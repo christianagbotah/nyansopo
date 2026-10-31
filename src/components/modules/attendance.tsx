@@ -102,7 +102,7 @@ export function Attendance() {
       />
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
-        <Select value={classId ?? undefined} onValueChange={setClassId}>
+        <Select value={classId ?? ""} onValueChange={setClassId}>
           <SelectTrigger className="w-64"><SelectValue placeholder="Select a class" /></SelectTrigger>
           <SelectContent>{data.classrooms.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
         </Select>

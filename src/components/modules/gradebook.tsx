@@ -106,7 +106,7 @@ export function Gradebook() {
         description={`Continuous assessment for ${data.termName ?? "the current term"} — exercises, quizzes, projects and exams feeding the terminal report.`}
         actions={
           <div className="flex gap-2">
-            <Select value={classId ?? undefined} onValueChange={setClassId}>
+            <Select value={classId ?? ""} onValueChange={setClassId}>
               <SelectTrigger className="w-56"><SelectValue placeholder="Select class" /></SelectTrigger>
               <SelectContent>{data.classrooms.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
             </Select>

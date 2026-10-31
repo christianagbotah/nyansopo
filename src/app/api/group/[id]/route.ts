@@ -11,7 +11,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   if (!group) return NextResponse.json({ error: "Group not found" }, { status: 404 });
   if (!user.schoolIds.some((sid) => group.schools.some((s) => s.id === sid))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  const branches = [];
+  const branches: any[] = [];
   for (const s of group.schools) {
     const term = await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId: s.id } } });
     const invoices = await db.invoice.findMany({ where: { schoolId: s.id, termId: term?.id } });

@@ -234,8 +234,8 @@ export function Admissions() {
                     {r.notes && <p className="text-xs mt-2 text-muted-foreground line-clamp-3">{r.notes}</p>}
                     {r.messages.length > 0 && (
                       <div className="mt-2 space-y-1.5">
-                        {r.messages.map((msg: any) => (
-                          <div key={msg.id} className="rounded bg-secondary/60 px-2.5 py-2 text-xs">
+                        {r.messages.map((msg: any, mi: number) => (
+                          <div key={msg.id ?? `in-${r.id}-${mi}`} className="rounded bg-secondary/60 px-2.5 py-2 text-xs">
                             <div className="font-semibold">{msg.senderName} <span className="font-normal text-muted-foreground">· {msg.senderTitle}</span></div>
                             <div className="mt-0.5">{msg.body}</div>
                           </div>
@@ -265,8 +265,8 @@ export function Admissions() {
                       </div>
                       <StatusBadge status={r.status} />
                     </div>
-                    {r.messages.map((msg: any) => (
-                      <div key={msg.id} className="rounded bg-secondary/60 px-2.5 py-2 text-xs mt-2">
+                    {r.messages.map((msg: any, mi: number) => (
+                      <div key={msg.id ?? `out-${r.id}-${mi}`} className="rounded bg-secondary/60 px-2.5 py-2 text-xs mt-2">
                         <div className="font-semibold">{msg.senderName}</div>
                         <div className="mt-0.5">{msg.body}</div>
                       </div>

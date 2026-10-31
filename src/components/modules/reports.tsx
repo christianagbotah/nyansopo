@@ -94,11 +94,11 @@ export function Reports() {
         description="Generate positioned report cards graded with your curriculum's scale — GES SBC/CCP proficiency bands, Cambridge or IB. Let AI draft the teacher's and head's remarks."
         actions={
           <div className="flex flex-wrap gap-2">
-            <Select value={termId ?? undefined} onValueChange={(v) => { setTermId(v); load(v); }}>
+            <Select value={termId ?? ""} onValueChange={(v) => { setTermId(v); load(v); }}>
               <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
               <SelectContent>{data.terms.map((t) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}</SelectContent>
             </Select>
-            <Select value={classId ?? undefined} onValueChange={setClassId}>
+            <Select value={classId ?? ""} onValueChange={setClassId}>
               <SelectTrigger className="w-44"><SelectValue placeholder="Class (generate)" /></SelectTrigger>
               <SelectContent>{data.classrooms.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
             </Select>

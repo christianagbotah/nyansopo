@@ -43,11 +43,11 @@ export const FLAG_LABELS: Record<string, string> = {
 export const STATUS_COLORS: Record<string, string> = {
   PAID: "default", PARTIAL: "secondary", UNPAID: "destructive", OVERDUE: "destructive",
   ACTIVE: "destructive", RESOLVED: "default", CONTESTED: "secondary", WITHDRAWN: "outline",
-  PENDING: "secondary", APPROVED: "default", DECLINED: "destructive", FULFILLED: "default",
+  PENDING: "destructive", APPROVED: "default", DECLINED: "destructive", FULFILLED: "default",
   COMPLETED: "default", PENDING_RELEASE: "destructive", NEW: "secondary", MATCHED: "secondary",
   FLAGGED: "destructive", CLEARED: "default", ENROLLED: "default", WITHDREW: "outline",
   TRANSFERRED: "secondary", GRADUATED: "default", EXPELLED: "destructive",
-  LICENSED: "default", PROVISIONAL: "secondary", PENDING: "destructive", EXPIRED: "destructive",
+  LICENSED: "default", PROVISIONAL: "secondary", EXPIRED: "destructive",
   VERIFIED: "default", LAPSED: "destructive",
 };
 

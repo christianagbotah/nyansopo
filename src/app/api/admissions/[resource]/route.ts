@@ -34,7 +34,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ reso
       school: dir === "in" ? r.requestingSchool : r.targetSchool, status: r.status, purpose: r.purpose,
       requestedAt: r.requestedAt, requestedByName: r.requestedByName, notes: r.notes,
       respondedByName: r.respondedByName, respondedAt: r.respondedAt,
-      messages: r.messages.map((m: any) => ({ senderName: m.senderName, senderTitle: m.senderTitle, body: m.body, sentAt: m.sentAt })),
+      messages: r.messages.map((m: any) => ({ id: m.id, senderName: m.senderName, senderTitle: m.senderTitle, body: m.body, sentAt: m.sentAt })),
     });
     return NextResponse.json({ inbox: inbox.map((r) => fmt(r, "in")), outbox: outbox.map((r) => fmt(r, "out")) });
   }

@@ -54,7 +54,7 @@ export function Fees() {
         title="Fees & Billing"
         description="Term-based billing in Ghana Cedis — tuition, exam, books, ICT, meals & transport. Record MoMo, cash and bank payments; chase arrears; flag defaulters to the network."
         actions={
-          <Select value={termId ?? undefined} onValueChange={(v) => { setTermId(v); load(v); }}>
+          <Select value={termId ?? ""} onValueChange={(v) => { setTermId(v); load(v); }}>
             <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
             <SelectContent>{data.terms.map((t) => <SelectItem key={t.id} value={t.id}>{t.name}{t.isCurrent ? " (current)" : ""}</SelectItem>)}</SelectContent>
           </Select>
