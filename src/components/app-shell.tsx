@@ -21,6 +21,7 @@ import { Admissions } from "@/components/modules/admissions";
 import { Fees } from "@/components/modules/fees";
 import { Attendance } from "@/components/modules/attendance";
 import { Gradebook } from "@/components/modules/gradebook";
+import { Classes } from "@/components/modules/classes";
 import { Reports } from "@/components/modules/reports";
 import { BranchConsole } from "@/components/modules/branch-console";
 import { AiCenter } from "@/components/modules/ai-center";
@@ -35,7 +36,7 @@ import { Finance } from "@/components/modules/finance";
 import {
   LayoutDashboard, Users, Banknote, CalendarCheck, ClipboardList, GraduationCap, ArrowLeftRight, Building2,
   BrainCircuit, Settings as SettingsIcon, Landmark, Menu, CloudOff, Cloud, RefreshCcw, LogOut, Moon, Sun,
-  Download, ChevronDown, School, MessageSquareText, UtensilsCrossed, Bus, Smartphone, Calculator, Package, PieChart,
+  Download, ChevronDown, School, MessageSquareText, UtensilsCrossed, Bus, Smartphone, Calculator, Package, PieChart, LayoutList,
 } from "lucide-react";
 
 type NavItem = { id: ModuleId; label: string; icon: any; section?: string };
@@ -51,6 +52,7 @@ const SCHOOL_NAV: NavItem[] = [
   { id: "inventory", label: "Inventory & Stores", icon: Package, section: "Finance" },
   { id: "finance", label: "Finance & Analytics", icon: PieChart, section: "Finance" },
   { id: "attendance", label: "Attendance", icon: CalendarCheck, section: "Academic" },
+  { id: "classes", label: "Classes & Timetable", icon: LayoutList, section: "Academic" },
   { id: "gradebook", label: "Gradebook", icon: ClipboardList, section: "Academic" },
   { id: "reports", label: "Exams & Reports", icon: GraduationCap, section: "Academic" },
   { id: "sms", label: "SMS Centre", icon: Smartphone, section: "Communication" },
@@ -173,7 +175,7 @@ export function AppShell() {
           <div className="flex items-center gap-2 min-w-0">
             <School className="size-4.5 text-muted-foreground hidden sm:block shrink-0" />
             {schools.length > 1 ? (
-              <Select value={currentSchoolId ?? ""} onValueChange={setCurrentSchool}>
+              <Select value={currentSchoolId ?? schools[0]?.id ?? ""} onValueChange={setCurrentSchool}>
                 <SelectTrigger className="h-9 w-auto max-w-[260px] gap-1.5 font-medium">
                   <SelectValue placeholder="Select school" />
                 </SelectTrigger>
@@ -304,6 +306,7 @@ export function AppShell() {
              module === "inventory" && schoolScope ? <Inventory /> :
              module === "finance" && schoolScope ? <Finance /> :
              module === "attendance" && schoolScope ? <Attendance /> :
+             module === "classes" && schoolScope ? <Classes /> :
              module === "gradebook" && schoolScope ? <Gradebook /> :
              module === "reports" && schoolScope ? <Reports /> :
              module === "branches" && schoolScope ? <BranchConsole /> :

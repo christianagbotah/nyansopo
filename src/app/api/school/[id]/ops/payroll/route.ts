@@ -47,7 +47,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       nhil: Math.round(rates.nhil * 1000) / 10,
     },
     staff: staff.map((s) => ({
-      id: s.id, fullName: s.fullName, role: s.role, title: s.title, phone: s.phone,
+      id: s.id, fullName: s.fullName, role: s.role, title: s.title, phone: s.phone, email: s.email,
+      category: s.category, position: s.position, qualification: s.qualification,
+      department: s.department, staffCode: s.staffCode, tier2Provider: s.tier2Provider,
+      accountNumber: s.accountNumber, bankName: s.bankName, tin: s.tin,
       salary: s.salaryCents, employmentType: s.employmentType, ssnitNumber: s.ssnitNumber,
       momoNumber: s.momoNumber, hiredAt: s.hiredAt, active: s.active,
     })),
@@ -59,6 +62,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     selectedRun: selectedRun ? { id: selectedRun.id, period: selectedRun.period, status: selectedRun.status } : null,
     payslips: payslips.map((p) => ({
       id: p.id, staffId: p.staffId, staff: p.staff.fullName, role: p.staff.role, title: p.staff.title, ssnitNumber: p.staff.ssnitNumber, momoNumber: p.staff.momoNumber,
+      position: p.staff.position, staffCode: p.staff.staffCode, accountNumber: p.staff.accountNumber, bankName: p.staff.bankName, tier2Provider: p.staff.tier2Provider,
       base: p.baseSalaryCents, allowances: JSON.parse(p.allowancesJson) as Allowance[],
       gross: p.grossCents, ssnitEmployee: p.ssnitEmployeeCents, ssnitEmployer: p.ssnitEmployerCents,
       paye: p.payeCents, otherDeductions: JSON.parse(p.otherDeductionsJson) as Deduction[],
@@ -79,7 +83,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const action: string = body.action;
 
   if (action === "save-staff") {
-    const { staffId, salaryCents, employmentType, ssnitNumber, momoNumber, active } = body;
+    const { staffId, salaryCents, employmentType, ssnitNumber, momoNumber, active,
+            fullName, role, title, phone, email, category, position, qualification, department,
+            tier2Provider, accountNumber, bankName, tin } = body;
     const st = await db.staff.findUnique({ where: { id: staffId } });
     if (!st || st.schoolId !== schoolId) return NextResponse.json({ error: "Staff not found" }, { status: 404 });
     const updated = await db.staff.update({
@@ -90,9 +96,54 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         ssnitNumber: ssnitNumber ?? st.ssnitNumber,
         momoNumber: momoNumber ?? st.momoNumber,
         ...(typeof active === "boolean" ? { active } : {}),
+        ...(fullName?.trim() ? { fullName: fullName.trim() } : {}),
+        ...(role ? { role } : {}),
+        ...(title !== undefined ? { title: title || null } : {}),
+        ...(phone !== undefined ? { phone: phone || null } : {}),
+        ...(email !== undefined ? { email: email || null } : {}),
+        ...(category ? { category } : {}),
+        ...(position !== undefined ? { position: position || null } : {}),
+        ...(qualification !== undefined ? { qualification: qualification || null } : {}),
+        ...(department !== undefined ? { department: department || null } : {}),
+        ...(tier2Provider !== undefined ? { tier2Provider: tier2Provider || null } : {}),
+        ...(accountNumber !== undefined ? { accountNumber: accountNumber || null } : {}),
+        ...(bankName !== undefined ? { bankName: bankName || null } : {}),
+        ...(tin !== undefined ? { tin: tin || null } : {}),
       },
     });
     return NextResponse.json({ staff: updated });
+  }
+
+  if (action === "create-staff") {
+    const { fullName, role, category, position, phone, email, salaryCents, employmentType, ssnitNumber, momoNumber, qualification, department, tier2Provider, accountNumber, bankName } = body;
+    if (!fullName?.trim()) return NextResponse.json({ error: "Full name is required" }, { status: 400 });
+    const cat = category ?? (role === "HEADTEACHER" || role === "BURSAR" ? "ADMINISTRATION" : "TEACHING");
+    const prefix = cat === "NON_TEACHING" ? "NTS" : cat === "ADMINISTRATION" ? "ADM" : "TCR";
+    const seq = (await db.staff.count({ where: { schoolId } })) + 1;
+    const created = await db.staff.create({
+      data: {
+        schoolId,
+        fullName: String(fullName).trim(),
+        role: role ?? (cat === "TEACHING" ? "TEACHER" : "ASSISTANT"),
+        title: position ?? null,
+        phone: phone || null,
+        email: email || null,
+        category: cat,
+        position: position || null,
+        qualification: qualification || null,
+        department: department || null,
+        staffCode: `${prefix}-${String(seq).padStart(5, "0")}`,
+        salaryCents: Number(salaryCents) || 0,
+        employmentType: employmentType ?? "FULL_TIME",
+        ssnitNumber: ssnitNumber || null,
+        momoNumber: momoNumber || null,
+        tier2Provider: tier2Provider || null,
+        accountNumber: accountNumber || null,
+        bankName: bankName || null,
+        hiredAt: new Date(),
+      },
+    });
+    return NextResponse.json({ staff: created });
   }
 
   if (action === "create-run") {

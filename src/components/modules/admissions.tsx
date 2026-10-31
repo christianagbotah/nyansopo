@@ -12,13 +12,14 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { ModuleHeader, LoadingBlock, StatusBadge, SeverityBadge, EmptyState } from "@/components/ui-helpers";
+import { AdmissionWizard } from "@/components/modules/admission-wizard";
 import { fmtCedi, fmtDate, fmtDateTime, FLAG_LABELS } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
 import { Search, UserPlus, FileSearch, ShieldAlert, ShieldCheck, Inbox, Send, ArrowLeftRight, Phone, Mail, MapPin, School as SchoolIcon, MessageSquare, Ban, CheckCheck, FileDown } from "lucide-react";
 
 export function Admissions() {
   const { currentSchoolId, schools } = useStore();
-  const [tab, setTab] = useState("inquiries");
+  const [tab, setTab] = useState("admit");
   const [inquiries, setInquiries] = useState<any[] | null>(null);
   const [requests, setRequests] = useState<{ inbox: any[]; outbox: any[] } | null>(null);
   const [transfers, setTransfers] = useState<{ outgoing: any[]; incoming: any[] } | null>(null);
@@ -57,7 +58,7 @@ export function Admissions() {
     <div>
       <ModuleHeader
         title="Admissions & Transfers"
-        description="The cross-school desk: check applicants against the national registry, pull their history from every prior school, request records and manage transfers."
+        description="Admit new learners with live bill preview, registry checks and record transfers — the cross-school admissions desk."
         actions={
           <>
             <Button size="sm" variant="outline" className="gap-1.5" onClick={() => runLookup()}><FileSearch className="size-4" /> Registry check</Button>
@@ -75,11 +76,21 @@ export function Admissions() {
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="flex-wrap">
+          <TabsTrigger value="admit" className="gap-1.5"><UserPlus className="size-3.5" /> Admit learner</TabsTrigger>
           <TabsTrigger value="inquiries">Inquiries</TabsTrigger>
           <TabsTrigger value="registry">Registry lookup</TabsTrigger>
           <TabsTrigger value="requests">Record requests</TabsTrigger>
           <TabsTrigger value="transfers">Transfers</TabsTrigger>
         </TabsList>
+
+        {/* ── ADMISSION WIZARD ── */}
+        <TabsContent value="admit" className="mt-4">
+          {currentSchoolId ? (
+            <AdmissionWizard key={currentSchoolId} schoolId={currentSchoolId} onAdmitted={load} />
+          ) : (
+            <EmptyState icon={<UserPlus className="size-5" />} title="No school selected" hint="Choose a school to start admitting learners." />
+          )}
+        </TabsContent>
 
         {/* ── INQUIRIES ── */}
         <TabsContent value="inquiries">

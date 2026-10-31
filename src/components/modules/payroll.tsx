@@ -14,13 +14,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatCard, ModuleHeader, LoadingBlock, StatusBadge, EmptyState } from "@/components/ui-helpers";
 import { fmtCedi, fmtDate } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
-import { Calculator, Users, Plus, CheckCheck, Banknote, Printer, Pencil, Trash2, ShieldCheck, FileText, AlertTriangle, Settings2, Landmark } from "lucide-react";
+import { Calculator, Users, Plus, CheckCheck, Banknote, Printer, Pencil, Trash2, ShieldCheck, FileText, AlertTriangle, Settings2, Landmark, GraduationCap } from "lucide-react";
 import { LogoMark, KenteStrip } from "@/components/brand";
 
-type StaffRow = { id: string; fullName: string; role: string; title: string | null; phone: string | null; salary: number; employmentType: string; ssnitNumber: string | null; momoNumber: string | null; hiredAt: string | null; active: boolean };
+type StaffRow = { id: string; fullName: string; role: string; title: string | null; phone: string | null; email?: string | null; category?: string; position?: string | null; qualification?: string | null; department?: string | null; staffCode?: string | null; tier2Provider?: string | null; accountNumber?: string | null; bankName?: string | null; tin?: string | null; salary: number; employmentType: string; ssnitNumber: string | null; momoNumber: string | null; hiredAt: string | null; active: boolean };
 type Run = { id: string; period: string; status: string; payslipCount: number; gross: number; deductions: number; net: number; employerSsnit: number; approvedByName: string | null; paidAt: string | null };
 type Slip = {
   id: string; staffId: string; staff: string; role: string; title: string | null; ssnitNumber: string | null; momoNumber: string | null;
+  position?: string | null; staffCode?: string | null; accountNumber?: string | null; bankName?: string | null; tier2Provider?: string | null;
   base: number; allowances: { name: string; amountCents: number }[]; gross: number; ssnitEmployee: number; ssnitEmployer: number;
   paye: number; otherDeductions: { name: string; amountCents: number }[]; totalDeductions: number; net: number; status: string;
   ssnit: { tier1Employee: number; tier1Employer: number; tier2: number; getfund: number; nhil: number };
@@ -41,6 +42,8 @@ export function Payroll() {
   const [data, setData] = useState<PayrollData | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
   const [staffDialog, setStaffDialog] = useState<StaffRow | null>(null);
+  const [newStaffOpen, setNewStaffOpen] = useState(false);
+  const [staffCat, setStaffCat] = useState<string>("ALL");
   const [slipFor, setSlipFor] = useState<Slip | null>(null);
   const [newPeriod, setNewPeriod] = useState("");
   const [busy, setBusy] = useState(false);
@@ -81,6 +84,7 @@ export function Payroll() {
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <StatCard icon={<Users className="size-4" />} label="Salaried staff" value={data.staff.filter((s) => s.active && s.salary > 0).length} sub={`${data.staff.filter((s) => !s.active).length} inactive`} />
+        <StatCard icon={<GraduationCap className="size-4" />} label="Teaching staff" value={data.staff.filter((s) => s.active && (s.category ?? "TEACHING") === "TEACHING").length} sub={`${data.staff.filter((s) => s.active && s.category === "NON_TEACHING").length} non-teaching · ${data.staff.filter((s) => s.active && s.category === "ADMINISTRATION").length} admin`} />
         <StatCard icon={<Calculator className="size-4" />} label="Latest net pay" value={run ? fmtCedi(run.net, { compact: true }) : "—"} tone="primary" sub={run ? `${run.period} · ${run.payslipCount} payslips` : "no runs yet"} />
         <StatCard icon={<ShieldCheck className="size-4" />} label="Employer SSNIT" value={run ? fmtCedi(run.employerSsnit, { compact: true }) : "—"} tone="gold" sub={`T1 ${data.rates.ssnitTier1Employer}% + T2 ${data.rates.ssnitTier2}%`} />
         <StatCard icon={<Banknote className="size-4" />} label="Total cost (month)" value={run ? fmtCedi(run.net + run.employerSsnit, { compact: true }) : "—"} sub="net + employer SSNIT" />
@@ -171,13 +175,26 @@ export function Payroll() {
         {/* ── STAFF ── */}
         <TabsContent value="staff">
           <Card>
-            <CardContent className="p-0">
-              <div className="overflow-x-auto nice-scroll max-h-[560px]">
+            <CardContent className="pt-4 pb-0">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                <div className="flex flex-wrap gap-1.5">
+                  {["ALL", "TEACHING", "NON_TEACHING", "ADMINISTRATION"].map((c) => (
+                    <button key={c}
+                      onClick={() => setStaffCat(c)}
+                      className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${staffCat === c ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"}`}>
+                      {c === "ALL" ? "All staff" : c === "TEACHING" ? "👨‍🏫 Teaching" : c === "NON_TEACHING" ? "👷 Non-teaching" : "🏢 Administration"}
+                      <span className="ml-1 opacity-70">{c === "ALL" ? data.staff.filter((s) => s.active).length : data.staff.filter((s) => s.active && (s.category ?? (s.role === "TEACHER" || s.role === "HEADTEACHER" ? "TEACHING" : "ADMINISTRATION")) === c).length}</span>
+                    </button>
+                  ))}
+                </div>
+                <Button size="sm" className="gap-1.5" onClick={() => setNewStaffOpen(true)}><Plus className="size-4" /> Add staff</Button>
+              </div>
+              <div className="overflow-x-auto nice-scroll max-h-[520px] -mx-6">
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 bg-secondary/70 backdrop-blur">
                     <tr className="text-left border-b">
                       <th className="px-3 py-2.5 font-medium">Staff</th>
-                      <th className="px-3 py-2.5 font-medium hidden sm:table-cell">Role</th>
+                      <th className="px-3 py-2.5 font-medium hidden sm:table-cell">Position</th>
                       <th className="px-3 py-2.5 font-medium text-right">Basic salary</th>
                       <th className="px-3 py-2.5 font-medium hidden md:table-cell">Type</th>
                       <th className="px-3 py-2.5 font-medium hidden lg:table-cell">MoMo</th>
@@ -186,13 +203,21 @@ export function Payroll() {
                     </tr>
                   </thead>
                   <tbody>
-                    {data.staff.map((s) => (
+                    {data.staff
+                      .filter((s) => staffCat === "ALL" || (s.category ?? (s.role === "TEACHER" || s.role === "HEADTEACHER" ? "TEACHING" : "ADMINISTRATION")) === staffCat)
+                      .map((s) => (
                       <tr key={s.id} className={`border-b last:border-0 hover:bg-secondary/30 ${!s.active ? "opacity-50" : ""}`}>
                         <td className="px-3 py-2.5">
                           <div className="font-medium">{s.fullName}</div>
-                          <div className="text-[11px] text-muted-foreground sm:hidden">{s.role}</div>
+                          <div className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+                            {s.staffCode && <span className="font-mono">{s.staffCode}</span>}
+                            <span className="sm:hidden">{s.position ?? s.title ?? s.role}</span>
+                          </div>
                         </td>
-                        <td className="px-3 py-2.5 hidden sm:table-cell text-muted-foreground">{s.title ?? s.role}</td>
+                        <td className="px-3 py-2.5 hidden sm:table-cell">
+                          <div className="text-[13px]">{s.position ?? s.title ?? s.role}</div>
+                          {s.department && <div className="text-[11px] text-muted-foreground">{s.department}</div>}
+                        </td>
                         <td className="px-3 py-2.5 text-right tabular-nums font-medium">{s.salary ? fmtCedi(s.salary) : <span className="text-muted-foreground font-normal">not set</span>}</td>
                         <td className="px-3 py-2.5 hidden md:table-cell"><Badge variant="outline" className="text-[10px]">{s.employmentType.replace("_", " ")}</Badge></td>
                         <td className="px-3 py-2.5 hidden lg:table-cell text-muted-foreground font-mono text-xs">{s.momoNumber ?? "—"}</td>
@@ -337,6 +362,7 @@ export function Payroll() {
       </Tabs>
 
       <StaffDialog staff={staffDialog} onOpenChange={(o) => !o && setStaffDialog(null)} onDone={() => { setStaffDialog(null); load(runId ?? undefined); }} />
+      <NewStaffDialog open={newStaffOpen} onOpenChange={(o) => !o && setNewStaffOpen(false)} onDone={() => { setNewStaffOpen(false); load(runId ?? undefined); }} />
       <PayslipDialog slip={slipFor} period={run?.period ?? ""} school={data.school} rates={data.rates} onOpenChange={(o) => !o && setSlipFor(null)} />
     </div>
   );
@@ -400,16 +426,27 @@ function StatutorySettings({ rates, onSaved }: { rates: Rates; onSaved: () => vo
 
 function StaffDialog({ staff, onOpenChange, onDone }: { staff: StaffRow | null; onOpenChange: (o: boolean) => void; onDone: () => void }) {
   const { currentSchoolId } = useStore();
-  const [salary, setSalary] = useState("");
-  const [employmentType, setEmploymentType] = useState("FULL_TIME");
-  const [ssnit, setSsnit] = useState("");
-  const [momo, setMomo] = useState("");
+  const [f, setF] = useState({
+    fullName: "", salary: "", employmentType: "FULL_TIME", ssnit: "", momo: "",
+    phone: "", email: "", position: "", qualification: "", department: "", category: "TEACHING",
+    tier2Provider: "", accountNumber: "", bankName: "", tin: "",
+  });
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (staff) {
-      setSalary(staff.salary ? (staff.salary / 100).toFixed(0) : "");
-      setEmploymentType(staff.employmentType); setSsnit(staff.ssnitNumber ?? ""); setMomo(staff.momoNumber ?? "");
+      setF({
+        fullName: staff.fullName,
+        salary: staff.salary ? String(Math.round(staff.salary / 100)) : "",
+        employmentType: staff.employmentType,
+        ssnit: staff.ssnitNumber ?? "", momo: staff.momoNumber ?? "",
+        phone: staff.phone ?? "", email: staff.email ?? "",
+        position: staff.position ?? staff.title ?? "", qualification: staff.qualification ?? "",
+        department: staff.department ?? "",
+        category: staff.category ?? (staff.role === "TEACHER" || staff.role === "HEADTEACHER" ? "TEACHING" : "ADMINISTRATION"),
+        tier2Provider: staff.tier2Provider ?? "", accountNumber: staff.accountNumber ?? "",
+        bankName: staff.bankName ?? "", tin: staff.tin ?? "",
+      });
     }
   }, [staff]);
 
@@ -419,29 +456,201 @@ function StaffDialog({ staff, onOpenChange, onDone }: { staff: StaffRow | null; 
     try {
       await apiPost(`/api/school/${currentSchoolId}/ops/payroll`, {
         action: "save-staff", staffId: staff.id,
-        salaryCents: Math.round(parseFloat(salary || "0") * 100),
-        employmentType, ssnitNumber: ssnit, momoNumber: momo,
+        fullName: f.fullName, salaryCents: Math.round(parseFloat(f.salary || "0") * 100),
+        employmentType: f.employmentType, ssnitNumber: f.ssnit, momoNumber: f.momo,
+        phone: f.phone, email: f.email, position: f.position, qualification: f.qualification,
+        department: f.department, category: f.category, tier2Provider: f.tier2Provider,
+        accountNumber: f.accountNumber, bankName: f.bankName, tin: f.tin,
       });
-      toast({ title: "Salary details saved" });
+      toast({ title: "Staff record saved" });
       onDone();
     } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
   }
 
+  const POSITIONS = ["Teacher", "Headteacher", "Bursar", "Accountant", "Driver", "Cleaner", "Cook", "Security Guard", "Librarian", "IT Technician", "Janitor", "Gardener", "Maintenance Worker", "Kitchen Assistant", "Office Assistant", "Lab Technician", "Receptionist", "Nurse", "Messenger"];
+
   return (
     <Dialog open={!!staff} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[92vh] overflow-y-auto nice-scroll sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Payroll setup — {staff?.fullName}</DialogTitle>
-          <DialogDescription>{staff?.title ?? staff?.role}</DialogDescription>
+          <DialogTitle>Staff record — {staff?.staffCode ?? staff?.fullName}</DialogTitle>
+          <DialogDescription>{staff?.position ?? staff?.title ?? staff?.role}</DialogDescription>
         </DialogHeader>
         <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5 col-span-2">
+            <Label>Full name</Label>
+            <Input value={f.fullName} onChange={(e) => setF({ ...f, fullName: e.target.value })} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Category</Label>
+            <Select value={f.category} onValueChange={(v) => setF({ ...f, category: v })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="TEACHING">Teaching</SelectItem>
+                <SelectItem value="NON_TEACHING">Non-teaching</SelectItem>
+                <SelectItem value="ADMINISTRATION">Administration</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Position</Label>
+            <Input list="staff-positions" value={f.position} onChange={(e) => setF({ ...f, position: e.target.value })} placeholder="Teacher / Driver / Cook…" />
+            <datalist id="staff-positions">{POSITIONS.map((p) => <option key={p} value={p} />)}</datalist>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Qualification</Label>
+            <Input value={f.qualification} onChange={(e) => setF({ ...f, qualification: e.target.value })} placeholder="B.Ed Basic Education" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Department</Label>
+            <Input value={f.department} onChange={(e) => setF({ ...f, department: e.target.value })} placeholder="Kitchen / Transport / Security" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Phone</Label>
+            <Input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Email</Label>
+            <Input type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} />
+          </div>
+          <Separator className="col-span-2 my-1" />
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold col-span-2">Payroll</div>
           <div className="space-y-1.5">
             <Label>Basic salary (GH₵/month)</Label>
-            <Input type="number" value={salary} onChange={(e) => setSalary(e.target.value)} placeholder="1600" />
+            <Input type="number" value={f.salary} onChange={(e) => setF({ ...f, salary: e.target.value })} placeholder="1600" />
           </div>
           <div className="space-y-1.5">
             <Label>Employment type</Label>
-            <Select value={employmentType} onValueChange={setEmploymentType}>
+            <Select value={f.employmentType} onValueChange={(v) => setF({ ...f, employmentType: v })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="FULL_TIME">Full time</SelectItem><SelectItem value="PART_TIME">Part time</SelectItem>
+                <SelectItem value="CONTRACT">Contract</SelectItem><SelectItem value="CASUAL">Casual</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <Separator className="col-span-2 my-1" />
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold col-span-2">Ghana statutory & payout</div>
+          <div className="space-y-1.5">
+            <Label>SSNIT number</Label>
+            <Input value={f.ssnit} onChange={(e) => setF({ ...f, ssnit: e.target.value })} placeholder="C0123456789" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>TIN</Label>
+            <Input value={f.tin} onChange={(e) => setF({ ...f, tin: e.target.value })} placeholder="C0012345678" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Tier 2 provider</Label>
+            <Input value={f.tier2Provider} onChange={(e) => setF({ ...f, tier2Provider: e.target.value })} placeholder="Petra Trust" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Bank name</Label>
+            <Input value={f.bankName} onChange={(e) => setF({ ...f, bankName: e.target.value })} placeholder="GCB Bank" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Account number</Label>
+            <Input value={f.accountNumber} onChange={(e) => setF({ ...f, accountNumber: e.target.value })} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>MoMo payout number</Label>
+            <Input value={f.momo} onChange={(e) => setF({ ...f, momo: e.target.value })} placeholder="024 000 0000" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={submit} disabled={busy || !f.fullName.trim()}>{busy ? "Saving…" : "Save record"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ── NEW STAFF (teacher / non-teaching / admin) ───────────── */
+function NewStaffDialog({ open, onOpenChange, onDone }: { open: boolean; onOpenChange: (o: boolean) => void; onDone: () => void }) {
+  const { currentSchoolId } = useStore();
+  const [f, setF] = useState({
+    fullName: "", category: "TEACHING", position: "Teacher", phone: "", email: "",
+    salary: "", employmentType: "FULL_TIME", ssnit: "", momo: "", qualification: "", department: "",
+  });
+  const [busy, setBusy] = useState(false);
+
+  async function submit() {
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/payroll`, {
+        action: "create-staff",
+        fullName: f.fullName, category: f.category, position: f.position,
+        phone: f.phone, email: f.email, qualification: f.qualification, department: f.department,
+        salaryCents: Math.round(parseFloat(f.salary || "0") * 100),
+        employmentType: f.employmentType, ssnitNumber: f.ssnit, momoNumber: f.momo,
+      });
+      toast({ title: "Staff member added", description: `${f.fullName} — ${f.position}` });
+      setF({ fullName: "", category: "TEACHING", position: "Teacher", phone: "", email: "", salary: "", employmentType: "FULL_TIME", ssnit: "", momo: "", qualification: "", department: "" });
+      onDone();
+    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
+  }
+
+  const POSITIONS = {
+    TEACHING: ["Teacher", "Headteacher", "Deputy Headteacher"],
+    NON_TEACHING: ["Driver", "Cleaner", "Cook", "Security Guard", "Librarian", "IT Technician", "Janitor", "Gardener", "Maintenance Worker", "Kitchen Assistant", "Office Assistant", "Lab Technician", "Receptionist", "Nurse", "Messenger"],
+    ADMINISTRATION: ["Bursar", "Accountant", "Administrator", "Receptionist"],
+  } as Record<string, string[]>;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[92vh] overflow-y-auto nice-scroll sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><Users className="size-4" /> Add staff member</DialogTitle>
+          <DialogDescription>Teachers, non-teaching staff and administrators — staff codes are auto-assigned (TCR / NTS / ADM).</DialogDescription>
+        </DialogHeader>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5 col-span-2">
+            <Label>Full name *</Label>
+            <Input value={f.fullName} onChange={(e) => setF({ ...f, fullName: e.target.value })} placeholder="Madam Akosua Dede" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Category *</Label>
+            <Select value={f.category} onValueChange={(v) => setF({ ...f, category: v, position: POSITIONS[v]?.[0] ?? "" })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="TEACHING">👨‍🏫 Teaching</SelectItem>
+                <SelectItem value="NON_TEACHING">👷 Non-teaching</SelectItem>
+                <SelectItem value="ADMINISTRATION">🏢 Administration</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Position *</Label>
+            <Select value={f.position} onValueChange={(v) => setF({ ...f, position: v })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {(POSITIONS[f.category] ?? []).map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Phone</Label>
+            <Input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} placeholder="024 000 0000" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Email</Label>
+            <Input type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Qualification</Label>
+            <Input value={f.qualification} onChange={(e) => setF({ ...f, qualification: e.target.value })} placeholder="B.Ed / WASSCE / HND" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Department</Label>
+            <Input value={f.department} onChange={(e) => setF({ ...f, department: e.target.value })} placeholder="Kitchen / Transport" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Basic salary (GH₵/month)</Label>
+            <Input type="number" value={f.salary} onChange={(e) => setF({ ...f, salary: e.target.value })} placeholder="1600" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Employment type</Label>
+            <Select value={f.employmentType} onValueChange={(v) => setF({ ...f, employmentType: v })}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="FULL_TIME">Full time</SelectItem><SelectItem value="PART_TIME">Part time</SelectItem>
@@ -451,16 +660,16 @@ function StaffDialog({ staff, onOpenChange, onDone }: { staff: StaffRow | null; 
           </div>
           <div className="space-y-1.5">
             <Label>SSNIT number</Label>
-            <Input value={ssnit} onChange={(e) => setSsnit(e.target.value)} placeholder="SSNIT-12345678" />
+            <Input value={f.ssnit} onChange={(e) => setF({ ...f, ssnit: e.target.value })} placeholder="C0123456789" />
           </div>
           <div className="space-y-1.5">
             <Label>MoMo payout number</Label>
-            <Input value={momo} onChange={(e) => setMomo(e.target.value)} placeholder="+233 24 000 0000" />
+            <Input value={f.momo} onChange={(e) => setF({ ...f, momo: e.target.value })} />
           </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={submit} disabled={busy}>{busy ? "Saving…" : "Save"}</Button>
+          <Button onClick={submit} disabled={busy || !f.fullName.trim()}>{busy ? "Adding…" : "Add staff member"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -468,6 +677,13 @@ function StaffDialog({ staff, onOpenChange, onDone }: { staff: StaffRow | null; 
 }
 
 /* ── PROFESSIONAL PRINTABLE PAYSLIP ─────────────────────────── */
+function maskAccount(acc?: string | null): string {
+  if (!acc) return "—";
+  const s = acc.replace(/\s/g, "");
+  if (s.length <= 5) return s;
+  return `${s.slice(0, 2)}*-****-***${s.slice(-3)}`;
+}
+
 function PayslipDialog({ slip, period, school, rates, onOpenChange }: { slip: Slip | null; period: string; school: PayrollData["school"]; rates: Rates; onOpenChange: (o: boolean) => void }) {
   if (!slip) return null;
   return (
@@ -498,34 +714,57 @@ function PayslipDialog({ slip, period, school, rates, onOpenChange }: { slip: Sl
               </div>
 
               <div className="grid grid-cols-2 gap-2 mt-4 text-[12px]">
-                <div className="rounded-lg bg-secondary/60 p-2.5"><div className="text-[9px] uppercase tracking-wider text-muted-foreground">Staff</div><div className="font-semibold">{slip.staff}</div></div>
-                <div className="rounded-lg bg-secondary/60 p-2.5"><div className="text-[9px] uppercase tracking-wider text-muted-foreground">Role / SSNIT No.</div><div className="font-semibold">{slip.title ?? slip.role} {slip.ssnitNumber ? `· ${slip.ssnitNumber}` : ""}</div></div>
+                <div className="rounded-lg bg-secondary/60 p-2.5"><div className="text-[9px] uppercase tracking-wider text-muted-foreground">Staff</div><div className="font-semibold">{slip.staff} {slip.staffCode && <span className="font-mono text-[10px] text-muted-foreground">{slip.staffCode}</span>}</div></div>
+                <div className="rounded-lg bg-secondary/60 p-2.5"><div className="text-[9px] uppercase tracking-wider text-muted-foreground">Position · SSNIT No.</div><div className="font-semibold">{slip.position ?? slip.title ?? slip.role} {slip.ssnitNumber ? `· ${slip.ssnitNumber}` : ""}</div></div>
+                {slip.bankName && (
+                  <div className="rounded-lg bg-secondary/60 p-2.5"><div className="text-[9px] uppercase tracking-wider text-muted-foreground">Bank / MoMo</div><div className="font-semibold">{slip.bankName} · {maskAccount(slip.accountNumber ?? slip.momoNumber)}</div></div>
+                )}
+                <div className="rounded-lg bg-secondary/60 p-2.5"><div className="text-[9px] uppercase tracking-wider text-muted-foreground">Payment status</div><div className="font-semibold">{slip.status === "PAID" ? "Paid" : "Draft — not yet paid"}</div></div>
               </div>
 
-              <table className="w-full text-[12.5px] mt-4">
-                <tbody>
-                  <tr className="border-b border-dashed"><td className="py-1.5 font-semibold uppercase text-[9px] tracking-wider text-muted-foreground" colSpan={2}>Earnings</td></tr>
-                  <tr className="border-b border-dashed"><td className="py-1.5">Basic salary</td><td className="py-1.5 text-right tabular-nums">{fmtCedi(slip.base)}</td></tr>
-                  {slip.allowances.map((a) => (
-                    <tr key={a.name} className="border-b border-dashed"><td className="py-1.5">{a.name}</td><td className="py-1.5 text-right tabular-nums">{fmtCedi(a.amountCents)}</td></tr>
-                  ))}
-                  <tr className="border-b"><td className="py-1.5 font-semibold">Gross earnings</td><td className="py-1.5 text-right font-semibold tabular-nums">{fmtCedi(slip.gross)}</td></tr>
-
-                  <tr className="border-b border-dashed"><td className="py-1.5 pt-3 font-semibold uppercase text-[9px] tracking-wider text-muted-foreground" colSpan={2}>Deductions</td></tr>
-                  <tr className="border-b border-dashed"><td className="py-1.5">SSNIT Tier 1 employee ({rates.ssnitTier1Employee}%) + Tier 2 ({rates.ssnitTier2}%)</td><td className="py-1.5 text-right tabular-nums">{fmtCedi(slip.ssnitEmployee)}</td></tr>
-                  <tr className="border-b border-dashed"><td className="py-1.5">PAYE income tax</td><td className="py-1.5 text-right tabular-nums">{fmtCedi(slip.paye)}</td></tr>
-                  {slip.otherDeductions.map((d) => (
-                    <tr key={d.name} className="border-b border-dashed"><td className="py-1.5">{d.name}</td><td className="py-1.5 text-right tabular-nums">{fmtCedi(d.amountCents)}</td></tr>
-                  ))}
-                  <tr className="border-b"><td className="py-1.5 font-semibold">Total deductions</td><td className="py-1.5 text-right font-semibold tabular-nums text-destructive">{fmtCedi(slip.totalDeductions)}</td></tr>
-                </tbody>
-              </table>
-
-              <div className="mt-3 rounded-lg bg-primary/10 border border-primary/20 px-3 py-2.5 flex items-center justify-between">
-                <span className="font-bold text-sm">NET PAY</span>
-                <span className="font-bold text-xl text-primary tabular-nums">{fmtCedi(slip.net)}</span>
+              <div className="grid grid-cols-2 gap-4 mt-4">
+                {/* earnings column */}
+                <div>
+                  <div className="font-semibold uppercase text-[9px] tracking-wider text-emerald-700 dark:text-emerald-400 border-b border-dashed pb-1 mb-1">Earnings</div>
+                  <table className="w-full text-[12.5px]">
+                    <tbody>
+                      <tr><td className="py-1">Basic salary</td><td className="py-1 text-right tabular-nums">{fmtCedi(slip.base)}</td></tr>
+                      {slip.allowances.map((a) => (
+                        <tr key={a.name}><td className="py-1">{a.name}</td><td className="py-1 text-right tabular-nums">{fmtCedi(a.amountCents)}</td></tr>
+                      ))}
+                      <tr className="border-t"><td className="py-1 font-semibold">Gross earnings</td><td className="py-1 text-right font-semibold tabular-nums">{fmtCedi(slip.gross)}</td></tr>
+                    </tbody>
+                  </table>
+                  <div className="mt-2 rounded-lg bg-primary/10 border border-primary/20 px-3 py-2">
+                    <div className="text-[9px] uppercase tracking-wider text-primary/80 font-semibold">Net pay</div>
+                    <div className="font-bold text-lg text-primary tabular-nums">{fmtCedi(slip.net)}</div>
+                  </div>
+                </div>
+                {/* deductions column */}
+                <div>
+                  <div className="rounded-md bg-secondary/50 border px-2 py-1.5 mb-1.5">
+                    <div className="text-[8.5px] uppercase tracking-wider text-muted-foreground font-semibold">Employer contributions (not deducted)</div>
+                    <div className="flex justify-between text-[12px]"><span>SSNIT Tier 1 employer ({rates.ssnitTier1Employer}%)</span><span className="tabular-nums">{fmtCedi(slip.ssnit.tier1Employer)}</span></div>
+                  </div>
+                  <div className="text-[8.5px] uppercase tracking-wider text-muted-foreground font-semibold border-b border-dashed pb-1 mb-1">Employee deductions</div>
+                  <table className="w-full text-[12.5px]">
+                    <tbody>
+                      <tr><td className="py-1">SSNIT Tier 1 employee ({rates.ssnitTier1Employee}%)</td><td className="py-1 text-right tabular-nums">{fmtCedi(slip.ssnit.tier1Employee)}</td></tr>
+                      <tr>
+                        <td className="py-1">{slip.tier2Provider ? <span>{slip.tier2Provider.toUpperCase()} <span className="text-[10px] text-muted-foreground">(Tier 2 {rates.ssnitTier2}%)</span></span> : `SSNIT Tier 2 (${rates.ssnitTier2}%)`}</td>
+                        <td className="py-1 text-right tabular-nums">{fmtCedi(slip.ssnit.tier2)}</td>
+                      </tr>
+                      <tr><td className="py-1">PAYE income tax</td><td className="py-1 text-right tabular-nums">{fmtCedi(slip.paye)}</td></tr>
+                      {slip.otherDeductions.map((d) => (
+                        <tr key={d.name}><td className="py-1">{d.name}</td><td className="py-1 text-right tabular-nums">{fmtCedi(d.amountCents)}</td></tr>
+                      ))}
+                      <tr className="border-t"><td className="py-1 font-semibold">Total deductions</td><td className="py-1 text-right font-semibold tabular-nums text-destructive">{fmtCedi(slip.totalDeductions)}</td></tr>
+                    </tbody>
+                  </table>
+                </div>
               </div>
-              <div className="mt-1.5 text-[10px] text-muted-foreground">Paid to {slip.momoNumber ?? "MoMo number not set"} · employer contributions (not deducted): {fmtCedi(slip.ssnitEmployer)}</div>
+
+              <div className="mt-2 text-[10px] text-muted-foreground">Report discrepancies to the accounts office within 30 days. Computer-generated payslip — no signature required.</div>
 
               <div className="grid grid-cols-2 gap-8 pt-5 text-[10px] text-muted-foreground">
                 <div className="border-t border-border pt-1">Employee signature</div>
