@@ -14,6 +14,7 @@ import { StatCard, ModuleHeader, LoadingBlock, StatusBadge, EmptyState } from "@
 import { fmtCedi, fmtDate, PAYMENT_LABELS } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
 import { Banknote, Receipt, AlertTriangle, CheckCircle2, Plus, Flag, Printer, Wallet, Ticket, Percent, UserPlus, XCircle } from "lucide-react";
+import { ReceiptDocument } from "@/components/receipts";
 
 type FeeData = {
   terms: { id: string; name: string; isCurrent: boolean }[];
@@ -250,7 +251,7 @@ function PayDialog({ invoice, onOpenChange, onDone }: { invoice: any; onOpenChan
         toast({ title: "Queued offline", description: "Receipt will be issued automatically when you reconnect." });
         onDone(null);
       } else {
-        onDone(res.data?.payment ?? null);
+        onDone(res.data?.receipt ?? res.data?.payment ?? null);
       }
     } catch (e: any) {
       toast({ title: "Payment failed", description: e.message, variant: "destructive" });
@@ -348,20 +349,24 @@ function FlagDialog({ invoice, onOpenChange, onDone }: { invoice: any; onOpenCha
 }
 
 function ReceiptDialog({ receipt, onOpenChange }: { receipt: any; onOpenChange: (o: boolean) => void }) {
-  if (!receipt) return null;
+  const isPayload = receipt && receipt.type && receipt.school;
   return (
     <Dialog open={!!receipt} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-sm">
-        <DialogHeader className="text-center">
+      <DialogContent className={isPayload ? "max-w-[560px] max-h-[92vh] overflow-y-auto nice-scroll" : "max-w-sm"}>
+        <DialogHeader className="text-center no-print">
           <DialogTitle className="flex items-center justify-center gap-2"><CheckCircle2 className="size-5 text-emerald-600" /> Payment received</DialogTitle>
         </DialogHeader>
-        <div className="text-center space-y-1 py-2">
-          <div className="text-3xl font-bold text-primary">{fmtCedi(receipt.amountCents ?? 0)}</div>
-          <div className="text-sm">{receipt.student}</div>
-          <div className="font-mono text-xs text-muted-foreground">{receipt.receiptNo}</div>
-          <div className="text-xs text-muted-foreground">{PAYMENT_LABELS[receipt.method] ?? receipt.method} · {fmtDate(receipt.paidAt)}</div>
-        </div>
-        <DialogFooter className="sm:justify-center gap-2">
+        {isPayload ? (
+          <div className="print-area"><ReceiptDocument data={receipt} /></div>
+        ) : (
+          <div className="text-center space-y-1 py-2">
+            <div className="text-3xl font-bold text-primary">{fmtCedi(receipt?.amountCents ?? 0)}</div>
+            <div className="text-sm">{receipt?.student}</div>
+            <div className="font-mono text-xs text-muted-foreground">{receipt?.receiptNo}</div>
+            <div className="text-xs text-muted-foreground">{PAYMENT_LABELS[receipt?.method] ?? receipt?.method} · {fmtDate(receipt?.paidAt)}</div>
+          </div>
+        )}
+        <DialogFooter className="sm:justify-center gap-2 no-print">
           <Button variant="outline" size="sm" onClick={() => window.print()}><Printer className="size-4" /> Print receipt</Button>
           <Button size="sm" onClick={() => onOpenChange(false)}>Done</Button>
         </DialogFooter>

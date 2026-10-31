@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
+import { sendSms } from "@/lib/sms";
+import { transportFareReceipt } from "@/lib/receipt-payload";
 
 // ── GET /api/school/[id]/ops/transport — routes, assignments, trips ──
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -27,7 +29,19 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const enrolled = await db.enrollment.findMany({ where: { schoolId, status: "ACTIVE" }, include: { student: true, classroom: true }, orderBy: { classroom: { name: "asc" } } });
   const unassigned = enrolled.filter((e) => !assigned.has(e.studentId));
 
+  // current-term transport payments → per-student fare collected
+  const year = await db.academicYear.findFirst({ where: { schoolId, isCurrent: true }, include: { terms: true } });
+  const currentTerm = year?.terms.find((t) => t.isCurrent) ?? year?.terms[0];
+  const termStart = currentTerm?.startsAt ?? new Date(new Date().getFullYear(), 0, 1);
+  const transportPayments = await db.payment.findMany({
+    where: { schoolId, category: "TRANSPORT", paidAt: { gte: termStart } },
+    select: { studentId: true, amountCents: true },
+  });
+  const paidByStudent: Record<string, number> = {};
+  transportPayments.forEach((p) => { if (p.studentId) paidByStudent[p.studentId] = (paidByStudent[p.studentId] ?? 0) + p.amountCents; });
+
   return NextResponse.json({
+    termLabel: currentTerm ? `${currentTerm.name} · ${year!.name}` : "current term",
     routes: routes.map((r) => ({
       id: r.id, name: r.name, vehicleReg: r.vehicleReg, vehicleModel: r.vehicleModel,
       driverName: r.driverName, driverPhone: r.driverPhone, capacity: r.capacity,
@@ -37,9 +51,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         classroom: a.student.enrollments[0]?.classroom?.name ?? null,
         pickupStop: a.pickupStop, dropStop: a.dropStop, fareOverride: a.fareOverrideCents,
         guardianPhone: a.student.guardianPhone,
+        farePaid: paidByStudent[a.studentId] ?? 0,
       })),
       utilisation: Math.round((r.assignments.length / Math.max(1, r.capacity)) * 100),
       fareRevenue: r.assignments.reduce((s, a) => s + (a.fareOverrideCents ?? r.farePerTermCents), 0),
+      fareCollected: r.assignments.reduce((s, a) => s + Math.min(paidByStudent[a.studentId] ?? 0, a.fareOverrideCents ?? r.farePerTermCents), 0),
       trips: (tripByRoute[r.id] ?? []).slice(0, 10).map((t) => ({ id: t.id, date: t.date, morning: t.morningCount, evening: t.eveningCount, notes: t.notes, recordedByName: t.recordedByName })),
     })),
     unassigned: unassigned.map((e) => ({ id: e.studentId, name: `${e.student.firstName} ${e.student.lastName}`, classroom: e.classroom.name, guardianPhone: e.student.guardianPhone })),
@@ -48,6 +64,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       learners: routes.reduce((s, r) => s + r.assignments.length, 0),
       capacity: routes.reduce((s, r) => s + r.capacity, 0),
       fareRevenue: routes.reduce((s, r) => s + r.assignments.reduce((x, a) => x + (a.fareOverrideCents ?? r.farePerTermCents), 0), 0),
+      fareCollected: routes.reduce((s, r) => s + r.assignments.reduce((x, a) => x + Math.min(paidByStudent[a.studentId] ?? 0, a.fareOverrideCents ?? r.farePerTermCents), 0), 0),
     },
   });
 }
@@ -128,6 +145,42 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       }
     }
     return NextResponse.json({ billed, skipped, noInvoice });
+  }
+
+  // collect a transport fare directly at the counter (receipt + optional SMS)
+  if (action === "collect-fare") {
+    const { assignmentId, method, reference } = body;
+    const a = await db.transportAssignment.findUnique({ where: { id: assignmentId }, include: { route: true, student: true } });
+    if (!a || a.route.schoolId !== schoolId) return NextResponse.json({ error: "Assignment not found" }, { status: 404 });
+    const year2 = await db.academicYear.findFirst({ where: { schoolId, isCurrent: true }, include: { terms: true } });
+    const term2 = year2?.terms.find((t) => t.isCurrent) ?? year2?.terms[0];
+    const termLabel = term2 ? `${term2.name} · ${year2!.name}` : "current term";
+    const termStart = term2?.startsAt ?? new Date(new Date().getFullYear(), 0, 1);
+    const already = await db.payment.aggregate({
+      where: { schoolId, category: "TRANSPORT", studentId: a.studentId, paidAt: { gte: termStart } },
+      _sum: { amountCents: true },
+    });
+    const fare = a.fareOverrideCents ?? a.route.farePerTermCents;
+    const outstanding = Math.max(0, fare - (already._sum.amountCents ?? 0));
+    if (outstanding <= 0) return NextResponse.json({ error: "This learner's fare is already settled for the term" }, { status: 400 });
+    const seq = (await db.payment.count({ where: { schoolId } })) + 1001;
+    const payment = await db.payment.create({
+      data: {
+        receiptNo: `RCP-2026-${String(seq).padStart(5, "0")}`, studentId: a.studentId, category: "TRANSPORT",
+        schoolId, amountCents: outstanding, method: method ?? "CASH", reference: reference ?? null,
+        receivedByName: auth.user.fullName, paidAt: new Date(),
+      },
+    });
+    const setting = await db.smsSetting.findUnique({ where: { schoolId } });
+    if (setting?.autoPaymentReceipts) {
+      await sendSms({
+        db, schoolId, studentId: a.studentId, recipientName: a.student.guardianName, recipientPhone: a.student.guardianPhone,
+        body: `Transport fare of GH₵${(outstanding / 100).toFixed(2)} received for ${a.student.firstName} — route ${a.route.name} (${payment.receiptNo}). Thank you.`,
+        category: "TRANSPORT", sentByName: auth.user.fullName,
+      });
+    }
+    const receipt = await transportFareReceipt(db, payment.id, { name: a.route.name, vehicleReg: a.route.vehicleReg }, termLabel, fare);
+    return NextResponse.json({ payment, receipt });
   }
 
   return NextResponse.json({ error: "Unknown action" }, { status: 400 });

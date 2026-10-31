@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
 import { generateDayCharges, settleDailyCharges, effectivePrice } from "@/lib/daily-billing";
 import { sendSms } from "@/lib/sms";
+import { dailyServicesReceipt } from "@/lib/receipt-payload";
 
 // ── GET /api/school/[id]/ops/daily — services, ledger, POS workspace ──
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -14,6 +15,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const q = (k: string) => url.searchParams.get(k) ?? undefined;
   const dateStr = q("date") ?? new Date().toISOString().slice(0, 10);
   const date = new Date(dateStr);
+  // seeded/generated charges may carry a time component — match the whole calendar day
+  const dayStart = new Date(date); dayStart.setHours(0, 0, 0, 0);
+  const dayEnd = new Date(date); dayEnd.setHours(23, 59, 59, 999);
   const monthStart = new Date(date.getFullYear(), date.getMonth(), 1);
   const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59);
 
@@ -64,8 +68,35 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   Object.values(ledger).forEach((l) => (l.classroom = clsName[classByStudent[l.studentId]] ?? null));
 
   // POS workspace: today's charges + recent POS payments
-  const todayCharges = await db.dailyCharge.findMany({ where: { schoolId, date }, include: { student: true, service: true } });
+  const todayCharges = await db.dailyCharge.findMany({ where: { schoolId, date: { gte: dayStart, lte: dayEnd } }, include: { student: true, service: true } });
   const posPayments = await db.payment.findMany({ where: { schoolId, category: "DAILY" }, orderBy: { paidAt: "desc" }, take: 10, include: { student: true } });
+
+  // per-service today stats (iedupro-style category cards)
+  const todayByService: Record<string, { billed: number; collected: number; count: number; owedCount: number }> = {};
+  todayCharges.forEach((c) => {
+    const e = (todayByService[c.serviceId] ??= { billed: 0, collected: 0, count: 0, owedCount: 0 });
+    e.billed += c.amountCents;
+    e.count++;
+    if (c.status === "PAID") e.collected += c.amountCents;
+    else if (c.status === "OWED") e.owedCount++;
+  });
+  // WEEKLY services (e.g. sachet water on Wednesdays) aggregate across the whole ISO week
+  const weeklyServiceIds = services.filter((s) => s.chargeMode === "WEEKLY").map((s) => s.id);
+  if (weeklyServiceIds.length) {
+    const wk = new Date(dayStart);
+    const dow = (wk.getDay() + 6) % 7; // Monday = 0
+    wk.setDate(wk.getDate() - dow); wk.setHours(0, 0, 0, 0); // week start (Mon)
+    const wkEnd = new Date(wk); wkEnd.setDate(wkEnd.getDate() + 7);
+    const weekCharges = await db.dailyCharge.findMany({ where: { schoolId, serviceId: { in: weeklyServiceIds }, date: { gte: wk, lt: wkEnd } } });
+    const weekByService: Record<string, { billed: number; collected: number; count: number; owedCount: number }> = {};
+    weekCharges.forEach((c) => {
+      const e = (weekByService[c.serviceId] ??= { billed: 0, collected: 0, count: 0, owedCount: 0 });
+      e.billed += c.amountCents; e.count++;
+      if (c.status === "PAID") e.collected += c.amountCents;
+      else if (c.status === "OWED") e.owedCount++;
+    });
+    Object.assign(todayByService, weekByService);
+  }
 
   // students list for POS picker (with enrolled services + today status)
   const studentRows = await db.enrollment.findMany({
@@ -94,6 +125,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       id: s.id, name: s.name, category: s.category, price: s.priceCents, chargeMode: s.chargeMode,
       weekdays: s.weekdays, active: s.active, enrolled: s._count.enrollments,
       month: byService[s.id] ?? { billed: 0, collected: 0, owed: 0, waived: 0, count: 0 },
+      today: todayByService[s.id] ?? { billed: 0, collected: 0, count: 0, owedCount: 0 },
     })),
     month: {
       billed: charges.reduce((a, c) => a + c.amountCents, 0),
@@ -184,7 +216,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (setting?.autoPaymentReceipts) {
       await sendSms({ db, schoolId, studentId, recipientName: student.guardianName, recipientPhone: student.guardianPhone, body: `We have received GH₵${(amt / 100).toFixed(2)} for ${student.firstName} (${payment.receiptNo}) towards daily services. Thank you.`, category: "PAYMENT", sentByName: user.fullName });
     }
-    return NextResponse.json({ payment: { ...payment, applied }, student: `${student.firstName} ${student.lastName}` });
+    const receipt = await dailyServicesReceipt(db, payment.id);
+    return NextResponse.json({ payment: { ...payment, applied }, student: `${student.firstName} ${student.lastName}`, receipt });
   }
 
   if (action === "waive-charge") {
@@ -196,7 +229,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   if (action === "waive-student-day") {
     const { studentId, date } = body;
-    const res = await db.dailyCharge.updateMany({ where: { schoolId, studentId, date: new Date(date), status: "OWED" }, data: { status: "WAIVED" } });
+    const d = new Date(date);
+    const dStart = new Date(d); dStart.setHours(0, 0, 0, 0);
+    const dEnd = new Date(d); dEnd.setHours(23, 59, 59, 999);
+    const res = await db.dailyCharge.updateMany({ where: { schoolId, studentId, date: { gte: dStart, lte: dEnd }, status: "OWED" }, data: { status: "WAIVED" } });
     return NextResponse.json({ waived: res.count });
   }
 

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
+import { receiptSchool, posSaleReceipt } from "@/lib/receipt-payload";
 
 // ── GET /api/school/[id]/ops/inventory — items, movements, suppliers ──
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -21,9 +22,28 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const lowStock = items.filter((i) => i.stockQty < i.reorderLevel);
   const students = await db.enrollment.findMany({ where: { schoolId, status: "ACTIVE" }, include: { student: true, classroom: true }, orderBy: { classroom: { name: "asc" } } });
 
+  // purchase orders (restocking)
+  const purchaseOrders = await db.purchaseOrder.findMany({ where: { schoolId }, orderBy: { createdAt: "desc" }, take: 30, include: { supplier: true } });
+
+  // returns (refunds): RETURN movements carrying a saleNo
+  const returnLines = await db.stockMovement.findMany({
+    where: { schoolId, type: "RETURN", saleNo: { not: null } },
+    orderBy: { createdAt: "desc" }, take: 60, include: { item: true },
+  });
+  const returnMap: Record<string, { saleNo: string; buyer: string; refunded: number; at: string; lines: { item: string; qty: number; amount: number }[] }> = {};
+  for (const l of returnLines) {
+    const no = l.saleNo!;
+    returnMap[no] ??= { saleNo: no, buyer: l.partyName ?? "—", refunded: 0, at: l.createdAt.toISOString(), lines: [] };
+    returnMap[no].refunded += l.amountCents ?? 0;
+    returnMap[no].lines.push({ item: l.item.name, qty: Math.abs(l.qty), amount: l.amountCents ?? 0 });
+  }
+  const returns = Object.values(returnMap).sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, 12);
+  const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
+  const returns30 = returnLines.filter((l) => l.createdAt >= monthStart).reduce((s, l) => s + (l.amountCents ?? 0), 0);
+
   // counter sales (POS): group ISSUE movements carrying a saleNo
   const saleLines = await db.stockMovement.findMany({
-    where: { schoolId, saleNo: { not: null } },
+    where: { schoolId, type: "ISSUE", saleNo: { not: null } },
     orderBy: { createdAt: "desc" },
     take: 240,
     include: { item: true },
@@ -40,8 +60,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     if (l.note?.startsWith("METHOD:")) saleMap[no].method = l.note.slice(7);
   }
   const sales = Object.values(saleMap).sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, 24);
-  const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
-  const salesMonth = saleLines.filter((l) => l.createdAt >= monthStart).reduce((s, l) => s + (l.amountCents ?? 0), 0);
+  const monthStart2 = new Date(); monthStart2.setDate(1); monthStart2.setHours(0, 0, 0, 0);
+  const salesMonth = saleLines.filter((l) => l.createdAt >= monthStart2).reduce((s, l) => s + (l.amountCents ?? 0), 0);
 
   return NextResponse.json({
     items: items.map((i) => ({ id: i.id, name: i.name, sku: i.sku, category: i.category, unit: i.unit, unitCost: i.unitCostCents, sellPrice: i.sellPriceCents, stockQty: i.stockQty, reorderLevel: i.reorderLevel, location: i.location })),
@@ -52,10 +72,15 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       chargedToInvoice: m.chargedToInvoice, note: m.note, createdAt: m.createdAt,
     })),
     suppliers: suppliers.map((s) => ({ id: s.id, name: s.name, phone: s.phone, email: s.email, itemsSupplied: s.itemsSupplied, notes: s.notes })),
-    stats: { stockValue, lowStock: lowStock.length, items: items.length, movements: movements.length, salesMonth, salesCount: sales.length },
+    stats: { stockValue, lowStock: lowStock.length, items: items.length, movements: movements.length, salesMonth, salesCount: sales.length, returns30, pendingOrders: purchaseOrders.filter((p) => p.status === "PENDING").length, pendingOrdersValue: purchaseOrders.filter((p) => p.status === "PENDING").reduce((s, p) => s + p.totalCents, 0) },
     lowStockItems: lowStock.map((i) => ({ id: i.id, name: i.name, stockQty: i.stockQty, reorderLevel: i.reorderLevel, unit: i.unit })),
     students: students.map((e) => ({ id: e.studentId, name: `${e.student.firstName} ${e.student.lastName}`, classroom: e.classroom.name })),
     sales,
+    returns,
+    purchaseOrders: purchaseOrders.map((p) => ({
+      id: p.id, poNo: p.poNo, supplier: p.supplier?.name ?? "—", lines: JSON.parse(p.linesJson) as { itemId: string; name: string; qty: number; unitCostCents: number }[],
+      total: p.totalCents, status: p.status, expectedAt: p.expectedDate, receivedAt: p.receivedAt, createdByName: p.createdByName, note: p.note, createdAt: p.createdAt,
+    })),
   });
 }
 
@@ -142,6 +167,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const seq = (await db.stockMovement.count({ where: { schoolId, saleNo: { not: null } } })) + 1001;
     const saleNo = `SLR-${String(seq).padStart(4, "0")}`;
     const payMethod = method ?? "CASH";
+    const now = new Date();
     for (const p of prepared) {
       const mv = await db.stockMovement.create({
         data: {
@@ -153,8 +179,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       await db.inventoryItem.update({ where: { id: p.item.id }, data: { stockQty: { decrement: p.qty } } });
       void mv;
     }
+    // record as a formal payment so the receipt can be reprinted from history
+    const paySeq = (await db.payment.count({ where: { schoolId } })) + 1001;
+    await db.payment.create({
+      data: { receiptNo: `RCP-2026-${String(paySeq).padStart(5, "0")}`, studentId: student?.id ?? null, category: "POS", schoolId, amountCents: total, method: payMethod, reference: saleNo, receivedByName: user.fullName, paidAt: now },
+    });
+    const school = await receiptSchool(db, schoolId);
+    const saleLines = prepared.map((p) => ({ item: p.item.name, qty: p.qty, amount: (p.item.sellPriceCents ?? 0) * p.qty }));
+    const receipt = posSaleReceipt(school, { saleNo, buyer, method: payMethod, total, lines: saleLines, at: now.toISOString() });
     return NextResponse.json({
-      sale: { saleNo, buyer, method: payMethod, total, lines: prepared.map((p) => ({ item: p.item.name, qty: p.qty, amount: (p.item.sellPriceCents ?? 0) * p.qty })) },
+      sale: { saleNo, buyer, method: payMethod, total, lines: saleLines },
+      receipt,
     });
   }
 
@@ -168,6 +203,79 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   if (action === "delete-supplier") {
     await db.supplier.delete({ where: { id: body.id } }).catch(() => null);
+    return NextResponse.json({ ok: true });
+  }
+
+  // ── record a return/refund against a prior counter sale ──
+  if (action === "return") {
+    const { saleNo, lines } = body; // lines: [{ itemId?, name?, qty }]
+    const priorLines = await db.stockMovement.findMany({ where: { schoolId, saleNo, type: "ISSUE" }, include: { item: true } });
+    if (!priorLines.length) return NextResponse.json({ error: "Sale not found" }, { status: 404 });
+    const buyer = priorLines[0].partyName ?? "Walk-in";
+    const itemByKey: Record<string, typeof priorLines[0]["item"]> = {};
+    priorLines.forEach((l) => { itemByKey[l.itemId] = l.item; itemByKey[l.item.name] = l.item; });
+    const prepared: { item: { id: string; name: string; sellPriceCents: number | null; unitCostCents: number; unit: string }; qty: number }[] = [];
+    for (const l of lines ?? []) {
+      const item = l.itemId ? itemByKey[l.itemId] : l.name ? itemByKey[l.name] : null;
+      if (!item) return NextResponse.json({ error: `Item not on sale ${saleNo}` }, { status: 400 });
+      const qty = Math.floor(Number(l.qty));
+      if (!qty || qty <= 0) return NextResponse.json({ error: `Invalid quantity for ${item.name}` }, { status: 400 });
+      prepared.push({ item, qty });
+    }
+    if (!prepared.length) return NextResponse.json({ error: "Select at least one item to return" }, { status: 400 });
+    let refunded = 0;
+    for (const p of prepared) {
+      const price = p.item.sellPriceCents ?? p.item.unitCostCents;
+      refunded += price * p.qty;
+      await db.stockMovement.create({
+        data: { itemId: p.item.id, schoolId, type: "RETURN", qty: p.qty, unitCostCents: price, partyType: "SALE", partyName: buyer, saleNo, amountCents: price * p.qty, note: "REFUND" },
+      });
+      await db.inventoryItem.update({ where: { id: p.item.id }, data: { stockQty: { increment: p.qty } } });
+    }
+    return NextResponse.json({ ok: true, saleNo, buyer, refunded, lines: prepared.map((p) => ({ item: p.item.name, qty: p.qty, amount: (p.item.sellPriceCents ?? p.item.unitCostCents) * p.qty })) });
+  }
+
+  // ── purchase orders ──
+  if (action === "create-po") {
+    const { supplierId, lines, expectedDate, note } = body; // lines: [{ itemId, qty, unitCostCents }]
+    if (!Array.isArray(lines) || !lines.length) return NextResponse.json({ error: "Add at least one line" }, { status: 400 });
+    const prepared: { itemId: string; name: string; qty: number; unitCostCents: number }[] = [];
+    for (const l of lines) {
+      const item = await db.inventoryItem.findUnique({ where: { id: l.itemId } });
+      if (!item || item.schoolId !== schoolId) return NextResponse.json({ error: "Item not found" }, { status: 404 });
+      const qty = Math.floor(Number(l.qty));
+      if (!qty || qty <= 0) return NextResponse.json({ error: `Invalid quantity for ${item.name}` }, { status: 400 });
+      prepared.push({ itemId: item.id, name: item.name, qty, unitCostCents: Number(l.unitCostCents) || item.unitCostCents });
+    }
+    const total = prepared.reduce((s, p) => s + p.qty * p.unitCostCents, 0);
+    const seq = (await db.purchaseOrder.count({ where: { schoolId } })) + 101;
+    const po = await db.purchaseOrder.create({
+      data: {
+        schoolId, poNo: `PO-${String(seq).padStart(4, "0")}`, supplierId: supplierId || null,
+        linesJson: JSON.stringify(prepared), totalCents: total, status: "PENDING",
+        expectedDate: expectedDate ? new Date(expectedDate) : null, createdByName: user.fullName, note: note || null,
+      },
+    });
+    return NextResponse.json({ po });
+  }
+
+  if (action === "receive-po") {
+    const po = await db.purchaseOrder.findUnique({ where: { id: body.id } });
+    if (!po || po.schoolId !== schoolId) return NextResponse.json({ error: "PO not found" }, { status: 404 });
+    if (po.status !== "PENDING") return NextResponse.json({ error: "PO is not pending" }, { status: 400 });
+    const lines = JSON.parse(po.linesJson) as { itemId: string; name: string; qty: number; unitCostCents: number }[];
+    for (const l of lines) {
+      await db.stockMovement.create({
+        data: { itemId: l.itemId, schoolId, type: "PURCHASE", qty: l.qty, unitCostCents: l.unitCostCents, partyType: "SUPPLIER", partyName: po.supplierId ? (await db.supplier.findUnique({ where: { id: po.supplierId } }))?.name ?? null : null, note: po.poNo },
+      });
+      await db.inventoryItem.update({ where: { id: l.itemId }, data: { stockQty: { increment: l.qty }, unitCostCents: l.unitCostCents } });
+    }
+    const updated = await db.purchaseOrder.update({ where: { id: po.id }, data: { status: "RECEIVED", receivedAt: new Date() } });
+    return NextResponse.json({ po: updated });
+  }
+
+  if (action === "cancel-po") {
+    await db.purchaseOrder.update({ where: { id: body.id }, data: { status: "CANCELLED" } }).catch(() => null);
     return NextResponse.json({ ok: true });
   }
 

@@ -9,21 +9,24 @@ import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { StatCard, ModuleHeader, LoadingBlock, EmptyState } from "@/components/ui-helpers";
-import { fmtCedi, fmtDate } from "@/lib/format";
+import { fmtCedi, fmtDate, PAYMENT_LABELS } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
-import { Bus, Plus, Phone, MapPin, UserPlus, ClipboardCheck, Banknote, Users, Pencil, Trash2, ArrowRight } from "lucide-react";
+import { Bus, Plus, Phone, MapPin, UserPlus, ClipboardCheck, Banknote, Users, Pencil, Trash2, ArrowRight, HandCoins, CheckCircle2, Printer } from "lucide-react";
+import { ReceiptDocument } from "@/components/receipts";
 
-type Rider = { id: string; studentId: string; student: string; classroom: string | null; pickupStop: string | null; dropStop: string | null; fareOverride: number | null; guardianPhone: string };
+type Rider = { id: string; studentId: string; student: string; classroom: string | null; pickupStop: string | null; dropStop: string | null; fareOverride: number | null; guardianPhone: string; farePaid: number };
 type Trip = { id: string; date: string; morning: number | null; evening: number | null; notes: string | null; recordedByName: string | null };
 type Route = {
   id: string; name: string; vehicleReg: string; vehicleModel: string | null; driverName: string; driverPhone: string;
-  capacity: number; fare: number; stops: string[]; active: boolean; riders: Rider[]; utilisation: number; fareRevenue: number; trips: Trip[];
+  capacity: number; fare: number; stops: string[]; active: boolean; riders: Rider[]; utilisation: number; fareRevenue: number; fareCollected: number; trips: Trip[];
 };
 type TransportData = {
+  termLabel: string;
   routes: Route[];
   unassigned: { id: string; name: string; classroom: string; guardianPhone: string }[];
-  summary: { routes: number; learners: number; capacity: number; fareRevenue: number };
+  summary: { routes: number; learners: number; capacity: number; fareRevenue: number; fareCollected: number };
 };
 
 export function Transportation() {
@@ -32,6 +35,8 @@ export function Transportation() {
   const [routeDialog, setRouteDialog] = useState<Route | "new" | null>(null);
   const [assignFor, setAssignFor] = useState<Route | null>(null);
   const [tripFor, setTripFor] = useState<Route | null>(null);
+  const [fareFor, setFareFor] = useState<{ rider: Rider; route: Route } | null>(null);
+  const [receipt, setReceipt] = useState<any | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = () => {
@@ -71,7 +76,7 @@ export function Transportation() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <StatCard icon={<Bus className="size-4" />} label="Active routes" value={data.summary.routes} sub={`${data.summary.capacity} seats total`} />
         <StatCard icon={<Users className="size-4" />} label="Learners on buses" value={data.summary.learners} tone="primary" sub={`${Math.round((data.summary.learners / Math.max(1, data.summary.capacity)) * 100)}% capacity`} />
-        <StatCard icon={<Banknote className="size-4" />} label="Term fare revenue" value={fmtCedi(data.summary.fareRevenue, { compact: true })} tone="gold" sub="billed per term" />
+        <StatCard icon={<Banknote className="size-4" />} label="Fare collected" value={fmtCedi(data.summary.fareCollected, { compact: true })} tone="gold" sub={`${fmtCedi(data.summary.fareRevenue, { compact: true })} billed · ${data.termLabel}`} />
         <StatCard icon={<ClipboardCheck className="size-4" />} label="Trips logged" value={data.routes.reduce((a, r) => a + r.trips.length, 0)} sub="recent runs" />
       </div>
 
@@ -106,7 +111,10 @@ export function Transportation() {
                   <Button size="sm" variant="ghost" className="h-6 gap-1 text-xs" onClick={() => setAssignFor(r)}><UserPlus className="size-3" /> Assign</Button>
                 </div>
                 <div className="space-y-1 max-h-44 overflow-y-auto nice-scroll pr-1">
-                  {r.riders.slice(0, 50).map((x) => (
+                  {r.riders.slice(0, 50).map((x) => {
+                    const fare = x.fareOverride ?? r.fare;
+                    const settled = x.farePaid >= fare;
+                    return (
                     <div key={x.id} className="flex items-center justify-between gap-2 text-sm border-b last:border-0 py-1">
                       <div className="min-w-0">
                         <span className="font-medium truncate">{x.student}</span>
@@ -117,13 +125,21 @@ export function Transportation() {
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
                         {x.fareOverride && <Badge variant="outline" className="text-[9px]">{fmtCedi(x.fareOverride)}</Badge>}
+                        {settled ? (
+                          <Badge className="text-[9px] gap-1" variant="secondary"><CheckCircle2 className="size-2.5" /> fare paid</Badge>
+                        ) : (
+                          <Button size="sm" variant="outline" className="h-6 gap-1 text-[11px] px-2" onClick={() => setFareFor({ rider: x, route: r })}>
+                            <HandCoins className="size-3" /> Collect {fmtCedi(fare - x.farePaid, { compact: true })}
+                          </Button>
+                        )}
                         <button className="text-muted-foreground hover:text-destructive" title="Remove from route"
                           onClick={async () => { await apiPost(`/api/school/${currentSchoolId}/ops/transport`, { action: "unassign", assignmentId: x.id }); toast({ title: "Removed from route" }); load(); }}>
                           <Trash2 className="size-3.5" />
                         </button>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
               <div className="border-t pt-3">
@@ -157,6 +173,19 @@ export function Transportation() {
       <RouteDialog route={routeDialog} onOpenChange={(o) => !o && setRouteDialog(null)} onDone={() => { setRouteDialog(null); load(); }} />
       <AssignDialog route={assignFor} unassigned={data.unassigned} onOpenChange={(o) => !o && setAssignFor(null)} onDone={() => { setAssignFor(null); load(); }} />
       <TripDialog route={tripFor} onOpenChange={(o) => !o && setTripFor(null)} onDone={() => { setTripFor(null); load(); }} />
+      <FareDialog ctx={fareFor} termLabel={data.termLabel} onOpenChange={(o) => !o && setFareFor(null)} onDone={(rc) => { setFareFor(null); if (rc) setReceipt(rc); load(); }} />
+      {receipt && (
+        <Dialog open onOpenChange={(o) => !o && setReceipt(null)}>
+          <DialogContent className="max-w-[560px] max-h-[92vh] overflow-y-auto nice-scroll">
+            <DialogHeader className="no-print"><DialogTitle className="text-base">Fare receipt issued</DialogTitle></DialogHeader>
+            <div className="print-area"><ReceiptDocument data={receipt} /></div>
+            <div className="no-print flex justify-end gap-2">
+              <Button size="sm" variant="outline" onClick={() => window.print()}><Printer className="size-4" /> Print</Button>
+              <Button size="sm" onClick={() => setReceipt(null)}>Done</Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }
@@ -348,6 +377,67 @@ function TripDialog({ route, onOpenChange, onDone }: { route: Route | null; onOp
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button onClick={submit} disabled={busy}>{busy ? "Saving…" : "Record trip"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── fare collection dialog (counter payment for one rider's term fare) ──
+function FareDialog({ ctx, termLabel, onOpenChange, onDone }: { ctx: { rider: Rider; route: Route } | null; termLabel: string; onOpenChange: (o: boolean) => void; onDone: (receipt: any) => void }) {
+  const { currentSchoolId } = useStore();
+  const [method, setMethod] = useState("CASH");
+  const [reference, setReference] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const fare = ctx ? (ctx.rider.fareOverride ?? ctx.route.fare) : 0;
+  const outstanding = ctx ? Math.max(0, fare - ctx.rider.farePaid) : 0;
+
+  async function submit() {
+    if (!ctx || !currentSchoolId) return;
+    setBusy(true);
+    try {
+      const res = await apiPost<any>(`/api/school/${currentSchoolId}/ops/transport`, {
+        action: "collect-fare", assignmentId: ctx.rider.id, method, reference: reference || undefined,
+      });
+      toast({ title: "Fare collected", description: `${ctx.rider.student} · ${termLabel}` });
+      onDone(res.receipt ?? null);
+    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
+  }
+
+  return (
+    <Dialog open={!!ctx} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><HandCoins className="size-4" /> Collect bus fare — {ctx?.rider.student}</DialogTitle>
+          <DialogDescription>
+            {ctx?.route.name} · {termLabel} · fare <b>{ctx ? fmtCedi(fare) : ""}</b>
+            {ctx && ctx.rider.farePaid > 0 && <> · already paid <b className="text-emerald-600">{fmtCedi(ctx.rider.farePaid)}</b></>}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="rounded-lg bg-primary/10 p-3 text-center">
+            <div className="text-[10px] uppercase tracking-wider text-primary/80">Collecting now</div>
+            <div className="text-2xl font-bold text-primary tabular-nums">{fmtCedi(outstanding)}</div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Method</Label>
+            <Select value={method} onValueChange={setMethod}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {Object.entries(PAYMENT_LABELS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5 col-span-2">
+            <Label>MoMo / reference</Label>
+            <Input placeholder="e.g. MP2401.5533.77" value={reference} onChange={(e) => setReference(e.target.value)} />
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground">A receipt is issued instantly and an SMS goes to the guardian.</p>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={submit} disabled={busy || outstanding <= 0} className="gap-1.5">{busy ? "Collecting…" : <><HandCoins className="size-4" /> Collect fare</>}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

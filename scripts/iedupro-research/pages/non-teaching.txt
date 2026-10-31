@@ -1,0 +1,1 @@
+" Print Gender Report\n Add New Non-Teaching Staff\n10\n25\n50\n100\n\t\nSearch:\nMALES: 0\nFEMALES: 0\nTOTAL: 0\n\nPHOTO\n\tSTAFF ID\n\tNAME\n\tGENDER\n\tPOSITION\n\tEMAIL\n\tPHONE\tACCOUNT STATUS\tOPTIONS\nNo data available in table\nShowing 0 to 0 of 0 entries\n\t\n«‹›»"

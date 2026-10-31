@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
         if (!inv) throw new Error("invoice missing");
         const amt = Math.max(0, Math.min(Number(amountCents), inv.totalCents - inv.discountCents - inv.paidCents));
         const seq = (await db.payment.count({ where: { schoolId } })) + 1001;
-        await db.payment.create({ data: { receiptNo: `RCP-2026-${String(seq).padStart(5, "0")}`, invoiceId, schoolId, amountCents: amt, method, reference: `SYNC:${op.clientId}`, receivedByName: `${user.fullName} (offline)`, paidAt: paidAt ? new Date(paidAt) : new Date(), offlineQueued: true, syncedAt: new Date() } });
+        await db.payment.create({ data: { receiptNo: `RCP-2026-${String(seq).padStart(5, "0")}`, invoiceId, studentId: inv.studentId, schoolId, amountCents: amt, method, reference: `SYNC:${op.clientId}`, receivedByName: `${user.fullName} (offline)`, paidAt: paidAt ? new Date(paidAt) : new Date(), offlineQueued: true, syncedAt: new Date() } });
         const paid = inv.paidCents + amt;
         await db.invoice.update({ where: { id: invoiceId }, data: { paidCents: paid, status: paid >= inv.totalCents - inv.discountCents ? "PAID" : "PARTIAL" } });
         results.push({ clientId: op.clientId, ok: true, detail: `receipt issued` });

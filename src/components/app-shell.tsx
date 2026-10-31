@@ -31,10 +31,11 @@ import { Transportation } from "@/components/modules/transport";
 import { SmsCenter } from "@/components/modules/sms-center";
 import { Payroll } from "@/components/modules/payroll";
 import { Inventory } from "@/components/modules/inventory";
+import { Finance } from "@/components/modules/finance";
 import {
   LayoutDashboard, Users, Banknote, CalendarCheck, ClipboardList, GraduationCap, ArrowLeftRight, Building2,
   BrainCircuit, Settings as SettingsIcon, Landmark, Menu, CloudOff, Cloud, RefreshCcw, LogOut, Moon, Sun,
-  Download, ChevronDown, School, MessageSquareText, UtensilsCrossed, Bus, Smartphone, Calculator, Package,
+  Download, ChevronDown, School, MessageSquareText, UtensilsCrossed, Bus, Smartphone, Calculator, Package, PieChart,
 } from "lucide-react";
 
 type NavItem = { id: ModuleId; label: string; icon: any; section?: string };
@@ -48,6 +49,7 @@ const SCHOOL_NAV: NavItem[] = [
   { id: "transport", label: "Transportation", icon: Bus, section: "Finance" },
   { id: "payroll", label: "HR & Payroll", icon: Calculator, section: "Finance" },
   { id: "inventory", label: "Inventory & Stores", icon: Package, section: "Finance" },
+  { id: "finance", label: "Finance & Analytics", icon: PieChart, section: "Finance" },
   { id: "attendance", label: "Attendance", icon: CalendarCheck, section: "Academic" },
   { id: "gradebook", label: "Gradebook", icon: ClipboardList, section: "Academic" },
   { id: "reports", label: "Exams & Reports", icon: GraduationCap, section: "Academic" },
@@ -300,6 +302,7 @@ export function AppShell() {
              module === "sms" && schoolScope ? <SmsCenter /> :
              module === "payroll" && schoolScope ? <Payroll /> :
              module === "inventory" && schoolScope ? <Inventory /> :
+             module === "finance" && schoolScope ? <Finance /> :
              module === "attendance" && schoolScope ? <Attendance /> :
              module === "gradebook" && schoolScope ? <Gradebook /> :
              module === "reports" && schoolScope ? <Reports /> :

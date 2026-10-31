@@ -6,12 +6,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ModuleHeader, LoadingBlock, EmptyState, StatusBadge } from "@/components/ui-helpers";
-import { fmtCedi, fmtDate } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
-import { GraduationCap, Sparkles, Printer, Wand2, Send, FileText, RefreshCcw } from "lucide-react";
-import { LogoMark, KenteStrip } from "@/components/brand";
+import { GraduationCap, Sparkles, Printer, Wand2, Send, RefreshCcw, Layers, FileText } from "lucide-react";
+import { ClassicSheet, ModernSheet, type SheetData } from "@/components/report-sheets";
 
 type RepData = {
   terms: { id: string; name: string; isCurrent: boolean }[];
@@ -31,13 +30,19 @@ export function Reports() {
   const [classId, setClassId] = useState<string | null>(null);
   const [selected, setSelected] = useState<RepData["reportCards"][0] | null>(null);
   const [detail, setDetail] = useState<any | null>(null);
+  const [sheetStyle, setSheetStyle] = useState<"classic" | "modern">("classic");
+  const [school, setSchool] = useState<SheetData["school"] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [bulk, setBulk] = useState<{ loading: boolean; cards: SheetData[] } | null>(null);
 
   const load = (t?: string) => {
     if (!currentSchoolId) return;
     apiGet<RepData>(`/api/school/${currentSchoolId}/reports${t ? `?termId=${t}` : ""}`)
       .then((d) => { setData(d); setTermId(d.termId); })
       .catch((e) => toast({ title: "Load failed", description: e.message, variant: "destructive" }));
+    apiGet<any>(`/api/school/${currentSchoolId}/settings`)
+      .then((s) => setSchool({ name: s.school.name, motto: s.school.motto, town: s.school.town, region: s.school.region, phone: s.school.phone }))
+      .catch(() => null);
   };
   useEffect(() => { load(); }, [currentSchoolId]);
 
@@ -83,15 +88,54 @@ export function Reports() {
     setDetail({ ...card, results: rc?.results ?? [], student: full.student, attendanceSummary: rc?.attendance });
   }
 
+  /* bulk: print the whole class's report sheets in one go */
+  async function printAll() {
+    if (!currentSchoolId || !classId) { toast({ title: "Choose a class first" }); return; }
+    setBulk({ loading: true, cards: [] });
+    try {
+      const cards: SheetData[] = [];
+      const list = filtered;
+      for (const rc of list) {
+        const full = await apiGet<any>(`/api/student/${rc.studentId}`);
+        const rcd = full.reportCards.find((r: any) => r.id === rc.id);
+        cards.push({
+          student: { name: `${full.student.firstName} ${full.student.lastName}`, index: full.student.nyansapoIndex, classroom: rc.classroom },
+          termName: data!.terms.find((t) => t.id === termId)?.name ?? "",
+          curriculum: schoolCurriculum,
+          position: rc.position, classSize: rc.classSize, average: rc.average,
+          conduct: rc.conduct, promotion: rc.promotion,
+          attendanceSummary: rcd?.attendance ?? rc.attendance,
+          teacherRemark: rc.teacherRemark, headRemark: rc.headRemark, aiGenerated: rc.aiGenerated, published: rc.published,
+          school: school ?? { name: "—" },
+          results: rcd?.results ?? [],
+        });
+      }
+      setBulk({ loading: false, cards });
+    } catch (e: any) { toast({ title: "Bulk print failed", description: e.message, variant: "destructive" }); setBulk(null); }
+  }
+
   if (!data) return <LoadingBlock label="Loading reports…" />;
 
   const filtered = classId ? data.reportCards.filter((r) => r.classroom === data.classrooms.find((c) => c.id === classId)?.name) : data.reportCards;
+  const schoolCurriculum = (detail?.student?.curriculum as string) || "GES";
+
+  const sheetData: SheetData | null = detail && school ? {
+    student: { name: `${detail.student.firstName} ${detail.student.lastName}`, index: detail.student.nyansapoIndex, classroom: detail.classroom },
+    termName: data.terms.find((t) => t.id === termId)?.name ?? "",
+    curriculum: schoolCurriculum,
+    position: detail.position, classSize: detail.classSize, average: detail.average,
+    conduct: detail.conduct, promotion: detail.promotion,
+    attendanceSummary: detail.attendanceSummary ?? detail.attendance,
+    teacherRemark: detail.teacherRemark, headRemark: detail.headRemark,
+    aiGenerated: detail.aiGenerated, published: detail.published,
+    school, results: detail.results ?? [],
+  } : null;
 
   return (
     <div>
       <ModuleHeader
         title="Exams & Terminal Reports"
-        description="Generate positioned report cards graded with your curriculum's scale — GES SBC/CCP proficiency bands, Cambridge or IB. Let AI draft the teacher's and head's remarks."
+        description="Generate positioned report cards graded with your curriculum's scale — GES SBC/CCP proficiency bands, Cambridge or IB. Print classic GES broadsheets or modern cards, one learner or the whole class."
         actions={
           <div className="flex flex-wrap gap-2">
             <Select value={termId ?? ""} onValueChange={(v) => { setTermId(v); load(v); }}>
@@ -104,6 +148,9 @@ export function Reports() {
             </Select>
             <Button size="sm" className="gap-1.5" onClick={generate} disabled={!classId || busy === "generate"}>
               <RefreshCcw className={cn("size-4", busy === "generate" && "animate-spin")} /> Generate for class
+            </Button>
+            <Button size="sm" variant="outline" className="gap-1.5" onClick={printAll} disabled={!classId || !filtered.length || !!bulk?.loading}>
+              <Layers className="size-4" /> {bulk?.loading ? "Preparing…" : "Print whole class"}
             </Button>
           </div>
         }
@@ -159,92 +206,57 @@ export function Reports() {
         </Card>
       )}
 
-      {/* report card viewer */}
+      {/* report card viewer with sheet style picker */}
       <Dialog open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
-        <DialogContent className="max-w-2xl max-h-[92vh] overflow-y-auto nice-scroll">
-          <DialogTitle className="sr-only">Report card — {selected?.student}</DialogTitle>
-          {!detail ? <LoadingBlock label="Preparing report card…" /> : <ReportCardView detail={detail} termName={data.terms.find((t) => t.id === termId)?.name ?? ""} onAiRemark={() => aiRemark(detail.id)} busy={busy === detail.id} onPublish={() => publish(detail.id)} />}
+        <DialogContent className="max-w-3xl max-h-[92vh] overflow-y-auto nice-scroll">
+          <DialogHeader className="no-print">
+            <DialogTitle className="flex items-center justify-between gap-3 text-base flex-wrap">
+              <span>Report sheet — {selected?.student}</span>
+              <span className="flex gap-1">
+                <Button size="sm" variant={sheetStyle === "classic" ? "default" : "outline"} className="h-7 text-xs" onClick={() => setSheetStyle("classic")}>Classic GES</Button>
+                <Button size="sm" variant={sheetStyle === "modern" ? "default" : "outline"} className="h-7 text-xs" onClick={() => setSheetStyle("modern")}>Modern</Button>
+              </span>
+            </DialogTitle>
+          </DialogHeader>
+          {!sheetData ? <LoadingBlock label="Preparing report sheet…" /> : (
+            <div className="print-area">
+              {sheetStyle === "classic" ? <ClassicSheet d={sheetData} /> : <ModernSheet d={sheetData} />}
+            </div>
+          )}
+          {sheetData && (
+            <div className="flex flex-wrap gap-2 justify-end mt-4 no-print">
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => aiRemark(sheetData && detail.id)} disabled={busy === detail.id}><Wand2 className="size-4" /> Draft AI remarks</Button>
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => window.print()}><Printer className="size-4" /> Print</Button>
+              {!sheetData.published && <Button size="sm" className="gap-1.5" onClick={() => publish(detail.id)}><Send className="size-4" /> Publish</Button>}
+            </div>
+          )}
         </DialogContent>
       </Dialog>
+
+      {/* bulk print overlay */}
+      {bulk && (
+        <Dialog open onOpenChange={() => setBulk(null)}>
+          <DialogContent className="max-w-3xl max-h-[92vh] overflow-y-auto nice-scroll">
+            <DialogHeader className="no-print">
+              <DialogTitle className="flex items-center justify-between text-base">
+                <span className="flex items-center gap-2"><FileText className="size-4" /> Class report sheets ({bulk.cards.length})</span>
+                <span className="flex gap-1">
+                  <Button size="sm" variant={sheetStyle === "classic" ? "default" : "outline"} className="h-7 text-xs" onClick={() => setSheetStyle("classic")}>Classic GES</Button>
+                  <Button size="sm" variant={sheetStyle === "modern" ? "default" : "outline"} className="h-7 text-xs" onClick={() => setSheetStyle("modern")}>Modern</Button>
+                </span>
+              </DialogTitle>
+            </DialogHeader>
+            {bulk.loading ? <LoadingBlock label="Fetching every learner's sheet…" /> : (
+              <div className="print-area space-y-4">
+                <div className="no-print flex justify-end"><Button size="sm" onClick={() => window.print()} className="gap-1.5"><Printer className="size-4" /> Print all {bulk.cards.length}</Button></div>
+                {bulk.cards.map((c, i) => sheetStyle === "classic" ? <ClassicSheet key={i} d={c} /> : <ModernSheet key={i} d={c} />)}
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }
 
 function cn(...args: any[]) { return args.filter(Boolean).join(" "); }
-
-export function ReportCardView({ detail, termName, onAiRemark, onPublish, busy }: { detail: any; termName: string; onAiRemark: () => void; onPublish: () => void; busy: boolean }) {
-  return (
-    <div>
-      <div className="print-area rounded-xl border overflow-hidden bg-card">
-        <KenteStrip />
-        <div className="p-5">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5">
-              <LogoMark size={40} />
-              <div>
-                <div className="font-bold text-lg leading-tight">Terminal Report Card</div>
-                <div className="text-xs text-muted-foreground">{termName}</div>
-              </div>
-            </div>
-            <Badge variant={detail.published ? "default" : "secondary"}>{detail.published ? "PUBLISHED" : "DRAFT"}</Badge>
-          </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4 text-sm">
-            <div className="rounded-lg bg-secondary/60 p-2.5"><div className="text-[10px] uppercase text-muted-foreground">Learner</div><div className="font-semibold">{detail.student.firstName} {detail.student.lastName}</div></div>
-            <div className="rounded-lg bg-secondary/60 p-2.5"><div className="text-[10px] uppercase text-muted-foreground">Index</div><div className="font-mono text-xs font-semibold mt-0.5">{detail.student.nyansapoIndex}</div></div>
-            <div className="rounded-lg bg-secondary/60 p-2.5"><div className="text-[10px] uppercase text-muted-foreground">Class</div><div className="font-semibold">{detail.classroom}</div></div>
-            <div className="rounded-lg bg-secondary/60 p-2.5"><div className="text-[10px] uppercase text-muted-foreground">Position</div><div className="font-semibold">{detail.position} of {detail.classSize}</div></div>
-          </div>
-
-          <table className="w-full text-sm mt-4 border rounded-lg overflow-hidden">
-            <thead>
-              <tr className="bg-secondary text-left">
-                <th className="px-2.5 py-2 font-medium">Subject</th>
-                <th className="px-2.5 py-2 font-medium text-center">Score</th>
-                <th className="px-2.5 py-2 font-medium">Grade</th>
-                <th className="px-2.5 py-2 font-medium hidden sm:table-cell">Remark</th>
-              </tr>
-            </thead>
-            <tbody>
-              {detail.results.map((r: any) => (
-                <tr key={r.subject} className="border-t">
-                  <td className="px-2.5 py-2">{r.subject}</td>
-                  <td className="px-2.5 py-2 text-center font-semibold tabular-nums">{r.total}%</td>
-                  <td className="px-2.5 py-2"><Badge variant="outline">{r.grade}</Badge></td>
-                  <td className="px-2.5 py-2 text-muted-foreground text-xs hidden sm:table-cell">{r.remark}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          <div className="grid sm:grid-cols-3 gap-2 mt-4 text-sm">
-            <div className="rounded-lg bg-secondary/60 p-2.5"><div className="text-[10px] uppercase text-muted-foreground">Average</div><div className="font-bold text-lg">{detail.average}%</div></div>
-            <div className="rounded-lg bg-secondary/60 p-2.5"><div className="text-[10px] uppercase text-muted-foreground">Conduct</div><div className="font-semibold">{detail.conduct ?? "—"}</div></div>
-            <div className="rounded-lg bg-secondary/60 p-2.5"><div className="text-[10px] uppercase text-muted-foreground">Promotion</div><div className="font-semibold">{detail.promotion ?? "—"}</div></div>
-          </div>
-
-          <div className="mt-4 space-y-3">
-            <div className="rounded-lg border p-3">
-              <div className="text-xs font-semibold uppercase text-muted-foreground">Class teacher&apos;s remarks {detail.aiGenerated && <Sparkles className="inline size-3 text-primary" />}</div>
-              <p className="text-sm mt-1 italic">“{detail.teacherRemark ?? "—"}”</p>
-            </div>
-            <div className="rounded-lg border p-3">
-              <div className="text-xs font-semibold uppercase text-muted-foreground">Head of school&apos;s remarks</div>
-              <p className="text-sm mt-1 italic">“{detail.headRemark ?? "—"}”</p>
-            </div>
-            <div className="text-[11px] text-muted-foreground">
-              Attendance: {detail.attendanceSummary ?? detail.attendance ?? "—"} · Generated by Nyansapo — The Wisdom Knot Cloud
-            </div>
-          </div>
-        </div>
-        <KenteStrip />
-      </div>
-
-      <div className="flex flex-wrap gap-2 justify-end mt-4 no-print">
-        <Button size="sm" variant="outline" className="gap-1.5" onClick={onAiRemark} disabled={busy}><Wand2 className="size-4" /> Draft AI remarks</Button>
-        <Button size="sm" variant="outline" className="gap-1.5" onClick={() => window.print()}><Printer className="size-4" /> Print</Button>
-        {!detail.published && <Button size="sm" className="gap-1.5" onClick={onPublish}><Send className="size-4" /> Publish</Button>}
-      </div>
-    </div>
-  );
-}

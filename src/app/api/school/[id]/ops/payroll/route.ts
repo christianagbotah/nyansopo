@@ -1,9 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
-import { calcPayslip, currentPeriod, Allowance, Deduction } from "@/lib/payroll";
+import { calcPayslip, currentPeriod, ssnitBreakdown, Allowance, Deduction, DEFAULT_RATES, type StatutoryRates } from "@/lib/payroll";
 
-// ── GET /api/school/[id]/ops/payroll — staff setup, runs, payslips ──
+/* statutory rates live in OpsSetting as percent strings keyed SSNIT_TIER1_EMPLOYEE etc. */
+async function loadRates(schoolId: string): Promise<StatutoryRates> {
+  const rows = await db.opsSetting.findMany({ where: { schoolId, key: { in: ["SSNIT_TIER1_EMPLOYEE", "SSNIT_TIER1_EMPLOYER", "SSNIT_TIER2", "GETFUND", "NHIL"] } } });
+  const map = Object.fromEntries(rows.map((r) => [r.key, parseFloat(r.value)]));
+  return {
+    ssnitTier1Employee: (map.SSNIT_TIER1_EMPLOYEE ?? 5) / 100,
+    ssnitTier1Employer: (map.SSNIT_TIER1_EMPLOYER ?? 13) / 100,
+    ssnitTier2: (map.SSNIT_TIER2 ?? 5) / 100,
+    getfund: (map.GETFUND ?? 2.5) / 100,
+    nhil: (map.NHIL ?? 2.5) / 100,
+  };
+}
+
+// ── GET /api/school/[id]/ops/payroll — staff setup, runs, payslips, statutory rates ──
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: schoolId } = await params;
   const auth = await opsAuth(req, schoolId, "GET");
@@ -12,6 +25,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const url = new URL(req.url);
   const runId = url.searchParams.get("runId") ?? undefined;
 
+  const [school, rates] = await Promise.all([db.school.findUnique({ where: { id: schoolId } }), loadRates(schoolId)]);
   const staff = await db.staff.findMany({ where: { schoolId }, orderBy: [{ active: "desc" }, { fullName: "asc" }] });
   const runs = await db.payrollRun.findMany({
     where: { schoolId },
@@ -24,6 +38,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     : [];
 
   return NextResponse.json({
+    school: school ? { name: school.name, motto: school.motto, town: school.town, region: school.region, phone: school.phone, email: school.email } : null,
+    rates: {
+      ssnitTier1Employee: Math.round(rates.ssnitTier1Employee * 1000) / 10,
+      ssnitTier1Employer: Math.round(rates.ssnitTier1Employer * 1000) / 10,
+      ssnitTier2: Math.round(rates.ssnitTier2 * 1000) / 10,
+      getfund: Math.round(rates.getfund * 1000) / 10,
+      nhil: Math.round(rates.nhil * 1000) / 10,
+    },
     staff: staff.map((s) => ({
       id: s.id, fullName: s.fullName, role: s.role, title: s.title, phone: s.phone,
       salary: s.salaryCents, employmentType: s.employmentType, ssnitNumber: s.ssnitNumber,
@@ -36,11 +58,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     })),
     selectedRun: selectedRun ? { id: selectedRun.id, period: selectedRun.period, status: selectedRun.status } : null,
     payslips: payslips.map((p) => ({
-      id: p.id, staffId: p.staffId, staff: p.staff.fullName, role: p.staff.role, momoNumber: p.staff.momoNumber,
+      id: p.id, staffId: p.staffId, staff: p.staff.fullName, role: p.staff.role, title: p.staff.title, ssnitNumber: p.staff.ssnitNumber, momoNumber: p.staff.momoNumber,
       base: p.baseSalaryCents, allowances: JSON.parse(p.allowancesJson) as Allowance[],
       gross: p.grossCents, ssnitEmployee: p.ssnitEmployeeCents, ssnitEmployer: p.ssnitEmployerCents,
       paye: p.payeCents, otherDeductions: JSON.parse(p.otherDeductionsJson) as Deduction[],
       totalDeductions: p.totalDeductionsCents, net: p.netCents, status: p.status,
+      ssnit: ssnitBreakdown(p.baseSalaryCents, rates),
     })),
     currentPeriod: currentPeriod(),
   });
@@ -78,10 +101,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (existing) return NextResponse.json({ error: `A payroll run for ${period} already exists` }, { status: 400 });
     const staff = await db.staff.findMany({ where: { schoolId, active: true, salaryCents: { gt: 0 } } });
     if (!staff.length) return NextResponse.json({ error: "No salaried active staff — set up salaries first" }, { status: 400 });
+    const rates = await loadRates(schoolId);
     const run = await db.payrollRun.create({ data: { schoolId, period, status: "DRAFT" } });
     let gross = 0, deduct = 0, net = 0, erSsnit = 0;
     for (const st of staff) {
-      const calc = calcPayslip(st.salaryCents, [], []);
+      const calc = calcPayslip(st.salaryCents, [], [], rates);
       gross += calc.grossCents; deduct += calc.totalDeductionsCents; net += calc.netCents; erSsnit += calc.ssnitEmployerCents;
       await db.payslip.create({
         data: {
@@ -97,6 +121,28 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ run: updated });
   }
 
+  // statutory settings — iedupro “Statutory Settings” parity
+  if (action === "save-rates") {
+    const { ssnitTier1Employee, ssnitTier1Employer, ssnitTier2, getfund, nhil } = body;
+    const entries: [string, number][] = [
+      ["SSNIT_TIER1_EMPLOYEE", Number(ssnitTier1Employee)],
+      ["SSNIT_TIER1_EMPLOYER", Number(ssnitTier1Employer)],
+      ["SSNIT_TIER2", Number(ssnitTier2)],
+      ["GETFUND", Number(getfund)],
+      ["NHIL", Number(nhil)],
+    ];
+    for (const [key, val] of entries) {
+      if (Number.isFinite(val) && val >= 0 && val <= 100) {
+        await db.opsSetting.upsert({
+          where: { schoolId_key: { schoolId, key } },
+          update: { value: String(val), updatedAt: new Date() },
+          create: { schoolId, key, value: String(val) },
+        });
+      }
+    }
+    return NextResponse.json({ ok: true });
+  }
+
   if (action === "update-payslip") {
     const { payslipId, allowances, otherDeductions } = body;
     const p = await db.payslip.findUnique({ where: { id: payslipId }, include: { payrollRun: true } });
@@ -104,7 +150,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (p.payrollRun.status !== "DRAFT") return NextResponse.json({ error: "Only DRAFT runs can be edited" }, { status: 400 });
     const allow: Allowance[] = Array.isArray(allowances) ? allowances : [];
     const ded: Deduction[] = Array.isArray(otherDeductions) ? otherDeductions : [];
-    const calc = calcPayslip(p.baseSalaryCents, allow, ded);
+    const rates = await loadRates(schoolId);
+    const calc = calcPayslip(p.baseSalaryCents, allow, ded, rates);
     const updated = await db.payslip.update({
       where: { id: payslipId },
       data: {

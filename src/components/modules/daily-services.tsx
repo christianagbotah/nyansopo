@@ -16,10 +16,12 @@ import { fmtCedi, fmtDate, PAYMENT_LABELS } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
 import { UtensilsCrossed, Wallet, CalendarPlus, Plus, TrendingUp, Search, Droplets, BookOpenCheck, Coffee, HandCoins, CheckCircle2, Printer, Percent } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { ReceiptDocument } from "@/components/receipts";
 
 type Service = {
   id: string; name: string; category: string; price: number; chargeMode: string; weekdays: string; active: boolean; enrolled: number;
   month: { billed: number; collected: number; owed: number; waived: number; count: number };
+  today: { billed: number; collected: number; count: number; owedCount: number };
 };
 type LedgerRow = { studentId: string; student: string; classroom: string | null; guardianPhone: string; owed: number; items: Record<string, number>; oldest: string };
 type PosStudent = { id: string; name: string; classroom: string; guardianPhone: string; balance: number; services: { id: string; name: string; price: number }[]; today: { charged: number; owed: number } | null };
@@ -108,6 +110,22 @@ export function DailyServices() {
 
         {/* ── POS ── */}
         <TabsContent value="pos">
+          {/* per-service today cards — iedupro cashier-portal style */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 mb-4">
+            {data.services.filter((s) => s.active).map((s) => {
+              const Icon = CAT_ICON[s.category] ?? UtensilsCrossed;
+              return (
+                <div key={s.id} className="rounded-xl border bg-card p-3">
+                  <div className="flex items-center gap-1.5 text-muted-foreground"><Icon className="size-3.5" /><span className="text-[10px] font-semibold uppercase tracking-wide truncate">{s.name.replace(" (optional)", "").replace(" (canteen)", "").replace(" (remedial)", "")}</span></div>
+                  <div className="text-lg font-bold tabular-nums mt-1 leading-none">{fmtCedi(s.today?.collected ?? 0, { compact: true })}</div>
+                  <div className="text-[11px] text-muted-foreground mt-1">
+                    {s.chargeMode === "WEEKLY" ? `${s.today?.count ?? 0} this week` : `${s.today?.count ?? 0} today`}
+                    {(s.today?.owedCount ?? 0) > 0 && <span className="text-destructive"> · {s.today.owedCount} owing</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
           <div className="grid lg:grid-cols-3 gap-4">
             <Card className="lg:col-span-2">
               <CardHeader className="pb-3 flex-row items-center justify-between space-y-0">
@@ -348,7 +366,7 @@ function CollectDialog({ student, date, online, onOpenChange, onDone }: { studen
         toast({ title: "Queued offline", description: "Receipt will be issued when you reconnect." });
         onDone(null);
       } else {
-        onDone({ ...res.data?.payment, student: student.name });
+        onDone(res.data?.receipt ?? { ...res.data?.payment, student: student.name });
       }
     } catch (e: any) { toast({ title: "Collection failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
   }
@@ -394,19 +412,25 @@ function CollectDialog({ student, date, online, onOpenChange, onDone }: { studen
 function ReceiptIcon() { return <Printer className="size-4" />; }
 
 function ReceiptDialog({ receipt, onOpenChange }: { receipt: any; onOpenChange: (o: boolean) => void }) {
+  const isPayload = receipt && receipt.type && receipt.school;
   return (
     <Dialog open={!!receipt} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-sm">
-        <DialogHeader className="text-center">
+      <DialogContent className={isPayload ? "max-w-[560px] max-h-[92vh] overflow-y-auto nice-scroll" : "max-w-sm"}>
+        <DialogHeader className="text-center no-print">
           <DialogTitle className="flex items-center justify-center gap-2"><CheckCircle2 className="size-5 text-emerald-600" /> Payment received</DialogTitle>
         </DialogHeader>
-        <div className="text-center space-y-1 py-2">
-          <div className="text-3xl font-bold text-primary">{fmtCedi(receipt?.amountCents ?? 0)}</div>
-          <div className="text-sm">{receipt?.student}</div>
-          <div className="font-mono text-xs text-muted-foreground">{receipt?.receiptNo}</div>
-          <div className="text-xs text-muted-foreground">daily services · SMS receipt sent to guardian</div>
-        </div>
-        <DialogFooter className="sm:justify-center gap-2">
+        {isPayload ? (
+          <div className="print-area"><ReceiptDocument data={receipt} /></div>
+        ) : (
+          <div className="text-center space-y-1 py-2">
+            <div className="text-3xl font-bold text-primary">{fmtCedi(receipt?.amountCents ?? 0)}</div>
+            <div className="text-sm">{receipt?.student}</div>
+            <div className="font-mono text-xs text-muted-foreground">{receipt?.receiptNo}</div>
+            <div className="text-xs text-muted-foreground">daily services · SMS receipt sent to guardian</div>
+          </div>
+        )}
+        <DialogFooter className="sm:justify-center gap-2 no-print">
+          <Button variant="outline" size="sm" onClick={() => window.print()}><Printer className="size-4" /> Print</Button>
           <Button size="sm" onClick={() => onOpenChange(false)}>Done</Button>
         </DialogFooter>
       </DialogContent>

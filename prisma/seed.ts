@@ -425,7 +425,7 @@ async function main() {
       const payDate = D(`2026-09-${String(int(8, 30)).padStart(2, "0")}T0${int(8, 9)}:${String(int(10, 59))}:00`);
       await db.payment.create({
         data: {
-          receiptNo: `RCP-2026-${String(rcpSeq++).padStart(5, "0")}`, invoiceId: inv.id, schoolId: schools[schoolCode].id,
+          receiptNo: `RCP-2026-${String(rcpSeq++).padStart(5, "0")}`, invoiceId: inv.id, studentId: inv.studentId, schoolId: schools[schoolCode].id,
           amountCents: chunk, method: pick(methods), reference: rnd() < 0.5 ? `MP${int(100000, 999999).toString()}.{GCASH}` : null,
           receivedByName: schoolCode === "GEA" ? "Mr. Patrick Quaye" : "Bursar", paidAt: payDate,
         },
@@ -464,7 +464,7 @@ async function main() {
   const dInv = await db.invoice.findFirst({ where: { studentId: daniel.id } });
   if (dInv) {
     await db.invoice.update({ where: { id: dInv.id }, data: { paidCents: dInv.totalCents, status: "PAID" } });
-    await db.payment.create({ data: { receiptNo: `RCP-2026-${String(rcpSeq++).padStart(5, "0")}`, invoiceId: dInv.id, schoolId: schools.GKO.id, amountCents: CENTS(540), method: "MOMO_MTN", reference: "MP238812.7742_GCASH", receivedByName: "Bursar", paidAt: D("2026-09-28T10:12:00") } });
+    await db.payment.create({ data: { receiptNo: `RCP-2026-${String(rcpSeq++).padStart(5, "0")}`, invoiceId: dInv.id, studentId: dInv.studentId, schoolId: schools.GKO.id, amountCents: CENTS(540), method: "MOMO_MTN", reference: "MP238812.7742_GCASH", receivedByName: "Bursar", paidAt: D("2026-09-28T10:12:00") } });
   }
 
   // ─────────────────────────────────────────────

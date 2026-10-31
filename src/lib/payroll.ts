@@ -15,18 +15,48 @@
 export type Allowance = { name: string; amountCents: number };
 export type Deduction = { name: string; amountCents: number };
 
+/* ── Statutory rates — school-configurable (iedupro “Statutory Settings” parity) ── */
+export type StatutoryRates = {
+  ssnitTier1Employee: number; // fraction, e.g. 0.05
+  ssnitTier1Employer: number; // e.g. 0.135
+  ssnitTier2: number; // employee occupational pension deduction, e.g. 0.05
+  getfund: number; // employer levy on basic
+  nhil: number;
+};
+export const DEFAULT_RATES: StatutoryRates = {
+  ssnitTier1Employee: 0.05,
+  ssnitTier1Employer: 0.13,
+  ssnitTier2: 0.05,
+  getfund: 0.025,
+  nhil: 0.025,
+};
+
 export const SSNIT_CAP_CENTS = 35_000_00; // GH₵35,000/month maximum pensionable earnings
 
-/** Employee Tier-1 contribution: 5% of basic, capped. */
-export function ssnitEmployeeCents(basicCents: number): number {
-  return Math.round(Math.min(basicCents, SSNIT_CAP_CENTS) * 0.05);
+/** Employee SSNIT deduction: Tier-1 employee share + Tier-2, capped at the SSNIT ceiling. */
+export function ssnitEmployeeCents(basicCents: number, r: StatutoryRates = DEFAULT_RATES): number {
+  return Math.round(Math.min(basicCents, SSNIT_CAP_CENTS) * (r.ssnitTier1Employee + r.ssnitTier2));
 }
 
-/** Employer contribution: 13% Tier 1 (capped) + 5% Tier 2 (uncapped). */
-export function ssnitEmployerCents(basicCents: number): number {
-  const tier1 = Math.round(Math.min(basicCents, SSNIT_CAP_CENTS) * 0.13);
-  const tier2 = Math.round(basicCents * 0.05);
-  return tier1 + tier2;
+/** Employer contribution: Tier-1 employer (capped) + Tier-2 + GETFund/NHIL levies. */
+export function ssnitEmployerCents(basicCents: number, r: StatutoryRates = DEFAULT_RATES): number {
+  const capped = Math.min(basicCents, SSNIT_CAP_CENTS);
+  const tier1 = Math.round(capped * r.ssnitTier1Employer);
+  const tier2 = Math.round(capped * r.ssnitTier2);
+  const levies = Math.round(basicCents * ((r.getfund ?? 0) + (r.nhil ?? 0)));
+  return tier1 + tier2 + levies;
+}
+
+/** SSNIT-only employer cost (for the Tier-1 / Tier-2 statutory reports). */
+export function ssnitBreakdown(basicCents: number, r: StatutoryRates = DEFAULT_RATES) {
+  const capped = Math.min(basicCents, SSNIT_CAP_CENTS);
+  return {
+    tier1Employee: Math.round(capped * r.ssnitTier1Employee),
+    tier1Employer: Math.round(capped * r.ssnitTier1Employer),
+    tier2: Math.round(capped * r.ssnitTier2),
+    getfund: Math.round(basicCents * (r.getfund ?? 0)),
+    nhil: Math.round(basicCents * (r.nhil ?? 0)),
+  };
 }
 
 const PAYE_BANDS_CENTS: { limit: number; rate: number }[] = [
@@ -68,12 +98,13 @@ export type PayslipCalc = {
 export function calcPayslip(
   baseSalaryCents: number,
   allowances: Allowance[] = [],
-  otherDeductions: Deduction[] = []
+  otherDeductions: Deduction[] = [],
+  rates: StatutoryRates = DEFAULT_RATES
 ): PayslipCalc {
   const allowanceTotal = allowances.reduce((s, a) => s + a.amountCents, 0);
   const gross = baseSalaryCents + allowanceTotal;
-  const ssnitEmp = ssnitEmployeeCents(baseSalaryCents);
-  const ssnitEr = ssnitEmployerCents(baseSalaryCents);
+  const ssnitEmp = ssnitEmployeeCents(baseSalaryCents, rates);
+  const ssnitEr = ssnitEmployerCents(baseSalaryCents, rates);
   // PAYE is charged on gross minus employee SSNIT (allowances are taxed too)
   const paye = payeCents(gross - ssnitEmp);
   const otherTotal = otherDeductions.reduce((s, d) => s + d.amountCents, 0);

@@ -122,6 +122,9 @@ model School {
   suppliers           Supplier[]
   discounts           Discount[]
   discountApplications DiscountApplication[]
+  expenses            Expense[]
+  purchaseOrders      PurchaseOrder[]
+  opsSettings         OpsSetting[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -785,14 +788,15 @@ model StockMovement {
 }
 
 model Supplier {
-  id            String   @id @default(cuid())
+  id            String           @id @default(cuid())
   schoolId      String
-  school        School   @relation(fields: [schoolId], references: [id])
+  school        School           @relation(fields: [schoolId], references: [id])
   name          String
   phone         String?
   email         String?
   itemsSupplied String?
   notes         String?
+  purchaseOrders PurchaseOrder[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -827,4 +831,54 @@ model DiscountApplication {
   reason        String?
   appliedByName String
   createdAt     DateTime  @default(now())
+}
+
+// ─────────────────────────────────────────────────────────────
+// EXPENDITURE (school expenses by category)
+// ─────────────────────────────────────────────────────────────
+model Expense {
+  id              String   @id @default(cuid())
+  schoolId        String
+  school          School   @relation(fields: [schoolId], references: [id])
+  category        String // UTILITIES | SALARIES | MAINTENANCE | TRANSPORT_FUEL | TEACHING_MATERIALS | EVENTS | ADMIN | OTHER
+  description     String
+  amountCents     Int
+  method          String   @default("CASH") // CASH | MOMO_MTN | MOMO_TELECEL | MOMO_AT | BANK | CHEQUE
+  expenseDate     DateTime @default(now())
+  recordedByName  String?
+  createdAt       DateTime @default(now())
+}
+
+// ─────────────────────────────────────────────────────────────
+// PURCHASE ORDERS (inventory restocking)
+// ─────────────────────────────────────────────────────────────
+model PurchaseOrder {
+  id            String    @id @default(cuid())
+  schoolId      String
+  school        School    @relation(fields: [schoolId], references: [id])
+  poNo          String    @unique
+  supplierId    String?
+  supplier      Supplier? @relation(fields: [supplierId], references: [id])
+  linesJson     String    @default("[]") // [{itemId, name, qty, unitCostCents}]
+  totalCents    Int       @default(0)
+  status        String    @default("PENDING") // PENDING | RECEIVED | CANCELLED
+  expectedDate  DateTime?
+  receivedAt    DateTime?
+  createdByName String?
+  note          String?
+  createdAt     DateTime  @default(now())
+}
+
+// ─────────────────────────────────────────────────────────────
+// OPS SETTINGS (key-value: statutory rates, numbering, etc.)
+// ─────────────────────────────────────────────────────────────
+model OpsSetting {
+  id        String   @id @default(cuid())
+  schoolId  String
+  school    School   @relation(fields: [schoolId], references: [id])
+  key       String // e.g. SSNIT_TIER1_RATE
+  value     String
+  updatedAt DateTime @default(now())
+
+  @@unique([schoolId, key])
 }

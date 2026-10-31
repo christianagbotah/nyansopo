@@ -1,0 +1,1 @@
+" Pay Salary\n10\n25\n50\n100\n\t\nSearch:\n\t\nColumn visibility▼ Copy Excel\n\tREFERENCE\n\tID NO\n\tNAME\n\tACCOUNT #\n\tMONTH\n\tYEAR\n\tSTATUS\n\tBASIC SALARY\n\tTOTAL ALLOWANCES\n\tGROSS SALARY\n\tTOTAL DEDUCTIONS\n\tNET SALARY\n\tACTION\n\nNo data available in table\nShowing 0 to 0 of 0 entries\n\t\n«‹›»\n 0 selected\nPrint Selected Payslips\nClear Selection"

@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { getUser, canOperateSchool } from "@/lib/session";
 import { gradeFor } from "@/lib/grading";
 import { sendSms } from "@/lib/sms";
+import { invoicePaymentReceipt } from "@/lib/receipt-payload";
 
 const C = (cedis: number) => Math.round(cedis * 100);
 
@@ -267,7 +268,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         const seq = (await db.payment.count({ where: { schoolId } })) + 1001;
         const payment = await db.payment.create({
           data: {
-            receiptNo: `RCP-2026-${String(seq).padStart(5, "0")}`, invoiceId, schoolId, amountCents: amt,
+            receiptNo: `RCP-2026-${String(seq).padStart(5, "0")}`, invoiceId, studentId: inv.studentId, schoolId, amountCents: amt,
             method: method ?? "CASH", reference: clientId ? `SYNC:${clientId}` : reference ?? null,
             receivedByName: user.fullName, paidAt: new Date(body.paidAt ?? Date.now()),
             offlineQueued: !!offline, syncedAt: offline ? new Date() : null,
@@ -285,7 +286,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             category: "PAYMENT", sentByName: user.fullName,
           });
         }
-        return NextResponse.json({ payment: { ...payment, student: `${inv.student.firstName} ${inv.student.lastName}` } });
+        const receipt = await invoicePaymentReceipt(db, payment.id);
+        return NextResponse.json({ payment: { ...payment, student: `${inv.student.firstName} ${inv.student.lastName}` }, receipt });
       }
       if (action === "generate-invoices") {
         const { classroomId } = body;

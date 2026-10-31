@@ -1,0 +1,1 @@
+"Suppliers\n\nManage product suppliers and vendors\n\nAdd Supplier\nShow \n10\n25\n50\n100\n suppliers\nSearch suppliers:\nExcel\nPDF\nPrint\nSUPPLIER NAME\n\tCONTACT PERSON\n\tPHONE\n\tEMAIL\n\tPRODUCTS\n\tSTATUS\n\tACTIONS\nGeneral Supplier\tAdmin\t0000000000\tadmin@school.com\t0\tActive\t\nShowing 1 to 1 of 1 suppliers\n«‹1›»"

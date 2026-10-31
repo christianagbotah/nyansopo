@@ -166,12 +166,26 @@
 .nice-scroll::-webkit-scrollbar-thumb { background: var(--input); border-radius: 999px; }
 .nice-scroll::-webkit-scrollbar-track { background: transparent; }
 
-/* report card print styles */
+/* report card / receipt print styles */
 @media print {
   body * { visibility: hidden; }
   .print-area, .print-area * { visibility: visible; }
   .print-area { position: absolute; inset: 0; width: 100%; box-shadow: none !important; border: none !important; }
   .no-print { display: none !important; }
+
+  /* bulk printing: each sheet starts on its own page */
+  .print-sheet { page-break-after: always; break-after: page; }
+  .print-sheet:last-child { page-break-after: auto; break-after: auto; }
+  .print-page { page-break-before: always; break-before: page; }
+  .print-page:first-child { page-break-before: auto; break-before: auto; }
+  @page { size: A4; margin: 10mm; }
+}
+@media print {
+  .a5-sheet { width: 148mm; }
+}
+.print-hidden { display: none; }
+@media print {
+  .print-hidden { display: block; }
 }
 
 @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }

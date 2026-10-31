@@ -1,0 +1,831 @@
+     1→// Nyansapo — The Wisdom Knot That Binds Ghana's Schools
+     2→// Full data model for the Ghanaian private-school ecosystem:
+     3→// association hierarchy (GNACOPS-style), school groups & branches, students,
+     4→// cross-school transfer tracking, defaulter flags, fees, attendance,
+     5→// gradebook, report cards, AI insights.
+     6→
+     7→generator client {
+     8→  provider = "prisma-client-js"
+     9→}
+    10→
+    11→datasource db {
+    12→  provider = "sqlite"
+    13→  url      = env("DATABASE_URL")
+    14→}
+    15→
+    16→// ─────────────────────────────────────────────────────────────
+    17→// ASSOCIATION HIERARCHY (National → Regional → District → Zone)
+    18→// ─────────────────────────────────────────────────────────────
+    19→model AssociationNode {
+    20→  id          String             @id @default(cuid())
+    21→  code        String             @unique
+    22→  name        String
+    23→  level       String // NATIONAL | REGIONAL | DISTRICT | ZONE
+    24→  region      String?
+    25→  meetingTown String?
+    26→  leadTitle   String? // e.g. "National Executive Director"
+    27→  leadName    String?
+    28→  parentId    String?
+    29→  parent      AssociationNode?   @relation("NodeTree", fields: [parentId], references: [id])
+    30→  children    AssociationNode[]  @relation("NodeTree")
+    31→  schools     School[]
+    32→  users       User[]
+    33→  announcements Announcement[]
+    34→}
+    35→
+    36→model User {
+    37→  id               String    @id @default(cuid())
+    38→  email            String    @unique
+    39→  password         String
+    40→  fullName         String
+    41→  phone            String?
+    42→  role             String // ASSOCIATION_NATIONAL | ASSOCIATION_REGIONAL | ASSOCIATION_DISTRICT | ASSOCIATION_ZONAL | GROUP_OWNER | SCHOOL_ADMIN | TEACHER | ACCOUNTANT | PARENT
+    43→  title            String? // display title e.g. "National Executive Director", "Headteacher"
+    44→  associationNodeId String?
+    45→  associationNode  AssociationNode? @relation(fields: [associationNodeId], references: [id])
+    46→  schoolGroupId    String?
+    47→  schoolGroup      SchoolGroup? @relation(fields: [schoolGroupId], references: [id])
+    48→  schoolId         String?
+    49→  school           School?   @relation(fields: [schoolId], references: [id])
+    50→  avatarSeed       String?
+    51→  createdAt        DateTime  @default(now())
+    52→}
+    53→
+    54→// ─────────────────────────────────────────────────────────────
+    55→// SCHOOL GROUPS (multi-branch proprietors) & SCHOOLS
+    56→// ─────────────────────────────────────────────────────────────
+    57→model SchoolGroup {
+    58→  id              String   @id @default(cuid())
+    59→  name            String
+    60→  proprietorName  String
+    61→  contactPhone    String?
+    62→  contactEmail    String?
+    63→  schools         School[]
+    64→  users           User[]
+    65→}
+    66→
+    67→model School {
+    68→  id                  String   @id @default(cuid())
+    69→  name                String
+    70→  code                String   @unique
+    71→  motto               String?
+    72→  curriculum          String // GES | CAIE | IB
+    73→  curriculumStages    String? // JSON: stage labels per curriculum
+    74→  category            String // LOW_FEE | MID_TIER | PREMIUM | INTERNATIONAL
+    75→  associationNodeId   String
+    76→  associationNode     AssociationNode @relation(fields: [associationNodeId], references: [id])
+    77→  groupId             String?
+    78→  group               SchoolGroup? @relation(fields: [groupId], references: [id])
+    79→  isBranchMain        Boolean  @default(false)
+    80→  region              String
+    81→  district            String
+    82→  town                String
+    83→  gpsAddress          String?
+    84→  phone               String?
+    85→  email               String?
+    86→  nasiaRegNo          String?
+    87→  nasiaStatus         String   @default("PENDING") // LICENSED | PROVISIONAL | PENDING | EXPIRED
+    88→  gnacopsStatus       String   @default("PENDING") // VERIFIED | PENDING | LAPSED
+    89→  gnacopsMemberSince  DateTime?
+    90→  establishedYear     Int?
+    91→  studentsOnRoll      Int      @default(0)
+    92→  logoColor           String   @default("#0F6B47")
+    93→  createdAt           DateTime @default(now())
+    94→  users               User[]
+    95→  classrooms          Classroom[]
+    96→  academicYears       AcademicYear[]
+    97→  feeStructures       FeeStructure[]
+    98→  invoices            Invoice[]
+    99→  payments            Payment[]
+   100→  enrollments         Enrollment[]
+   101→  assessments         Assessment[]
+   102→  attendanceSessions  AttendanceSession[]
+   103→  subjects            Subject[]
+   104→  staff               Staff[]
+   105→  flagsRaised         StudentFlag[] @relation("FlagsRaised")
+   106→  transfersFrom       TransferRecord[] @relation("TransfersFrom")
+   107→  transfersTo         TransferRecord[] @relation("TransfersTo")
+   108→  recordRequestsFrom  RecordRequest[] @relation("RequestsFrom")
+   109→  recordRequestsTo    RecordRequest[] @relation("RequestsTo")
+   110→  inquiries           AdmissionInquiry[]
+   111→  announcements       Announcement[]
+   112→  riskScores          RiskScore[]
+   113→  dailyServices       DailyService[]
+   114→  dailyCharges        DailyCharge[]
+   115→  transportRoutes     TransportRoute[]
+   116→  smsSetting          SmsSetting?
+   117→  smsTemplates        SmsTemplate[]
+   118→  smsMessages         SmsMessage[]
+   119→  payrollRuns         PayrollRun[]
+   120→  inventoryItems      InventoryItem[]
+   121→  stockMovements      StockMovement[]
+   122→  suppliers           Supplier[]
+   123→  discounts           Discount[]
+   124→  discountApplications DiscountApplication[]
+   125→}
+   126→
+   127→// ─────────────────────────────────────────────────────────────
+   128→// ACADEMIC CALENDAR
+   129→// ─────────────────────────────────────────────────────────────
+   130→model AcademicYear {
+   131→  id         String   @id @default(cuid())
+   132→  schoolId   String
+   133→  school     School   @relation(fields: [schoolId], references: [id])
+   134→  name       String // "2026/2027"
+   135→  isCurrent  Boolean  @default(false)
+   136→  startsAt   DateTime
+   137→  endsAt     DateTime
+   138→  terms      Term[]
+   139→}
+   140→
+   141→model Term {
+   142→  id             String   @id @default(cuid())
+   143→  academicYearId String
+   144→  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
+   145→  name           String // First Term | Second Term | Third Term
+   146→  sequence       Int
+   147→  startsAt       DateTime
+   148→  endsAt         DateTime
+   149→  isCurrent      Boolean  @default(false)
+   150→  feeStructures  FeeStructure[]
+   151→  invoices       Invoice[]
+   152→  assessments    Assessment[]
+   153→  attendanceSessions AttendanceSession[]
+   154→  reportCards    ReportCard[]
+   155→}
+   156→
+   157→// ─────────────────────────────────────────────────────────────
+   158→// CLASSES, SUBJECTS, STAFF
+   159→// ─────────────────────────────────────────────────────────────
+   160→model Classroom {
+   161→  id            String   @id @default(cuid())
+   162→  schoolId      String
+   163→  school        School   @relation(fields: [schoolId], references: [id])
+   164→  name          String // "Basic 4 Gold"
+   165→  gradeLevel    String // KG1..B9 | Year 1..13 | PYP 1..MYP 4
+   166→  stageLabel    String? // "Primary (SBC)" | "Cambridge Lower Secondary" | "IB MYP"
+   167→  capacity      Int      @default(30)
+   168→  classTeacherId String?
+   169→  classTeacher  Staff?   @relation(fields: [classTeacherId], references: [id])
+   170→  enrollments   Enrollment[]
+   171→  feeStructures FeeStructure[]
+   172→  assessments   Assessment[]
+   173→  attendanceSessions AttendanceSession[]
+   174→}
+   175→
+   176→model Subject {
+   177→  id        String  @id @default(cuid())
+   178→  schoolId  String
+   179→  school    School  @relation(fields: [schoolId], references: [id])
+   180→  name      String
+   181→  code      String
+   182→  curriculum String?
+   183→  isCore    Boolean @default(true)
+   184→  assessments Assessment[]
+   185→}
+   186→
+   187→model Staff {
+   188→  id        String   @id @default(cuid())
+   189→  schoolId  String
+   190→  school    School   @relation(fields: [schoolId], references: [id])
+   191→  fullName  String
+   192→  role      String // HEADTEACHER | TEACHER | ACCOUNTANT | ASSISTANT | BURSAR
+   193→  title     String?
+   194→  email     String?
+   195→  phone     String?
+   196→  subjects  String? // comma-separated
+   197→  // payroll
+   198→  salaryCents      Int      @default(0) // basic monthly salary
+   199→  employmentType   String   @default("FULL_TIME") // FULL_TIME | PART_TIME | CONTRACT | CASUAL
+   200→  ssnitNumber      String?
+   201→  tin              String?
+   202→  momoNumber       String?
+   203→  bankName         String?
+   204→  hiredAt          DateTime?
+   205→  active           Boolean  @default(true)
+   206→  classrooms Classroom[]
+   207→  payslips   Payslip[]
+   208→}
+   209→
+   210→// ─────────────────────────────────────────────────────────────
+   211→// STUDENTS (national registry via nyansapoIndex)
+   212→// ─────────────────────────────────────────────────────────────
+   213→model Student {
+   214→  id                String   @id @default(cuid())
+   215→  nyansapoIndex     String   @unique // NY-YYYY-NNNNNN national student index
+   216→  firstName         String
+   217→  lastName          String
+   218→  otherNames        String?
+   219→  gender            String // M | F
+   220→  dateOfBirth       DateTime?
+   221→  photoSeed         String?
+   222→  guardianName      String
+   223→  guardianPhone     String
+   224→  guardianAltPhone  String?
+   225→  guardianEmail     String?
+   226→  guardianOccupation String?
+   227→  guardianAddress   String?
+   228→  relationship      String   @default("Parent")
+   229→  hometown          String?
+   230→  previousSchool    String?
+   231→  status            String   @default("ACTIVE") // ACTIVE | TRACKED (not currently enrolled)
+   232→  createdAt         DateTime @default(now())
+   233→  enrollments       Enrollment[]
+   234→  invoices          Invoice[]
+   235→  marks             Mark[]
+   236→  attendanceRecords AttendanceRecord[]
+   237→  flags             StudentFlag[]
+   238→  reportCards       ReportCard[]
+   239→  transfers         TransferRecord[]
+   240→  recordRequests    RecordRequest[]
+   241→  inquiries         AdmissionInquiry[]
+   242→  riskScores        RiskScore[]
+   243→  serviceEnrollments DailyServiceEnrollment[]
+   244→  dailyCharges      DailyCharge[]
+   245→  transportAssignments TransportAssignment[]
+   246→  smsMessages       SmsMessage[]
+   247→  discountApplications DiscountApplication[]
+   248→  stockIssues       StockMovement[]
+   249→  posPayments       Payment[]
+   250→}
+   251→
+   252→model Enrollment {
+   253→  id            String    @id @default(cuid())
+   254→  studentId     String
+   255→  student       Student   @relation(fields: [studentId], references: [id])
+   256→  classroomId   String
+   257→  classroom     Classroom @relation(fields: [classroomId], references: [id])
+   258→  schoolId      String
+   259→  school        School    @relation(fields: [schoolId], references: [id])
+   260→  rollNo        Int?
+   261→  admissionDate DateTime
+   262→  exitDate      DateTime?
+   263→  status        String    @default("ACTIVE") // ACTIVE | WITHDRAWN | TRANSFERRED | GRADUATED | EXPELLED
+   264→  exitReason    String?
+   265→}
+   266→
+   267→// ─────────────────────────────────────────────────────────────
+   268→// FEES, INVOICES, PAYMENTS
+   269→// ─────────────────────────────────────────────────────────────
+   270→model FeeStructure {
+   271→  id           String    @id @default(cuid())
+   272→  schoolId     String
+   273→  school       School    @relation(fields: [schoolId], references: [id])
+   274→  classroomId  String
+   275→  classroom    Classroom @relation(fields: [classroomId], references: [id])
+   276→  termId       String
+   277→  term         Term      @relation(fields: [termId], references: [id])
+   278→  items        FeeItem[]
+   279→  totalCents   Int       @default(0)
+   280→}
+   281→
+   282→model FeeItem {
+   283→  id             String       @id @default(cuid())
+   284→  feeStructureId String
+   285→  feeStructure   FeeStructure @relation(fields: [feeStructureId], references: [id])
+   286→  name           String
+   287→  amountCents    Int
+   288→  isOptional     Boolean      @default(false)
+   289→}
+   290→
+   291→model Invoice {
+   292→  id             String    @id @default(cuid())
+   293→  invoiceNo      String    @unique
+   294→  studentId      String
+   295→  student        Student   @relation(fields: [studentId], references: [id])
+   296→  schoolId       String
+   297→  school         School    @relation(fields: [schoolId], references: [id])
+   298→  termId         String
+   299→  term           Term      @relation(fields: [termId], references: [id])
+   300→  classroomName  String?
+   301→  items          InvoiceItem[]
+   302→  totalCents     Int       @default(0)
+   303→  discountCents  Int       @default(0)
+   304→  discountReason String?
+   305→  paidCents      Int       @default(0)
+   306→  status         String    @default("UNPAID") // PAID | PARTIAL | UNPAID | OVERDUE
+   307→  dueDate        DateTime?
+   308→  paymentPlan    String    @default("FULL") // FULL | INSTALLMENTS
+   309→  createdAt      DateTime  @default(now())
+   310→  payments       Payment[]
+   311→}
+   312→
+   313→model InvoiceItem {
+   314→  id         String  @id @default(cuid())
+   315→  invoiceId  String
+   316→  invoice    Invoice @relation(fields: [invoiceId], references: [id])
+   317→  name       String
+   318→  amountCents Int
+   319→}
+   320→
+   321→model Payment {
+   322→  id             String   @id @default(cuid())
+   323→  receiptNo      String   @unique
+   324→  invoiceId      String?
+   325→  invoice        Invoice? @relation(fields: [invoiceId], references: [id])
+   326→  studentId      String?
+   327→  student        Student? @relation(fields: [studentId], references: [id])
+   328→  category       String   @default("INVOICE") // INVOICE | DAILY
+   329→  schoolId       String
+   330→  school         School   @relation(fields: [schoolId], references: [id])
+   331→  amountCents    Int
+   332→  method         String // CASH | MOMO_MTN | MOMO_TELECEL | MOMO_AT | BANK | CHEQUE | CARD
+   333→  reference      String?
+   334→  receivedByName String?
+   335→  paidAt         DateTime
+   336→  recordedAt     DateTime @default(now())
+   337→  offlineQueued  Boolean  @default(false)
+   338→  syncedAt       DateTime?
+   339→  voided         Boolean  @default(false)
+   340→  dailyCharges   DailyCharge[]
+   341→}
+   342→
+   343→// ─────────────────────────────────────────────────────────────
+   344→// ATTENDANCE
+   345→// ─────────────────────────────────────────────────────────────
+   346→model AttendanceSession {
+   347→  id            String   @id @default(cuid())
+   348→  classroomId   String
+   349→  classroom     Classroom @relation(fields: [classroomId], references: [id])
+   350→  schoolId      String
+   351→  school        School   @relation(fields: [schoolId], references: [id])
+   352→  termId        String
+   353→  term          Term     @relation(fields: [termId], references: [id])
+   354→  date          DateTime
+   355→  takenByName   String?
+   356→  records       AttendanceRecord[]
+   357→}
+   358→
+   359→model AttendanceRecord {
+   360→  id            String   @id @default(cuid())
+   361→  sessionId     String
+   362→  session       AttendanceSession @relation(fields: [sessionId], references: [id])
+   363→  studentId     String
+   364→  student       Student  @relation(fields: [studentId], references: [id])
+   365→  status        String   @default("PRESENT") // PRESENT | ABSENT | LATE | SICK | EXCUSED
+   366→  markedOffline Boolean  @default(false)
+   367→}
+   368→
+   369→// ─────────────────────────────────────────────────────────────
+   370→// GRADEBOOK & REPORT CARDS
+   371→// ─────────────────────────────────────────────────────────────
+   372→model Assessment {
+   373→  id           String   @id @default(cuid())
+   374→  classroomId  String
+   375→  classroom    Classroom @relation(fields: [classroomId], references: [id])
+   376→  schoolId     String
+   377→  school       School   @relation(fields: [schoolId], references: [id])
+   378→  termId       String
+   379→  term         Term     @relation(fields: [termId], references: [id])
+   380→  subjectId    String
+   381→  subject      Subject  @relation(fields: [subjectId], references: [id])
+   382→  title        String
+   383→  type         String // EXERCISE | HOMEWORK | PROJECT | QUIZ | GROUP_WORK | MID_TERM | END_OF_TERM
+   384→  maxScore     Int      @default(100)
+   385→  date         DateTime
+   386→  marks        Mark[]
+   387→}
+   388→
+   389→model Mark {
+   390→  id            String    @id @default(cuid())
+   391→  assessmentId  String
+   392→  assessment    Assessment @relation(fields: [assessmentId], references: [id])
+   393→  studentId     String
+   394→  student       Student   @relation(fields: [studentId], references: [id])
+   395→  score         Float?
+   396→  enteredOffline Boolean  @default(false)
+   397→}
+   398→
+   399→model ReportCard {
+   400→  id            String   @id @default(cuid())
+   401→  studentId     String
+   402→  student       Student  @relation(fields: [studentId], references: [id])
+   403→  termId        String
+   404→  term          Term     @relation(fields: [termId], references: [id])
+   405→  classroomName String
+   406→  results       ReportCardResult[]
+   407→  totalScore    Float?
+   408→  average       Float?
+   409→  classPosition Int?
+   410→  classSize     Int?
+   411→  conduct       String? // A | B | C
+   412→  interest      String?
+   413→  attendance    String? // "Present 38 of 42 days"
+   414→  teacherRemark String?
+   415→  headRemark    String?
+   416→  aiGenerated   Boolean  @default(false)
+   417→  promotion     String? // PROMOTED | PROBATION | REPEAT
+   418→  published     Boolean  @default(false)
+   419→  publishedAt   DateTime?
+   420→  createdAt     DateTime @default(now())
+   421→}
+   422→
+   423→model ReportCardResult {
+   424→  id           String     @id @default(cuid())
+   425→  reportCardId String
+   426→  reportCard   ReportCard @relation(fields: [reportCardId], references: [id])
+   427→  subjectName  String
+   428→  classScore   Float?
+   429→  examScore    Float?
+   430→  total        Float?
+   431→  grade        String?
+   432→  remark       String?
+   433→}
+   434→
+   435→// ─────────────────────────────────────────────────────────────
+   436→// CROSS-SCHOOL: FLAGS, TRANSFERS, RECORD REQUESTS, ADMISSIONS
+   437→// ─────────────────────────────────────────────────────────────
+   438→model StudentFlag {
+   439→  id               String    @id @default(cuid())
+   440→  studentId        String
+   441→  student          Student   @relation(fields: [studentId], references: [id])
+   442→  schoolId         String
+   443→  school           School    @relation("FlagsRaised", fields: [schoolId], references: [id])
+   444→  raisedByName     String
+   445→  type             String // FEE_ARREARS | WITHDREW_OWING | DISCIPLINE_SUSPENSION | DISCIPLINE_EXPULSION | EXAM_MALPRACTICE | PROPERTY_UNRETURNED
+   446→  severity         String // LOW | MEDIUM | HIGH | CRITICAL
+   447→  status           String    @default("ACTIVE") // ACTIVE | RESOLVED | CONTESTED | WITHDRAWN
+   448→  amountOwedCents  Int?
+   449→  description      String
+   450→  raisedAt         DateTime  @default(now())
+   451→  resolvedAt       DateTime?
+   452→  resolutionNote   String?
+   453→  resolvedByName   String?
+   454→  verifications    FlagVerification[]
+   455→}
+   456→
+   457→model FlagVerification {
+   458→  id             String      @id @default(cuid())
+   459→  flagId         String
+   460→  flag           StudentFlag @relation(fields: [flagId], references: [id])
+   461→  officerName    String
+   462→  officerTitle   String
+   463→  action         String // CONFIRMED | EVIDENCE_REQUESTED | DISMISSED
+   464→  note           String?
+   465→  verifiedAt     DateTime    @default(now())
+   466→}
+   467→
+   468→model TransferRecord {
+   469→  id               String   @id @default(cuid())
+   470→  studentId        String
+   471→  student          Student  @relation(fields: [studentId], references: [id])
+   472→  fromSchoolId     String
+   473→  fromSchool       School   @relation("TransfersFrom", fields: [fromSchoolId], references: [id])
+   474→  toSchoolId       String
+   475→  toSchool         School   @relation("TransfersTo", fields: [toSchoolId], references: [id])
+   476→  date             DateTime
+   477→  reason           String?
+   478→  outstandingCents Int      @default(0)
+   479→  documentsReleased Boolean @default(false)
+   480→  initiatedBy      String   @default("PARENT") // PARENT | SCHOOL
+   481→  status           String   @default("COMPLETED") // COMPLETED | PENDING_RELEASE | DECLINED
+   482→  notes            String?
+   483→}
+   484→
+   485→model RecordRequest {
+   486→  id                 String   @id @default(cuid())
+   487→  studentId          String
+   488→  student            Student  @relation(fields: [studentId], references: [id])
+   489→  requestingSchoolId String
+   490→  requestingSchool   School   @relation("RequestsFrom", fields: [requestingSchoolId], references: [id])
+   491→  targetSchoolId     String
+   492→  targetSchool       School   @relation("RequestsTo", fields: [targetSchoolId], references: [id])
+   493→  requestedByName    String
+   494→  requestedAt        DateTime @default(now())
+   495→  purpose            String   @default("ADMISSION") // ADMISSION | TRANSFER | VERIFICATION
+   496→  status             String   @default("PENDING") // PENDING | APPROVED | DECLINED | FULFILLED
+   497→  respondedAt        DateTime?
+   498→  respondedByName    String?
+   499→  notes              String?
+   500→  messages           RequestMessage[]
+   501→}
+   502→
+   503→model RequestMessage {
+   504→  id          String        @id @default(cuid())
+   505→  requestId   String
+   506→  request     RecordRequest @relation(fields: [requestId], references: [id])
+   507→  senderName  String
+   508→  senderTitle String
+   509→  body        String
+   510→  sentAt      DateTime      @default(now())
+   511→}
+   512→
+   513→model AdmissionInquiry {
+   514→  id               String    @id @default(cuid())
+   515→  schoolId         String
+   516→  school           School    @relation(fields: [schoolId], references: [id])
+   517→  studentName      String
+   518→  dateOfBirth      DateTime?
+   519→  gender           String?
+   520→  guardianName     String
+   521→  guardianPhone    String
+   522→  guardianEmail    String?
+   523→  classAppliedFor  String
+   524→  matchedStudentId String?
+   525→  matchedStudent   Student?  @relation(fields: [matchedStudentId], references: [id])
+   526→  registryCheckedAt DateTime?
+   527→  registrySummary  String? // JSON snapshot
+   528→  status           String    @default("NEW") // NEW | MATCHED | FLAGGED | CLEARED | ENROLLED | DECLINED
+   529→  handledByName    String?
+   530→  notes            String?
+   531→  createdAt        DateTime  @default(now())
+   532→}
+   533→
+   534→// ─────────────────────────────────────────────────────────────
+   535→// AI, RISK, ANNOUNCEMENTS
+   536→// ─────────────────────────────────────────────────────────────
+   537→model RiskScore {
+   538→  id             String   @id @default(cuid())
+   539→  studentId      String
+   540→  student        Student  @relation(fields: [studentId], references: [id])
+   541→  schoolId       String
+   542→  school         School   @relation(fields: [schoolId], references: [id])
+   543→  termId         String?
+   544→  score          Int // 0-100
+   545→  level          String // LOW | MODERATE | HIGH | CRITICAL
+   546→  factorsJson    String // JSON
+   547→  recommendation String?
+   548→  computedAt     DateTime @default(now())
+   549→}
+   550→
+   551→model Announcement {
+   552→  id               String   @id @default(cuid())
+   553→  schoolId         String?
+   554→  school           School?  @relation(fields: [schoolId], references: [id])
+   555→  associationNodeId String?
+   556→  associationNode  AssociationNode? @relation(fields: [associationNodeId], references: [id])
+   557→  title            String
+   558→  body             String
+   559→  audience         String   @default("SCHOOLS") // SCHOOLS | PARENTS | ZONAL | DISTRICT | REGIONAL | NATIONAL
+   560→  category         String   @default("GENERAL") // GENERAL | COMPLIANCE | CALENDAR | URGENT | TRAINING
+   561→  priority         String   @default("NORMAL") // NORMAL | HIGH
+   562→  postedByName     String
+   563→  postedAt         DateTime @default(now())
+   564→}
+   565→
+   566→model AiChatMessage {
+   567→  id        String   @id @default(cuid())
+   568→  sessionKey String   // user-scoped key
+   569→  role      String // user | assistant
+   570→  content   String
+   571→  createdAt DateTime @default(now())
+   572→}
+   573→
+   574→// ─────────────────────────────────────────────────────────────
+   575→// DAILY SERVICES (canteen, water, extra classes) — micro-billing
+   576→// ─────────────────────────────────────────────────────────────
+   577→model DailyService {
+   578→  id          String  @id @default(cuid())
+   579→  schoolId    String
+   580→  school      School  @relation(fields: [schoolId], references: [id])
+   581→  name        String // Lunch, Breakfast, Sachet Water, Extra Classes
+   582→  category    String // MEAL | DRINK | CLASS | CARE | OTHER
+   583→  priceCents  Int
+   584→  chargeMode  String  @default("DAILY") // DAILY (every school day) | WEEKLY (once a week)
+   585→  weekdays    String  @default("1,2,3,4,5") // ISO weekdays the service runs (e.g. "3" = Wednesdays only)
+   586→  active      Boolean @default(true)
+   587→  enrollments DailyServiceEnrollment[]
+   588→  charges     DailyCharge[]
+   589→}
+   590→
+   591→model DailyServiceEnrollment {
+   592→  id                 String       @id @default(cuid())
+   593→  serviceId          String
+   594→  service            DailyService @relation(fields: [serviceId], references: [id])
+   595→  studentId          String
+   596→  student            Student      @relation(fields: [studentId], references: [id])
+   597→  priceCentsOverride Int? // subsidised rate per learner (e.g. needy-family support)
+   598→  active             Boolean      @default(true)
+   599→  enrolledAt         DateTime     @default(now())
+   600→  @@unique([serviceId, studentId])
+   601→}
+   602→
+   603→model DailyCharge {
+   604→  id          String       @id @default(cuid())
+   605→  serviceId   String
+   606→  service     DailyService @relation(fields: [serviceId], references: [id])
+   607→  studentId   String
+   608→  student     Student      @relation(fields: [studentId], references: [id])
+   609→  schoolId    String
+   610→  school      School       @relation(fields: [schoolId], references: [id])
+   611→  date        DateTime
+   612→  amountCents Int
+   613→  status      String       @default("OWED") // OWED | PAID | WAIVED
+   614→  paymentId   String?
+   615→  payment     Payment?     @relation(fields: [paymentId], references: [id])
+   616→  createdAt   DateTime     @default(now())
+   617→  @@unique([serviceId, studentId, date])
+   618→}
+   619→
+   620→// ─────────────────────────────────────────────────────────────
+   621→// TRANSPORTATION (routes, vehicles, assignments, trips)
+   622→// ─────────────────────────────────────────────────────────────
+   623→model TransportRoute {
+   624→  id               String  @id @default(cuid())
+   625→  schoolId         String
+   626→  school           School  @relation(fields: [schoolId], references: [id])
+   627→  name             String // "Adenta Loop"
+   628→  vehicleReg       String // "GR 4521-21"
+   629→  vehicleModel     String?
+   630→  driverName       String
+   631→  driverPhone      String
+   632→  capacity         Int     @default(15)
+   633→  farePerTermCents Int
+   634→  stops            String // comma-separated stop names
+   635→  active           Boolean @default(true)
+   636→  assignments      TransportAssignment[]
+   637→  trips            TransportTrip[]
+   638→}
+   639→
+   640→model TransportAssignment {
+   641→  id                String         @id @default(cuid())
+   642→  routeId           String
+   643→  route             TransportRoute @relation(fields: [routeId], references: [id])
+   644→  studentId         String
+   645→  student           Student        @relation(fields: [studentId], references: [id])
+   646→  pickupStop        String?
+   647→  dropStop          String?
+   648→  fareOverrideCents Int? // per-term override (e.g. half-route rate)
+   649→  active            Boolean        @default(true)
+   650→  enrolledAt        DateTime       @default(now())
+   651→  @@unique([routeId, studentId])
+   652→}
+   653→
+   654→model TransportTrip {
+   655→  id             String         @id @default(cuid())
+   656→  routeId        String
+   657→  route          TransportRoute @relation(fields: [routeId], references: [id])
+   658→  date           DateTime
+   659→  morningCount   Int?
+   660→  eveningCount   Int?
+   661→  notes          String?
+   662→  recordedByName String?
+   663→  @@unique([routeId, date])
+   664→}
+   665→
+   666→// ─────────────────────────────────────────────────────────────
+   667→// SMS ALERTS (gateway-agnostic: Arkesel / Termii / simulated)
+   668→// ─────────────────────────────────────────────────────────────
+   669→model SmsSetting {
+   670→  id                  String  @id @default(cuid())
+   671→  schoolId            String  @unique
+   672→  school              School  @relation(fields: [schoolId], references: [id])
+   673→  provider            String  @default("SIMULATED") // SIMULATED | ARKESEL | TERMII
+   674→  senderId            String  @default("NYANSAPO")
+   675→  credits             Int     @default(500)
+   676→  autoFeeReminders    Boolean @default(true)
+   677→  autoAbsenceAlerts   Boolean @default(true)
+   678→  autoPaymentReceipts Boolean @default(true)
+   679→}
+   680→
+   681→model SmsTemplate {
+   682→  id        String  @id @default(cuid())
+   683→  schoolId  String
+   684→  school    School  @relation(fields: [schoolId], references: [id])
+   685→  name      String
+   686→  category  String // FEES | ATTENDANCE | RESULTS | ANNOUNCEMENT | PAYMENT | TRANSPORT | GENERAL
+   687→  body      String // supports {student} {school} {amount} {balance} {class} {date} placeholders
+   688→  isDefault Boolean @default(false)
+   689→}
+   690→
+   691→model SmsMessage {
+   692→  id             String   @id @default(cuid())
+   693→  schoolId       String
+   694→  school         School   @relation(fields: [schoolId], references: [id])
+   695→  studentId      String?
+   696→  student        Student? @relation(fields: [studentId], references: [id])
+   697→  recipientName  String
+   698→  recipientPhone String
+   699→  body           String
+   700→  category       String
+   701→  status         String   @default("SENT") // QUEUED | SENT | DELIVERED | FAILED
+   702→  creditsUsed    Int      @default(1)
+   703→  sentByName     String?
+   704→  sentAt         DateTime @default(now())
+   705→  errorReason    String?
+   706→}
+   707→
+   708→// ─────────────────────────────────────────────────────────────
+   709→// PAYROLL (Ghana: SSNIT Tier 1/2 + PAYE progressive tax)
+   710→// ─────────────────────────────────────────────────────────────
+   711→model PayrollRun {
+   712→  id                   String    @id @default(cuid())
+   713→  schoolId             String
+   714→  school               School    @relation(fields: [schoolId], references: [id])
+   715→  period               String // "2026-10"
+   716→  status               String    @default("DRAFT") // DRAFT | APPROVED | PAID
+   717→  payslips             Payslip[]
+   718→  totalGrossCents      Int       @default(0)
+   719→  totalDeductionsCents Int       @default(0)
+   720→  totalNetCents        Int       @default(0)
+   721→  totalEmployerSsnitCents Int    @default(0)
+   722→  approvedByName       String?
+   723→  paidAt               DateTime?
+   724→  createdAt            DateTime   @default(now())
+   725→  @@unique([schoolId, period])
+   726→}
+   727→
+   728→model Payslip {
+   729→  id                   String    @id @default(cuid())
+   730→  payrollRunId         String
+   731→  payrollRun           PayrollRun @relation(fields: [payrollRunId], references: [id])
+   732→  staffId              String
+   733→  staff                Staff     @relation(fields: [staffId], references: [id])
+   734→  baseSalaryCents      Int
+   735→  allowancesJson       String    @default("[]") // [{name, amountCents}]
+   736→  grossCents           Int
+   737→  ssnitEmployeeCents   Int // 5% Tier 1
+   738→  ssnitEmployerCents   Int // 13% Tier 1 + 5% Tier 2
+   739→  payeCents            Int
+   740→  otherDeductionsJson  String    @default("[]") // [{name, amountCents}]
+   741→  totalDeductionsCents Int
+   742→  netCents             Int
+   743→  status               String    @default("PENDING") // PENDING | PAID
+   744→  paidAt               DateTime?
+   745→  @@unique([payrollRunId, staffId])
+   746→}
+   747→
+   748→// ─────────────────────────────────────────────────────────────
+   749→// INVENTORY (books, uniforms, stationery, food supplies)
+   750→// ─────────────────────────────────────────────────────────────
+   751→model InventoryItem {
+   752→  id             String  @id @default(cuid())
+   753→  schoolId       String
+   754→  school         School  @relation(fields: [schoolId], references: [id])
+   755→  name           String
+   756→  sku            String?
+   757→  category       String // BOOKS | UNIFORMS | STATIONERY | FOOD | CLEANING | FUEL | OTHER
+   758→  unit           String  @default("pcs")
+   759→  unitCostCents  Int     @default(0)
+   760→  sellPriceCents Int? // null = internal use only
+   761→  stockQty       Int     @default(0)
+   762→  reorderLevel   Int     @default(10)
+   763→  location       String?
+   764→  movements      StockMovement[]
+   765→}
+   766→
+   767→model StockMovement {
+   768→  id               String        @id @default(cuid())
+   769→  itemId           String
+   770→  item             InventoryItem @relation(fields: [itemId], references: [id])
+   771→  schoolId         String
+   772→  school           School        @relation(fields: [schoolId], references: [id])
+   773→  type             String // PURCHASE | ISSUE | RETURN | ADJUST
+   774→  qty              Int // signed: + in, - out
+   775→  unitCostCents    Int?
+   776→  partyType        String? // SUPPLIER | STUDENT | STAFF | CLASS | SALE
+   777→  partyName        String?
+   778→  studentId        String?
+   779→  student          Student?      @relation(fields: [studentId], references: [id])
+   780→  chargedToInvoice Boolean       @default(false)
+   781→  note             String?
+   782→  saleNo           String? // groups the lines of one counter sale (POS)
+   783→  amountCents      Int? // line total for counter sales (qty × sell price)
+   784→  createdAt        DateTime      @default(now())
+   785→}
+   786→
+   787→model Supplier {
+   788→  id            String   @id @default(cuid())
+   789→  schoolId      String
+   790→  school        School   @relation(fields: [schoolId], references: [id])
+   791→  name          String
+   792→  phone         String?
+   793→  email         String?
+   794→  itemsSupplied String?
+   795→  notes         String?
+   796→}
+   797→
+   798→// ─────────────────────────────────────────────────────────────
+   799→// DISCOUNTS (scholarships, siblings, needy support — invoice & daily)
+   800→// ─────────────────────────────────────────────────────────────
+   801→model Discount {
+   802→  id           String   @id @default(cuid())
+   803→  schoolId     String
+   804→  school       School   @relation(fields: [schoolId], references: [id])
+   805→  name         String // "Sibling Discount 10%"
+   806→  type         String // PERCENT | FIXED
+   807→  value        Int // percent (0-100) or pesewas
+   808→  scope        String   @default("INVOICE") // INVOICE | DAILY_SERVICE
+   809→  autoApply    Boolean  @default(false) // applied automatically at invoice generation
+   810→  active       Boolean  @default(true)
+   811→  notes        String?
+   812→  createdAt    DateTime @default(now())
+   813→  applications DiscountApplication[]
+   814→}
+   815→
+   816→model DiscountApplication {
+   817→  id            String    @id @default(cuid())
+   818→  discountId    String
+   819→  discount      Discount  @relation(fields: [discountId], references: [id])
+   820→  studentId     String
+   821→  student       Student   @relation(fields: [studentId], references: [id])
+   822→  schoolId      String
+   823→  school        School    @relation(fields: [schoolId], references: [id])
+   824→  serviceId     String? // for DAILY_SERVICE scope: which service gets the subsidised rate
+   825→  valueOverride Int? // per-application override of the discount value
+   826→  status        String    @default("ACTIVE") // ACTIVE | REVOKED | EXPIRED
+   827→  reason        String?
+   828→  appliedByName String
+   829→  createdAt     DateTime  @default(now())
+   830→}
+   831→
