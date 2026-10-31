@@ -13,8 +13,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatCard, ModuleHeader, LoadingBlock, StatusBadge, EmptyState } from "@/components/ui-helpers";
 import { fmtCedi, fmtDate, PAYMENT_LABELS } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
-import { Banknote, Receipt, AlertTriangle, CheckCircle2, Plus, Flag, Printer, Wallet, Ticket, Percent, UserPlus, XCircle } from "lucide-react";
-import { ReceiptDocument } from "@/components/receipts";
+import { Banknote, Receipt, AlertTriangle, CheckCircle2, Plus, Flag, Printer, Wallet, Ticket, Percent, UserPlus, XCircle, ListChecks } from "lucide-react";
+import { ReceiptDocument, BulkReceiptsDocument } from "@/components/receipts";
 
 type FeeData = {
   terms: { id: string; name: string; isCurrent: boolean }[];
@@ -44,6 +44,10 @@ export function Fees() {
   const [discDialog, setDiscDialog] = useState<DiscountRow | "new" | null>(null);
   const [applyDialog, setApplyDialog] = useState<DiscountRow | null>(null);
   const [receipt, setReceipt] = useState<any | null>(null);
+  const [receiptStyle, setReceiptStyle] = useState<"A5" | "THERMAL">("A5");
+  const [checkedReceipts, setCheckedReceipts] = useState<Set<string>>(new Set());
+  const [bulkReceipts, setBulkReceipts] = useState<any[] | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const load = (t?: string) => {
     if (!currentSchoolId) return;
@@ -55,6 +59,9 @@ export function Fees() {
   useEffect(() => { load(); }, [currentSchoolId]);
 
   const overdue = useMemo(() => (data?.invoices ?? []).filter((i) => i.status === "OVERDUE" || (i.status === "UNPAID" && i.balance > 0)).sort((a, b) => b.balance - a.balance), [data]);
+  const allPayments = useMemo(() =>
+    (data?.invoices ?? []).flatMap((i) => i.payments.map((p) => ({ ...p, student: i.student, classroom: i.classroom, invoiceNo: i.invoiceNo }))).sort((a, b) => new Date(b.paidAt).getTime() - new Date(a.paidAt).getTime()),
+  [data]);
 
   if (!data) return <LoadingBlock label="Loading billing…" />;
 
@@ -81,6 +88,7 @@ export function Fees() {
       <Tabs value={tab} onValueChange={setTab} className="mt-5">
         <TabsList>
           <TabsTrigger value="invoices">Invoices</TabsTrigger>
+          <TabsTrigger value="receipts">Receipts ({allPayments.length})</TabsTrigger>
           <TabsTrigger value="structures">Fee structures</TabsTrigger>
           <TabsTrigger value="discounts">Discounts ({discounts?.discounts.length ?? 0})</TabsTrigger>
           <TabsTrigger value="arrears">Arrears chase-list ({overdue.length})</TabsTrigger>

@@ -183,6 +183,13 @@
 @media print {
   .a5-sheet { width: 148mm; }
 }
+/* 80mm thermal roll for counter printers */
+@media print {
+  .thermal-sheet { width: 72mm; border: none !important; box-shadow: none !important; }
+  .thermal-sheet * { font-size: 9.5px !important; }
+}
+.print-break-after { page-break-after: always; break-after: page; }
+.print-avoid-break { page-break-inside: avoid; break-inside: avoid; }
 .print-hidden { display: none; }
 @media print {
   .print-hidden { display: block; }

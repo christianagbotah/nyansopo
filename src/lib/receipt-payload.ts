@@ -17,6 +17,11 @@ export type ReceiptPayload = {
   transport?: { route: string; vehicle?: string | null; term: string; fare: number };
   amount: number;
   school: { name: string; motto?: string | null; town?: string | null; region?: string | null; phone?: string | null; email?: string | null };
+  // print styling / watermarks
+  style?: "A5" | "THERMAL";
+  multiInvoice?: boolean;
+  arrears?: boolean;
+  creditCreated?: number;
 };
 
 export async function receiptSchool(db: PrismaClient, schoolId: string) {
@@ -49,6 +54,8 @@ export async function invoicePaymentReceipt(db: PrismaClient, paymentId: string)
   const inv = p.invoice;
   const net = inv ? inv.totalCents - inv.discountCents : p.amountCents;
   const balance = inv ? Math.max(0, net - inv.paidCents) : 0;
+  // arrears watermark: paying a bill that is not from the current term
+  const arrears = inv ? !inv.term.isCurrent : false;
   return {
     type: "INVOICE_PAYMENT" as const,
     receiptNo: p.receiptNo,
@@ -75,6 +82,7 @@ export async function invoicePaymentReceipt(db: PrismaClient, paymentId: string)
       : undefined,
     amount: p.amountCents,
     school,
+    arrears,
   } satisfies ReceiptPayload;
 }
 

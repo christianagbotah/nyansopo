@@ -255,6 +255,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   switch (resource) {
     // ── FEES ──────────────────────────────────────────────
     case "fees": {
+      // bulk receipt payloads for reprinting issued receipts
+      if (action === "receipt-payloads") {
+        const ids: string[] = Array.isArray(body.paymentIds) ? body.paymentIds : [];
+        if (!ids.length) return NextResponse.json({ error: "No payments selected" }, { status: 400 });
+        if (ids.length > 50) return NextResponse.json({ error: "Maximum 50 receipts per batch" }, { status: 400 });
+        const payloads = [];
+        for (const id of ids) {
+          const p = await db.payment.findFirst({ where: { id, schoolId } });
+          if (!p) continue;
+          try { payloads.push(await invoicePaymentReceipt(db, p.id)); } catch { /* skip broken rows */ }
+        }
+        return NextResponse.json({ receipts: payloads });
+      }
       if (action === "record-payment") {
         const { invoiceId, amountCents, method, reference, offline, clientId } = body;
         if (clientId) {
