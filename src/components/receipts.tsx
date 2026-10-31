@@ -1,7 +1,9 @@
 "use client";
 /* Nyansapo — professional payment receipts.
-   Four receipt types, two print styles (A5 sheet + 80mm thermal), watermarks:
-   INVOICE_PAYMENT · DAILY_SERVICES · POS_SALE · TRANSPORT_FARE */
+   Four print styles × four receipt types (iedupro parity):
+   INVOICE_PAYMENT · DAILY_SERVICES · POS_SALE · TRANSPORT_FARE
+   Styles: A5 standard · FORMAL (dotted-field bursar sheet) ·
+           MODERN (gradient, total-bills section) · THERMAL (80mm) */
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { LogoMark, KenteStrip } from "@/components/brand";
@@ -59,10 +61,13 @@ export type ReceiptData = {
   amount: number;
   school: ReceiptSchool;
   // print styling
-  style?: "A5" | "THERMAL"; // 80mm roll
+  style?: "A5" | "FORMAL" | "MODERN" | "THERMAL"; // THERMAL = 80mm roll
   multiInvoice?: boolean; // watermark: payment spans several invoices
   arrears?: boolean; // watermark: paying a previous term's bill
   creditCreated?: number; // overpayment converted to credit
+  paymentType?: "PAYMENT" | "REFUND" | "CREDIT"; // refund receipts get distinct banner
+  bankName?: string | null;
+  chequeNo?: string | null;
 };
 const TYPE_TITLES: Record<ReceiptData["type"], string> = {
   INVOICE_PAYMENT: "Official Fees Receipt",
@@ -70,6 +75,23 @@ const TYPE_TITLES: Record<ReceiptData["type"], string> = {
   POS_SALE: "Store Sale Receipt",
   TRANSPORT_FARE: "Transport Fare Receipt",
 };
+
+export const RECEIPT_STYLES = [
+  { value: "A5", label: "Standard A5", hint: "Kente-accented sheet, itemised table" },
+  { value: "FORMAL", label: "Formal Bursar A5", hint: "Serif, dotted fields, amount in words" },
+  { value: "MODERN", label: "Modern Gradient", hint: "Gradient header, total-bills section" },
+  { value: "THERMAL", label: "Thermal 80mm", hint: "Counter roll printer" },
+] as const;
+export type ReceiptStyle = (typeof RECEIPT_STYLES)[number]["value"];
+
+/** rows for the active receipt type (shared by all sheet styles) */
+function receiptRows(data: ReceiptData): { label: string; amount: number; sub?: string }[] {
+  if (data.type === "INVOICE_PAYMENT" && data.invoice) return data.invoice.items.map((it) => ({ label: it.name, amount: it.amount }));
+  if (data.type === "DAILY_SERVICES" && data.services) return data.services.map((s) => ({ label: s.name, amount: s.amount, sub: s.count > 1 ? `${s.count} units` : undefined }));
+  if (data.type === "POS_SALE" && data.lines) return data.lines.map((l) => ({ label: l.item, amount: l.amount, sub: `×${l.qty}` }));
+  if (data.type === "TRANSPORT_FARE" && data.transport) return [{ label: `${data.transport.route} fare`, amount: data.transport.fare }];
+  return [];
+}
 
 // ── watermarks (iedupro parity: MULTI-INVOICE / ARREARS) ──
 function ReceiptWatermark({ data }: { data: ReceiptData }) {
@@ -143,9 +165,233 @@ export function ThermalReceipt({ data }: { data: ReceiptData }) {
   );
 }
 
+// ── FORMAL BURSAR SHEET (A5 serif, dotted fields — iedupro style_2) ──
+export function FormalReceipt({ data }: { data: ReceiptData }) {
+  const school = data.school;
+  const rows = receiptRows(data);
+  const discount = data.invoice?.discount ?? 0;
+  const isRefund = data.paymentType === "REFUND";
+  return (
+    <div className="print-sheet a5-sheet mx-auto bg-card text-card-foreground rounded-xl border shadow-sm overflow-hidden relative">
+      <ReceiptWatermark data={data} />
+      <div className="px-7 py-6 font-serif">
+        {/* 3-column letterhead */}
+        <div className="grid grid-cols-[1fr_1.4fr_1fr] items-start gap-3">
+          <LogoMark size={52} />
+          <div className="text-center leading-tight">
+            <div className="font-bold text-lg uppercase tracking-wide">{school.name}</div>
+            <div className="text-[11px]">{[school.town, school.region].filter(Boolean).join(", ")}</div>
+            <div className="text-[10px]">{school.phone ?? ""}{school.email ? ` · ${school.email}` : ""}</div>
+            <div className="mt-2 inline-block rounded-md bg-foreground px-3 py-0.5 text-[10px] font-bold uppercase tracking-[0.18em] text-background">
+              {isRefund ? "Official Refund Voucher" : "Official Receipt"}
+            </div>
+          </div>
+          <table className="w-full text-[10px]">
+            <tbody>
+              <tr><td className="text-muted-foreground py-0.5">Receipt No.</td><td className="font-mono font-bold text-right">{data.receiptNo}</td></tr>
+              <tr><td className="text-muted-foreground py-0.5">Date</td><td className="text-right">{fmtDateTime(data.date)}</td></tr>
+              {data.invoice && (
+                <tr><td className="text-muted-foreground py-0.5">Invoice</td><td className="font-mono text-right">{data.invoice.no}</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="my-4 border-t-2 border-foreground/70" />
+
+        {/* dotted form fields */}
+        <div className="space-y-3.5 text-[13px]">
+          <div className="flex items-baseline gap-2">
+            <span className="font-semibold uppercase text-[11px] tracking-wide">Received from</span>
+            <span className="flex-1 border-b border-dotted border-foreground/50 pb-0.5 font-semibold">
+              {data.student ? (data.student.guardian ?? "Guardian") : (data.buyer ?? "Walk-in customer")}
+              {data.student && <span className="font-normal text-muted-foreground"> — guardian of {data.student.name}</span>}
+            </span>
+          </div>
+          <div className="flex items-baseline gap-2">
+            <span className="font-semibold uppercase text-[11px] tracking-wide">The sum of</span>
+            <span className="font-bold tabular-nums border-b border-dotted border-foreground/50 pb-0.5">GH₵ {(data.amount / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+            <span className="flex-1 border-b border-dotted border-foreground/50 pb-0.5 italic text-[12px] text-muted-foreground text-right">({amountInWords(data.amount)})</span>
+          </div>
+          <div className="flex items-baseline gap-2">
+            <span className="font-semibold uppercase text-[11px] tracking-wide">Being</span>
+            <span className="flex-1 border-b border-dotted border-foreground/50 pb-0.5">
+              {isRefund ? "refund of overpayment on school fees" : data.invoice ? `${data.invoice.balance > 0 ? "part payment" : "full payment"} of school fees — ${data.invoice.term}` : `payment — ${TYPE_TITLES[data.type].replace(" Receipt", "")}`}
+            </span>
+          </div>
+          {(data.method === "CHEQUE" || data.method === "BANK") && (
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex items-baseline gap-2">
+                <span className="font-semibold uppercase text-[11px] tracking-wide">{data.method === "CHEQUE" ? "Cheque No." : "Bank"}</span>
+                <span className="flex-1 border-b border-dotted border-foreground/50 pb-0.5 font-mono text-[12px]">{data.method === "CHEQUE" ? (data.chequeNo ?? data.reference ?? "—") : (data.bankName ?? "—")}</span>
+              </div>
+              <div className="flex items-baseline gap-2">
+                <span className="font-semibold uppercase text-[11px] tracking-wide">Reference</span>
+                <span className="flex-1 border-b border-dotted border-foreground/50 pb-0.5 font-mono text-[12px]">{data.reference ?? "—"}</span>
+              </div>
+            </div>
+          )}
+          {data.method.startsWith("MOMO") && data.reference && (
+            <div className="flex items-baseline gap-2">
+              <span className="font-semibold uppercase text-[11px] tracking-wide">MoMo Transaction ID</span>
+              <span className="flex-1 border-b border-dotted border-foreground/50 pb-0.5 font-mono text-[12px]">{data.reference}</span>
+            </div>
+          )}
+        </div>
+
+        {/* items */}
+        <table className="w-full mt-4 text-[12.5px]">
+          <thead>
+            <tr className="border-y border-foreground/40 text-left text-[9.5px] uppercase tracking-wider">
+              <th className="py-1.5 font-semibold">Particulars</th>
+              <th className="py-1.5 font-semibold text-center w-14">Qty</th>
+              <th className="py-1.5 font-semibold text-right">Amount (GH₵)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={i} className="border-b border-dotted border-foreground/25">
+                <td className="py-1.5">{r.label}</td>
+                <td className="py-1.5 text-center tabular-nums text-muted-foreground">{r.sub?.replace("×", "") ?? "1"}</td>
+                <td className="py-1.5 text-right tabular-nums">{(r.amount / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+              </tr>
+            ))}
+            {discount > 0 && (
+              <tr className="border-b border-dotted border-foreground/25 text-emerald-700 dark:text-emerald-400">
+                <td className="py-1.5" colSpan={2}>Discount applied</td>
+                <td className="py-1.5 text-right tabular-nums">−{(discount / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+
+        {/* totals */}
+        <div className="mt-3 grid grid-cols-3 gap-3">
+          <div className="border border-foreground/40 rounded p-2 text-center">
+            <div className="text-[9px] uppercase tracking-widest text-muted-foreground">{isRefund ? "Refunded" : "Amount Paid"}</div>
+            <div className="font-bold text-[15px] tabular-nums">GH₵ {(data.amount / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+          </div>
+          <div className="border border-foreground/40 rounded p-2 text-center">
+            <div className="text-[9px] uppercase tracking-widest text-muted-foreground">Balance Due</div>
+            <div className={`font-bold text-[15px] tabular-nums ${(data.invoice?.balance ?? 0) > 0 ? "text-destructive" : "text-emerald-600"}`}>GH₵ {((data.invoice?.balance ?? 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+          </div>
+          <div className="border border-foreground/40 rounded p-2 text-center">
+            <div className="text-[9px] uppercase tracking-widest text-muted-foreground">Method</div>
+            <div className="font-semibold text-[13px] mt-0.5">{PAYMENT_LABELS[data.method] ?? data.method}</div>
+          </div>
+        </div>
+
+        {data.creditCreated ? (
+          <div className="mt-3 rounded border border-emerald-500/60 bg-emerald-50 dark:bg-emerald-950/40 px-3 py-1.5 text-center text-[11.5px] font-semibold text-emerald-700 dark:text-emerald-300">
+            CREDIT CREATED — GH₵ {(data.creditCreated / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })} carried forward to future bills
+          </div>
+        ) : null}
+
+        {/* signatures */}
+        <div className="mt-8 grid grid-cols-2 gap-10 text-[10.5px]">
+          <div className="border-t border-foreground/60 pt-1">Bursar&apos;s Signature</div>
+          <div className="border-t border-foreground/60 pt-1 text-right">Issued by: {data.cashier ?? "Front Desk"}</div>
+        </div>
+        <div className="mt-3 text-center text-[10px] italic text-muted-foreground">Thank you for your payment · Computer-generated receipt</div>
+      </div>
+      <KenteStrip />
+    </div>
+  );
+}
+
+// ── MODERN GRADIENT SHEET (A5, total-bills section — iedupro style_3) ──
+export function ModernReceipt({ data }: { data: ReceiptData }) {
+  const school = data.school;
+  const rows = receiptRows(data);
+  const discount = data.invoice?.discount ?? 0;
+  const grossOriginal = rows.reduce((s, r) => s + r.amount, 0);
+  const afterDiscount = grossOriginal - discount;
+  const isRefund = data.paymentType === "REFUND";
+  return (
+    <div className="print-sheet a5-sheet mx-auto bg-card text-card-foreground rounded-xl border shadow-sm overflow-hidden relative">
+      <ReceiptWatermark data={data} />
+      {/* gradient header */}
+      <div className="px-6 py-4 bg-gradient-to-br from-slate-800 via-slate-700 to-emerald-900 text-white relative">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="font-bold text-lg tracking-tight leading-tight">{school.name}</div>
+            <div className="text-[10.5px] text-white/70">{[school.town, school.region].filter(Boolean).join(", ")}{school.phone ? ` · ${school.phone}` : ""}</div>
+            {school.motto && <div className="text-[10px] italic text-white/60 mt-0.5">{school.motto}</div>}
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="size-10 rounded-lg bg-white/95 grid place-items-center"><LogoMark size={30} /></div>
+          </div>
+        </div>
+        <div className="mt-3 flex items-center justify-between">
+          <span className="inline-block rounded-full bg-white/15 backdrop-blur px-3 py-0.5 text-[10px] font-bold uppercase tracking-[0.16em]">{isRefund ? "Refund Voucher" : TYPE_TITLES[data.type]}</span>
+          <span className="font-mono text-sm font-bold">{data.receiptNo}</span>
+        </div>
+      </div>
+
+      <div className="px-6 py-5 text-[12.5px]">
+        {/* total bills section — original amounts, discount, after discount */}
+        <div className="rounded-lg border overflow-hidden">
+          <div className="bg-secondary/70 px-3 py-1.5 text-[9.5px] font-bold uppercase tracking-widest text-muted-foreground">Total Bills</div>
+          <table className="w-full">
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i} className="border-t">
+                  <td className="px-3 py-1.5">{r.label}{r.sub ? <span className="text-muted-foreground"> ({r.sub})</span> : ""}</td>
+                  <td className="px-3 py-1.5 text-right tabular-nums">{fmtCedi(r.amount)}</td>
+                </tr>
+              ))}
+              {discount > 0 && (
+                <>
+                  <tr className="border-t bg-secondary/30"><td className="px-3 py-1.5 font-semibold">Total Amount</td><td className="px-3 py-1.5 text-right font-semibold tabular-nums">{fmtCedi(grossOriginal)}</td></tr>
+                  <tr><td className="px-3 py-1.5 text-emerald-700 dark:text-emerald-400">Discount Applied</td><td className="px-3 py-1.5 text-right tabular-nums text-emerald-700 dark:text-emerald-400">−{fmtCedi(discount)}</td></tr>
+                  <tr className="border-t bg-secondary/30"><td className="px-3 py-1.5 font-semibold">Amount After Discount</td><td className="px-3 py-1.5 text-right font-semibold tabular-nums">{fmtCedi(afterDiscount)}</td></tr>
+                </>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* receipt details grid */}
+        <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-2">
+          <div><span className="text-[10px] uppercase tracking-wider text-muted-foreground">Received from </span><span className="font-semibold">{data.student ? `${data.student.guardian ?? "Guardian"} (${data.student.name})` : (data.buyer ?? "Walk-in")}</span></div>
+          <div><span className="text-[10px] uppercase tracking-wider text-muted-foreground">Class </span><span className="font-semibold">{data.student?.classroom ?? "—"}</span></div>
+          <div><span className="text-[10px] uppercase tracking-wider text-muted-foreground">Paid on </span><span className="font-semibold">{fmtDateTime(data.date)}</span></div>
+          <div><span className="text-[10px] uppercase tracking-wider text-muted-foreground">Method </span><span className="font-semibold">{PAYMENT_LABELS[data.method] ?? data.method}</span></div>
+          {data.invoice && <div className="col-span-2"><span className="text-[10px] uppercase tracking-wider text-muted-foreground">Invoice </span><span className="font-mono font-semibold">{data.invoice.no}</span><span className="text-muted-foreground"> · {data.invoice.term}</span></div>}
+          <div className="col-span-2"><span className="text-[10px] uppercase tracking-wider text-muted-foreground">The sum of </span><span className="italic">{amountInWords(data.amount)}</span></div>
+        </div>
+
+        {/* amount paid banner */}
+        <div className="mt-4 rounded-lg bg-gradient-to-r from-emerald-600 to-emerald-500 text-white px-4 py-3 flex items-center justify-between">
+          <div>
+            <div className="text-[10px] uppercase tracking-widest text-white/80">{isRefund ? "Refunded" : "Amount Paid"}</div>
+            <div className="text-[10px] text-white/70">{data.invoice?.balance > 0 ? `Part payment · balance ${fmtCedi(data.invoice.balance)}` : "Full settlement"}</div>
+          </div>
+          <div className="text-2xl font-black tabular-nums">{fmtCedi(data.amount)}</div>
+        </div>
+
+        {data.creditCreated ? (
+          <div className="mt-3 rounded-lg border border-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 px-3 py-1.5 text-center text-[12px] font-semibold text-emerald-700 dark:text-emerald-300">
+            Credit created — {fmtCedi(data.creditCreated)} applied to future bills
+          </div>
+        ) : null}
+
+        {/* signatures */}
+        <div className="mt-8 grid grid-cols-2 gap-10 text-[10px] text-muted-foreground">
+          <div className="border-t pt-1">Cashier — {data.cashier ?? "Front Desk"}</div>
+          <div className="border-t pt-1 text-right">School stamp</div>
+        </div>
+      </div>
+      <div className="bg-secondary/50 px-6 py-2 text-center text-[10px] text-muted-foreground">{school.name} · Computer-generated receipt · {new Date().toLocaleDateString()}</div>
+    </div>
+  );
+}
+
 // ── the document ──────────────────────────────────────────────
 export function ReceiptDocument({ data, copy = "ORIGINAL" }: { data: ReceiptData; copy?: string }) {
   if (data.style === "THERMAL") return <ThermalReceipt data={data} />;
+  if (data.style === "FORMAL") return <FormalReceipt data={data} />;
+  if (data.style === "MODERN") return <ModernReceipt data={data} />;
   const school = data.school;
   return (
     <div className="print-sheet a5-sheet mx-auto bg-card text-card-foreground rounded-xl border shadow-sm overflow-hidden relative">
@@ -368,7 +614,7 @@ export function ReceiptDialog({ data, open, onOpenChange }: { data: ReceiptData 
   if (!data) return null;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={data.style === "THERMAL" ? "max-w-[360px]" : "max-w-[560px]"}>
+      <DialogContent className={data.style === "THERMAL" ? "max-w-[360px]" : "max-w-[580px]"}>
         <DialogHeader className="no-print">
           <DialogTitle className="flex items-center gap-2 text-base">
             <ReceiptText className="size-4" /> Receipt issued
