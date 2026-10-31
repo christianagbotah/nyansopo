@@ -133,6 +133,8 @@ model School {
   expenses             Expense[]
   purchaseOrders       PurchaseOrder[]
   opsSettings          OpsSetting[]
+  studentWallets       StudentWallet[]
+  walletTxns           WalletTxn[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -263,6 +265,8 @@ model Student {
   inquiries            AdmissionInquiry[]
   riskScores           RiskScore[]
   serviceEnrollments   DailyServiceEnrollment[]
+  wallet               StudentWallet?
+  walletTxns           WalletTxn[]
   dailyCharges         DailyCharge[]
   transportAssignments TransportAssignment[]
   smsMessages          SmsMessage[]
@@ -687,11 +691,44 @@ model DailyCharge {
   date        DateTime
   amountCents Int
   status      String       @default("OWED") // OWED | PAID | WAIVED
+  usage       String?      // transport fare usage: MORNING | AFTERNOON | BOTH | NOT_USING | BOARDED (TRANSPORT-category services only)
   paymentId   String?
   payment     Payment?     @relation(fields: [paymentId], references: [id])
   createdAt   DateTime     @default(now())
 
-  @@unique([serviceId, studentId, date])
+  @@index([serviceId, studentId, date]) // not unique: partial payments split a day-charge into PAID + remainder rows
+}
+
+// ── Daily-fee wallets (iedupro parity): prepaid balance for any daily service,
+//    transport wallet reserved for bus fare. Arrears are derived from OWED charges.
+model StudentWallet {
+  id             String   @id @default(cuid())
+  schoolId       String
+  school         School   @relation(fields: [schoolId], references: [id])
+  studentId      String   @unique
+  student        Student  @relation(fields: [studentId], references: [id])
+  prepaidCents   Int      @default(0)
+  transportCents Int      @default(0)
+  updatedAt      DateTime @default(now()) @updatedAt
+
+  @@index([schoolId])
+}
+
+model WalletTxn {
+  id           String   @id @default(cuid())
+  schoolId     String
+  school       School   @relation(fields: [schoolId], references: [id])
+  studentId    String
+  student      Student  @relation(fields: [studentId], references: [id])
+  wallet       String // PREPAID | TRANSPORT
+  kind         String // TOPUP | PAY | ADJUST
+  amountCents  Int // signed: + credit, − debit
+  balanceAfter Int
+  note         String?
+  byName       String?
+  at           DateTime @default(now())
+
+  @@index([schoolId, studentId])
 }
 
 // ─────────────────────────────────────────────────────────────

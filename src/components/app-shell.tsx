@@ -42,11 +42,12 @@ import {
 type NavItem = { id: ModuleId; label: string; icon: any; section?: string };
 
 /* role-scoped modules — iedupro teacher-portal parity: a class teacher sees the
-   classroom toolchain only; the bursar sees the money side; admin/proprietor see all */
+   classroom toolchain (plus daily-fee classroom collection); the bursar sees the
+   money side; admin/proprietor see all */
 const ROLE_MODULES: Record<string, ModuleId[] | "*"> = {
   SCHOOL_ADMIN: "*",
   GROUP_OWNER: "*",
-  TEACHER: ["dashboard", "students", "attendance", "classes", "gradebook", "reports", "sms", "ai"],
+  TEACHER: ["dashboard", "students", "attendance", "classes", "gradebook", "reports", "sms", "ai", "daily"],
   ACCOUNTANT: ["dashboard", "students", "admissions", "fees", "daily", "transport", "inventory", "finance", "sms", "ai"],
 };
 

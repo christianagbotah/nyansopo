@@ -29,6 +29,8 @@ export const PAYMENT_LABELS: Record<string, string> = {
   BANK: "Bank Transfer",
   CHEQUE: "Cheque",
   CARD: "Card",
+  WALLET: "Prepaid wallet",
+  TRANSPORT_WALLET: "Transport wallet",
 };
 
 export const FLAG_LABELS: Record<string, string> = {

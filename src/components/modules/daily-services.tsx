@@ -14,7 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatCard, ModuleHeader, LoadingBlock, EmptyState } from "@/components/ui-helpers";
 import { fmtCedi, fmtDate, PAYMENT_LABELS } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
-import { UtensilsCrossed, Wallet, CalendarPlus, Plus, TrendingUp, Search, Droplets, BookOpenCheck, Coffee, HandCoins, CheckCircle2, Printer, Percent } from "lucide-react";
+import { UtensilsCrossed, Wallet, CalendarPlus, Plus, TrendingUp, Search, Droplets, BookOpenCheck, Coffee, HandCoins, CheckCircle2, Printer, Percent, Bus, Settings2, CircleDollarSign, ArrowDownToLine, History, BadgeCheck, UserCheck, Landmark } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ReceiptDocument } from "@/components/receipts";
 
@@ -24,7 +24,16 @@ type Service = {
   today: { billed: number; collected: number; count: number; owedCount: number };
 };
 type LedgerRow = { studentId: string; student: string; classroom: string | null; guardianPhone: string; owed: number; items: Record<string, number>; oldest: string };
-type PosStudent = { id: string; name: string; classroom: string; guardianPhone: string; balance: number; services: { id: string; name: string; price: number }[]; today: { charged: number; owed: number } | null };
+type PosStudent = {
+  id: string; name: string; classroom: string; classroomId: string; guardianPhone: string;
+  balance: number;
+  services: { id: string; name: string; category: string; price: number }[];
+  wallet: { prepaidCents: number; transportCents: number };
+  todayTransport: { id: string; amount: number; status: string; usage: string | null } | null;
+  today: { charged: number; owed: number } | null;
+};
+type WalletTxnRow = { id: string; student: string; wallet: string; kind: string; amount: number; balanceAfter: number; note: string | null; byName: string | null; at: string };
+type DailySettings = { collectionMode: "CLASSROOM" | "CASHIER" | "HYBRID"; teacherPerms: { mode: "ALL" | "NONE" | "SELECTIVE"; classroomIds: string[]; serviceIds: string[] }; classrooms: { id: string; name: string }[] };
 type DailyData = {
   date: string;
   services: Service[];
@@ -34,14 +43,19 @@ type DailyData = {
   ledger: LedgerRow[];
   posStudents: PosStudent[];
   posPayments: { id: string; receiptNo: string; amount: number; method: string; paidAt: string; student: string }[];
+  wallets: { studentId: string; student: string; classroom: string; prepaid: number; transport: number; arrears: number }[];
+  walletTxns: WalletTxnRow[];
+  settings: DailySettings;
 };
 
-const CAT_ICON: Record<string, any> = { MEAL: Coffee, DRINK: Droplets, CLASS: BookOpenCheck, CARE: HandCoins, OTHER: UtensilsCrossed };
+const MODE_LABELS: Record<string, string> = { CLASSROOM: "Classroom only", CASHIER: "Cashier only", HYBRID: "Hybrid (classroom + counter)" };
+
+const CAT_ICON: Record<string, any> = { MEAL: Coffee, DRINK: Droplets, CLASS: BookOpenCheck, CARE: HandCoins, TRANSPORT: Bus, OTHER: UtensilsCrossed };
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const weekdayLabel = (wd: string) => wd.split(",").map((n) => DAY_LABELS[Number(n)]).join(" · ");
 
 export function DailyServices() {
-  const { currentSchoolId, online } = useStore();
+  const { currentSchoolId, online, session } = useStore();
   const [data, setData] = useState<DailyData | null>(null);
   const [tab, setTab] = useState("pos");
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
@@ -51,6 +65,11 @@ export function DailyServices() {
   const [receipt, setReceipt] = useState<any | null>(null);
   const [busy, setBusy] = useState(false);
   const [search, setSearch] = useState("");
+  const [topUpFor, setTopUpFor] = useState<PosStudent | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const isAdmin = session?.role === "SCHOOL_ADMIN" || session?.role === "GROUP_OWNER";
+  const isTeacher = session?.role === "TEACHER";
 
   const load = (d?: string) => {
     if (!currentSchoolId) return;
@@ -65,6 +84,25 @@ export function DailyServices() {
     return (data?.posStudents ?? []).filter((s) => !q || s.name.toLowerCase().includes(q) || s.classroom.toLowerCase().includes(q));
   }, [data, search]);
   const withBalance = useMemo(() => filteredStudents.filter((s) => s.balance > 0), [filteredStudents]);
+
+  /* iedupro §1 collection policy — client mirror of the server gate (server stays authoritative) */
+  const collectGate = (s: PosStudent): { ok: boolean; reason?: string } => {
+    if (!data) return { ok: false };
+    if (isAdmin) return { ok: true };
+    const mode = data.settings.collectionMode;
+    const perms = data.settings.teacherPerms;
+    if (mode === "CLASSROOM" && !isTeacher) return { ok: false, reason: "Classroom-only — the class teacher collects." };
+    if (mode === "CASHIER" && session?.role !== "ACCOUNTANT") return { ok: false, reason: "Cashier-only — see the bursar." };
+    if (isTeacher) {
+      if (perms.mode === "NONE") return { ok: false, reason: "No collection permission." };
+      if (perms.mode === "SELECTIVE") {
+        if (!perms.classroomIds.includes(s.classroomId)) return { ok: false, reason: "Not your class." };
+        const svcIds = s.services.map((x) => x.id);
+        if (svcIds.some((id) => !perms.serviceIds.includes(id))) return { ok: false, reason: "Some fee types are outside your permission." };
+      }
+    }
+    return { ok: true };
+  };
 
   async function generateDay() {
     if (!currentSchoolId) return;
@@ -82,13 +120,19 @@ export function DailyServices() {
     <div>
       <ModuleHeader
         title="Daily Services & Tuck"
-        description="Canteen, breakfast, sachet water, remedial classes — micro-billing charged by the school day. Collect at the POS counter, track every pesewa."
+        description="Canteen, breakfast, sachet water, remedial classes, transport fare — micro-billing charged by the school day. Collect at the counter or in class, track every pesewa."
         actions={
           <div className="flex items-center gap-2 flex-wrap">
+            {data && <Badge variant="secondary" className="gap-1 h-8 px-2.5"><Landmark className="size-3.5" /> {MODE_LABELS[data.settings.collectionMode]}</Badge>}
             <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-40" />
-            <Button size="sm" className="gap-1.5" onClick={generateDay} disabled={busy}>
-              <CalendarPlus className="size-4" /> {data.today.generated ? "Re-generate day" : "Generate day charges"}
+            <Button size="sm" className="h-8 gap-1.5" onClick={generateDay} disabled={busy}>
+              <CalendarPlus className="size-4" /> {data?.today.generated ? "Re-generate day" : "Generate day charges"}
             </Button>
+            {isAdmin && data && (
+              <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={() => setSettingsOpen(true)}>
+                <Settings2 className="size-4" /> Collection policy
+              </Button>
+            )}
           </div>
         }
       />
@@ -103,8 +147,9 @@ export function DailyServices() {
       <Tabs value={tab} onValueChange={setTab} className="mt-5">
         <TabsList>
           <TabsTrigger value="pos">Counter / POS</TabsTrigger>
+          <TabsTrigger value="wallets">Wallets</TabsTrigger>
           <TabsTrigger value="ledger">Ledger & arrears ({data.ledger.length})</TabsTrigger>
-          <TabsTrigger value="services">Services & enrolment</TabsTrigger>
+          {!isTeacher && <TabsTrigger value="services">Services & enrolment</TabsTrigger>}
           <TabsTrigger value="trend">14-day trend</TabsTrigger>
         </TabsList>
 
@@ -137,20 +182,29 @@ export function DailyServices() {
               </CardHeader>
               <CardContent className="max-h-[520px] overflow-y-auto nice-scroll space-y-1.5">
                 {withBalance.length === 0 && <EmptyState icon={<CheckCircle2 className="size-5" />} title="No outstanding daily balances" hint="Everything collected — or generate today's charges first." />}
-                {withBalance.slice(0, 60).map((s) => (
-                  <div key={s.id} className="rounded-lg border p-3 flex flex-wrap items-center justify-between gap-2 hover:bg-secondary/30 transition-colors">
-                    <div className="min-w-0">
-                      <div className="font-medium text-sm truncate">{s.name} <span className="text-muted-foreground font-normal">· {s.classroom}</span></div>
-                      <div className="text-[11px] text-muted-foreground">
-                        {s.services.map((x) => x.name.replace(" (optional)", "").replace(" (canteen)", "").replace(" (remedial)", "")).join(" · ") || "—"}
+                {withBalance.slice(0, 60).map((s) => {
+                  const gate = collectGate(s);
+                  return (
+                    <div key={s.id} className="rounded-lg border p-3 flex flex-wrap items-center justify-between gap-2 hover:bg-secondary/30 transition-colors">
+                      <div className="min-w-0">
+                        <div className="font-medium text-sm truncate">{s.name} <span className="text-muted-foreground font-normal">· {s.classroom}</span></div>
+                        <div className="text-[11px] text-muted-foreground">
+                          {s.services.map((x) => x.name.replace(" (optional)", "").replace(" (canteen)", "").replace(" (remedial)", "")).join(" · ") || "—"}
+                        </div>
+                        {(s.wallet.prepaidCents > 0 || s.wallet.transportCents > 0) && (
+                          <div className="flex gap-1 mt-1">
+                            {s.wallet.prepaidCents > 0 && <Badge variant="outline" className="text-[10px] gap-1"><CircleDollarSign className="size-3" /> prepaid {fmtCedi(s.wallet.prepaidCents)}</Badge>}
+                            {s.wallet.transportCents > 0 && <Badge variant="outline" className="text-[10px] gap-1"><Bus className="size-3" /> transport {fmtCedi(s.wallet.transportCents)}</Badge>}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="font-semibold text-destructive tabular-nums text-sm">{fmtCedi(s.balance)}</span>
+                        <Button size="sm" className="h-8 gap-1" disabled={!gate.ok} title={gate.reason ?? ""} onClick={() => setCollectFor(s)}><Wallet className="size-3.5" /> Collect</Button>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className="font-semibold text-destructive tabular-nums text-sm">{fmtCedi(s.balance)}</span>
-                      <Button size="sm" className="h-8 gap-1" onClick={() => setCollectFor(s)}><Wallet className="size-3.5" /> Collect</Button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </CardContent>
             </Card>
             <div className="space-y-4">
@@ -182,6 +236,84 @@ export function DailyServices() {
                 </CardContent>
               </Card>
             </div>
+          </div>
+        </TabsContent>
+
+        {/* ── WALLETS (iedupro §1: prepaid + transport wallets, top-ups, audit log) ── */}
+        <TabsContent value="wallets">
+          <div className="grid grid-cols-3 gap-3 mb-4">
+            <StatCard icon={<CircleDollarSign className="size-4" />} label="Prepaid wallets" value={fmtCedi(data.wallets.reduce((a, w) => a + w.prepaid, 0), { compact: true })} tone="primary" sub={`${data.wallets.filter((w) => w.prepaid > 0).length} learners holding credit`} />
+            <StatCard icon={<Bus className="size-4" />} label="Transport wallets" value={fmtCedi(data.wallets.reduce((a, w) => a + w.transport, 0), { compact: true })} tone="gold" sub={`${data.wallets.filter((w) => w.transport > 0).length} learners holding credit`} />
+            <StatCard icon={<Percent className="size-4" />} label="Arrears balance" value={fmtCedi(data.wallets.reduce((a, w) => a + w.arrears, 0), { compact: true })} tone={data.wallets.some((w) => w.arrears > 0) ? "danger" : "default"} sub="derived from unpaid charges" />
+          </div>
+          <div className="grid lg:grid-cols-3 gap-4">
+            <Card className="lg:col-span-2">
+              <CardHeader className="pb-3 flex-row items-center justify-between space-y-0">
+                <CardTitle className="text-base">Learner wallets</CardTitle>
+                {!isTeacher && data.posStudents.length > 0 && (
+                  <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={() => setTopUpFor(data.posStudents[0])}>
+                    <ArrowDownToLine className="size-4" /> Top up
+                  </Button>
+                )}
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="overflow-x-auto max-h-[420px] nice-scroll">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 bg-secondary/70 backdrop-blur">
+                      <tr className="text-left border-b">
+                        <th className="px-3 py-2.5 font-medium">Learner</th>
+                        <th className="px-3 py-2.5 font-medium hidden md:table-cell">Class</th>
+                        <th className="px-3 py-2.5 font-medium text-right">Prepaid</th>
+                        <th className="px-3 py-2.5 font-medium text-right">Transport</th>
+                        <th className="px-3 py-2.5 font-medium text-right">Arrears</th>
+                        <th className="px-3 py-2.5 text-right"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.wallets.length === 0 && <tr><td colSpan={6}><EmptyState icon={<BadgeCheck className="size-5" />} title="No wallet balances" hint="Top up a learner to open a prepaid wallet." /></td></tr>}
+                      {data.wallets.map((w) => {
+                        const ps = data.posStudents.find((p) => p.id === w.studentId) ?? null;
+                        return (
+                          <tr key={w.studentId} className="border-b last:border-0 hover:bg-secondary/30">
+                            <td className="px-3 py-2.5"><div className="font-medium">{w.student}</div></td>
+                            <td className="px-3 py-2.5 hidden md:table-cell text-muted-foreground">{w.classroom}</td>
+                            <td className="px-3 py-2.5 text-right tabular-nums">{w.prepaid > 0 ? fmtCedi(w.prepaid) : <span className="text-muted-foreground">—</span>}</td>
+                            <td className="px-3 py-2.5 text-right tabular-nums">{w.transport > 0 ? fmtCedi(w.transport) : <span className="text-muted-foreground">—</span>}</td>
+                            <td className="px-3 py-2.5 text-right tabular-nums">{w.arrears > 0 ? <span className="text-destructive font-semibold">{fmtCedi(w.arrears)}</span> : <span className="text-muted-foreground">—</span>}</td>
+                            <td className="px-3 py-2.5 text-right">
+                              <div className="flex gap-1.5 justify-end">
+                                {!isTeacher && ps && <Button size="sm" variant="ghost" className="h-7" onClick={() => setTopUpFor(ps)}>Top up</Button>}
+                                {ps && ps.balance > 0 && <Button size="sm" variant="outline" className="h-7" onClick={() => setCollectFor(ps)}>Collect</Button>}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><History className="size-4 text-primary" /> Wallet activity</CardTitle></CardHeader>
+              <CardContent className="space-y-2 max-h-[420px] overflow-y-auto nice-scroll">
+                {data.walletTxns.length === 0 && <EmptyState title="No wallet activity yet" />}
+                {data.walletTxns.map((t) => (
+                  <div key={t.id} className="flex items-center justify-between gap-2 text-sm border-b last:border-0 pb-2 last:pb-0">
+                    <div className="min-w-0">
+                      <div className="font-medium truncate">{t.student}</div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {t.wallet === "PREPAID" ? "Prepaid" : "Transport"} · {t.kind === "TOPUP" ? "top-up" : t.kind === "PAY" ? "paid charges" : "correction"}{t.byName ? ` · ${t.byName}` : ""}
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className={`tabular-nums font-semibold ${t.kind === "PAY" ? "text-destructive" : "text-emerald-600"}`}>{t.kind === "PAY" ? "−" : "+"}{fmtCedi(t.amount)}</div>
+                      <div className="text-[11px] text-muted-foreground">bal {fmtCedi(t.balanceAfter)} · {fmtDate(t.at)}</div>
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
           </div>
         </TabsContent>
 
@@ -323,6 +455,23 @@ export function DailyServices() {
       />
       {receipt && <ReceiptDialog receipt={receipt} onOpenChange={(o) => !o && setReceipt(null)} />}
 
+      {/* top-up dialog */}
+      <TopUpDialog
+        students={data.posStudents}
+        initialStudent={topUpFor}
+        open={!!topUpFor}
+        onOpenChange={(o) => !o && setTopUpFor(null)}
+        onDone={() => { setTopUpFor(null); load(date); }}
+      />
+
+      {/* collection policy dialog */}
+      <DailySettingsDialog
+        open={settingsOpen}
+        data={data}
+        onOpenChange={(o) => !o && setSettingsOpen(false)}
+        onDone={() => { setSettingsOpen(false); load(date); }}
+      />
+
       {/* service dialog */}
       <ServiceDialog
         service={svcDialog}
@@ -346,26 +495,54 @@ function CollectDialog({ student, date, online, onOpenChange, onDone }: { studen
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState("MOMO_MTN");
   const [reference, setReference] = useState("");
+  const [paidOn, setPaidOn] = useState(date);
+  const [payFrom, setPayFrom] = useState<"COUNTER" | "PREPAID" | "TRANSPORT">("COUNTER");
+  const [tendered, setTendered] = useState("");
+  const [usage, setUsage] = useState<string>("");
+  const [markPresent, setMarkPresent] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => { if (student) { setAmount((student.balance / 100).toFixed(2)); setReference(""); } }, [student]);
+  const transportSvc = student?.services.find((x) => x.category === "TRANSPORT");
+
+  useEffect(() => {
+    if (student) {
+      setAmount((student.balance / 100).toFixed(2));
+      setReference("");
+      setPaidOn(date);
+      setPayFrom("COUNTER");
+      setTendered("");
+      setMarkPresent(false);
+      setUsage("");
+    }
+  }, [student, date]);
+
+  const cents = Math.round(parseFloat(amount || "0") * 100);
+  const walletCap = payFrom === "PREPAID" ? (student?.wallet.prepaidCents ?? 0) : payFrom === "TRANSPORT" ? (student?.wallet.transportCents ?? 0) : Infinity;
+  const capped = Math.min(cents, walletCap);
+  const change = Math.max(0, Math.round(parseFloat(tendered || "0") * 100) - cents);
 
   async function submit() {
     if (!student || !currentSchoolId) return;
-    const cents = Math.round(parseFloat(amount || "0") * 100);
     if (!cents || cents <= 0) { toast({ title: "Enter a valid amount" }); return; }
+    if (payFrom !== "COUNTER" && cents > walletCap) { toast({ title: "Wallet too small", description: `Balance is ${fmtCedi(walletCap)} — lower the amount.` }); return; }
     setBusy(true);
     try {
-      const payload = { action: "pos-collect", studentId: student.id, amountCents: cents, method, reference: reference || undefined, date };
+      const payload = {
+        action: "pos-collect", studentId: student.id, amountCents: cents,
+        method: payFrom === "COUNTER" ? method : undefined,
+        payFrom, reference: reference || undefined, paidAt: paidOn,
+        transportUsage: usage || undefined, markPresent, date: paidOn,
+      };
       const res = await apiPostQueueable<any>(
         `/api/school/${currentSchoolId}/ops/daily`, "payment", payload,
         `Daily services ${fmtCedi(cents)} — ${student.name}`,
-        (p, clientId) => ({ ...p, category: "DAILY", schoolId: currentSchoolId, studentId: student.id, amountCents: cents, method, paidAt: new Date().toISOString(), clientId })
+        (p, clientId) => ({ ...p, category: "DAILY", schoolId: currentSchoolId, studentId: student.id, amountCents: cents, method: payFrom === "COUNTER" ? method : payFrom === "PREPAID" ? "WALLET" : "TRANSPORT_WALLET", paidAt: paidOn, clientId })
       );
       if (res.queued) {
         toast({ title: "Queued offline", description: "Receipt will be issued when you reconnect." });
         onDone(null);
       } else {
+        if (res.data?.present === "marked" || res.data?.present === "updated") toast({ title: "Marked present", description: "Class register updated." });
         onDone(res.data?.receipt ?? { ...res.data?.payment, student: student.name });
       }
     } catch (e: any) { toast({ title: "Collection failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
@@ -378,27 +555,92 @@ function CollectDialog({ student, date, online, onOpenChange, onDone }: { studen
           <DialogTitle className="flex items-center gap-2"><Wallet className="size-4" /> Collect daily payment — {student?.name}</DialogTitle>
           <DialogDescription>
             {student?.classroom} · outstanding <b className="text-destructive">{student ? fmtCedi(student.balance) : ""}</b>
+            {student && student.wallet.prepaidCents > 0 && <> · prepaid <b>{fmtCedi(student.wallet.prepaidCents)}</b></>}
+            {student && student.wallet.transportCents > 0 && <> · transport wallet <b>{fmtCedi(student.wallet.transportCents)}</b></>}
             {!online && " · offline — will queue & sync"}
           </DialogDescription>
         </DialogHeader>
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">
             <Label>Amount (GH₵) *</Label>
-            <Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
+            <Input type="number" step="0.01" max={payFrom === "COUNTER" ? undefined : (walletCap / 100).toFixed(2)} value={amount} onChange={(e) => setAmount(e.target.value)} />
+            {payFrom !== "COUNTER" && capped < cents && (
+              <p className="text-[11px] text-destructive">Wallet balance is {fmtCedi(walletCap)} — amount will be capped.</p>
+            )}
           </div>
           <div className="space-y-1.5">
-            <Label>Method</Label>
-            <Select value={method} onValueChange={setMethod}>
+            <Label>Payment date</Label>
+            <Input type="date" value={paidOn} onChange={(e) => setPaidOn(e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Pay from</Label>
+            <Select value={payFrom} onValueChange={(v: any) => setPayFrom(v)}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                {Object.entries(PAYMENT_LABELS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                <SelectItem value="COUNTER">Counter — cash / MoMo</SelectItem>
+                {student && student.wallet.prepaidCents > 0 && <SelectItem value="PREPAID">Prepaid wallet ({fmtCedi(student.wallet.prepaidCents)})</SelectItem>}
+                {student && student.wallet.transportCents > 0 && <SelectItem value="TRANSPORT">Transport wallet ({fmtCedi(student.wallet.transportCents)})</SelectItem>}
               </SelectContent>
             </Select>
           </div>
+          {payFrom === "COUNTER" ? (
+            <div className="space-y-1.5">
+              <Label>Method</Label>
+              <Select value={method} onValueChange={setMethod}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {Object.entries(PAYMENT_LABELS).filter(([k]) => k !== "WALLET" && k !== "TRANSPORT_WALLET").map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              <Label>Tendered (GH₵)</Label>
+              <Input type="number" step="0.5" value={tendered} onChange={(e) => setTendered(e.target.value)} placeholder="0.00" disabled />
+              <p className="text-[11px] text-muted-foreground">Wallet payments deduct directly — no tender needed.</p>
+            </div>
+          )}
+          {payFrom === "COUNTER" && (
+            <div className="space-y-1.5">
+              <Label>Tendered (GH₵)</Label>
+              <Input type="number" step="0.5" value={tendered} onChange={(e) => setTendered(e.target.value)} placeholder="e.g. 20.00" />
+              {tendered && change >= 0 && (
+                <p className="text-[11px]">Change: <b className="text-emerald-600">{fmtCedi(change)}</b></p>
+              )}
+              {tendered && change < 0 && (
+                <p className="text-[11px] text-destructive">Short by {fmtCedi(-change)}</p>
+              )}
+            </div>
+          )}
           <div className="space-y-1.5 col-span-2">
             <Label>MoMo / reference</Label>
             <Input placeholder="e.g. MP2401.5533.77" value={reference} onChange={(e) => setReference(e.target.value)} />
           </div>
+          {transportSvc && (
+            <div className="space-y-1.5 col-span-2">
+              <Label>Transport usage today</Label>
+              <Select value={usage} onValueChange={setUsage}>
+                <SelectTrigger><SelectValue placeholder="Both ways — full fare" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="BOTH">Both ways — full fare</SelectItem>
+                  <SelectItem value="MORNING">Morning only — half fare</SelectItem>
+                  <SelectItem value="AFTERNOON">Afternoon only — half fare</SelectItem>
+                  <SelectItem value="NOT_USING">Not using bus — waive fare</SelectItem>
+                  <SelectItem value="BOARDED">Already boarded — keep fare</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground">
+                {student?.todayTransport
+                  ? `Today's ${transportSvc.name}: ${fmtCedi(student.todayTransport.amount)} (${student.todayTransport.status.toLowerCase()})`
+                  : "No transport charge generated for today — usage will apply when it exists."}
+              </p>
+            </div>
+          )}
+          <label className="col-span-2 flex items-center gap-2 text-sm rounded-lg border p-2.5 cursor-pointer hover:bg-secondary/40">
+            <input type="checkbox" checked={markPresent} onChange={(e) => setMarkPresent(e.target.checked)} className="accent-primary" />
+            <UserCheck className="size-4 text-primary" />
+            <span>Mark present in class register</span>
+          </label>
         </div>
         <p className="text-xs text-muted-foreground">Charges settle oldest-first. A receipt SMS goes to {student?.guardianPhone} automatically.</p>
         <DialogFooter>
@@ -589,6 +831,232 @@ function EnrollDialog({ service, students, onOpenChange, onDone }: { service: Se
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button onClick={submit} disabled={busy || !picked.length}>{busy ? "Enrolling…" : `Enrol ${picked.length || ""} learner${picked.length === 1 ? "" : "s"}`}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ── TOP-UP DIALOG (iedupro §1 wallets): credit a prepaid or transport wallet ── */
+function TopUpDialog({ students, initialStudent, open, onOpenChange, onDone }: {
+  students: PosStudent[]; initialStudent: PosStudent | null; open: boolean;
+  onOpenChange: (o: boolean) => void; onDone: () => void;
+}) {
+  const { currentSchoolId } = useStore();
+  const [studentId, setStudentId] = useState("");
+  const [wallet, setWallet] = useState<"PREPAID" | "TRANSPORT">("PREPAID");
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
+  const [asAdjust, setAsAdjust] = useState(false);
+  const [search, setSearch] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setStudentId(initialStudent?.id ?? "");
+      setWallet("PREPAID"); setAmount(""); setNote(""); setAsAdjust(false); setSearch("");
+    }
+  }, [open, initialStudent]);
+
+  const picked = students.find((s) => s.id === studentId) ?? null;
+  const currentBal = picked ? (wallet === "PREPAID" ? picked.wallet.prepaidCents : picked.wallet.transportCents) : 0;
+
+  const list = useMemo(() => {
+    const q = search.toLowerCase();
+    return students.filter((s) => !q || s.name.toLowerCase().includes(q) || s.classroom.toLowerCase().includes(q)).slice(0, 200);
+  }, [students, search]);
+
+  async function submit() {
+    if (!currentSchoolId || !studentId) { toast({ title: "Pick a learner first" }); return; }
+    const cents = Math.round(parseFloat(amount || "0") * 100);
+    if (!cents || cents < 0) { toast({ title: "Enter a valid amount" }); return; }
+    if (asAdjust && wallet === "PREPAID" ? !picked?.wallet : false) { toast({ title: "No wallet to adjust" }); return; }
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/daily`, {
+        action: asAdjust ? "wallet-adjust" : "wallet-topup",
+        studentId, wallet, amountCents: cents, note: note || undefined,
+      });
+      toast({
+        title: asAdjust ? "Wallet corrected" : `${wallet === "PREPAID" ? "Prepaid" : "Transport"} wallet topped up`,
+        description: asAdjust ? `${picked?.name} → ${fmtCedi(cents)}` : `${picked?.name} +${fmtCedi(cents)}`,
+      });
+      onDone();
+    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><ArrowDownToLine className="size-4" /> {asAdjust ? "Correct wallet balance" : "Top up a wallet"}</DialogTitle>
+          <DialogDescription>
+            Prepaid wallets pay for any daily service; transport wallets are reserved for bus fare.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="relative">
+            <Search className="size-4 absolute left-2.5 top-2.5 text-muted-foreground" />
+            <Input placeholder="Search learner…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-8" />
+          </div>
+          <div className="border rounded-lg max-h-44 overflow-y-auto nice-scroll">
+            {list.map((s) => (
+              <label key={s.id} className={`flex items-center gap-2.5 px-3 py-2 border-b last:border-0 cursor-pointer text-sm ${studentId === s.id ? "bg-primary/10" : "hover:bg-secondary/40"}`}>
+                <input type="radio" checked={studentId === s.id} onChange={() => setStudentId(s.id)} className="accent-primary" />
+                <span className="flex-1">{s.name}</span>
+                <span className="text-xs text-muted-foreground">{s.classroom}</span>
+                <span className="text-xs text-muted-foreground">
+                  {s.wallet.prepaidCents > 0 && <>prepaid {fmtCedi(s.wallet.prepaidCents)} </>}
+                  {s.wallet.transportCents > 0 && <>· bus {fmtCedi(s.wallet.transportCents)}</>}
+                </span>
+              </label>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Wallet</Label>
+              <Select value={wallet} onValueChange={(v: any) => setWallet(v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="PREPAID">Prepaid — any daily service</SelectItem>
+                  <SelectItem value="TRANSPORT">Transport — bus fare only</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>{asAdjust ? "New balance (GH₵)" : "Amount (GH₵)"}</Label>
+              <Input type="number" step="0.5" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={asAdjust ? "0.00" : "e.g. 20.00"} />
+              {picked && !asAdjust && <p className="text-[11px] text-muted-foreground">Current {wallet === "PREPAID" ? "prepaid" : "transport"} balance: {fmtCedi(currentBal)}</p>}
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Note — optional</Label>
+            <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder={asAdjust ? "reason for correction" : "e.g. Monday top-up from guardian"} />
+          </div>
+          <label className="flex items-center gap-2 text-sm rounded-lg border p-2.5 cursor-pointer hover:bg-secondary/40">
+            <input type="checkbox" checked={asAdjust} onChange={(e) => setAsAdjust(e.target.checked)} className="accent-primary" />
+            <span>Set an exact balance instead (correction)</span>
+          </label>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={submit} disabled={busy || !studentId}>{busy ? "Saving…" : asAdjust ? "Correct balance" : "Top up"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ── COLLECTION POLICY DIALOG (iedupro §1): mode + teacher permission matrix ── */
+function DailySettingsDialog({ open, data, onOpenChange, onDone }: {
+  open: boolean; data: DailyData | null; onOpenChange: (o: boolean) => void; onDone: () => void;
+}) {
+  const { currentSchoolId } = useStore();
+  const [mode, setMode] = useState<"CLASSROOM" | "CASHIER" | "HYBRID">("HYBRID");
+  const [permMode, setPermMode] = useState<"ALL" | "NONE" | "SELECTIVE">("ALL");
+  const [classIds, setClassIds] = useState<string[]>([]);
+  const [svcIds, setSvcIds] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (open && data) {
+      setMode(data.settings.collectionMode);
+      setPermMode(data.settings.teacherPerms.mode);
+      setClassIds(data.settings.teacherPerms.classroomIds);
+      setSvcIds(data.settings.teacherPerms.serviceIds);
+    }
+  }, [open, data]);
+
+  if (!data) return null;
+  const activeServices = data.services.filter((s) => s.active);
+  const toggle = (arr: string[], v: string, set: (a: string[]) => void) => set(arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v]);
+
+  async function submit() {
+    if (!currentSchoolId) return;
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/daily`, {
+        action: "settings-save",
+        collectionMode: mode,
+        teacherPerms: permMode === "SELECTIVE" ? { mode: permMode, classroomIds: classIds, serviceIds: svcIds } : { mode: permMode, classroomIds: [], serviceIds: [] },
+      });
+      toast({ title: "Collection policy saved", description: `${MODE_LABELS[mode]} · teacher permission: ${permMode === "ALL" ? "all fee types" : permMode === "NONE" ? "none" : "selective"}.` });
+      onDone();
+    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
+  }
+
+  const MODE_CARDS: { id: "CLASSROOM" | "CASHIER" | "HYBRID"; title: string; desc: string; icon: any }[] = [
+    { id: "CLASSROOM", title: "Classroom only", desc: "Class teachers collect in class; the bursar's counter is closed for daily fees.", icon: UserCheck },
+    { id: "CASHIER", title: "Cashier only", desc: "Only the bursar's counter may collect — teachers cannot take money.", icon: Landmark },
+    { id: "HYBRID", title: "Hybrid", desc: "Collect either in class or at the counter — the default.", icon: CircleDollarSign },
+  ];
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><Settings2 className="size-4" /> Daily-fee collection policy</DialogTitle>
+          <DialogDescription>Who may collect daily fees, and which fee types teachers may touch (iedupro parity).</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <Label className="text-xs uppercase tracking-wide text-muted-foreground">Collection mode</Label>
+            <div className="grid gap-2">
+              {MODE_CARDS.map((m) => (
+                <button key={m.id} type="button" onClick={() => setMode(m.id)}
+                  className={`flex items-start gap-2.5 rounded-lg border p-3 text-left transition-colors ${mode === m.id ? "border-primary bg-primary/5" : "hover:bg-secondary/40"}`}>
+                  <m.icon className={`size-4 mt-0.5 ${mode === m.id ? "text-primary" : "text-muted-foreground"}`} />
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium">{m.title}{mode === m.id && <Badge className="ml-2 h-4 px-1.5 text-[10px]" variant="secondary">selected</Badge>}</span>
+                    <span className="block text-xs text-muted-foreground">{m.desc}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs uppercase tracking-wide text-muted-foreground">Teacher collection permission</Label>
+            <Select value={permMode} onValueChange={(v: any) => setPermMode(v)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">All — every teacher, every fee type</SelectItem>
+                <SelectItem value="NONE">None — teachers cannot collect</SelectItem>
+                <SelectItem value="SELECTIVE">Selective — per class & fee type</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {permMode === "SELECTIVE" && (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Classes</Label>
+                <div className="border rounded-lg max-h-40 overflow-y-auto nice-scroll">
+                  {data.settings.classrooms.map((c) => (
+                    <label key={c.id} className="flex items-center gap-2 px-2.5 py-1.5 border-b last:border-0 text-sm hover:bg-secondary/40 cursor-pointer">
+                      <input type="checkbox" checked={classIds.includes(c.id)} onChange={() => toggle(classIds, c.id, setClassIds)} className="accent-primary" />
+                      <span className="truncate">{c.name}</span>
+                    </label>
+                  ))}
+                </div>
+                <p className="text-[11px] text-muted-foreground">{classIds.length} of {data.settings.classrooms.length} classes</p>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Fee types</Label>
+                <div className="border rounded-lg max-h-40 overflow-y-auto nice-scroll">
+                  {activeServices.map((s) => (
+                    <label key={s.id} className="flex items-center gap-2 px-2.5 py-1.5 border-b last:border-0 text-sm hover:bg-secondary/40 cursor-pointer">
+                      <input type="checkbox" checked={svcIds.includes(s.id)} onChange={() => toggle(svcIds, s.id, setSvcIds)} className="accent-primary" />
+                      <span className="truncate">{s.name}</span>
+                    </label>
+                  ))}
+                </div>
+                <p className="text-[11px] text-muted-foreground">{svcIds.length} of {activeServices.length} services</p>
+              </div>
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={submit} disabled={busy}>{busy ? "Saving…" : "Save policy"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

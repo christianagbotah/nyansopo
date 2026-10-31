@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
-import { generateDayCharges, settleDailyCharges, effectivePrice } from "@/lib/daily-billing";
-import { sendSms, sendAutomated } from "@/lib/sms";
+import { generateDayCharges, settleDailyCharges, effectivePrice, applyTransportUsage, parseTeacherPerms, DEFAULT_TEACHER_PERMS, collectionAllowed, TRANSPORT_USAGES, type CollectionMode, type TeacherPerms, type TransportUsage } from "@/lib/daily-billing";
+import { sendAutomated } from "@/lib/sms";
 import { dailyServicesReceipt } from "@/lib/receipt-payload";
 
-// ── GET /api/school/[id]/ops/daily — services, ledger, POS workspace ──
+// ── GET /api/school/[id]/ops/daily — services, ledger, POS, wallets, settings ──
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: schoolId } = await params;
   const auth = await opsAuth(req, schoolId, "GET");
@@ -109,15 +109,36 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     e.charged += c.amountCents;
     if (c.status === "OWED") e.owed += c.amountCents;
   });
+
+  // ── wallets (iedupro §1): prepaid + transport balances, arrears derived from ledger ──
+  const walletRows = await db.studentWallet.findMany({ where: { schoolId } });
+  const walletByStudent: Record<string, { prepaidCents: number; transportCents: number }> = {};
+  walletRows.forEach((w) => (walletByStudent[w.studentId] = { prepaidCents: w.prepaidCents, transportCents: w.transportCents }));
+  const walletTxns = await db.walletTxn.findMany({ where: { schoolId }, orderBy: { at: "desc" }, take: 60, include: { student: true } });
+
+  // today's transport-fare charge per student (usage picker in the collect dialog)
+  const todayTransport = todayCharges.filter((c) => c.service.category === "TRANSPORT");
+  const transportByStudent: Record<string, { id: string; amount: number; status: string; usage: string | null }> = {};
+  todayTransport.forEach((c) => (transportByStudent[c.studentId] = { id: c.id, amount: c.amountCents, status: c.status, usage: c.usage }));
+
   const posStudents = studentRows.map((r) => ({
     id: r.student.id,
     name: `${r.student.firstName} ${r.student.lastName}`,
     classroom: r.classroom.name,
+    classroomId: r.classroomId,
     guardianPhone: r.student.guardianPhone,
-    services: r.student.serviceEnrollments.map((se) => ({ id: se.serviceId, name: se.service.name, price: effectivePrice(se.service, se) })),
+    services: r.student.serviceEnrollments.map((se) => ({ id: se.serviceId, name: se.service.name, category: se.service.category, price: effectivePrice(se.service, se) })),
     balance: (ledger[r.student.id]?.owed ?? 0),
+    wallet: walletByStudent[r.student.id] ?? { prepaidCents: 0, transportCents: 0 },
+    todayTransport: transportByStudent[r.student.id] ?? null,
     today: todayByStudent[r.student.id] ?? null,
   }));
+
+  // ── collection policy settings (iedupro §1) ──
+  const settingRows = await db.opsSetting.findMany({ where: { schoolId, key: { in: ["DAILY_COLLECTION_MODE", "DAILY_TEACHER_PERMS"] } } });
+  const collectionMode = ((settingRows.find((r) => r.key === "DAILY_COLLECTION_MODE")?.value ?? "HYBRID") as CollectionMode);
+  const teacherPerms = parseTeacherPerms(settingRows.find((r) => r.key === "DAILY_TEACHER_PERMS")?.value);
+  const allClassrooms = await db.classroom.findMany({ where: { schoolId }, orderBy: { name: "asc" }, select: { id: true, name: true } });
 
   return NextResponse.json({
     date: dateStr,
@@ -144,6 +165,15 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     ledger: Object.values(ledger).sort((a, b) => b.owed - a.owed),
     posStudents,
     posPayments: posPayments.map((p) => ({ id: p.id, receiptNo: p.receiptNo, amount: p.amountCents, method: p.method, paidAt: p.paidAt, student: p.student ? `${p.student.firstName} ${p.student.lastName}` : "—" })),
+    wallets: posStudents
+      .filter((s) => s.wallet.prepaidCents > 0 || s.wallet.transportCents > 0 || s.balance > 0)
+      .map((s) => ({ studentId: s.id, student: s.name, classroom: s.classroom, prepaid: s.wallet.prepaidCents, transport: s.wallet.transportCents, arrears: s.balance })),
+    walletTxns: walletTxns.map((t) => ({ id: t.id, student: `${t.student.firstName} ${t.student.lastName}`, wallet: t.wallet, kind: t.kind, amount: Math.abs(t.amountCents), balanceAfter: t.balanceAfter, note: t.note, byName: t.byName, at: t.at })),
+    settings: {
+      collectionMode,
+      teacherPerms,
+      classrooms: allClassrooms,
+    },
   });
 }
 
@@ -155,6 +185,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const user = auth.user;
   const body = await req.json().catch(() => ({}));
   const action: string = body.action;
+  // management actions are for admins & the bursar — teachers may only collect (pos-collect)
+  const isManager = user.role === "SCHOOL_ADMIN" || user.role === "GROUP_OWNER" || user.role === "ACCOUNTANT";
+  const needsManager = ["save-service", "toggle-service", "enroll", "unenroll", "settings-save", "wallet-topup", "wallet-adjust", "waive-charge", "waive-student-day"].includes(action);
+  if (needsManager && !isManager) return NextResponse.json({ error: "Teachers may collect payments — see the bursar for service, wallet and waiver changes." }, { status: 403 });
 
   if (action === "save-service") {
     const { id, name, category, priceCents, chargeMode, weekdays } = body;
@@ -197,20 +231,150 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json(res);
   }
 
-  if (action === "pos-collect") {
-    const { studentId, amountCents, method, reference } = body;
+  if (action === "settings-save") {
+    // admins only — the collection policy is a management decision
+    if (user.role !== "SCHOOL_ADMIN" && user.role !== "GROUP_OWNER")
+      return NextResponse.json({ error: "Only administrators can change the collection policy." }, { status: 403 });
+    const mode = ["CLASSROOM", "CASHIER", "HYBRID"].includes(body.collectionMode) ? body.collectionMode as string : "HYBRID";
+    const permsIn = body.teacherPerms ?? {};
+    const perms: TeacherPerms = {
+      mode: ["ALL", "NONE", "SELECTIVE"].includes(permsIn.mode) ? permsIn.mode : "ALL",
+      classroomIds: Array.isArray(permsIn.classroomIds) ? permsIn.classroomIds.filter((x: unknown) => typeof x === "string") : [],
+      serviceIds: Array.isArray(permsIn.serviceIds) ? permsIn.serviceIds.filter((x: unknown) => typeof x === "string") : [],
+    };
+    for (const [key, value] of [["DAILY_COLLECTION_MODE", mode], ["DAILY_TEACHER_PERMS", JSON.stringify(perms)] as [string, string]] as [string, string][]) {
+      await db.opsSetting.upsert({ where: { schoolId_key: { schoolId, key } }, update: { value }, create: { schoolId, key, value } });
+    }
+    return NextResponse.json({ collectionMode: mode, teacherPerms: perms });
+  }
+
+  if (action === "wallet-topup") {
+    const { studentId, wallet, amountCents, note } = body;
+    if (!studentId) return NextResponse.json({ error: "studentId required" }, { status: 400 });
+    if (wallet !== "PREPAID" && wallet !== "TRANSPORT") return NextResponse.json({ error: "wallet must be PREPAID or TRANSPORT" }, { status: 400 });
+    const amt = Math.round(Number(amountCents));
+    if (!amt || amt <= 0) return NextResponse.json({ error: "Enter a top-up amount above zero" }, { status: 400 });
     const student = await db.student.findUnique({ where: { id: studentId } });
     if (!student) return NextResponse.json({ error: "Learner not found" }, { status: 404 });
+    const existing = await db.studentWallet.findUnique({ where: { studentId } });
+    const w = existing
+      ? await db.studentWallet.update({
+          where: { studentId },
+          data: wallet === "PREPAID" ? { prepaidCents: { increment: amt } } : { transportCents: { increment: amt } },
+        })
+      : await db.studentWallet.create({
+          data: { schoolId, studentId, ...(wallet === "PREPAID" ? { prepaidCents: amt } : { transportCents: amt }) },
+        });
+    const balanceAfter = wallet === "PREPAID" ? w.prepaidCents : w.transportCents;
+    const txn = await db.walletTxn.create({
+      data: { schoolId, studentId, wallet, kind: "TOPUP", amountCents: amt, balanceAfter, note: note ?? null, byName: user.fullName },
+    });
+    return NextResponse.json({ wallet: w, txn });
+  }
+
+  if (action === "wallet-adjust") {
+    // correction: set a wallet to an exact balance (audit-trailed)
+    const { studentId, wallet, amountCents, note } = body;
+    if (!studentId) return NextResponse.json({ error: "studentId required" }, { status: 400 });
+    if (wallet !== "PREPAID" && wallet !== "TRANSPORT") return NextResponse.json({ error: "wallet must be PREPAID or TRANSPORT" }, { status: 400 });
+    const target = Math.max(0, Math.round(Number(amountCents) || 0));
+    const w0 = await db.studentWallet.findUnique({ where: { studentId } });
+    if (!w0) return NextResponse.json({ error: "No wallet to adjust — top it up first" }, { status: 404 });
+    const before = wallet === "PREPAID" ? w0.prepaidCents : w0.transportCents;
+    const w = await db.studentWallet.update({
+      where: { studentId },
+      data: wallet === "PREPAID" ? { prepaidCents: target } : { transportCents: target },
+    });
+    const txn = await db.walletTxn.create({
+      data: { schoolId, studentId, wallet, kind: "ADJUST", amountCents: target - before, balanceAfter: target, note: note ?? "balance correction", byName: user.fullName },
+    });
+    return NextResponse.json({ wallet: w, txn });
+  }
+
+  if (action === "pos-collect") {
+    const { studentId, amountCents, method, reference, payFrom, paidAt, transportUsage, markPresent } = body;
+    const student = await db.student.findUnique({ where: { id: studentId } });
+    if (!student) return NextResponse.json({ error: "Learner not found" }, { status: 404 });
+
+    // transport usage first (iedupro §1): may waive or halve today's fare before settling
+    if (transportUsage) {
+      if (!TRANSPORT_USAGES.includes(transportUsage)) return NextResponse.json({ error: "Invalid transport usage" }, { status: 400 });
+      await applyTransportUsage(db, schoolId, studentId, new Date(body.date ?? new Date().toISOString().slice(0, 10)), transportUsage as TransportUsage);
+    }
+
     const owed = await db.dailyCharge.aggregate({ where: { studentId, status: "OWED" }, _sum: { amountCents: true } });
     const owedCents = owed._sum.amountCents ?? 0;
     if (owedCents <= 0) return NextResponse.json({ error: "No outstanding daily balance" }, { status: 400 });
     const amt = Math.max(0, Math.min(Number(amountCents), owedCents));
     if (amt <= 0) return NextResponse.json({ error: "Amount exceeds balance or is invalid" }, { status: 400 });
+
+    // ── collection policy (iedupro §1): mode + teacher permission matrix ──
+    const settingRows = await db.opsSetting.findMany({ where: { schoolId, key: { in: ["DAILY_COLLECTION_MODE", "DAILY_TEACHER_PERMS"] } } });
+    const mode = ((settingRows.find((r) => r.key === "DAILY_COLLECTION_MODE")?.value ?? "HYBRID") as CollectionMode);
+    const perms = parseTeacherPerms(settingRows.find((r) => r.key === "DAILY_TEACHER_PERMS")?.value);
+    const en = await db.enrollment.findFirst({ where: { studentId, status: "ACTIVE", schoolId } });
+    const scopeCharges = await db.dailyCharge.findMany({ where: { studentId, status: "OWED" }, include: { service: true } });
+    const gate = collectionAllowed(user.role, mode, perms, {
+      classroomId: en?.classroomId ?? null,
+      serviceIds: [...new Set(scopeCharges.map((c) => c.serviceId))],
+    });
+    if (!gate.ok) return NextResponse.json({ error: gate.reason ?? "Not permitted" }, { status: 403 });
+
+    // ── wallet payment paths (iedupro §1) ──
+    const walletKind = payFrom === "PREPAID" ? "PREPAID" : payFrom === "TRANSPORT" ? "TRANSPORT" : null;
+    let walletTxnId: string | null = null;
+    let payMethod = method ?? "CASH";
+    let onlyCategory: string | undefined;
+    if (walletKind === "PREPAID") {
+      const w = await db.studentWallet.findUnique({ where: { studentId } });
+      if (!w || w.prepaidCents < amt) return NextResponse.json({ error: `Prepaid wallet short — balance is GH₵${(w?.prepaidCents ?? 0) / 100}` }, { status: 400 });
+      await db.studentWallet.update({ where: { studentId }, data: { prepaidCents: { decrement: amt } } });
+      const t = await db.walletTxn.create({ data: { schoolId, studentId, wallet: "PREPAID", kind: "PAY", amountCents: -amt, balanceAfter: w.prepaidCents - amt, note: reference ?? null, byName: user.fullName } });
+      walletTxnId = t.id;
+      payMethod = "WALLET";
+    } else if (walletKind === "TRANSPORT") {
+      const w = await db.studentWallet.findUnique({ where: { studentId } });
+      if (!w || w.transportCents < amt) return NextResponse.json({ error: `Transport wallet short — balance is GH₵${(w?.transportCents ?? 0) / 100}` }, { status: 400 });
+      await db.studentWallet.update({ where: { studentId }, data: { transportCents: { decrement: amt } } });
+      const t = await db.walletTxn.create({ data: { schoolId, studentId, wallet: "TRANSPORT", kind: "PAY", amountCents: -amt, balanceAfter: w.transportCents - amt, note: reference ?? null, byName: user.fullName } });
+      walletTxnId = t.id;
+      payMethod = "TRANSPORT_WALLET";
+      onlyCategory = "TRANSPORT"; // transport wallet may only clear transport-fare charges
+    }
+
     const seq = (await db.payment.count({ where: { schoolId } })) + 1001;
     const payment = await db.payment.create({
-      data: { receiptNo: `RCP-2026-${String(seq).padStart(5, "0")}`, studentId, category: "DAILY", schoolId, amountCents: amt, method: method ?? "CASH", reference: reference ?? null, receivedByName: user.fullName, paidAt: new Date() },
+      data: {
+        receiptNo: `RCP-2026-${String(seq).padStart(5, "0")}`, studentId, category: "DAILY", schoolId,
+        amountCents: amt, method: payMethod, reference: reference ?? null,
+        receivedByName: user.fullName,
+        paidAt: paidAt ? new Date(paidAt) : new Date(),
+      },
     });
-    const applied = await settleDailyCharges(db, payment.id, studentId, amt);
+    const applied = await settleDailyCharges(db, payment.id, studentId, amt, onlyCategory);
+
+    // ── mark present (iedupro §1): flip today's class attendance to PRESENT ──
+    let present: string | null = null;
+    if (markPresent) {
+      const d = new Date(body.date ?? new Date().toISOString().slice(0, 10));
+      const dStart = new Date(d); dStart.setHours(0, 0, 0, 0);
+      const dEnd = new Date(d); dEnd.setHours(23, 59, 59, 999);
+      if (!en) present = "no-class";
+      else {
+        const session = await db.attendanceSession.findFirst({ where: { classroomId: en.classroomId, date: { gte: dStart, lte: dEnd } }, include: { records: { where: { studentId } } } });
+        if (!session) present = "no-session";
+        else if (session.records.length) {
+          if (session.records[0].status !== "PRESENT") {
+            await db.attendanceRecord.update({ where: { id: session.records[0].id }, data: { status: "PRESENT" } });
+            present = "updated";
+          } else present = "already";
+        } else {
+          await db.attendanceRecord.create({ data: { sessionId: session.id, studentId, status: "PRESENT" } });
+          present = "marked";
+        }
+      }
+    }
+
     // auto receipt SMS
     const setting = await db.smsSetting.findUnique({ where: { schoolId } });
     if (setting?.autoPaymentReceipts) {
@@ -222,7 +386,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       });
     }
     const receipt = await dailyServicesReceipt(db, payment.id);
-    return NextResponse.json({ payment: { ...payment, applied }, student: `${student.firstName} ${student.lastName}`, receipt });
+    return NextResponse.json({ payment: { ...payment, applied }, student: `${student.firstName} ${student.lastName}`, receipt, walletTxnId, present });
   }
 
   if (action === "waive-charge") {
