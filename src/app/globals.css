@@ -1,0 +1,178 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-gold: var(--gold);
+  --color-terra: var(--terra);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* ── Nyansapo Warm Ghana Modern ─────────────────────────── */
+:root {
+  --radius: 0.75rem;
+  --background: #faf7f0;
+  --foreground: #23190f;
+  --card: #ffffff;
+  --card-foreground: #23190f;
+  --popover: #ffffff;
+  --popover-foreground: #23190f;
+  --primary: #0e5f3f;
+  --primary-foreground: #fffdf4;
+  --secondary: #f1e8d6;
+  --secondary-foreground: #57431f;
+  --muted: #f3eee1;
+  --muted-foreground: #7d7157;
+  --accent: #d9a521;
+  --accent-foreground: #3a2a00;
+  --destructive: #b42318;
+  --border: #e7ddc8;
+  --input: #e0d5bd;
+  --ring: #0e5f3f;
+  --gold: #d9a521;
+  --terra: #c05621;
+  --chart-1: #0e5f3f;
+  --chart-2: #d9a521;
+  --chart-3: #c05621;
+  --chart-4: #9b2c2c;
+  --chart-5: #7c4a21;
+  --sidebar: #14261c;
+  --sidebar-foreground: #e9f3ea;
+  --sidebar-primary: #d9a521;
+  --sidebar-primary-foreground: #20180a;
+  --sidebar-accent: #1e3a2a;
+  --sidebar-accent-foreground: #f2e9c9;
+  --sidebar-border: #274634;
+  --sidebar-ring: #d9a521;
+}
+
+.dark {
+  --background: #131009;
+  --foreground: #f3ecdc;
+  --card: #1d1913;
+  --card-foreground: #f3ecdc;
+  --popover: #201b13;
+  --popover-foreground: #f3ecdc;
+  --primary: #38b57f;
+  --primary-foreground: #0b1f16;
+  --secondary: #2a2318;
+  --secondary-foreground: #e8d9b0;
+  --muted: #241f16;
+  --muted-foreground: #b0a684;
+  --accent: #e5b83b;
+  --accent-foreground: #241a00;
+  --destructive: #e5544a;
+  --border: #33291a;
+  --input: #3a2f1e;
+  --ring: #38b57f;
+  --gold: #e5b83b;
+  --terra: #d97a45;
+  --chart-1: #38b57f;
+  --chart-2: #e5b83b;
+  --chart-3: #d97a45;
+  --chart-4: #e5544a;
+  --chart-5: #b98a55;
+  --sidebar: #0f1c14;
+  --sidebar-foreground: #d9e7da;
+  --sidebar-primary: #e5b83b;
+  --sidebar-primary-foreground: #20180a;
+  --sidebar-accent: #1a3024;
+  --sidebar-accent-foreground: #f2e9c9;
+  --sidebar-border: #22392b;
+  --sidebar-ring: #e5b83b;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* ── Kente strip (Ghana flag colours woven pattern) ─────── */
+.kente-strip {
+  background: repeating-linear-gradient(
+    90deg,
+    #0e5f3f 0px, #0e5f3f 14px,
+    #d9a521 14px, #d9a521 20px,
+    #111111 20px, #111111 26px,
+    #d9a521 26px, #d9a521 32px,
+    #9b2c2c 32px, #9b2c2c 46px,
+    #d9a521 46px, #d9a521 52px,
+    #0e5f3f 52px, #0e5f3f 66px
+  );
+}
+.kente-strip-v {
+  background: repeating-linear-gradient(
+    180deg,
+    #0e5f3f 0px, #0e5f3f 12px,
+    #d9a521 12px, #d9a521 18px,
+    #111111 18px, #111111 24px,
+    #d9a521 24px, #d9a521 30px,
+    #9b2c2c 30px, #9b2c2c 42px
+  );
+}
+
+/* adinkra-like texture for hero panels */
+.adinkra-bg {
+  background-color: #0e5f3f;
+  background-image: radial-gradient(rgba(217, 165, 33, 0.16) 1.5px, transparent 1.6px),
+    radial-gradient(rgba(255, 255, 255, 0.07) 1.5px, transparent 1.6px);
+  background-size: 28px 28px, 28px 28px;
+  background-position: 0 0, 14px 14px;
+}
+
+/* thin custom scrollbars */
+.nice-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+.nice-scroll::-webkit-scrollbar-thumb { background: var(--input); border-radius: 999px; }
+.nice-scroll::-webkit-scrollbar-track { background: transparent; }
+
+/* report card print styles */
+@media print {
+  body * { visibility: hidden; }
+  .print-area, .print-area * { visibility: visible; }
+  .print-area { position: absolute; inset: 0; width: 100%; box-shadow: none !important; border: none !important; }
+  .no-print { display: none !important; }
+}
+
+@keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.pulse-dot { animation: pulse-dot 1.6s ease-in-out infinite; }

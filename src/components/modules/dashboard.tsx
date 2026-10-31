@@ -1,0 +1,201 @@
+"use client";
+import { useEffect, useState } from "react";
+import { useStore } from "@/lib/store";
+import { apiGet } from "@/lib/api";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { StatCard, ModuleHeader, LoadingBlock, SeverityBadge, StatusBadge } from "@/components/ui-helpers";
+import { fmtCedi, fmtDate, PAYMENT_LABELS, FLAG_LABELS, fmtDateShort } from "@/lib/format";
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
+import { Banknote, CalendarCheck, Flag, TrendingUp, Users, AlertTriangle, ArrowLeftRight, Inbox } from "lucide-react";
+
+type Dash = {
+  school: any; year: { name: string } | null; term: any;
+  stats: { students: number; gender: { M: number; F: number }; staffCount: number; classes: number; billed: number; collected: number; arrears: number; collectionRate: number; flagged: number; riskHigh: number; pendingRequests: number; attendanceRate: number | null };
+  recentPayments: { id: string; receiptNo: string; amount: number; method: string; paidAt: string; student: string }[];
+  arrearsByClass: { name: string; billed: number; collected: number; arrears: number; students: number }[];
+  attendanceTrend: { date: string; rate: number }[];
+  flags: { id: string; type: string; severity: string; status: string; amountOwed: number | null; student: string; raisedAt: string; description: string }[];
+  inquiries: any[];
+};
+
+export function Dashboard() {
+  const { currentSchoolId, setModule } = useStore();
+  const [data, setData] = useState<Dash | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const load = () => {
+    if (!currentSchoolId) return;
+    apiGet<Dash>(`/api/school/${currentSchoolId}/dashboard`)
+      .then(setData)
+      .catch((e) => setErr(e.message));
+  };
+  useEffect(load, [currentSchoolId]);
+
+  if (err) return <div className="text-destructive text-sm">{err}</div>;
+  if (!data) return <LoadingBlock label="Loading your school…" />;
+
+  const { stats } = data;
+  const attData = data.attendanceTrend.map((t) => ({ ...t, date: fmtDateShort(t.date) }));
+
+  return (
+    <div>
+      <ModuleHeader
+        title={`${data.school.name}`}
+        description={`${data.term?.name ?? "Term"} · ${data.year?.name ?? "Academic Year"} · ${data.school.town}, ${data.school.region} — ${data.school.motto ?? ""}`}
+        actions={
+          <>
+            <Badge variant="outline" className="gap-1.5"><TrendingUp className="size-3.5" /> {stats.collectionRate}% collected</Badge>
+            {stats.pendingRequests > 0 && (
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setModule("admissions")}>
+                <Inbox className="size-3.5" /> {stats.pendingRequests} record request{stats.pendingRequests > 1 ? "s" : ""}
+              </Button>
+            )}
+          </>
+        }
+      />
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <StatCard icon={<Users className="size-4" />} label="Learners on roll" value={stats.students} sub={`${stats.gender.M} boys · ${stats.gender.F} girls · ${stats.classes} classes`} tone="primary" />
+        <StatCard icon={<Banknote className="size-4" />} label="Collected this term" value={fmtCedi(stats.collected, { compact: true })} sub={`of ${fmtCedi(stats.billed, { compact: true })} billed`} tone="gold" />
+        <StatCard icon={<AlertTriangle className="size-4" />} label="Arrears" value={fmtCedi(stats.arrears, { compact: true })} sub={`${stats.collectionRate}% collection rate`} tone="danger" />
+        <StatCard icon={<CalendarCheck className="size-4" />} label="Attendance" value={stats.attendanceRate !== null ? `${stats.attendanceRate}%` : "—"} sub={`last ${data.attendanceTrend.length} school days`} />
+      </div>
+
+      <div className="grid lg:grid-cols-3 gap-4 mt-4">
+        <Card className="lg:col-span-2">
+          <CardHeader className="pb-2"><CardTitle className="text-base">Attendance trend</CardTitle></CardHeader>
+          <CardContent className="h-56">
+            {attData.length ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={attData} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="attGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#0e5f3f" stopOpacity={0.35} />
+                      <stop offset="100%" stopColor="#0e5f3f" stopOpacity={0.02} />
+                    </linearGradient>
+                  </defs>
+                  <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="#888" />
+                  <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} stroke="#888" unit="%" />
+                  <Tooltip formatter={(v: any) => [`${v}%`, "Present"]} contentStyle={{ borderRadius: 10, border: "1px solid #e7ddc8" }} />
+                  <Area type="monotone" dataKey="rate" stroke="#0e5f3f" strokeWidth={2.2} fill="url(#attGrad)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-full grid place-items-center text-sm text-muted-foreground">No attendance sessions recorded yet — take the first register from the Attendance module.</div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-base">Term collection</CardTitle></CardHeader>
+          <CardContent className="space-y-3">
+            <div>
+              <div className="flex justify-between text-sm mb-1"><span className="text-muted-foreground">Collected</span><span className="font-semibold">{fmtCedi(stats.collected)}</span></div>
+              <div className="h-2.5 rounded-full bg-secondary overflow-hidden">
+                <div className="h-full bg-primary rounded-full transition-all" style={{ width: `${stats.collectionRate}%` }} />
+              </div>
+            </div>
+            <div className="flex justify-between text-sm pt-1 border-t">
+              <span className="text-muted-foreground">Outstanding</span>
+              <span className="font-semibold text-destructive">{fmtCedi(stats.arrears)}</span>
+            </div>
+            <div className="text-xs text-muted-foreground">
+              Mid-term benchmark: schools should sit above 65% collection by the mid-term break.
+            </div>
+            <Button size="sm" variant="outline" className="w-full gap-1.5" onClick={() => setModule("fees")}>
+              <Banknote className="size-4" /> Open Fees & Billing
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid lg:grid-cols-2 gap-4 mt-4">
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-base">Arrears by class</CardTitle></CardHeader>
+          <CardContent className="h-64">
+            {data.arrearsByClass.length ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={data.arrearsByClass.slice(0, 8)} margin={{ top: 4, right: 8, left: -12, bottom: 0 }}>
+                  <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#888" interval={0} angle={-20} textAnchor="end" height={44} />
+                  <YAxis tick={{ fontSize: 11 }} stroke="#888" />
+                  <Tooltip formatter={(v: any) => [fmtCedi(Number(v)), "Arrears"]} contentStyle={{ borderRadius: 10 }} />
+                  <Bar dataKey="arrears" fill="#c05621" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-full grid place-items-center text-sm text-muted-foreground">No billing data yet.</div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-3 flex-row items-center justify-between space-y-0">
+            <CardTitle className="text-base flex items-center gap-2"><Flag className="size-4 text-destructive" /> Active flags ({stats.flagged})</CardTitle>
+            <Button size="sm" variant="ghost" onClick={() => setModule("students")}>View students</Button>
+          </CardHeader>
+          <CardContent className="space-y-2.5 max-h-64 overflow-y-auto nice-scroll">
+            {data.flags.length === 0 && <div className="text-sm text-muted-foreground py-6 text-center">No active flags — clean register. 🎉</div>}
+            {data.flags.map((f) => (
+              <div key={f.id} className="rounded-lg border p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-medium text-sm">{f.student}</div>
+                  <div className="flex items-center gap-1.5"><SeverityBadge severity={f.severity} /><StatusBadge status={f.status} /></div>
+                </div>
+                <div className="text-xs text-muted-foreground mt-1">
+                  {FLAG_LABELS[f.type] ?? f.type}{f.amountOwed ? ` — ${fmtCedi(f.amountOwed)}` : ""} · raised {fmtDate(f.raisedAt)}
+                </div>
+                <p className="text-xs mt-1.5 line-clamp-2 text-muted-foreground">{f.description}</p>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid lg:grid-cols-2 gap-4 mt-4">
+        <Card>
+          <CardHeader className="pb-3"><CardTitle className="text-base">Recent receipts</CardTitle></CardHeader>
+          <CardContent className="max-h-72 overflow-y-auto nice-scroll">
+            <table className="w-full text-sm">
+              <tbody>
+                {data.recentPayments.map((p) => (
+                  <tr key={p.id} className="border-b last:border-0">
+                    <td className="py-2.5">
+                      <div className="font-medium">{p.student}</div>
+                      <div className="text-xs text-muted-foreground">{p.receiptNo} · {PAYMENT_LABELS[p.method] ?? p.method}</div>
+                    </td>
+                    <td className="py-2.5 text-right text-muted-foreground text-xs">{fmtDate(p.paidAt)}</td>
+                    <td className="py-2.5 text-right font-semibold tabular-nums">{fmtCedi(p.amount)}</td>
+                  </tr>
+                ))}
+                {!data.recentPayments.length && <tr><td className="py-6 text-center text-muted-foreground">No payments yet this term.</td></tr>}
+              </tbody>
+            </table>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-3"><CardTitle className="text-base">Attention needed</CardTitle></CardHeader>
+          <CardContent className="space-y-2.5">
+            <div className="flex items-center justify-between rounded-lg border border-orange-200 dark:border-orange-900 bg-orange-50 dark:bg-orange-950/40 p-3">
+              <div className="flex items-center gap-2.5 text-sm">
+                <AlertTriangle className="size-4.5 text-orange-600" />
+                <span><b>{stats.riskHigh}</b> learners at HIGH/CRITICAL risk</span>
+              </div>
+              <Button size="sm" variant="outline" onClick={() => setModule("ai")}>Open AI</Button>
+            </div>
+            <div className="flex items-center justify-between rounded-lg border p-3 text-sm">
+              <div className="flex items-center gap-2.5"><ArrowLeftRight className="size-4.5 text-primary" /> <span><b>{data.inquiries.length}</b> recent admission inquiries</span></div>
+              <Button size="sm" variant="outline" onClick={() => setModule("admissions")}>Review</Button>
+            </div>
+            <div className="flex items-center justify-between rounded-lg border p-3 text-sm">
+              <div className="flex items-center gap-2.5"><Flag className="size-4.5 text-destructive" /> <span><b>{stats.flagged}</b> active defaulter flags</span></div>
+              <Button size="sm" variant="outline" onClick={() => setModule("students")}>Manage</Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}

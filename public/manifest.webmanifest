@@ -1,0 +1,23 @@
+{
+  "name": "Nyansapo — School Management Cloud for Ghana",
+  "short_name": "Nyansapo",
+  "description": "The Wisdom Knot that binds Ghana's private schools — school management, fees, defaulters registry, transfers, association oversight. Works offline.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#faf7f0",
+  "theme_color": "#0e5f3f",
+  "categories": ["education", "productivity", "business"],
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Attendance Register", "url": "/?module=attendance" },
+    { "name": "Fees & Billing", "url": "/?module=fees" },
+    { "name": "AI Assistant", "url": "/?module=ai" }
+  ]
+}

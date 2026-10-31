@@ -1,0 +1,539 @@
+// Nyansapo — The Wisdom Knot That Binds Ghana's Schools
+// Full data model for the Ghanaian private-school ecosystem:
+// association hierarchy (GNACOPS-style), school groups & branches, students,
+// cross-school transfer tracking, defaulter flags, fees, attendance,
+// gradebook, report cards, AI insights.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────
+// ASSOCIATION HIERARCHY (National → Regional → District → Zone)
+// ─────────────────────────────────────────────────────────────
+model AssociationNode {
+  id          String             @id @default(cuid())
+  code        String             @unique
+  name        String
+  level       String // NATIONAL | REGIONAL | DISTRICT | ZONE
+  region      String?
+  meetingTown String?
+  leadTitle   String? // e.g. "National Executive Director"
+  leadName    String?
+  parentId    String?
+  parent      AssociationNode?   @relation("NodeTree", fields: [parentId], references: [id])
+  children    AssociationNode[]  @relation("NodeTree")
+  schools     School[]
+  users       User[]
+  announcements Announcement[]
+}
+
+model User {
+  id               String    @id @default(cuid())
+  email            String    @unique
+  password         String
+  fullName         String
+  phone            String?
+  role             String // ASSOCIATION_NATIONAL | ASSOCIATION_REGIONAL | ASSOCIATION_DISTRICT | ASSOCIATION_ZONAL | GROUP_OWNER | SCHOOL_ADMIN | TEACHER | ACCOUNTANT | PARENT
+  title            String? // display title e.g. "National Executive Director", "Headteacher"
+  associationNodeId String?
+  associationNode  AssociationNode? @relation(fields: [associationNodeId], references: [id])
+  schoolGroupId    String?
+  schoolGroup      SchoolGroup? @relation(fields: [schoolGroupId], references: [id])
+  schoolId         String?
+  school           School?   @relation(fields: [schoolId], references: [id])
+  avatarSeed       String?
+  createdAt        DateTime  @default(now())
+}
+
+// ─────────────────────────────────────────────────────────────
+// SCHOOL GROUPS (multi-branch proprietors) & SCHOOLS
+// ─────────────────────────────────────────────────────────────
+model SchoolGroup {
+  id              String   @id @default(cuid())
+  name            String
+  proprietorName  String
+  contactPhone    String?
+  contactEmail    String?
+  schools         School[]
+  users           User[]
+}
+
+model School {
+  id                  String   @id @default(cuid())
+  name                String
+  code                String   @unique
+  motto               String?
+  curriculum          String // GES | CAIE | IB
+  curriculumStages    String? // JSON: stage labels per curriculum
+  category            String // LOW_FEE | MID_TIER | PREMIUM | INTERNATIONAL
+  associationNodeId   String
+  associationNode     AssociationNode @relation(fields: [associationNodeId], references: [id])
+  groupId             String?
+  group               SchoolGroup? @relation(fields: [groupId], references: [id])
+  isBranchMain        Boolean  @default(false)
+  region              String
+  district            String
+  town                String
+  gpsAddress          String?
+  phone               String?
+  email               String?
+  nasiaRegNo          String?
+  nasiaStatus         String   @default("PENDING") // LICENSED | PROVISIONAL | PENDING | EXPIRED
+  gnacopsStatus       String   @default("PENDING") // VERIFIED | PENDING | LAPSED
+  gnacopsMemberSince  DateTime?
+  establishedYear     Int?
+  studentsOnRoll      Int      @default(0)
+  logoColor           String   @default("#0F6B47")
+  createdAt           DateTime @default(now())
+  users               User[]
+  classrooms          Classroom[]
+  academicYears       AcademicYear[]
+  feeStructures       FeeStructure[]
+  invoices            Invoice[]
+  payments            Payment[]
+  enrollments         Enrollment[]
+  assessments         Assessment[]
+  attendanceSessions  AttendanceSession[]
+  subjects            Subject[]
+  staff               Staff[]
+  flagsRaised         StudentFlag[] @relation("FlagsRaised")
+  transfersFrom       TransferRecord[] @relation("TransfersFrom")
+  transfersTo         TransferRecord[] @relation("TransfersTo")
+  recordRequestsFrom  RecordRequest[] @relation("RequestsFrom")
+  recordRequestsTo    RecordRequest[] @relation("RequestsTo")
+  inquiries           AdmissionInquiry[]
+  announcements       Announcement[]
+  riskScores          RiskScore[]
+}
+
+// ─────────────────────────────────────────────────────────────
+// ACADEMIC CALENDAR
+// ─────────────────────────────────────────────────────────────
+model AcademicYear {
+  id         String   @id @default(cuid())
+  schoolId   String
+  school     School   @relation(fields: [schoolId], references: [id])
+  name       String // "2026/2027"
+  isCurrent  Boolean  @default(false)
+  startsAt   DateTime
+  endsAt     DateTime
+  terms      Term[]
+}
+
+model Term {
+  id             String   @id @default(cuid())
+  academicYearId String
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
+  name           String // First Term | Second Term | Third Term
+  sequence       Int
+  startsAt       DateTime
+  endsAt         DateTime
+  isCurrent      Boolean  @default(false)
+  feeStructures  FeeStructure[]
+  invoices       Invoice[]
+  assessments    Assessment[]
+  attendanceSessions AttendanceSession[]
+  reportCards    ReportCard[]
+}
+
+// ─────────────────────────────────────────────────────────────
+// CLASSES, SUBJECTS, STAFF
+// ─────────────────────────────────────────────────────────────
+model Classroom {
+  id            String   @id @default(cuid())
+  schoolId      String
+  school        School   @relation(fields: [schoolId], references: [id])
+  name          String // "Basic 4 Gold"
+  gradeLevel    String // KG1..B9 | Year 1..13 | PYP 1..MYP 4
+  stageLabel    String? // "Primary (SBC)" | "Cambridge Lower Secondary" | "IB MYP"
+  capacity      Int      @default(30)
+  classTeacherId String?
+  classTeacher  Staff?   @relation(fields: [classTeacherId], references: [id])
+  enrollments   Enrollment[]
+  feeStructures FeeStructure[]
+  assessments   Assessment[]
+  attendanceSessions AttendanceSession[]
+}
+
+model Subject {
+  id        String  @id @default(cuid())
+  schoolId  String
+  school    School  @relation(fields: [schoolId], references: [id])
+  name      String
+  code      String
+  curriculum String?
+  isCore    Boolean @default(true)
+  assessments Assessment[]
+}
+
+model Staff {
+  id        String   @id @default(cuid())
+  schoolId  String
+  school    School   @relation(fields: [schoolId], references: [id])
+  fullName  String
+  role      String // HEADTEACHER | TEACHER | ACCOUNTANT | ASSISTANT | BURSAR
+  title     String?
+  email     String?
+  phone     String?
+  subjects  String? // comma-separated
+  classrooms Classroom[]
+}
+
+// ─────────────────────────────────────────────────────────────
+// STUDENTS (national registry via nyansapoIndex)
+// ─────────────────────────────────────────────────────────────
+model Student {
+  id                String   @id @default(cuid())
+  nyansapoIndex     String   @unique // NY-YYYY-NNNNNN national student index
+  firstName         String
+  lastName          String
+  otherNames        String?
+  gender            String // M | F
+  dateOfBirth       DateTime?
+  photoSeed         String?
+  guardianName      String
+  guardianPhone     String
+  guardianAltPhone  String?
+  guardianEmail     String?
+  guardianOccupation String?
+  guardianAddress   String?
+  relationship      String   @default("Parent")
+  hometown          String?
+  previousSchool    String?
+  status            String   @default("ACTIVE") // ACTIVE | TRACKED (not currently enrolled)
+  createdAt         DateTime @default(now())
+  enrollments       Enrollment[]
+  invoices          Invoice[]
+  marks             Mark[]
+  attendanceRecords AttendanceRecord[]
+  flags             StudentFlag[]
+  reportCards       ReportCard[]
+  transfers         TransferRecord[]
+  recordRequests    RecordRequest[]
+  inquiries         AdmissionInquiry[]
+  riskScores        RiskScore[]
+}
+
+model Enrollment {
+  id            String    @id @default(cuid())
+  studentId     String
+  student       Student   @relation(fields: [studentId], references: [id])
+  classroomId   String
+  classroom     Classroom @relation(fields: [classroomId], references: [id])
+  schoolId      String
+  school        School    @relation(fields: [schoolId], references: [id])
+  rollNo        Int?
+  admissionDate DateTime
+  exitDate      DateTime?
+  status        String    @default("ACTIVE") // ACTIVE | WITHDRAWN | TRANSFERRED | GRADUATED | EXPELLED
+  exitReason    String?
+}
+
+// ─────────────────────────────────────────────────────────────
+// FEES, INVOICES, PAYMENTS
+// ─────────────────────────────────────────────────────────────
+model FeeStructure {
+  id           String    @id @default(cuid())
+  schoolId     String
+  school       School    @relation(fields: [schoolId], references: [id])
+  classroomId  String
+  classroom    Classroom @relation(fields: [classroomId], references: [id])
+  termId       String
+  term         Term      @relation(fields: [termId], references: [id])
+  items        FeeItem[]
+  totalCents   Int       @default(0)
+}
+
+model FeeItem {
+  id             String       @id @default(cuid())
+  feeStructureId String
+  feeStructure   FeeStructure @relation(fields: [feeStructureId], references: [id])
+  name           String
+  amountCents    Int
+  isOptional     Boolean      @default(false)
+}
+
+model Invoice {
+  id             String    @id @default(cuid())
+  invoiceNo      String    @unique
+  studentId      String
+  student        Student   @relation(fields: [studentId], references: [id])
+  schoolId       String
+  school         School    @relation(fields: [schoolId], references: [id])
+  termId         String
+  term           Term      @relation(fields: [termId], references: [id])
+  classroomName  String?
+  items          InvoiceItem[]
+  totalCents     Int       @default(0)
+  discountCents  Int       @default(0)
+  discountReason String?
+  paidCents      Int       @default(0)
+  status         String    @default("UNPAID") // PAID | PARTIAL | UNPAID | OVERDUE
+  dueDate        DateTime?
+  paymentPlan    String    @default("FULL") // FULL | INSTALLMENTS
+  createdAt      DateTime  @default(now())
+  payments       Payment[]
+}
+
+model InvoiceItem {
+  id         String  @id @default(cuid())
+  invoiceId  String
+  invoice    Invoice @relation(fields: [invoiceId], references: [id])
+  name       String
+  amountCents Int
+}
+
+model Payment {
+  id             String   @id @default(cuid())
+  receiptNo      String   @unique
+  invoiceId      String
+  invoice        Invoice  @relation(fields: [invoiceId], references: [id])
+  schoolId       String
+  school         School   @relation(fields: [schoolId], references: [id])
+  amountCents    Int
+  method         String // CASH | MOMO_MTN | MOMO_TELECEL | MOMO_AT | BANK | CHEQUE | CARD
+  reference      String?
+  receivedByName String?
+  paidAt         DateTime
+  recordedAt     DateTime @default(now())
+  offlineQueued  Boolean  @default(false)
+  syncedAt       DateTime?
+  voided         Boolean  @default(false)
+}
+
+// ─────────────────────────────────────────────────────────────
+// ATTENDANCE
+// ─────────────────────────────────────────────────────────────
+model AttendanceSession {
+  id            String   @id @default(cuid())
+  classroomId   String
+  classroom     Classroom @relation(fields: [classroomId], references: [id])
+  schoolId      String
+  school        School   @relation(fields: [schoolId], references: [id])
+  termId        String
+  term          Term     @relation(fields: [termId], references: [id])
+  date          DateTime
+  takenByName   String?
+  records       AttendanceRecord[]
+}
+
+model AttendanceRecord {
+  id            String   @id @default(cuid())
+  sessionId     String
+  session       AttendanceSession @relation(fields: [sessionId], references: [id])
+  studentId     String
+  student       Student  @relation(fields: [studentId], references: [id])
+  status        String   @default("PRESENT") // PRESENT | ABSENT | LATE | SICK | EXCUSED
+  markedOffline Boolean  @default(false)
+}
+
+// ─────────────────────────────────────────────────────────────
+// GRADEBOOK & REPORT CARDS
+// ─────────────────────────────────────────────────────────────
+model Assessment {
+  id           String   @id @default(cuid())
+  classroomId  String
+  classroom    Classroom @relation(fields: [classroomId], references: [id])
+  schoolId     String
+  school       School   @relation(fields: [schoolId], references: [id])
+  termId       String
+  term         Term     @relation(fields: [termId], references: [id])
+  subjectId    String
+  subject      Subject  @relation(fields: [subjectId], references: [id])
+  title        String
+  type         String // EXERCISE | HOMEWORK | PROJECT | QUIZ | GROUP_WORK | MID_TERM | END_OF_TERM
+  maxScore     Int      @default(100)
+  date         DateTime
+  marks        Mark[]
+}
+
+model Mark {
+  id            String    @id @default(cuid())
+  assessmentId  String
+  assessment    Assessment @relation(fields: [assessmentId], references: [id])
+  studentId     String
+  student       Student   @relation(fields: [studentId], references: [id])
+  score         Float?
+  enteredOffline Boolean  @default(false)
+}
+
+model ReportCard {
+  id            String   @id @default(cuid())
+  studentId     String
+  student       Student  @relation(fields: [studentId], references: [id])
+  termId        String
+  term          Term     @relation(fields: [termId], references: [id])
+  classroomName String
+  results       ReportCardResult[]
+  totalScore    Float?
+  average       Float?
+  classPosition Int?
+  classSize     Int?
+  conduct       String? // A | B | C
+  interest      String?
+  attendance    String? // "Present 38 of 42 days"
+  teacherRemark String?
+  headRemark    String?
+  aiGenerated   Boolean  @default(false)
+  promotion     String? // PROMOTED | PROBATION | REPEAT
+  published     Boolean  @default(false)
+  publishedAt   DateTime?
+  createdAt     DateTime @default(now())
+}
+
+model ReportCardResult {
+  id           String     @id @default(cuid())
+  reportCardId String
+  reportCard   ReportCard @relation(fields: [reportCardId], references: [id])
+  subjectName  String
+  classScore   Float?
+  examScore    Float?
+  total        Float?
+  grade        String?
+  remark       String?
+}
+
+// ─────────────────────────────────────────────────────────────
+// CROSS-SCHOOL: FLAGS, TRANSFERS, RECORD REQUESTS, ADMISSIONS
+// ─────────────────────────────────────────────────────────────
+model StudentFlag {
+  id               String    @id @default(cuid())
+  studentId        String
+  student          Student   @relation(fields: [studentId], references: [id])
+  schoolId         String
+  school           School    @relation("FlagsRaised", fields: [schoolId], references: [id])
+  raisedByName     String
+  type             String // FEE_ARREARS | WITHDREW_OWING | DISCIPLINE_SUSPENSION | DISCIPLINE_EXPULSION | EXAM_MALPRACTICE | PROPERTY_UNRETURNED
+  severity         String // LOW | MEDIUM | HIGH | CRITICAL
+  status           String    @default("ACTIVE") // ACTIVE | RESOLVED | CONTESTED | WITHDRAWN
+  amountOwedCents  Int?
+  description      String
+  raisedAt         DateTime  @default(now())
+  resolvedAt       DateTime?
+  resolutionNote   String?
+  resolvedByName   String?
+  verifications    FlagVerification[]
+}
+
+model FlagVerification {
+  id             String      @id @default(cuid())
+  flagId         String
+  flag           StudentFlag @relation(fields: [flagId], references: [id])
+  officerName    String
+  officerTitle   String
+  action         String // CONFIRMED | EVIDENCE_REQUESTED | DISMISSED
+  note           String?
+  verifiedAt     DateTime    @default(now())
+}
+
+model TransferRecord {
+  id               String   @id @default(cuid())
+  studentId        String
+  student          Student  @relation(fields: [studentId], references: [id])
+  fromSchoolId     String
+  fromSchool       School   @relation("TransfersFrom", fields: [fromSchoolId], references: [id])
+  toSchoolId       String
+  toSchool         School   @relation("TransfersTo", fields: [toSchoolId], references: [id])
+  date             DateTime
+  reason           String?
+  outstandingCents Int      @default(0)
+  documentsReleased Boolean @default(false)
+  initiatedBy      String   @default("PARENT") // PARENT | SCHOOL
+  status           String   @default("COMPLETED") // COMPLETED | PENDING_RELEASE | DECLINED
+  notes            String?
+}
+
+model RecordRequest {
+  id                 String   @id @default(cuid())
+  studentId          String
+  student            Student  @relation(fields: [studentId], references: [id])
+  requestingSchoolId String
+  requestingSchool   School   @relation("RequestsFrom", fields: [requestingSchoolId], references: [id])
+  targetSchoolId     String
+  targetSchool       School   @relation("RequestsTo", fields: [targetSchoolId], references: [id])
+  requestedByName    String
+  requestedAt        DateTime @default(now())
+  purpose            String   @default("ADMISSION") // ADMISSION | TRANSFER | VERIFICATION
+  status             String   @default("PENDING") // PENDING | APPROVED | DECLINED | FULFILLED
+  respondedAt        DateTime?
+  respondedByName    String?
+  notes              String?
+  messages           RequestMessage[]
+}
+
+model RequestMessage {
+  id          String        @id @default(cuid())
+  requestId   String
+  request     RecordRequest @relation(fields: [requestId], references: [id])
+  senderName  String
+  senderTitle String
+  body        String
+  sentAt      DateTime      @default(now())
+}
+
+model AdmissionInquiry {
+  id               String    @id @default(cuid())
+  schoolId         String
+  school           School    @relation(fields: [schoolId], references: [id])
+  studentName      String
+  dateOfBirth      DateTime?
+  gender           String?
+  guardianName     String
+  guardianPhone    String
+  guardianEmail    String?
+  classAppliedFor  String
+  matchedStudentId String?
+  matchedStudent   Student?  @relation(fields: [matchedStudentId], references: [id])
+  registryCheckedAt DateTime?
+  registrySummary  String? // JSON snapshot
+  status           String    @default("NEW") // NEW | MATCHED | FLAGGED | CLEARED | ENROLLED | DECLINED
+  handledByName    String?
+  notes            String?
+  createdAt        DateTime  @default(now())
+}
+
+// ─────────────────────────────────────────────────────────────
+// AI, RISK, ANNOUNCEMENTS
+// ─────────────────────────────────────────────────────────────
+model RiskScore {
+  id             String   @id @default(cuid())
+  studentId      String
+  student        Student  @relation(fields: [studentId], references: [id])
+  schoolId       String
+  school         School   @relation(fields: [schoolId], references: [id])
+  termId         String?
+  score          Int // 0-100
+  level          String // LOW | MODERATE | HIGH | CRITICAL
+  factorsJson    String // JSON
+  recommendation String?
+  computedAt     DateTime @default(now())
+}
+
+model Announcement {
+  id               String   @id @default(cuid())
+  schoolId         String?
+  school           School?  @relation(fields: [schoolId], references: [id])
+  associationNodeId String?
+  associationNode  AssociationNode? @relation(fields: [associationNodeId], references: [id])
+  title            String
+  body             String
+  audience         String   @default("SCHOOLS") // SCHOOLS | PARENTS | ZONAL | DISTRICT | REGIONAL | NATIONAL
+  category         String   @default("GENERAL") // GENERAL | COMPLIANCE | CALENDAR | URGENT | TRAINING
+  priority         String   @default("NORMAL") // NORMAL | HIGH
+  postedByName     String
+  postedAt         DateTime @default(now())
+}
+
+model AiChatMessage {
+  id        String   @id @default(cuid())
+  sessionKey String   // user-scoped key
+  role      String // user | assistant
+  content   String
+  createdAt DateTime @default(now())
+}
