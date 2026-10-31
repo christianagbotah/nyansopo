@@ -1,16 +1,24 @@
 "use client";
-/* Nyansapo — Terminal report sheet styles.
-   Two professional print-ready designs:
-   · ClassicSheet  — formal GES-style broadsheet (bio grid, learning areas,
-     grading key, conduct, triple signature block, next-term date)
-   · ModernSheet   — compact Kente-accented card
-   Both are A4 print-optimised; wrap in .print-area and each sheet carries
+/* Nyansapo — Terminal report sheet styles (iedupro parity).
+   Three professional print-ready designs:
+   · ClassicSheet  — formal GES broadsheet: two-tier score header
+     (CLASS 30 / EXAM 70 / TOTAL 100), per-subject position, colour-coded
+     grades, BECE best-six aggregate, conduct & interest, grading key,
+     triple signature block, next-term date
+   · ModernSheet   — compact Kente-accented card with score split
+   · CompactSheet  — primary / KG descriptor sheet (code · raw score ·
+     grade · descriptor) — no ranking, iedupro enhanced-print style
+   All A4 print-optimised; wrap in .print-area — each sheet carries
    .print-sheet so bulk printing paginates cleanly. */
 import { Badge } from "@/components/ui/badge";
 import { LogoMark, KenteStrip } from "@/components/brand";
 import { SCALES_TABLE } from "@/lib/grading-scale";
 
-export type SheetResult = { subject: string; total: number; grade: string; remark: string };
+export type SheetResult = {
+  subject: string; code?: string | null; isCore?: boolean;
+  classScore?: number | null; examScore?: number | null;
+  total: number; grade: string; remark: string; position?: number | null;
+};
 export type SheetData = {
   student: { name: string; index?: string; classroom: string; gender?: string };
   termName: string;
@@ -19,6 +27,7 @@ export type SheetData = {
   classSize: number | null;
   average: number | null;
   conduct?: string | null;
+  interest?: string | null;
   promotion?: string | null;
   attendanceSummary?: string | null;
   teacherRemark?: string | null;
@@ -34,15 +43,43 @@ function gradingBands(curriculum?: string) {
   return SCALES_TABLE[curriculum ?? "GES"] ?? SCALES_TABLE.GES;
 }
 
-/* ── CLASSIC GES BROADSHEET ─────────────────────────────────── */
+const ordinal = (n: number) => {
+  const s = ["th", "st", "nd", "rd"], v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+};
+
+/* grade-code → band index → colour chip (iedupro grade-a1…grade-f parity) */
+const GRADE_CHIPS = [
+  "bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-300",
+  "bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-300",
+  "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300",
+  "bg-orange-100 text-orange-900 dark:bg-orange-950 dark:text-orange-300",
+  "bg-rose-100 text-rose-900 dark:bg-rose-950 dark:text-rose-300",
+];
+function gradeChipIdx(curriculum: string | undefined, grade: string): number {
+  const bands = gradingBands(curriculum).bands;
+  const i = bands.findIndex((b) => b.grade === grade);
+  if (i < 0) return 4;
+  return Math.min(Math.floor((i / bands.length) * 5), 4);
+}
+
+/* WAEC BECE best-six aggregate (core subjects first, then best others; grades 1–9) */
+export function beceAggregate(results: SheetResult[]): number | null {
+  const waec = (t: number) => (t >= 75 ? 1 : t >= 70 ? 2 : t >= 65 ? 3 : t >= 60 ? 4 : t >= 55 ? 5 : t >= 50 ? 6 : t >= 45 ? 7 : t >= 40 ? 8 : 9);
+  const scored = results.filter((r) => typeof r.total === "number");
+  if (scored.length < 6) return null;
+  const byTotal = (a: SheetResult, b: SheetResult) => b.total - a.total;
+  const six = [...scored.filter((r) => r.isCore).sort(byTotal), ...scored.filter((r) => !r.isCore).sort(byTotal)].slice(0, 6);
+  return six.reduce((s, r) => s + waec(r.total), 0);
+}
+
+/* ── CLASSIC GES BROADSHEET (iedupro terminal_report_print) ──── */
 export function ClassicSheet({ d }: { d: SheetData }) {
   const bands = gradingBands(d.curriculum);
-  const ordinal = (n: number) => {
-    const s = ["th", "st", "nd", "rd"], v = n % 100;
-    return n + (s[(v - 20) % 10] || s[v] || s[0]);
-  };
+  const hasSplit = d.results.some((r) => r.classScore != null || r.examScore != null);
+  const aggregate = d.curriculum === "GES" || !d.curriculum ? beceAggregate(d.results) : null;
   return (
-    <div className="print-sheet bg-card text-card-foreground rounded-xl border shadow-sm overflow-hidden mx-auto max-w-[820px]">
+    <div className="print-sheet bg-card text-card-foreground rounded-xl border shadow-sm overflow-hidden mx-auto max-w-[860px]">
       {/* letterhead */}
       <div className="px-8 pt-6 pb-4 text-center border-b-2 border-foreground/80">
         <div className="flex items-center justify-center gap-3">
@@ -71,34 +108,52 @@ export function ClassicSheet({ d }: { d: SheetData }) {
           <div><span className="text-muted-foreground">Attendance: </span><b>{d.attendanceSummary ?? "—"}</b></div>
         </div>
 
-        {/* learning areas */}
+        {/* learning areas — two-tier score header (Ghana 30/70 standard) */}
         <table className="w-full text-[12.5px] mt-4 border border-foreground/50">
           <thead>
-            <tr className="bg-foreground text-background text-left">
-              <th className="px-3 py-2 font-semibold uppercase text-[10px] tracking-wider">Learning area</th>
-              <th className="px-2 py-2 font-semibold uppercase text-[10px] tracking-wider text-center w-20">Total (100)</th>
-              <th className="px-2 py-2 font-semibold uppercase text-[10px] tracking-wider text-center w-16">Grade</th>
-              <th className="px-2 py-2 font-semibold uppercase text-[10px] tracking-wider w-24 text-center">Descriptor</th>
-              <th className="px-3 py-2 font-semibold uppercase text-[10px] tracking-wider">Subject teacher&apos;s remark</th>
+            <tr className="bg-foreground text-background">
+              <th rowSpan={2} className="px-3 py-2 font-semibold uppercase text-[10px] tracking-wider text-left">Learning area</th>
+              {hasSplit && <th colSpan={2} className="px-2 py-1.5 font-semibold uppercase text-[10px] tracking-wider text-center border-l border-background/30">Scores</th>}
+              <th rowSpan={2} className="px-2 py-2 font-semibold uppercase text-[10px] tracking-wider text-center w-[76px] border-l border-background/30">Total<br />(100)</th>
+              <th rowSpan={2} className="px-2 py-2 font-semibold uppercase text-[10px] tracking-wider text-center w-14 border-l border-background/30">Grade</th>
+              <th rowSpan={2} className="px-2 py-2 font-semibold uppercase text-[10px] tracking-wider text-center w-12 border-l border-background/30">Pos.</th>
+              <th rowSpan={2} className="px-3 py-2 font-semibold uppercase text-[10px] tracking-wider text-left border-l border-background/30">Subject teacher&apos;s remark</th>
             </tr>
+            {hasSplit && (
+              <tr className="bg-foreground/90 text-background">
+                <th className="px-1.5 py-1.5 font-semibold uppercase text-[9px] tracking-wider text-center w-16 border-l border-background/30">Class<br />(30)</th>
+                <th className="px-1.5 py-1.5 font-semibold uppercase text-[9px] tracking-wider text-center w-16">Exam<br />(70)</th>
+              </tr>
+            )}
           </thead>
           <tbody>
             {d.results.map((r, i) => {
               const band = bands.bands.find((b) => r.total >= b.min) ?? bands.bands[bands.bands.length - 1];
+              const chip = GRADE_CHIPS[gradeChipIdx(d.curriculum, r.grade)];
               return (
                 <tr key={i} className={i % 2 ? "bg-secondary/40" : ""}>
-                  <td className="px-3 py-1.5 border-t border-foreground/20 font-medium">{r.subject}</td>
+                  <td className="px-3 py-1.5 border-t border-foreground/20 font-medium">
+                    {r.isCore && <span title="Core subject" className="mr-1 text-amber-600 dark:text-amber-400">★</span>}
+                    {r.subject}
+                    {r.code && <span className="ml-1.5 font-mono text-[10px] text-muted-foreground">{r.code}</span>}
+                  </td>
+                  {hasSplit && <td className="px-1.5 py-1.5 border-t border-foreground/20 text-center tabular-nums">{r.classScore ?? "—"}</td>}
+                  {hasSplit && <td className="px-1.5 py-1.5 border-t border-foreground/20 text-center tabular-nums">{r.examScore ?? "—"}</td>}
                   <td className="px-2 py-1.5 border-t border-foreground/20 text-center tabular-nums font-semibold">{r.total}</td>
-                  <td className="px-2 py-1.5 border-t border-foreground/20 text-center font-bold">{r.grade}</td>
-                  <td className="px-2 py-1.5 border-t border-foreground/20 text-center text-[11px]">{band.label}</td>
+                  <td className="px-2 py-1.5 border-t border-foreground/20 text-center">
+                    <span className={`inline-block min-w-7 rounded px-1.5 py-0.5 font-bold ${chip}`}>{r.grade}</span>
+                  </td>
+                  <td className="px-2 py-1.5 border-t border-foreground/20 text-center text-[11px] font-semibold">{r.position ? ordinal(r.position) : "—"}</td>
                   <td className="px-3 py-1.5 border-t border-foreground/20 text-muted-foreground text-[11.5px]">{r.remark}</td>
                 </tr>
               );
             })}
             <tr className="bg-foreground/10 font-semibold">
               <td className="px-3 py-2 border-t-2 border-foreground/50">Overall average</td>
+              {hasSplit && <td colSpan={2} className="px-2 py-2 border-t-2 border-foreground/50 text-center text-[10px] uppercase tracking-widest text-muted-foreground">Class 30 + Exam 70</td>}
               <td className="px-2 py-2 border-t-2 border-foreground/50 text-center tabular-nums">{d.average ?? "—"}%</td>
-              <td className="px-2 py-2 border-t-2 border-foreground/50 text-center" colSpan={3}>
+              <td className="px-2 py-2 border-t-2 border-foreground/50 text-center text-[11px]" colSpan={hasSplit ? 3 : 2}>
+                {aggregate != null ? <>BECE aggregate (best six): <b>{aggregate}</b> · </> : ""}
                 {d.promotion ? `Promotion: ${d.promotion === "PROMOTED" ? "Promoted" : d.promotion === "REPEAT" ? "To repeat the class" : d.promotion}` : "—"}
               </td>
             </tr>
@@ -117,14 +172,19 @@ export function ClassicSheet({ d }: { d: SheetData }) {
                 </span>
               );
             })}
+            <span className="text-muted-foreground">★ core subject</span>
           </div>
         </div>
 
-        {/* conduct & remarks */}
-        <div className="grid grid-cols-2 gap-4 mt-4 text-[12.5px]">
+        {/* conduct, interest & disposition */}
+        <div className="grid grid-cols-3 gap-4 mt-4 text-[12.5px]">
           <div>
             <div className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">Conduct</div>
             <p className="mt-0.5">{d.conduct ?? "—"}</p>
+          </div>
+          <div>
+            <div className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">Interests</div>
+            <p className="mt-0.5">{d.interest ?? "—"}</p>
           </div>
           <div>
             <div className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">Learning disposition</div>
@@ -161,8 +221,10 @@ export function ClassicSheet({ d }: { d: SheetData }) {
 
 /* ── MODERN COMPACT CARD ────────────────────────────────────── */
 export function ModernSheet({ d }: { d: SheetData }) {
+  const bands = gradingBands(d.curriculum);
+  const aggregate = d.curriculum === "GES" || !d.curriculum ? beceAggregate(d.results) : null;
   return (
-    <div className="print-sheet bg-card text-card-foreground rounded-xl border shadow-sm overflow-hidden mx-auto max-w-[760px]">
+    <div className="print-sheet bg-card text-card-foreground rounded-xl border shadow-sm overflow-hidden mx-auto max-w-[780px]">
       <KenteStrip />
       <div className="p-6">
         <div className="flex items-center justify-between gap-3">
@@ -170,7 +232,7 @@ export function ModernSheet({ d }: { d: SheetData }) {
             <LogoMark size={40} />
             <div>
               <div className="font-bold text-lg leading-tight">Terminal Report Card</div>
-              <div className="text-xs text-muted-foreground">{d.termName}</div>
+              <div className="text-xs text-muted-foreground">{d.termName} · {bands.name.split("—")[0].trim()}</div>
             </div>
           </div>
           <Badge variant={d.published ? "default" : "secondary"}>{d.published ? "PUBLISHED" : "DRAFT"}</Badge>
@@ -187,27 +249,38 @@ export function ModernSheet({ d }: { d: SheetData }) {
           <thead>
             <tr className="bg-secondary text-left">
               <th className="px-2.5 py-2 font-medium">Subject</th>
-              <th className="px-2.5 py-2 font-medium text-center">Score</th>
+              <th className="px-2 py-2 font-medium text-center text-[11px]" title="Class score (30%)">Cls 30</th>
+              <th className="px-2 py-2 font-medium text-center text-[11px]" title="Exam score (70%)">Exam 70</th>
+              <th className="px-2.5 py-2 font-medium text-center">Total</th>
               <th className="px-2.5 py-2 font-medium">Grade</th>
+              <th className="px-2.5 py-2 font-medium text-center text-[11px]">Pos</th>
               <th className="px-2.5 py-2 font-medium hidden sm:table-cell">Remark</th>
             </tr>
           </thead>
           <tbody>
-            {d.results.map((r: any, i: number) => (
-              <tr key={i} className="border-t">
-                <td className="px-2.5 py-2">{r.subject}</td>
-                <td className="px-2.5 py-2 text-center font-semibold tabular-nums">{r.total}%</td>
-                <td className="px-2.5 py-2"><Badge variant="outline">{r.grade}</Badge></td>
-                <td className="px-2.5 py-2 text-muted-foreground text-xs hidden sm:table-cell">{r.remark}</td>
-              </tr>
-            ))}
+            {d.results.map((r: any, i: number) => {
+              const band = bands.bands.find((b) => r.total >= b.min) ?? bands.bands[bands.bands.length - 1];
+              const chip = GRADE_CHIPS[gradeChipIdx(d.curriculum, r.grade)];
+              return (
+                <tr key={i} className="border-t">
+                  <td className="px-2.5 py-2 font-medium">{r.isCore && <span className="mr-1 text-amber-600 dark:text-amber-400">★</span>}{r.subject}</td>
+                  <td className="px-2 py-2 text-center tabular-nums text-muted-foreground">{r.classScore ?? "—"}</td>
+                  <td className="px-2 py-2 text-center tabular-nums text-muted-foreground">{r.examScore ?? "—"}</td>
+                  <td className="px-2.5 py-2 text-center font-semibold tabular-nums">{r.total}</td>
+                  <td className="px-2.5 py-2"><span className={`inline-block min-w-7 rounded px-1.5 py-0.5 text-xs font-bold ${chip}`}>{r.grade}</span></td>
+                  <td className="px-2.5 py-2 text-center text-xs font-semibold">{r.position ?? "—"}</td>
+                  <td className="px-2.5 py-2 text-muted-foreground text-xs hidden sm:table-cell">{r.remark}{band ? "" : ""}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
 
-        <div className="grid sm:grid-cols-3 gap-2 mt-4 text-sm">
+        <div className="grid sm:grid-cols-4 gap-2 mt-4 text-sm">
           <div className="rounded-lg bg-secondary/60 p-2.5"><div className="text-[10px] uppercase text-muted-foreground">Average</div><div className="font-bold text-lg">{d.average}%</div></div>
           <div className="rounded-lg bg-secondary/60 p-2.5"><div className="text-[10px] uppercase text-muted-foreground">Conduct</div><div className="font-semibold">{d.conduct ?? "—"}</div></div>
-          <div className="rounded-lg bg-secondary/60 p-2.5"><div className="text-[10px] uppercase text-muted-foreground">Promotion</div><div className="font-semibold">{d.promotion ?? "—"}</div></div>
+          <div className="rounded-lg bg-secondary/60 p-2.5"><div className="text-[10px] uppercase text-muted-foreground">Interests</div><div className="font-semibold">{d.interest ?? "—"}</div></div>
+          <div className="rounded-lg bg-secondary/60 p-2.5"><div className="text-[10px] uppercase text-muted-foreground">{aggregate != null ? "BECE aggregate" : "Promotion"}</div><div className="font-semibold">{aggregate != null ? `${aggregate} (best six)` : (d.promotion ?? "—")}</div></div>
         </div>
 
         <div className="mt-4 space-y-3">
@@ -222,6 +295,105 @@ export function ModernSheet({ d }: { d: SheetData }) {
           <div className="text-[11px] text-muted-foreground">
             Attendance: {d.attendanceSummary ?? "—"} · Generated by Nyansapo — The Wisdom Knot Cloud
           </div>
+        </div>
+      </div>
+      <KenteStrip />
+    </div>
+  );
+}
+
+/* ── COMPACT PRIMARY / KG DESCRIPTOR SHEET (iedupro enhanced) ── */
+export function CompactSheet({ d }: { d: SheetData }) {
+  const bands = gradingBands(d.curriculum);
+  return (
+    <div className="print-sheet bg-card text-card-foreground rounded-xl border shadow-sm overflow-hidden mx-auto max-w-[820px]">
+      <div className="px-8 pt-6 pb-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <LogoMark size={46} />
+            <div>
+              <div className="font-bold text-lg uppercase tracking-tight leading-tight">{d.school.name}</div>
+              <div className="text-[10.5px] text-muted-foreground">{[d.school.town, d.school.region].filter(Boolean).join(", ")}{d.school.phone ? ` · ${d.school.phone}` : ""}</div>
+            </div>
+          </div>
+          <div className="text-right">
+            <div className="inline-block border-2 border-foreground px-3 py-0.5 font-bold tracking-[0.15em] text-[11px] uppercase">Progress Report</div>
+            <div className="text-[10px] text-muted-foreground mt-1">{d.termName}</div>
+          </div>
+        </div>
+      </div>
+      <div className="px-8 pb-6">
+        {/* bio strip */}
+        <div className="grid grid-cols-2 gap-y-1.5 text-[12.5px] border-y border-foreground/30 py-3">
+          <div className="col-span-2"><span className="text-muted-foreground">Learner: </span><b className="uppercase">{d.student.name}</b></div>
+          <div><span className="text-muted-foreground">Class: </span><b>{d.student.classroom}</b></div>
+          <div><span className="text-muted-foreground">Learner ID: </span><b className="font-mono">{d.student.index ?? "—"}</b></div>
+        </div>
+
+        {/* descriptor table — no ranking in early years */}
+        <table className="w-full text-[12.5px] mt-4 border border-foreground/40">
+          <thead>
+            <tr className="bg-foreground/90 text-background text-left">
+              <th className="px-2.5 py-2 font-semibold uppercase text-[10px] tracking-wider w-14">Code</th>
+              <th className="px-3 py-2 font-semibold uppercase text-[10px] tracking-wider">Learning area</th>
+              <th className="px-2 py-2 font-semibold uppercase text-[10px] tracking-wider text-center w-[86px]">Raw score (100)</th>
+              <th className="px-2 py-2 font-semibold uppercase text-[10px] tracking-wider text-center w-16">Grade</th>
+              <th className="px-3 py-2 font-semibold uppercase text-[10px] tracking-wider w-[190px]">Descriptor</th>
+            </tr>
+          </thead>
+          <tbody>
+            {d.results.map((r, i) => {
+              const band = bands.bands.find((b) => r.total >= b.min) ?? bands.bands[bands.bands.length - 1];
+              const chip = GRADE_CHIPS[gradeChipIdx(d.curriculum, r.grade)];
+              return (
+                <tr key={i} className={i % 2 ? "bg-secondary/40" : ""}>
+                  <td className="px-2.5 py-2 border-t border-foreground/20 font-mono text-[11px] text-muted-foreground">{r.code ?? "—"}</td>
+                  <td className="px-3 py-2 border-t border-foreground/20 font-medium">{r.subject}</td>
+                  <td className="px-2 py-2 border-t border-foreground/20 text-center tabular-nums font-semibold">{r.total}</td>
+                  <td className="px-2 py-2 border-t border-foreground/20 text-center"><span className={`inline-block min-w-7 rounded px-1.5 py-0.5 font-bold ${chip}`}>{r.grade}</span></td>
+                  <td className="px-3 py-2 border-t border-foreground/20 text-[11.5px]">{band.label} — {r.remark}</td>
+                </tr>
+              );
+            })}
+            <tr className="bg-foreground/10 font-semibold">
+              <td colSpan={2} className="px-3 py-2 border-t-2 border-foreground/50">Overall performance</td>
+              <td className="px-2 py-2 border-t-2 border-foreground/50 text-center tabular-nums">{d.average ?? "—"}%</td>
+              <td colSpan={2} className="px-3 py-2 border-t-2 border-foreground/50 text-center">
+                {(() => { const b = d.average == null ? null : bands.bands.find((x) => d.average! >= x.min); return b ? `${b.grade} — ${b.label}` : "—"; })()}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        {/* descriptors key */}
+        <div className="mt-3 rounded border border-foreground/30 p-2.5">
+          <div className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Descriptors — {bands.name}</div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10.5px]">
+            {bands.bands.map((b, i) => (
+              <span key={b.grade} className="text-muted-foreground"><b className="text-foreground">{b.grade}</b> · {b.label}</span>
+            ))}
+          </div>
+        </div>
+
+        {/* teacher narrative */}
+        <div className="mt-4 space-y-3 text-[12.5px]">
+          <div className="rounded border border-foreground/25 p-3">
+            <div className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">How {d.student.name.split(" ")[0]} is getting on</div>
+            <p className="mt-1 italic">“{d.teacherRemark ?? "—"}”</p>
+          </div>
+          <div className="rounded border border-foreground/25 p-3">
+            <div className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">Head of school&apos;s comments</div>
+            <p className="mt-1 italic">“{d.headRemark ?? "—"}”</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-8 pt-8 text-[10px] text-muted-foreground">
+          <div className="border-t border-foreground/60 pt-1">Class teacher</div>
+          <div className="border-t border-foreground/60 pt-1">Parent / guardian</div>
+        </div>
+        <div className="mt-2 text-[11px] text-muted-foreground">
+          Attendance: {d.attendanceSummary ?? "—"}{d.nextTermBegins ? <> · Next term begins: <b className="text-foreground">{d.nextTermBegins}</b></> : null}
+          {" "}· Status: <b className={d.published ? "text-foreground" : "text-amber-600"}>{d.published ? "OFFICIAL" : "PROVISIONAL"}</b>
         </div>
       </div>
       <KenteStrip />

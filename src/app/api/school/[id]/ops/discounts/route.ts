@@ -16,7 +16,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const applications = await db.discountApplication.findMany({
     where: { schoolId },
     orderBy: { createdAt: "desc" },
-    include: { discount: true, student: true },
+    include: { discount: true, profile: true, student: true },
   });
   const services = await db.dailyService.findMany({ where: { schoolId }, orderBy: { name: "asc" } });
 
@@ -27,8 +27,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       applied: d._count.applications,
     })),
     applications: applications.map((a) => ({
-      id: a.id, discountId: a.discountId, discountName: a.discount.name, type: a.discount.type,
-      value: a.valueOverride ?? a.discount.value, scope: a.discount.scope,
+      id: a.id, discountId: a.discountId, discountName: a.discount?.name ?? a.profile?.name ?? "Discount", type: a.discount?.type ?? "PERCENT",
+      value: a.valueOverride ?? a.discount?.value ?? a.profile?.value ?? 0, scope: a.discount?.scope ?? (a.profile?.category === "DAILY_SERVICE" ? "DAILY_SERVICE" : "TUITION"),
       serviceId: a.serviceId, student: `${a.student.firstName} ${a.student.lastName}`,
       studentId: a.studentId, guardianPhone: a.student.guardianPhone,
       status: a.status, reason: a.reason, appliedByName: a.appliedByName, createdAt: a.createdAt,
@@ -91,7 +91,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (!app || app.schoolId !== schoolId) return NextResponse.json({ error: "Application not found" }, { status: 404 });
     await db.discountApplication.update({ where: { id: app.id }, data: { status: "REVOKED" } });
     // restore standard daily rate if this was a service subsidy
-    if (app.discount.scope === "DAILY_SERVICE" && app.serviceId) {
+    if (app.discount?.scope === "DAILY_SERVICE" && app.serviceId) {
       const en = await db.dailyServiceEnrollment.findUnique({ where: { serviceId_studentId: { serviceId: app.serviceId, studentId: app.studentId } } });
       if (en) {
         const others = await db.discountApplication.count({ where: { studentId: app.studentId, serviceId: app.serviceId, status: "ACTIVE" } });

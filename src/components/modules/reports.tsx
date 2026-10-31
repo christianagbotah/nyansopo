@@ -9,8 +9,21 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ModuleHeader, LoadingBlock, EmptyState, StatusBadge } from "@/components/ui-helpers";
 import { toast } from "@/hooks/use-toast";
-import { GraduationCap, Sparkles, Printer, Wand2, Send, RefreshCcw, Layers, FileText } from "lucide-react";
-import { ClassicSheet, ModernSheet, type SheetData } from "@/components/report-sheets";
+import { GraduationCap, Sparkles, Printer, Wand2, Send, RefreshCcw, Layers, FileText, Pencil, Save } from "lucide-react";
+import { ClassicSheet, ModernSheet, CompactSheet, type SheetData } from "@/components/report-sheets";
+import { Textarea } from "@/components/ui/textarea";
+
+type SheetStyle = "classic" | "modern" | "compact";
+const STYLE_BUTTONS: { id: SheetStyle; label: string }[] = [
+  { id: "classic", label: "Classic GES" },
+  { id: "compact", label: "Primary / KG" },
+  { id: "modern", label: "Modern" },
+];
+function StylePicker({ style, set }: { style: SheetStyle; set: (s: SheetStyle) => void }) {
+  return <span className="flex gap-1 flex-wrap">{STYLE_BUTTONS.map((b) => (
+    <Button key={b.id} size="sm" variant={style === b.id ? "default" : "outline"} className="h-7 text-xs" onClick={() => set(b.id)}>{b.label}</Button>
+  ))}</span>;
+}
 
 type RepData = {
   terms: { id: string; name: string; isCurrent: boolean }[];
@@ -18,7 +31,7 @@ type RepData = {
   classrooms: { id: string; name: string }[];
   reportCards: {
     id: string; student: string; studentId: string; classroom: string; average: number | null; position: number | null;
-    classSize: number | null; conduct: string | null; promotion: string | null; published: boolean;
+    classSize: number | null; conduct: string | null; interest: string | null; promotion: string | null; published: boolean;
     teacherRemark: string | null; headRemark: string | null; aiGenerated: boolean; attendance: string | null; subjectCount: number;
   }[];
 };
@@ -30,10 +43,12 @@ export function Reports() {
   const [classId, setClassId] = useState<string | null>(null);
   const [selected, setSelected] = useState<RepData["reportCards"][0] | null>(null);
   const [detail, setDetail] = useState<any | null>(null);
-  const [sheetStyle, setSheetStyle] = useState<"classic" | "modern">("classic");
+  const [sheetStyle, setSheetStyle] = useState<SheetStyle>("classic");
   const [school, setSchool] = useState<SheetData["school"] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [bulk, setBulk] = useState<{ loading: boolean; cards: SheetData[] } | null>(null);
+  const [editRemarks, setEditRemarks] = useState(false);
+  const [draft, setDraft] = useState<{ teacherRemark: string; headRemark: string; conduct: string }>({ teacherRemark: "", headRemark: "", conduct: "" });
 
   const load = (t?: string) => {
     if (!currentSchoolId) return;
@@ -82,10 +97,25 @@ export function Reports() {
   }
 
   async function openCard(card: RepData["reportCards"][0]) {
-    setSelected(card); setDetail(null);
+    setSelected(card); setDetail(null); setEditRemarks(false);
     const full = await apiGet<any>(`/api/student/${card.studentId}`);
     const rc = full.reportCards.find((r: any) => r.id === card.id);
     setDetail({ ...card, results: rc?.results ?? [], student: full.student, attendanceSummary: rc?.attendance });
+    setDraft({ teacherRemark: card.teacherRemark ?? "", headRemark: card.headRemark ?? "", conduct: card.conduct ?? "" });
+  }
+
+  /* save edited remarks / conduct straight onto the report card */
+  async function saveRemarks() {
+    if (!currentSchoolId || !detail) return;
+    setBusy("remarks");
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/reports`, { action: "update-remarks", reportCardId: detail.id, teacherRemark: draft.teacherRemark, headRemark: draft.headRemark, conduct: draft.conduct });
+      toast({ title: "Remarks saved", description: "The report sheet now carries the updated remarks." });
+      setDetail({ ...detail, teacherRemark: draft.teacherRemark, headRemark: draft.headRemark, conduct: draft.conduct });
+      setEditRemarks(false);
+      load(termId ?? undefined);
+    } catch (e: any) { toast({ title: "Save failed", description: e.message, variant: "destructive" }); }
+    finally { setBusy(null); }
   }
 
   /* bulk: print the whole class's report sheets in one go */
@@ -103,7 +133,7 @@ export function Reports() {
           termName: data!.terms.find((t) => t.id === termId)?.name ?? "",
           curriculum: schoolCurriculum,
           position: rc.position, classSize: rc.classSize, average: rc.average,
-          conduct: rc.conduct, promotion: rc.promotion,
+          conduct: rc.conduct, interest: rc.interest, promotion: rc.promotion,
           attendanceSummary: rcd?.attendance ?? rc.attendance,
           teacherRemark: rc.teacherRemark, headRemark: rc.headRemark, aiGenerated: rc.aiGenerated, published: rc.published,
           school: school ?? { name: "—" },
@@ -124,7 +154,7 @@ export function Reports() {
     termName: data.terms.find((t) => t.id === termId)?.name ?? "",
     curriculum: schoolCurriculum,
     position: detail.position, classSize: detail.classSize, average: detail.average,
-    conduct: detail.conduct, promotion: detail.promotion,
+    conduct: detail.conduct, interest: detail.interest, promotion: detail.promotion,
     attendanceSummary: detail.attendanceSummary ?? detail.attendance,
     teacherRemark: detail.teacherRemark, headRemark: detail.headRemark,
     aiGenerated: detail.aiGenerated, published: detail.published,
@@ -212,20 +242,45 @@ export function Reports() {
           <DialogHeader className="no-print">
             <DialogTitle className="flex items-center justify-between gap-3 text-base flex-wrap">
               <span>Report sheet — {selected?.student}</span>
-              <span className="flex gap-1">
-                <Button size="sm" variant={sheetStyle === "classic" ? "default" : "outline"} className="h-7 text-xs" onClick={() => setSheetStyle("classic")}>Classic GES</Button>
-                <Button size="sm" variant={sheetStyle === "modern" ? "default" : "outline"} className="h-7 text-xs" onClick={() => setSheetStyle("modern")}>Modern</Button>
-              </span>
+              <StylePicker style={sheetStyle} set={setSheetStyle} />
             </DialogTitle>
           </DialogHeader>
           {!sheetData ? <LoadingBlock label="Preparing report sheet…" /> : (
-            <div className="print-area">
-              {sheetStyle === "classic" ? <ClassicSheet d={sheetData} /> : <ModernSheet d={sheetData} />}
-            </div>
+            <>
+              <div className="print-area">
+                {sheetStyle === "classic" ? <ClassicSheet d={sheetData} /> : sheetStyle === "compact" ? <CompactSheet d={sheetData} /> : <ModernSheet d={sheetData} />}
+              </div>
+
+              {/* remark / conduct editor (no-print) */}
+              <div className="mt-4 no-print rounded-lg border bg-secondary/30 p-3">
+                <button className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground" onClick={() => setEditRemarks(!editRemarks)}>
+                  <Pencil className="size-3.5" /> {editRemarks ? "Hide remark editor" : "Edit remarks & conduct"}
+                </button>
+                {editRemarks && (
+                  <div className="grid sm:grid-cols-3 gap-3 mt-3">
+                    <label className="text-xs space-y-1.5">
+                      <span className="font-medium">Class teacher's remarks</span>
+                      <Textarea rows={3} value={draft.teacherRemark} onChange={(e) => setDraft({ ...draft, teacherRemark: e.target.value })} placeholder="Shown on every sheet style" />
+                    </label>
+                    <label className="text-xs space-y-1.5">
+                      <span className="font-medium">Head of school's remarks</span>
+                      <Textarea rows={3} value={draft.headRemark} onChange={(e) => setDraft({ ...draft, headRemark: e.target.value })} placeholder="Final word on the report" />
+                    </label>
+                    <label className="text-xs space-y-1.5">
+                      <span className="font-medium">Conduct</span>
+                      <Textarea rows={3} value={draft.conduct} onChange={(e) => setDraft({ ...draft, conduct: e.target.value })} placeholder="e.g. A — Polite and respectful" />
+                    </label>
+                    <div className="sm:col-span-3 flex justify-end">
+                      <Button size="sm" className="gap-1.5" onClick={saveRemarks} disabled={busy === "remarks"}><Save className="size-3.5" /> {busy === "remarks" ? "Saving…" : "Save to report card"}</Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </>
           )}
           {sheetData && (
             <div className="flex flex-wrap gap-2 justify-end mt-4 no-print">
-              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => aiRemark(sheetData && detail.id)} disabled={busy === detail.id}><Wand2 className="size-4" /> Draft AI remarks</Button>
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => aiRemark(detail.id)} disabled={busy === detail.id}><Wand2 className="size-4" /> Draft AI remarks</Button>
               <Button size="sm" variant="outline" className="gap-1.5" onClick={() => window.print()}><Printer className="size-4" /> Print</Button>
               {!sheetData.published && <Button size="sm" className="gap-1.5" onClick={() => publish(detail.id)}><Send className="size-4" /> Publish</Button>}
             </div>
@@ -238,18 +293,15 @@ export function Reports() {
         <Dialog open onOpenChange={() => setBulk(null)}>
           <DialogContent className="max-w-3xl max-h-[92vh] overflow-y-auto nice-scroll">
             <DialogHeader className="no-print">
-              <DialogTitle className="flex items-center justify-between text-base">
+              <DialogTitle className="flex items-center justify-between text-base flex-wrap gap-2">
                 <span className="flex items-center gap-2"><FileText className="size-4" /> Class report sheets ({bulk.cards.length})</span>
-                <span className="flex gap-1">
-                  <Button size="sm" variant={sheetStyle === "classic" ? "default" : "outline"} className="h-7 text-xs" onClick={() => setSheetStyle("classic")}>Classic GES</Button>
-                  <Button size="sm" variant={sheetStyle === "modern" ? "default" : "outline"} className="h-7 text-xs" onClick={() => setSheetStyle("modern")}>Modern</Button>
-                </span>
+                <StylePicker style={sheetStyle} set={setSheetStyle} />
               </DialogTitle>
             </DialogHeader>
             {bulk.loading ? <LoadingBlock label="Fetching every learner's sheet…" /> : (
               <div className="print-area space-y-4">
                 <div className="no-print flex justify-end"><Button size="sm" onClick={() => window.print()} className="gap-1.5"><Printer className="size-4" /> Print all {bulk.cards.length}</Button></div>
-                {bulk.cards.map((c, i) => sheetStyle === "classic" ? <ClassicSheet key={i} d={c} /> : <ModernSheet key={i} d={c} />)}
+                {bulk.cards.map((c, i) => sheetStyle === "classic" ? <ClassicSheet key={i} d={c} /> : sheetStyle === "compact" ? <CompactSheet key={i} d={c} /> : <ModernSheet key={i} d={c} />)}
               </div>
             )}
           </DialogContent>

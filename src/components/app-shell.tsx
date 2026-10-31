@@ -175,22 +175,28 @@ export function AppShell() {
           <div className="flex items-center gap-2 min-w-0">
             <School className="size-4.5 text-muted-foreground hidden sm:block shrink-0" />
             {schools.length > 1 ? (
-              <Select value={currentSchoolId ?? schools[0]?.id ?? ""} onValueChange={setCurrentSchool}>
-                <SelectTrigger className="h-9 w-auto max-w-[260px] gap-1.5 font-medium">
-                  <SelectValue placeholder="Select school" />
-                </SelectTrigger>
-                <SelectContent>
-                  {schools.map((s) => (
-                    <SelectItem key={s.id} value={s.id}>
-                      <span className="flex items-center gap-2">
-                        <span className="size-2 rounded-full shrink-0" style={{ background: s.logoColor }} />
-                        <span className="truncate">{s.name}</span>
-                        {s.isBranchMain && <Badge variant="secondary" className="text-[9px] px-1">MAIN</Badge>}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              (() => {
+                // fully-controlled value: fall back when the stored id isn't in the list
+                const activeId = schools.some((s) => s.id === currentSchoolId) ? (currentSchoolId as string) : (schools[0]?.id ?? "");
+                return (
+                  <Select value={activeId} onValueChange={setCurrentSchool}>
+                    <SelectTrigger className="h-9 w-auto max-w-[260px] gap-1.5 font-medium">
+                      <SelectValue placeholder="Select school" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {schools.map((s) => (
+                        <SelectItem key={s.id} value={s.id}>
+                          <span className="flex items-center gap-2">
+                            <span className="size-2 rounded-full shrink-0" style={{ background: s.logoColor }} />
+                            <span className="truncate">{s.name}</span>
+                            {s.isBranchMain && <Badge variant="secondary" className="text-[9px] px-1">MAIN</Badge>}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                );
+              })()
             ) : assocScope ? (
               <div className="text-sm font-medium truncate">{session?.title ?? "Association Portal"}</div>
             ) : (

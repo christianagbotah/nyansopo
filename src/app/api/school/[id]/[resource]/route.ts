@@ -196,7 +196,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         reportCards: cards.map((rc) => ({
           id: rc.id, student: `${rc.student.firstName} ${rc.student.lastName}`, studentId: rc.studentId,
           classroom: rc.classroomName, average: rc.average, position: rc.classPosition, classSize: rc.classSize,
-          conduct: rc.conduct, promotion: rc.promotion, published: rc.published,
+          conduct: rc.conduct, interest: rc.interest, promotion: rc.promotion, published: rc.published,
           teacherRemark: rc.teacherRemark, headRemark: rc.headRemark, aiGenerated: rc.aiGenerated,
           attendance: rc.attendance, subjectCount: rc.results.length,
         })),
@@ -260,7 +260,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         const ids: string[] = Array.isArray(body.paymentIds) ? body.paymentIds : [];
         if (!ids.length) return NextResponse.json({ error: "No payments selected" }, { status: 400 });
         if (ids.length > 50) return NextResponse.json({ error: "Maximum 50 receipts per batch" }, { status: 400 });
-        const payloads = [];
+        const payloads: Awaited<ReturnType<typeof invoicePaymentReceipt>>[] = [];
         for (const id of ids) {
           const p = await db.payment.findFirst({ where: { id, schoolId } });
           if (!p) continue;
@@ -330,9 +330,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           if (apps.length) {
             let pct = 0, names: string[] = [];
             for (const a of apps) {
-              const v = a.valueOverride ?? a.discount.value;
-              pct += a.discount.type === "PERCENT" ? v : 0;
-              names.push(a.discount.name);
+              const v = a.valueOverride ?? a.discount?.value ?? 0;
+              pct += a.discount?.type === "PERCENT" ? v : 0;
+              if (a.discount) names.push(a.discount.name);
             }
             if (pct > 0) {
               pct = Math.min(100, pct);
@@ -429,31 +429,62 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         const enrolled = await db.enrollment.findMany({ where: { classroomId, status: "ACTIVE" }, include: { student: true } });
         const assessments = await db.assessment.findMany({ where: { classroomId, termId }, include: { subject: true, marks: true } });
         if (!assessments.length) return NextResponse.json({ error: "No assessments recorded for this class and term yet — enter marks in the Gradebook first." }, { status: 400 });
-        // group by subject
-        const bySubject: Record<string, { subjectId: string; name: string; marks: Record<string, number>; max: number }> = {};
+        // remark template library (iedupro parity) — falls back to band heuristics
+        const templates = await db.remarkTemplate.findMany({ where: { schoolId, active: true } });
+        const pickRemark = (pct: number, kind: "TEACHER" | "HEAD"): string => {
+          const cat = kind === "TEACHER" ? (pct >= 68 ? "TEACHER_POSITIVE" : pct >= 40 ? "TEACHER_NEUTRAL" : "TEACHER_NEGATIVE") : "HEAD_RANGE";
+          const pool = cat === "HEAD_RANGE" ? templates.filter((t) => t.category === "HEAD_RANGE" && pct >= (t.minPercent ?? 0) && pct <= (t.maxPercent ?? 100)) : templates.filter((t) => t.category === cat);
+          if (!pool.length) {
+            if (kind === "HEAD") return pct >= 80 ? "An excellent result — a model learner for the school." : pct >= 55 ? "A good result. Keep striving for excellence." : "Needs closer support at home and at school.";
+            return pct >= 68 ? "Commendable" : pct >= 55 ? "Good effort" : pct >= 40 ? "Fair — needs practice" : "Needs close support";
+          }
+          return pool[Math.floor(Math.random() * pool.length)].text;
+        };
+        // group by subject, splitting class work (30) from end-of-term exam (70) — Ghana standard
+        const bySubject: Record<string, { subjectId: string; name: string; code: string; isCore: boolean; classGot: Record<string, number>; classMax: number; examGot: Record<string, number>; examMax: number }> = {};
         for (const a of assessments) {
           const key = a.subject.name;
-          bySubject[key] ??= { subjectId: a.subjectId, name: key, marks: {}, max: 0 };
+          bySubject[key] ??= { subjectId: a.subjectId, name: key, code: a.subject.code, isCore: a.subject.isCore, classGot: {}, classMax: 0, examGot: {}, examMax: 0 };
+          const isExam = a.type === "END_OF_TERM";
+          const got = isExam ? bySubject[key].examGot : bySubject[key].classGot;
           for (const m of a.marks) {
             if (m.score === null) continue;
-            bySubject[key].marks[m.studentId] = (bySubject[key].marks[m.studentId] ?? 0) + m.score;
+            got[m.studentId] = (got[m.studentId] ?? 0) + m.score;
           }
-          bySubject[key].max += a.maxScore;
+          if (isExam) bySubject[key].examMax += a.maxScore; else bySubject[key].classMax += a.maxScore;
         }
-        const results: { studentId: string; subjects: { name: string; pct: number }[] }[] = enrolled.map((e) => ({
+        // per-student subject rows with 30/70 composition
+        const subjRows = Object.values(bySubject);
+        const results: { studentId: string; subjects: { name: string; code: string; isCore: boolean; classScore: number | null; examScore: number | null; total: number }[] }[] = enrolled.map((e) => ({
           studentId: e.student.id,
-          subjects: Object.values(bySubject).map((s) => ({ name: s.name, pct: s.marks[e.student.id] !== undefined ? Math.round((s.marks[e.student.id] / s.max) * 100) : 0 })),
+          subjects: subjRows.map((s) => {
+            const classPct = s.classMax > 0 && s.classGot[e.student.id] !== undefined ? s.classGot[e.student.id] / s.classMax : null;
+            const examPct = s.examMax > 0 && s.examGot[e.student.id] !== undefined ? s.examGot[e.student.id] / s.examMax : null;
+            if (classPct !== null && examPct !== null) {
+              const cs = Math.round(classPct * 30), es = Math.round(examPct * 70);
+              return { name: s.name, code: s.code, isCore: s.isCore, classScore: cs, examScore: es, total: cs + es };
+            }
+            // single-component subject: grade on what exists, no artificial split
+            const pct = classPct ?? examPct ?? 0;
+            return { name: s.name, code: s.code, isCore: s.isCore, classScore: null, examScore: null, total: Math.round(pct * 100) };
+          }),
         }));
-        const withAvg = results.map((r) => ({ ...r, avg: r.subjects.length ? r.subjects.reduce((s, x) => s + x.pct, 0) / r.subjects.length : 0 })).sort((a, b) => b.avg - a.avg);
+        // subject positions: rank within each subject across the class
+        const subjNames = subjRows.map((s) => s.name);
+        for (const name of subjNames) {
+          const ranked = [...results].sort((a, b) => (b.subjects.find((s) => s.name === name)?.total ?? -1) - (a.subjects.find((s) => s.name === name)?.total ?? -1));
+          ranked.forEach((r, i) => { const row = r.subjects.find((s) => s.name === name); if (row) (row as any).position = i + 1; });
+        }
+        const withAvg = results.map((r) => ({ ...r, avg: r.subjects.length ? r.subjects.reduce((s, x) => s + x.total, 0) / r.subjects.length : 0 })).sort((a, b) => b.avg - a.avg);
         let created = 0;
         for (let i = 0; i < withAvg.length; i++) {
           const r = withAvg[i];
           const existing = await db.reportCard.findFirst({ where: { studentId: r.studentId, termId } });
           if (existing) { await db.reportCardResult.deleteMany({ where: { reportCardId: existing.id } }); await db.reportCard.delete({ where: { id: existing.id } }); }
-          const rc = await db.reportCard.create({ data: { studentId: r.studentId, termId, classroomName: classroom?.name ?? "", totalScore: Math.round(r.avg * r.subjects.length), average: Math.round(r.avg), classPosition: i + 1, classSize: withAvg.length, promotion: r.avg >= 40 ? "PROMOTED" : "PROBATION", published: false } });
+          const rc = await db.reportCard.create({ data: { studentId: r.studentId, termId, classroomName: classroom?.name ?? "", totalScore: Math.round(r.avg * r.subjects.length), average: Math.round(r.avg), classPosition: i + 1, classSize: withAvg.length, promotion: r.avg >= 40 ? "PROMOTED" : "PROBATION", published: false, teacherRemark: pickRemark(Math.round(r.avg), "TEACHER"), headRemark: pickRemark(Math.round(r.avg), "HEAD") } });
           for (const s of r.subjects) {
-            const g = gradeFor(school.curriculum, s.pct);
-            await db.reportCardResult.create({ data: { reportCardId: rc.id, subjectName: s.name, total: s.pct, grade: `${g.grade} — ${g.label}`, remark: s.pct >= 68 ? "Commendable" : s.pct >= 55 ? "Good effort" : s.pct >= 40 ? "Fair — needs practice" : "Needs close support" } });
+            const g = gradeFor(school.curriculum, s.total);
+            await db.reportCardResult.create({ data: { reportCardId: rc.id, subjectName: s.name, subjectCode: s.code, isCore: s.isCore, classScore: s.classScore, examScore: s.examScore, total: s.total, grade: g.grade, position: (s as any).position ?? null, remark: pickRemark(s.total, "TEACHER") } });
           }
           created++;
         }

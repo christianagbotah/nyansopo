@@ -365,7 +365,7 @@ export function ModernReceipt({ data }: { data: ReceiptData }) {
         <div className="mt-4 rounded-lg bg-gradient-to-r from-emerald-600 to-emerald-500 text-white px-4 py-3 flex items-center justify-between">
           <div>
             <div className="text-[10px] uppercase tracking-widest text-white/80">{isRefund ? "Refunded" : "Amount Paid"}</div>
-            <div className="text-[10px] text-white/70">{data.invoice?.balance > 0 ? `Part payment · balance ${fmtCedi(data.invoice.balance)}` : "Full settlement"}</div>
+            <div className="text-[10px] text-white/70">{(data.invoice?.balance ?? 0) > 0 ? `Part payment · balance ${fmtCedi(data.invoice?.balance ?? 0)}` : "Full settlement"}</div>
           </div>
           <div className="text-2xl font-black tabular-nums">{fmtCedi(data.amount)}</div>
         </div>
