@@ -11,20 +11,22 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatCard, ModuleHeader, LoadingBlock, EmptyState } from "@/components/ui-helpers";
-import { fmtCedi, fmtDate } from "@/lib/format";
+import { fmtCedi, fmtDate, PAYMENT_LABELS } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
-import { Package, Plus, TrendingDown, TrendingUp, Warehouse, Truck, ArrowDownRight, ArrowUpRight, RotateCcw, Search, Pencil, PackageOpen } from "lucide-react";
+import { Package, Plus, TrendingDown, TrendingUp, Warehouse, Truck, ArrowDownRight, ArrowUpRight, RotateCcw, Search, Pencil, PackageOpen, Banknote, ShoppingBasket, ReceiptText, Minus, CheckCircle2 } from "lucide-react";
 
 type Item = { id: string; name: string; sku: string | null; category: string; unit: string; unitCost: number; sellPrice: number | null; stockQty: number; reorderLevel: number; location: string | null };
 type Movement = { id: string; item: string; itemId: string; type: string; qty: number; unitCost: number | null; partyType: string | null; partyName: string | null; student: string | null; chargedToInvoice: boolean; note: string | null; createdAt: string };
 type Supplier = { id: string; name: string; phone: string | null; email: string | null; itemsSupplied: string | null; notes: string | null };
+type Sale = { saleNo: string; buyer: string; method: string; total: number; at: string; lines: { item: string; qty: number; amount: number }[] };
 type InventoryData = {
   items: Item[];
   movements: Movement[];
   suppliers: Supplier[];
-  stats: { stockValue: number; lowStock: number; items: number; movements: number };
+  stats: { stockValue: number; lowStock: number; items: number; movements: number; salesMonth: number; salesCount: number };
   lowStockItems: { id: string; name: string; stockQty: number; reorderLevel: number; unit: string }[];
   students: { id: string; name: string; classroom: string }[];
+  sales: Sale[];
 };
 
 const CATS = ["BOOKS", "UNIFORMS", "STATIONERY", "FOOD", "CLEANING", "FUEL", "OTHER"];
@@ -39,6 +41,15 @@ export function Inventory() {
   const [supDialog, setSupDialog] = useState<Supplier | "new" | null>(null);
   const [catFilter, setCatFilter] = useState("all");
   const [search, setSearch] = useState("");
+  // POS state
+  const [cart, setCart] = useState<Record<string, number>>({});
+  const [posSearch, setPosSearch] = useState("");
+  const [buyerMode, setBuyerMode] = useState("walkin");
+  const [buyerName, setBuyerName] = useState("");
+  const [buyerStudentId, setBuyerStudentId] = useState("");
+  const [payMethod, setPayMethod] = useState("CASH");
+  const [saleBusy, setSaleBusy] = useState(false);
+  const [saleReceipt, setSaleReceipt] = useState<Sale | null>(null);
 
   const load = () => {
     if (!currentSchoolId) return;
@@ -50,6 +61,50 @@ export function Inventory() {
     const q = search.toLowerCase();
     return (data?.items ?? []).filter((i) => (catFilter === "all" || i.category === catFilter) && (!q || i.name.toLowerCase().includes(q) || (i.sku ?? "").toLowerCase().includes(q)));
   }, [data, catFilter, search]);
+
+  const sellable = useMemo(() => {
+    const q = posSearch.toLowerCase();
+    return (data?.items ?? []).filter((i) => i.sellPrice !== null && (!q || i.name.toLowerCase().includes(q) || (i.sku ?? "").toLowerCase().includes(q)));
+  }, [data, posSearch]);
+
+  const cartLines = useMemo(() => Object.entries(cart).map(([id, qty]) => {
+    const it = data?.items.find((x) => x.id === id);
+    return it ? { item: it, qty } : null;
+  }).filter(Boolean) as { item: Item; qty: number }[], [cart, data]);
+  const cartTotal = cartLines.reduce((s, l) => s + (l.item.sellPrice ?? 0) * l.qty, 0);
+
+  function addToCart(it: Item) {
+    setCart((c) => {
+      const next = (c[it.id] ?? 0) + 1;
+      if (next > it.stockQty) { toast({ title: "Not enough stock", description: `Only ${it.stockQty} ${it.unit} of ${it.name} available.` }); return c; }
+      return { ...c, [it.id]: next };
+    });
+  }
+  function setCartQty(it: Item, qty: number) {
+    setCart((c) => {
+      if (qty <= 0) { const { [it.id]: _drop, ...rest } = c; return rest; }
+      if (qty > it.stockQty) { toast({ title: "Not enough stock", description: `Only ${it.stockQty} ${it.unit} available.` }); return c; }
+      return { ...c, [it.id]: qty };
+    });
+  }
+
+  async function completeSale() {
+    if (!currentSchoolId || cartLines.length === 0) return;
+    if (buyerMode === "student" && !buyerStudentId) { toast({ title: "Choose the learner buying" }); return; }
+    setSaleBusy(true);
+    try {
+      const res = await apiPost<{ sale: Sale }>(`/api/school/${currentSchoolId}/ops/inventory`, {
+        action: "sale",
+        lines: cartLines.map((l) => ({ itemId: l.item.id, qty: l.qty })),
+        buyerName: buyerMode === "walkin" ? buyerName : undefined,
+        studentId: buyerMode === "student" ? buyerStudentId : undefined,
+        method: payMethod,
+      });
+      setSaleReceipt(res.sale);
+      setCart({}); setBuyerName(""); setBuyerStudentId("");
+      load();
+    } catch (e: any) { toast({ title: "Sale failed", description: e.message, variant: "destructive" }); } finally { setSaleBusy(false); }
+  }
 
   if (!data) return <LoadingBlock label="Loading inventory…" />;
 
@@ -69,17 +124,150 @@ export function Inventory() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <StatCard icon={<Warehouse className="size-4" />} label="Stock value" value={fmtCedi(data.stats.stockValue, { compact: true })} tone="gold" sub={`${data.stats.items} items`} />
         <StatCard icon={<PackageOpen className="size-4" />} label="Low stock" value={data.stats.lowStock} tone={data.stats.lowStock ? "danger" : "default"} sub="below reorder level" />
-        <StatCard icon={<ArrowUpRight className="size-4" />} label="Restocks (recent)" value={data.movements.filter((m) => m.type === "PURCHASE").length} tone="primary" />
-        <StatCard icon={<ArrowDownRight className="size-4" />} label="Issues (recent)" value={data.movements.filter((m) => m.type === "ISSUE").length} sub="to learners, staff & classes" />
+        <StatCard icon={<Banknote className="size-4" />} label="Sales this month" value={fmtCedi(data.stats.salesMonth, { compact: true })} tone="primary" sub={`${data.sales.length} recent sales`} />
+        <StatCard icon={<ArrowDownRight className="size-4" />} label="Issues (recent)" value={data.movements.filter((m) => m.type === "ISSUE").length} sub="sales, learners, staff & classes" />
       </div>
 
       <Tabs value={tab} onValueChange={setTab} className="mt-5">
         <TabsList>
+          <TabsTrigger value="pos">Counter sales</TabsTrigger>
           <TabsTrigger value="items">Stock ({items.length})</TabsTrigger>
           <TabsTrigger value="low">Low stock ({data.lowStockItems.length})</TabsTrigger>
           <TabsTrigger value="movements">Movements</TabsTrigger>
           <TabsTrigger value="suppliers">Suppliers ({data.suppliers.length})</TabsTrigger>
         </TabsList>
+
+        {/* ── COUNTER SALES (POS) ── */}
+        <TabsContent value="pos">
+          <div className="grid lg:grid-cols-3 gap-4">
+            {/* product picker */}
+            <Card className="lg:col-span-2">
+              <CardHeader className="pb-3 flex-row items-center justify-between space-y-0">
+                <CardTitle className="text-base">Pick items — tap to add</CardTitle>
+                <div className="relative">
+                  <Search className="size-4 absolute left-2.5 top-2.5 text-muted-foreground" />
+                  <Input placeholder="Search item or SKU…" value={posSearch} onChange={(e) => setPosSearch(e.target.value)} className="pl-8 w-52 h-8" />
+                </div>
+              </CardHeader>
+              <CardContent className="max-h-[520px] overflow-y-auto nice-scroll">
+                <div className="grid sm:grid-cols-2 gap-2">
+                  {sellable.length === 0 && <div className="col-span-2"><EmptyState icon={<Package className="size-5" />} title="No sellable items" hint="Set a selling price on an item first — internal-only items can't be sold." /></div>}
+                  {sellable.map((i) => {
+                    const inCart = cart[i.id] ?? 0;
+                    const out = i.stockQty - inCart <= 0;
+                    return (
+                      <button key={i.id} onClick={() => addToCart(i)} disabled={out}
+                        className={`text-left rounded-lg border p-3 transition-colors ${out ? "opacity-50 cursor-not-allowed" : "hover:border-primary/50 hover:bg-primary/5"} ${inCart ? "border-primary/60 bg-primary/5" : ""}`}>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-medium text-sm truncate">{i.name}</span>
+                          {inCart > 0 && <Badge className="text-[10px] shrink-0">×{inCart}</Badge>}
+                        </div>
+                        <div className="flex items-center justify-between mt-1">
+                          <span className="text-sm font-semibold text-primary tabular-nums">{fmtCedi(i.sellPrice ?? 0)}</span>
+                          <span className={`text-[11px] tabular-nums ${i.stockQty < i.reorderLevel ? "text-destructive" : "text-muted-foreground"}`}>{i.stockQty} {i.unit}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* cart + checkout */}
+            <div className="space-y-4">
+              <Card>
+                <CardHeader className="pb-3 flex-row items-center justify-between space-y-0">
+                  <CardTitle className="text-base">Cart</CardTitle>
+                  {cartLines.length > 0 && <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setCart({})}>Clear</Button>}
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {cartLines.length === 0 && <EmptyState icon={<ShoppingBasket className="size-5" />} title="Cart is empty" hint="Tap items on the left to add them." />}
+                  {cartLines.map(({ item, qty }) => (
+                    <div key={item.id} className="flex items-center justify-between gap-2 border-b last:border-0 pb-2 last:pb-0">
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium truncate">{item.name}</div>
+                        <div className="text-[11px] text-muted-foreground tabular-nums">{fmtCedi(item.sellPrice ?? 0)} × {qty} = <b className="text-foreground">{fmtCedi((item.sellPrice ?? 0) * qty)}</b></div>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Button size="icon" variant="outline" className="size-6" onClick={() => setCartQty(item, qty - 1)}><Minus className="size-3" /></Button>
+                        <span className="w-6 text-center text-sm tabular-nums">{qty}</span>
+                        <Button size="icon" variant="outline" className="size-6" onClick={() => setCartQty(item, qty + 1)}><Plus className="size-3" /></Button>
+                      </div>
+                    </div>
+                  ))}
+                  {cartLines.length > 0 && (
+                    <div className="flex justify-between text-sm font-semibold pt-1 border-t">
+                      <span>Total</span><span className="tabular-nums text-primary text-base">{fmtCedi(cartTotal)}</span>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-3"><CardTitle className="text-base">Checkout</CardTitle></CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button size="sm" variant={buyerMode === "walkin" ? "default" : "outline"} className="h-8" onClick={() => setBuyerMode("walkin")}>Walk-in</Button>
+                    <Button size="sm" variant={buyerMode === "student" ? "default" : "outline"} className="h-8" onClick={() => setBuyerMode("student")}>Learner</Button>
+                  </div>
+                  {buyerMode === "walkin" ? (
+                    <div className="space-y-1.5">
+                      <Label>Buyer name (optional)</Label>
+                      <Input placeholder="e.g. Auntie Adjoa" value={buyerName} onChange={(e) => setBuyerName(e.target.value)} className="h-9" />
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      <Label>Learner *</Label>
+                      <Select value={buyerStudentId} onValueChange={setBuyerStudentId}>
+                        <SelectTrigger className="h-9"><SelectValue placeholder="Choose learner…" /></SelectTrigger>
+                        <SelectContent>
+                          {(data.students ?? []).slice(0, 200).map((s) => <SelectItem key={s.id} value={s.id}>{s.name} · {s.classroom}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  <div className="space-y-1.5">
+                    <Label>Payment method</Label>
+                    <Select value={payMethod} onValueChange={setPayMethod}>
+                      <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="CASH">Cash</SelectItem>
+                        <SelectItem value="MOMO_MTN">MoMo — MTN</SelectItem>
+                        <SelectItem value="MOMO_TELECEL">MoMo — Telecel</SelectItem>
+                        <SelectItem value="MOMO_AT">MoMo — AirtelTigo</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button className="w-full gap-1.5" disabled={saleBusy || cartLines.length === 0} onClick={completeSale}>
+                    <Banknote className="size-4" /> {saleBusy ? "Completing…" : `Complete sale · ${fmtCedi(cartTotal)}`}
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+
+          {/* recent sales */}
+          <Card className="mt-4">
+            <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><ReceiptText className="size-4 text-primary" /> Recent counter sales</CardTitle></CardHeader>
+            <CardContent className="p-0">
+              <div className="max-h-[320px] overflow-y-auto nice-scroll">
+                {data.sales.length === 0 && <EmptyState title="No sales yet" hint="Complete your first counter sale above." />}
+                {data.sales.map((s) => (
+                  <div key={s.saleNo} className="px-4 py-2.5 border-b last:border-0 hover:bg-secondary/30 flex items-center justify-between gap-3 flex-wrap">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium">{s.buyer} <span className="text-muted-foreground font-mono text-xs">{s.saleNo}</span></div>
+                      <div className="text-[11px] text-muted-foreground">{s.lines.map((l) => `${l.item}×${l.qty}`).join(" · ")}</div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className="text-sm font-semibold tabular-nums">{fmtCedi(s.total)}</div>
+                      <div className="text-[11px] text-muted-foreground">{PAYMENT_LABELS[s.method] ?? s.method} · {fmtDate(s.at)}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         {/* ── ITEMS ── */}
         <TabsContent value="items">
@@ -188,8 +376,8 @@ export function Inventory() {
                       <tr key={m.id} className="border-b last:border-0 hover:bg-secondary/30">
                         <td className="px-3 py-2.5 font-medium">{m.item}</td>
                         <td className="px-3 py-2.5">
-                          <Badge variant={m.type === "PURCHASE" ? "default" : m.type === "ISSUE" ? "destructive" : "secondary"} className="text-[10px]">
-                            {m.type === "PURCHASE" ? "Restock" : m.type === "ISSUE" ? "Issue" : m.type === "RETURN" ? "Return" : "Adjust"}
+                          <Badge variant={m.type === "PURCHASE" ? "default" : m.type === "ISSUE" ? (m.partyType === "SALE" ? "secondary" : "destructive") : "secondary"} className="text-[10px]">
+                            {m.partyType === "SALE" ? "Sale" : m.type === "PURCHASE" ? "Restock" : m.type === "ISSUE" ? "Issue" : m.type === "RETURN" ? "Return" : "Adjust"}
                           </Badge>
                         </td>
                         <td className={`px-3 py-2.5 text-right tabular-nums font-semibold ${m.qty > 0 ? "text-emerald-600" : "text-destructive"}`}>
@@ -232,6 +420,32 @@ export function Inventory() {
       <ItemDialog item={itemDialog} onOpenChange={(o) => !o && setItemDialog(null)} onDone={() => { setItemDialog(null); load(); }} />
       <MovementDialog ctx={mvFor} students={data.students} suppliers={data.suppliers} onOpenChange={(o) => !o && setMvFor(null)} onDone={() => { setMvFor(null); load(); }} />
       <SupplierDialog supplier={supDialog} onOpenChange={(o) => !o && setSupDialog(null)} onDone={() => { setSupDialog(null); load(); }} />
+
+      {/* sale receipt */}
+      <Dialog open={!!saleReceipt} onOpenChange={(o) => !o && setSaleReceipt(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader className="text-center">
+            <DialogTitle className="flex items-center justify-center gap-2"><CheckCircle2 className="size-5 text-emerald-600" /> Sale completed</DialogTitle>
+            <DialogDescription className="sr-only">Counter sale receipt</DialogDescription>
+          </DialogHeader>
+          <div className="text-center space-y-1 py-2">
+            <div className="text-3xl font-bold text-primary">{fmtCedi(saleReceipt?.total ?? 0)}</div>
+            <div className="text-sm">{saleReceipt?.buyer}</div>
+            <div className="font-mono text-xs text-muted-foreground">{saleReceipt?.saleNo} · {PAYMENT_LABELS[saleReceipt?.method ?? ""] ?? saleReceipt?.method}</div>
+          </div>
+          <div className="rounded-lg border divide-y text-sm">
+            {(saleReceipt?.lines ?? []).map((l, i) => (
+              <div key={i} className="px-3 py-1.5 flex justify-between">
+                <span>{l.item} ×{l.qty}</span>
+                <span className="tabular-nums">{fmtCedi(l.amount)}</span>
+              </div>
+            ))}
+          </div>
+          <DialogFooter className="sm:justify-center">
+            <Button size="sm" onClick={() => setSaleReceipt(null)}>Done</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

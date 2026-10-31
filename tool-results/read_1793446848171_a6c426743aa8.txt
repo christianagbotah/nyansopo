@@ -1,0 +1,573 @@
+     1→"use client";
+     2→import { useEffect, useMemo, useState } from "react";
+     3→import { useStore } from "@/lib/store";
+     4→import { apiGet, apiPost, apiPostQueueable } from "@/lib/api";
+     5→import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+     6→import { Button } from "@/components/ui/button";
+     7→import { Badge } from "@/components/ui/badge";
+     8→import { Progress } from "@/components/ui/progress";
+     9→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+    10→import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+    11→import { Label } from "@/components/ui/label";
+    12→import { Input } from "@/components/ui/input";
+    13→import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+    14→import { StatCard, ModuleHeader, LoadingBlock, EmptyState } from "@/components/ui-helpers";
+    15→import { fmtCedi, fmtDate, PAYMENT_LABELS } from "@/lib/format";
+    16→import { toast } from "@/hooks/use-toast";
+    17→import { UtensilsCrossed, Wallet, CalendarPlus, Plus, TrendingUp, Search, Droplets, BookOpenCheck, Coffee, HandCoins, CheckCircle2, Printer, Percent } from "lucide-react";
+    18→import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+    19→
+    20→type Service = {
+    21→  id: string; name: string; category: string; price: number; chargeMode: string; weekdays: string; active: boolean; enrolled: number;
+    22→  month: { billed: number; collected: number; owed: number; waived: number; count: number };
+    23→};
+    24→type LedgerRow = { studentId: string; student: string; classroom: string | null; guardianPhone: string; owed: number; items: Record<string, number>; oldest: string };
+    25→type PosStudent = { id: string; name: string; classroom: string; guardianPhone: string; balance: number; services: { id: string; name: string; price: number }[]; today: { charged: number; owed: number } | null };
+    26→type DailyData = {
+    27→  date: string;
+    28→  services: Service[];
+    29→  month: { billed: number; collected: number; owed: number; waived: number };
+    30→  today: { charged: number; collected: number; owed: number; count: number; generated: boolean };
+    31→  trend: { date: string; billed: number; collected: number }[];
+    32→  ledger: LedgerRow[];
+    33→  posStudents: PosStudent[];
+    34→  posPayments: { id: string; receiptNo: string; amount: number; method: string; paidAt: string; student: string }[];
+    35→};
+    36→
+    37→const CAT_ICON: Record<string, any> = { MEAL: Coffee, DRINK: Droplets, CLASS: BookOpenCheck, CARE: HandCoins, OTHER: UtensilsCrossed };
+    38→const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    39→const weekdayLabel = (wd: string) => wd.split(",").map((n) => DAY_LABELS[Number(n)]).join(" · ");
+    40→
+    41→export function DailyServices() {
+    42→  const { currentSchoolId, online } = useStore();
+    43→  const [data, setData] = useState<DailyData | null>(null);
+    44→  const [tab, setTab] = useState("pos");
+    45→  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+    46→  const [collectFor, setCollectFor] = useState<PosStudent | null>(null);
+    47→  const [svcDialog, setSvcDialog] = useState<Service | "new" | null>(null);
+    48→  const [enrollFor, setEnrollFor] = useState<Service | null>(null);
+    49→  const [receipt, setReceipt] = useState<any | null>(null);
+    50→  const [busy, setBusy] = useState(false);
+    51→  const [search, setSearch] = useState("");
+    52→
+    53→  const load = (d?: string) => {
+    54→    if (!currentSchoolId) return;
+    55→    apiGet<DailyData>(`/api/school/${currentSchoolId}/ops/daily?date=${d ?? date}`)
+    56→      .then(setData)
+    57→      .catch((e) => toast({ title: "Load failed", description: e.message, variant: "destructive" }));
+    58→  };
+    59→  useEffect(() => { load(date); }, [currentSchoolId, date]);
+    60→
+    61→  const filteredStudents = useMemo(() => {
+    62→    const q = search.toLowerCase();
+    63→    return (data?.posStudents ?? []).filter((s) => !q || s.name.toLowerCase().includes(q) || s.classroom.toLowerCase().includes(q));
+    64→  }, [data, search]);
+    65→  const withBalance = useMemo(() => filteredStudents.filter((s) => s.balance > 0), [filteredStudents]);
+    66→
+    67→  async function generateDay() {
+    68→    if (!currentSchoolId) return;
+    69→    setBusy(true);
+    70→    try {
+    71→      const res = await apiPost<any>(`/api/school/${currentSchoolId}/ops/daily`, { action: "generate-day", date });
+    72→      toast({ title: "Day generated", description: `${res.created} charges created${res.skipped ? ` · ${res.skipped} already existed` : ""}.` });
+    73→      load(date);
+    74→    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
+    75→  }
+    76→
+    77→  if (!data) return <LoadingBlock label="Loading daily services…" />;
+    78→
+    79→  return (
+    80→    <div>
+    81→      <ModuleHeader
+    82→        title="Daily Services & Tuck"
+    83→        description="Canteen, breakfast, sachet water, remedial classes — micro-billing charged by the school day. Collect at the POS counter, track every pesewa."
+    84→        actions={
+    85→          <div className="flex items-center gap-2 flex-wrap">
+    86→            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-40" />
+    87→            <Button size="sm" className="gap-1.5" onClick={generateDay} disabled={busy}>
+    88→              <CalendarPlus className="size-4" /> {data.today.generated ? "Re-generate day" : "Generate day charges"}
+    89→            </Button>
+    90→          </div>
+    91→        }
+    92→      />
+    93→
+    94→      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+    95→        <StatCard icon={<Wallet className="size-4" />} label="Today collected" value={fmtCedi(data.today.collected, { compact: true })} tone="primary" sub={`${data.today.count} charges · ${fmtCedi(data.today.owed, { compact: true })} open`} />
+    96→        <StatCard icon={<TrendingUp className="size-4" />} label="This month" value={fmtCedi(data.month.collected, { compact: true })} sub={`${fmtCedi(data.month.billed, { compact: true })} billed`} />
+    97→        <StatCard icon={<Percent className="size-4" />} label="Daily arrears" value={fmtCedi(data.month.owed, { compact: true })} tone={data.month.owed > 0 ? "danger" : "default"} sub={`waived ${fmtCedi(data.month.waived, { compact: true })}`} />
+    98→        <StatCard icon={<UtensilsCrossed className="size-4" />} label="Services live" value={data.services.filter((s) => s.active).length} tone="gold" sub={`${data.services.reduce((a, s) => a + s.enrolled, 0)} enrolments`} />
+    99→      </div>
+   100→
+   101→      <Tabs value={tab} onValueChange={setTab} className="mt-5">
+   102→        <TabsList>
+   103→          <TabsTrigger value="pos">Counter / POS</TabsTrigger>
+   104→          <TabsTrigger value="ledger">Ledger & arrears ({data.ledger.length})</TabsTrigger>
+   105→          <TabsTrigger value="services">Services & enrolment</TabsTrigger>
+   106→          <TabsTrigger value="trend">14-day trend</TabsTrigger>
+   107→        </TabsList>
+   108→
+   109→        {/* ── POS ── */}
+   110→        <TabsContent value="pos">
+   111→          <div className="grid lg:grid-cols-3 gap-4">
+   112→            <Card className="lg:col-span-2">
+   113→              <CardHeader className="pb-3 flex-row items-center justify-between space-y-0">
+   114→                <CardTitle className="text-base">Collect a payment</CardTitle>
+   115→                <div className="relative">
+   116→                  <Search className="size-4 absolute left-2.5 top-2.5 text-muted-foreground" />
+   117→                  <Input placeholder="Search learner or class…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-8 w-56 h-8" />
+   118→                </div>
+   119→              </CardHeader>
+   120→              <CardContent className="max-h-[520px] overflow-y-auto nice-scroll space-y-1.5">
+   121→                {withBalance.length === 0 && <EmptyState icon={<CheckCircle2 className="size-5" />} title="No outstanding daily balances" hint="Everything collected — or generate today's charges first." />}
+   122→                {withBalance.slice(0, 60).map((s) => (
+   123→                  <div key={s.id} className="rounded-lg border p-3 flex flex-wrap items-center justify-between gap-2 hover:bg-secondary/30 transition-colors">
+   124→                    <div className="min-w-0">
+   125→                      <div className="font-medium text-sm truncate">{s.name} <span className="text-muted-foreground font-normal">· {s.classroom}</span></div>
+   126→                      <div className="text-[11px] text-muted-foreground">
+   127→                        {s.services.map((x) => x.name.replace(" (optional)", "").replace(" (canteen)", "").replace(" (remedial)", "")).join(" · ") || "—"}
+   128→                      </div>
+   129→                    </div>
+   130→                    <div className="flex items-center gap-2 shrink-0">
+   131→                      <span className="font-semibold text-destructive tabular-nums text-sm">{fmtCedi(s.balance)}</span>
+   132→                      <Button size="sm" className="h-8 gap-1" onClick={() => setCollectFor(s)}><Wallet className="size-3.5" /> Collect</Button>
+   133→                    </div>
+   134→                  </div>
+   135→                ))}
+   136→              </CardContent>
+   137→            </Card>
+   138→            <div className="space-y-4">
+   139→              <Card>
+   140→                <CardHeader className="pb-3"><CardTitle className="text-base">Recent counter receipts</CardTitle></CardHeader>
+   141→                <CardContent className="space-y-2 max-h-[240px] overflow-y-auto nice-scroll">
+   142→                  {data.posPayments.length === 0 && <EmptyState title="No receipts yet" />}
+   143→                  {data.posPayments.map((p) => (
+   144→                    <div key={p.id} className="flex items-center justify-between gap-2 text-sm border-b last:border-0 pb-2 last:pb-0">
+   145→                      <div className="min-w-0">
+   146→                        <div className="font-medium truncate">{p.student}</div>
+   147→                        <div className="text-[11px] text-muted-foreground font-mono">{p.receiptNo} · {PAYMENT_LABELS[p.method] ?? p.method}</div>
+   148→                      </div>
+   149→                      <div className="text-right shrink-0">
+   150→                        <div className="tabular-nums font-semibold">{fmtCedi(p.amount)}</div>
+   151→                        <div className="text-[11px] text-muted-foreground">{fmtDate(p.paidAt)}</div>
+   152→                      </div>
+   153→                    </div>
+   154→                  ))}
+   155→                </CardContent>
+   156→              </Card>
+   157→              <Card className="bg-primary/5 border-primary/20">
+   158→                <CardContent className="pt-4 text-sm space-y-1.5">
+   159→                  <div className="font-semibold flex items-center gap-1.5"><UtensilsCrossed className="size-4 text-primary" /> How it works</div>
+   160→                  <p className="text-muted-foreground text-xs leading-relaxed">
+   161→                    Generate the day&apos;s charges each morning (only learners enrolled in a service running that weekday are billed).
+   162→                    Collect at the counter in cash or MoMo — the oldest charges settle first, and the guardian gets an automatic SMS receipt.
+   163→                  </p>
+   164→                </CardContent>
+   165→              </Card>
+   166→            </div>
+   167→          </div>
+   168→        </TabsContent>
+   169→
+   170→        {/* ── LEDGER ── */}
+   171→        <TabsContent value="ledger">
+   172→          <Card>
+   173→            <CardContent className="p-0">
+   174→              <div className="overflow-x-auto nice-scroll max-h-[560px]">
+   175→                <table className="w-full text-sm">
+   176→                  <thead className="sticky top-0 bg-secondary/70 backdrop-blur">
+   177→                    <tr className="text-left border-b">
+   178→                      <th className="px-3 py-2.5 font-medium">Learner</th>
+   179→                      <th className="px-3 py-2.5 font-medium hidden md:table-cell">Class</th>
+   180→                      <th className="px-3 py-2.5 font-medium hidden lg:table-cell">Breakdown</th>
+   181→                      <th className="px-3 py-2.5 font-medium hidden sm:table-cell">Oldest unpaid</th>
+   182→                      <th className="px-3 py-2.5 font-medium text-right">Owed</th>
+   183→                      <th className="px-3 py-2.5 text-right"></th>
+   184→                    </tr>
+   185→                  </thead>
+   186→                  <tbody>
+   187→                    {data.ledger.length === 0 && <tr><td colSpan={6}><EmptyState icon={<CheckCircle2 className="size-5" />} title="Clean ledger — no daily arrears" /></td></tr>}
+   188→                    {data.ledger.map((r) => (
+   189→                      <tr key={r.studentId} className="border-b last:border-0 hover:bg-secondary/30">
+   190→                        <td className="px-3 py-2.5">
+   191→                          <div className="font-medium">{r.student}</div>
+   192→                          <div className="text-[11px] text-muted-foreground lg:hidden">{r.classroom}</div>
+   193→                        </td>
+   194→                        <td className="px-3 py-2.5 hidden md:table-cell text-muted-foreground">{r.classroom}</td>
+   195→                        <td className="px-3 py-2.5 hidden lg:table-cell">
+   196→                          <div className="flex flex-wrap gap-1">
+   197→                            {Object.entries(r.items).map(([k, v]) => (
+   198→                              <Badge key={k} variant="outline" className="text-[10px]">{k.replace(" (optional)", "")} {fmtCedi(v)}</Badge>
+   199→                            ))}
+   200→                          </div>
+   201→                        </td>
+   202→                        <td className="px-3 py-2.5 hidden sm:table-cell text-muted-foreground text-xs">{fmtDate(r.oldest)}</td>
+   203→                        <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-destructive">{fmtCedi(r.owed)}</td>
+   204→                        <td className="px-3 py-2.5 text-right">
+   205→                          <Button size="sm" variant="outline" className="h-7 gap-1"
+   206→                            onClick={() => setCollectFor(data.posStudents.find((s) => s.id === r.studentId) ?? null)}>
+   207→                            <Wallet className="size-3.5" /> Collect
+   208→                          </Button>
+   209→                        </td>
+   210→                      </tr>
+   211→                    ))}
+   212→                  </tbody>
+   213→                </table>
+   214→              </div>
+   215→            </CardContent>
+   216→          </Card>
+   217→        </TabsContent>
+   218→
+   219→        {/* ── SERVICES ── */}
+   220→        <TabsContent value="services">
+   221→          <div className="flex justify-end mb-3">
+   222→            <Button size="sm" className="gap-1.5" onClick={() => setSvcDialog("new")}><Plus className="size-4" /> New service</Button>
+   223→          </div>
+   224→          <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
+   225→            {data.services.map((s) => {
+   226→              const Icon = CAT_ICON[s.category] ?? UtensilsCrossed;
+   227→              const rate = s.month.billed ? Math.round((s.month.collected / s.month.billed) * 100) : 0;
+   228→              return (
+   229→                <Card key={s.id} className={s.active ? "" : "opacity-60"}>
+   230→                  <CardHeader className="pb-2 flex-row items-center justify-between space-y-0">
+   231→                    <CardTitle className="text-sm flex items-center gap-2"><Icon className="size-4 text-primary" /> {s.name}</CardTitle>
+   232→                    <div className="flex items-center gap-1.5">
+   233→                      {!s.active && <Badge variant="outline">paused</Badge>}
+   234→                      <Badge variant="secondary">{fmtCedi(s.price)}</Badge>
+   235→                    </div>
+   236→                  </CardHeader>
+   237→                  <CardContent className="space-y-3">
+   238→                    <div className="text-xs text-muted-foreground">
+   239→                      {s.chargeMode === "WEEKLY" ? `Weekly — ${weekdayLabel(s.weekdays)}` : `Daily — ${weekdayLabel(s.weekdays)}`} · {s.enrolled} learners enrolled
+   240→                    </div>
+   241→                    <div className="space-y-1">
+   242→                      <div className="flex justify-between text-xs"><span className="text-muted-foreground">Month collection</span><span className="tabular-nums">{rate}%</span></div>
+   243→                      <Progress value={rate} className="h-1.5" />
+   244→                      <div className="flex justify-between text-[11px] text-muted-foreground">
+   245→                        <span>{fmtCedi(s.month.collected)} of {fmtCedi(s.month.billed)}</span>
+   246→                        {s.month.owed > 0 && <span className="text-destructive">{fmtCedi(s.month.owed)} owed</span>}
+   247→                      </div>
+   248→                    </div>
+   249→                    <div className="flex gap-2 pt-1">
+   250→                      <Button size="sm" variant="outline" className="h-7 flex-1" onClick={() => setEnrollFor(s)}>Enrol learners</Button>
+   251→                      <Button size="sm" variant="ghost" className="h-7" onClick={() => setSvcDialog(s)}>Edit</Button>
+   252→                      <Button size="sm" variant="ghost" className="h-7"
+   253→                        onClick={async () => {
+   254→                          await apiPost(`/api/school/${currentSchoolId}/ops/daily`, { action: "toggle-service", id: s.id });
+   255→                          toast({ title: s.active ? "Service paused" : "Service resumed" });
+   256→                          load(date);
+   257→                        }}>{s.active ? "Pause" : "Resume"}</Button>
+   258→                    </div>
+   259→                  </CardContent>
+   260→                </Card>
+   261→              );
+   262→            })}
+   263→          </div>
+   264→        </TabsContent>
+   265→
+   266→        {/* ── TREND ── */}
+   267→        <TabsContent value="trend">
+   268→          <Card>
+   269→            <CardHeader className="pb-3"><CardTitle className="text-base">Billed vs collected — last 14 school days</CardTitle></CardHeader>
+   270→            <CardContent>
+   271→              <div className="h-72">
+   272→                <ResponsiveContainer width="100%" height="100%">
+   273→                  <AreaChart data={data.trend.map((t) => ({ ...t, label: new Date(t.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) }))}>
+   274→                    <defs>
+   275→                      <linearGradient id="dailyBilled" x1="0" y1="0" x2="0" y2="1">
+   276→                        <stop offset="5%" stopColor="#a97c0b" stopOpacity={0.25} />
+   277→                        <stop offset="95%" stopColor="#a97c0b" stopOpacity={0} />
+   278→                      </linearGradient>
+   279→                      <linearGradient id="dailyCollected" x1="0" y1="0" x2="0" y2="1">
+   280→                        <stop offset="5%" stopColor="#0e5f3f" stopOpacity={0.35} />
+   281→                        <stop offset="95%" stopColor="#0e5f3f" stopOpacity={0} />
+   282→                      </linearGradient>
+   283→                    </defs>
+   284→                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+   285→                    <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+   286→                    <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `₵${(v / 100000).toFixed(0)}k`} width={44} />
+   287→                    <Tooltip formatter={(v: any) => fmtCedi(Number(v))} contentStyle={{ fontSize: 12, borderRadius: 8 }} />
+   288→                    <Area dataKey="billed" name="Billed" stroke="#a97c0b" fill="url(#dailyBilled)" strokeWidth={2} />
+   289→                    <Area dataKey="collected" name="Collected" stroke="#0e5f3f" fill="url(#dailyCollected)" strokeWidth={2} />
+   290→                  </AreaChart>
+   291→                </ResponsiveContainer>
+   292→              </div>
+   293→            </CardContent>
+   294→          </Card>
+   295→        </TabsContent>
+   296→      </Tabs>
+   297→
+   298→      {/* collect dialog */}
+   299→      <CollectDialog
+   300→        student={collectFor}
+   301→        date={date}
+   302→        online={online}
+   303→        onOpenChange={(o) => !o && setCollectFor(null)}
+   304→        onDone={(rc) => { setReceipt(rc); setCollectFor(null); load(date); }}
+   305→      />
+   306→      {receipt && <ReceiptDialog receipt={receipt} onOpenChange={(o) => !o && setReceipt(null)} />}
+   307→
+   308→      {/* service dialog */}
+   309→      <ServiceDialog
+   310→        service={svcDialog}
+   311→        onOpenChange={(o) => !o && setSvcDialog(null)}
+   312→        onDone={() => { setSvcDialog(null); load(date); }}
+   313→      />
+   314→
+   315→      {/* enroll dialog */}
+   316→      <EnrollDialog
+   317→        service={enrollFor}
+   318→        students={data.posStudents}
+   319→        onOpenChange={(o) => !o && setEnrollFor(null)}
+   320→        onDone={() => { setEnrollFor(null); load(date); }}
+   321→      />
+   322→    </div>
+   323→  );
+   324→}
+   325→
+   326→function CollectDialog({ student, date, online, onOpenChange, onDone }: { student: PosStudent | null; date: string; online: boolean; onOpenChange: (o: boolean) => void; onDone: (receipt: any) => void }) {
+   327→  const { currentSchoolId } = useStore();
+   328→  const [amount, setAmount] = useState("");
+   329→  const [method, setMethod] = useState("MOMO_MTN");
+   330→  const [reference, setReference] = useState("");
+   331→  const [busy, setBusy] = useState(false);
+   332→
+   333→  useEffect(() => { if (student) { setAmount((student.balance / 100).toFixed(2)); setReference(""); } }, [student]);
+   334→
+   335→  async function submit() {
+   336→    if (!student || !currentSchoolId) return;
+   337→    const cents = Math.round(parseFloat(amount || "0") * 100);
+   338→    if (!cents || cents <= 0) { toast({ title: "Enter a valid amount" }); return; }
+   339→    setBusy(true);
+   340→    try {
+   341→      const payload = { action: "pos-collect", studentId: student.id, amountCents: cents, method, reference: reference || undefined, date };
+   342→      const res = await apiPostQueueable<any>(
+   343→        `/api/school/${currentSchoolId}/ops/daily`, "payment", payload,
+   344→        `Daily services ${fmtCedi(cents)} — ${student.name}`,
+   345→        (p, clientId) => ({ ...p, category: "DAILY", schoolId: currentSchoolId, studentId: student.id, amountCents: cents, method, paidAt: new Date().toISOString(), clientId })
+   346→      );
+   347→      if (res.queued) {
+   348→        toast({ title: "Queued offline", description: "Receipt will be issued when you reconnect." });
+   349→        onDone(null);
+   350→      } else {
+   351→        onDone({ ...res.data?.payment, student: student.name });
+   352→      }
+   353→    } catch (e: any) { toast({ title: "Collection failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
+   354→  }
+   355→
+   356→  return (
+   357→    <Dialog open={!!student} onOpenChange={onOpenChange}>
+   358→      <DialogContent>
+   359→        <DialogHeader>
+   360→          <DialogTitle className="flex items-center gap-2"><Wallet className="size-4" /> Collect daily payment — {student?.name}</DialogTitle>
+   361→          <DialogDescription>
+   362→            {student?.classroom} · outstanding <b className="text-destructive">{student ? fmtCedi(student.balance) : ""}</b>
+   363→            {!online && " · offline — will queue & sync"}
+   364→          </DialogDescription>
+   365→        </DialogHeader>
+   366→        <div className="grid grid-cols-2 gap-3">
+   367→          <div className="space-y-1.5">
+   368→            <Label>Amount (GH₵) *</Label>
+   369→            <Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
+   370→          </div>
+   371→          <div className="space-y-1.5">
+   372→            <Label>Method</Label>
+   373→            <Select value={method} onValueChange={setMethod}>
+   374→              <SelectTrigger><SelectValue /></SelectTrigger>
+   375→              <SelectContent>
+   376→                {Object.entries(PAYMENT_LABELS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+   377→              </SelectContent>
+   378→            </Select>
+   379→          </div>
+   380→          <div className="space-y-1.5 col-span-2">
+   381→            <Label>MoMo / reference</Label>
+   382→            <Input placeholder="e.g. MP2401.5533.77" value={reference} onChange={(e) => setReference(e.target.value)} />
+   383→          </div>
+   384→        </div>
+   385→        <p className="text-xs text-muted-foreground">Charges settle oldest-first. A receipt SMS goes to {student?.guardianPhone} automatically.</p>
+   386→        <DialogFooter>
+   387→          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+   388→          <Button onClick={submit} disabled={busy} className="gap-1.5">{busy ? "Recording…" : <><ReceiptIcon /> Record payment</>}</Button>
+   389→        </DialogFooter>
+   390→      </DialogContent>
+   391→    </Dialog>
+   392→  );
+   393→}
+   394→function ReceiptIcon() { return <Printer className="size-4" />; }
+   395→
+   396→function ReceiptDialog({ receipt, onOpenChange }: { receipt: any; onOpenChange: (o: boolean) => void }) {
+   397→  return (
+   398→    <Dialog open={!!receipt} onOpenChange={onOpenChange}>
+   399→      <DialogContent className="max-w-sm">
+   400→        <DialogHeader className="text-center">
+   401→          <DialogTitle className="flex items-center justify-center gap-2"><CheckCircle2 className="size-5 text-emerald-600" /> Payment received</DialogTitle>
+   402→        </DialogHeader>
+   403→        <div className="text-center space-y-1 py-2">
+   404→          <div className="text-3xl font-bold text-primary">{fmtCedi(receipt?.amountCents ?? 0)}</div>
+   405→          <div className="text-sm">{receipt?.student}</div>
+   406→          <div className="font-mono text-xs text-muted-foreground">{receipt?.receiptNo}</div>
+   407→          <div className="text-xs text-muted-foreground">daily services · SMS receipt sent to guardian</div>
+   408→        </div>
+   409→        <DialogFooter className="sm:justify-center gap-2">
+   410→          <Button size="sm" onClick={() => onOpenChange(false)}>Done</Button>
+   411→        </DialogFooter>
+   412→      </DialogContent>
+   413→    </Dialog>
+   414→  );
+   415→}
+   416→
+   417→function ServiceDialog({ service, onOpenChange, onDone }: { service: Service | "new" | null; onOpenChange: (o: boolean) => void; onDone: () => void }) {
+   418→  const { currentSchoolId } = useStore();
+   419→  const [name, setName] = useState("");
+   420→  const [category, setCategory] = useState("MEAL");
+   421→  const [price, setPrice] = useState("");
+   422→  const [chargeMode, setChargeMode] = useState("DAILY");
+   423→  const [weekdays, setWeekdays] = useState<string[]>(["1", "2", "3", "4", "5"]);
+   424→  const [busy, setBusy] = useState(false);
+   425→
+   426→  useEffect(() => {
+   427→    if (service && service !== "new") {
+   428→      setName(service.name); setCategory(service.category); setPrice((service.price / 100).toFixed(2));
+   429→      setChargeMode(service.chargeMode); setWeekdays(service.weekdays.split(","));
+   430→    } else if (service === "new") {
+   431→      setName(""); setCategory("MEAL"); setPrice(""); setChargeMode("DAILY"); setWeekdays(["1", "2", "3", "4", "5"]);
+   432→    }
+   433→  }, [service]);
+   434→
+   435→  async function submit() {
+   436→    if (!currentSchoolId || !name || !price) { toast({ title: "Name and price are required" }); return; }
+   437→    setBusy(true);
+   438→    try {
+   439→      await apiPost(`/api/school/${currentSchoolId}/ops/daily`, {
+   440→        action: "save-service",
+   441→        id: service && service !== "new" ? service.id : undefined,
+   442→        name, category, priceCents: Math.round(parseFloat(price) * 100), chargeMode,
+   443→        weekdays: (chargeMode === "WEEKLY" ? weekdays.slice(0, 1) : weekdays).join(","),
+   444→      });
+   445→      toast({ title: service === "new" ? "Service created" : "Service updated" });
+   446→      onDone();
+   447→    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
+   448→  }
+   449→
+   450→  const toggleDay = (d: string) => setWeekdays((w) => (w.includes(d) ? w.filter((x) => x !== d) : [...w, d]));
+   451→
+   452→  return (
+   453→    <Dialog open={!!service} onOpenChange={onOpenChange}>
+   454→      <DialogContent>
+   455→        <DialogHeader>
+   456→          <DialogTitle>{service === "new" ? "New daily service" : "Edit service"}</DialogTitle>
+   457→          <DialogDescription>e.g. Lunch GH₵8 every school day, or Sachet Water GH₵1 on Wednesdays only.</DialogDescription>
+   458→        </DialogHeader>
+   459→        <div className="grid grid-cols-2 gap-3">
+   460→          <div className="space-y-1.5 col-span-2">
+   461→            <Label>Name *</Label>
+   462→            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Lunch (canteen)" />
+   463→          </div>
+   464→          <div className="space-y-1.5">
+   465→            <Label>Category</Label>
+   466→            <Select value={category} onValueChange={setCategory}>
+   467→              <SelectTrigger><SelectValue /></SelectTrigger>
+   468→              <SelectContent>
+   469→                <SelectItem value="MEAL">Meal</SelectItem><SelectItem value="DRINK">Drink</SelectItem>
+   470→                <SelectItem value="CLASS">Class / remedial</SelectItem><SelectItem value="CARE">Care</SelectItem>
+   471→                <SelectItem value="OTHER">Other</SelectItem>
+   472→              </SelectContent>
+   473→            </Select>
+   474→          </div>
+   475→          <div className="space-y-1.5">
+   476→            <Label>Price (GH₵) *</Label>
+   477→            <Input type="number" step="0.5" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="8.00" />
+   478→          </div>
+   479→          <div className="space-y-1.5 col-span-2">
+   480→            <Label>Charging pattern</Label>
+   481→            <Select value={chargeMode} onValueChange={setChargeMode}>
+   482→              <SelectTrigger><SelectValue /></SelectTrigger>
+   483→              <SelectContent>
+   484→                <SelectItem value="DAILY">Daily — every selected school day</SelectItem>
+   485→                <SelectItem value="WEEKLY">Weekly — once a week</SelectItem>
+   486→              </SelectContent>
+   487→            </Select>
+   488→          </div>
+   489→          <div className="space-y-1.5 col-span-2">
+   490→            <Label>Days it runs {chargeMode === "WEEKLY" && <span className="text-muted-foreground font-normal">(pick one day)</span>}</Label>
+   491→            <div className="flex gap-1.5 flex-wrap">
+   492→              {DAY_LABELS.slice(1, 6).map((d, i) => (
+   493→                <button key={d} type="button"
+   494→                  onClick={() => toggleDay(String(i + 1))}
+   495→                  className={`size-9 rounded-lg border text-xs font-medium transition-colors ${weekdays.includes(String(i + 1)) ? "bg-primary text-primary-foreground border-primary" : "hover:bg-secondary"}`}>
+   496→                  {d}
+   497→                </button>
+   498→              ))}
+   499→            </div>
+   500→          </div>
+   501→        </div>
+   502→        <DialogFooter>
+   503→          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+   504→          <Button onClick={submit} disabled={busy}>{busy ? "Saving…" : "Save service"}</Button>
+   505→        </DialogFooter>
+   506→      </DialogContent>
+   507→    </Dialog>
+   508→  );
+   509→}
+   510→
+   511→function EnrollDialog({ service, students, onOpenChange, onDone }: { service: Service | null; students: PosStudent[]; onOpenChange: (o: boolean) => void; onDone: () => void }) {
+   512→  const { currentSchoolId } = useStore();
+   513→  const [picked, setPicked] = useState<string[]>([]);
+   514→  const [subsidy, setSubsidy] = useState("");
+   515→  const [search, setSearch] = useState("");
+   516→  const [busy, setBusy] = useState(false);
+   517→
+   518→  useEffect(() => { setPicked([]); setSearch(""); setSubsidy(""); }, [service]);
+   519→
+   520→  const list = useMemo(() => {
+   521→    const q = search.toLowerCase();
+   522→    return students.filter((s) => !q || s.name.toLowerCase().includes(q) || s.classroom.toLowerCase().includes(q));
+   523→  }, [students, search]);
+   524→
+   525→  async function submit() {
+   526→    if (!service || !currentSchoolId || !picked.length) return;
+   527→    setBusy(true);
+   528→    try {
+   529→      const res = await apiPost<any>(`/api/school/${currentSchoolId}/ops/daily`, {
+   530→        action: "enroll", serviceId: service.id, studentIds: picked,
+   531→        priceCentsOverride: subsidy ? Math.round(parseFloat(subsidy) * 100) : undefined,
+   532→      });
+   533→      toast({ title: `${res.enrolled} learners enrolled`, description: `${service.name}${subsidy ? ` at GH₵${subsidy} subsidised rate` : ""}.` });
+   534→      onDone();
+   535→    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
+   536→  }
+   537→
+   538→  return (
+   539→    <Dialog open={!!service} onOpenChange={onOpenChange}>
+   540→      <DialogContent className="max-w-lg">
+   541→        <DialogHeader>
+   542→          <DialogTitle>Enrol learners — {service?.name}</DialogTitle>
+   543→          <DialogDescription>Enrolled learners are billed automatically when you generate the day&apos;s charges.</DialogDescription>
+   544→        </DialogHeader>
+   545→        <div className="space-y-3">
+   546→          <div className="relative">
+   547→            <Search className="size-4 absolute left-2.5 top-2.5 text-muted-foreground" />
+   548→            <Input placeholder="Search learner…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-8" />
+   549→          </div>
+   550→          <div className="border rounded-lg max-h-64 overflow-y-auto nice-scroll">
+   551→            {list.map((s) => (
+   552→              <label key={s.id} className="flex items-center gap-2.5 px-3 py-2 border-b last:border-0 hover:bg-secondary/40 cursor-pointer text-sm">
+   553→                <input type="checkbox" checked={picked.includes(s.id)} onChange={() => setPicked((p) => (p.includes(s.id) ? p.filter((x) => x !== s.id) : [...p, s.id]))} className="accent-primary" />
+   554→                <span className="flex-1">{s.name}</span>
+   555→                <span className="text-xs text-muted-foreground">{s.classroom}</span>
+   556→              </label>
+   557→            ))}
+   558→          </div>
+   559→          <div className="space-y-1.5">
+   560→            <Label>Subsidised rate (GH₵) — optional</Label>
+   561→            <Input type="number" step="0.5" value={subsidy} onChange={(e) => setSubsidy(e.target.value)} placeholder={`Standard ${service ? fmtCedi(service.price) : ""}`} />
+   562→            <p className="text-xs text-muted-foreground">For needy-family support or staff wards — overrides the standard price for these learners.</p>
+   563→          </div>
+   564→        </div>
+   565→        <DialogFooter>
+   566→          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+   567→          <Button onClick={submit} disabled={busy || !picked.length}>{busy ? "Enrolling…" : `Enrol ${picked.length || ""} learner${picked.length === 1 ? "" : "s"}`}</Button>
+   568→        </DialogFooter>
+   569→      </DialogContent>
+   570→    </Dialog>
+   571→  );
+   572→}
+   573→

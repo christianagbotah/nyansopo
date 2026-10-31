@@ -773,12 +773,14 @@ model StockMovement {
   type             String // PURCHASE | ISSUE | RETURN | ADJUST
   qty              Int // signed: + in, - out
   unitCostCents    Int?
-  partyType        String? // SUPPLIER | STUDENT | STAFF | CLASS
+  partyType        String? // SUPPLIER | STUDENT | STAFF | CLASS | SALE
   partyName        String?
   studentId        String?
   student          Student?      @relation(fields: [studentId], references: [id])
   chargedToInvoice Boolean       @default(false)
   note             String?
+  saleNo           String? // groups the lines of one counter sale (POS)
+  amountCents      Int? // line total for counter sales (qty × sell price)
   createdAt        DateTime      @default(now())
 }
 
