@@ -13,7 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatCard, ModuleHeader, LoadingBlock, StatusBadge, EmptyState } from "@/components/ui-helpers";
 import { fmtCedi, fmtDate, PAYMENT_LABELS } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
-import { Banknote, Receipt, AlertTriangle, CheckCircle2, Plus, Flag, Printer, Wallet, Ticket, Percent, UserPlus, XCircle, ListChecks, Copy as CopyIcon, Eye } from "lucide-react";
+import { Banknote, Receipt, AlertTriangle, CheckCircle2, Plus, Flag, Printer, Wallet, Ticket, Percent, UserPlus, XCircle, ListChecks, Copy as CopyIcon, Eye, Link2 } from "lucide-react";
 import { ReceiptDocument, BulkReceiptsDocument, RECEIPT_STYLES, type ReceiptStyle } from "@/components/receipts";
 import { Checkbox } from "@/components/ui/checkbox";
 
@@ -71,6 +71,15 @@ export function Fees() {
       else toast({ title: "No printable receipts", description: "None of the selected receipts could be reconstructed.", variant: "destructive" });
     } catch (e: any) { toast({ title: "Bulk print failed", description: e.message, variant: "destructive" }); }
     finally { setBulkBusy(false); }
+  }
+
+  /* public statement link for the guardian (no login needed) */
+  function copyParentLink(inv: { id: string; invoiceNo: string; student: string }) {
+    const url = `${location.origin}/invoice/${inv.id}`;
+    navigator.clipboard?.writeText(url).then(
+      () => toast({ title: "Parent link copied", description: `Shareable statement for ${inv.student} (${inv.invoiceNo}) — open it on any phone, no login needed.` }),
+      () => toast({ title: "Copy this link", description: url }),
+    );
   }
 
   const load = (t?: string) => {
@@ -151,6 +160,7 @@ export function Fees() {
                         <td className="px-3 py-2.5 text-right">
                           <div className="flex gap-1 justify-end">
                             <Button size="sm" variant="ghost" className="h-7 gap-1" title="Apply discount" onClick={() => setDiscFor(inv)}><Percent className="size-3.5" /></Button>
+                            <Button size="sm" variant="ghost" className="h-7 gap-1" title="Copy shareable parent statement link" onClick={() => copyParentLink(inv)}><Link2 className="size-3.5" /></Button>
                             <Button size="sm" variant="outline" className="h-7 gap-1" disabled={inv.balance <= 0} onClick={() => setPayFor(inv)}>
                               <Wallet className="size-3.5" /> Pay
                             </Button>
