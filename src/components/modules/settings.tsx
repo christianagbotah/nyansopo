@@ -13,7 +13,8 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { ModuleHeader, LoadingBlock, StatusBadge } from "@/components/ui-helpers";
 import { SCALES_TABLE } from "@/lib/grading-scale";
 import { toast } from "@/hooks/use-toast";
-import { Settings as SettingsIcon, GraduationCap, BookOpen, Users, CalendarRange, Plus, Save } from "lucide-react";
+import { Settings as SettingsIcon, GraduationCap, BookOpen, Users, CalendarRange, Plus, Save, MessageSquareQuote, Sparkles, Trash2 } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
 
 export function Settings() {
   const { currentSchoolId } = useStore();
@@ -55,6 +56,7 @@ export function Settings() {
           <TabsTrigger value="calendar">Calendar</TabsTrigger>
           <TabsTrigger value="staff">Staff ({data.staff.length})</TabsTrigger>
           <TabsTrigger value="grading">Grading scale</TabsTrigger>
+          <TabsTrigger value="reportlib">Report library ({(data.remarkTemplates?.length ?? 0) + (data.conductItems?.length ?? 0)})</TabsTrigger>
         </TabsList>
 
         <TabsContent value="profile">
@@ -210,6 +212,10 @@ export function Settings() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        <TabsContent value="reportlib">
+          <ReportLibraryTab data={data} onChanged={load} />
+        </TabsContent>
       </Tabs>
 
       <AddClassDialog open={clsOpen} onOpenChange={setClsOpen} onDone={load} />
@@ -268,5 +274,140 @@ function AddClassDialog({ open, onOpenChange, onDone }: { open: boolean; onOpenC
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/* ── REPORT SHEET LIBRARY — remark templates & conduct traits (iedupro parity) ── */
+const TEMPLATE_CATEGORIES: { value: string; label: string; hint: string }[] = [
+  { value: "TEACHER_POSITIVE", label: "Teacher — positive", hint: "used for scores ≥ 68%" },
+  { value: "TEACHER_NEUTRAL", label: "Teacher — neutral", hint: "used for 40–67%" },
+  { value: "TEACHER_NEGATIVE", label: "Teacher — concern", hint: "used below 40%" },
+  { value: "HEAD_RANGE", label: "Head — by average band", hint: "picked by the learner's overall average" },
+];
+
+function ReportLibraryTab({ data, onChanged }: { data: any; onChanged: () => void }) {
+  const { currentSchoolId } = useStore();
+  const templates: { id: string; category: string; minPercent: number | null; maxPercent: number | null; text: string; active: boolean }[] = data.remarkTemplates ?? [];
+  const conductItems: { id: string; name: string; kind: string; active: boolean }[] = data.conductItems ?? [];
+  const [busy, setBusy] = useState<string | null>(null);
+  const [draft, setDraft] = useState<{ category: string; minPercent: string; maxPercent: string; text: string }>({ category: "TEACHER_POSITIVE", minPercent: "", maxPercent: "", text: "" });
+  const [conductDraft, setConductDraft] = useState<{ name: string; kind: string }>({ name: "", kind: "CONDUCT" });
+
+  async function act(payload: Record<string, unknown>, key: string, okMsg: string) {
+    if (!currentSchoolId) return;
+    setBusy(key);
+    try {
+      const res = await apiPost<any>(`/api/school/${currentSchoolId}/settings`, payload);
+      toast({ title: okMsg, description: res.created ? `${res.created} starter entries added.` : undefined });
+      onChanged();
+    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); }
+    finally { setBusy(null); }
+  }
+
+  return (
+    <div className="grid lg:grid-cols-2 gap-4 items-start">
+      {/* remark templates */}
+      <Card>
+        <CardHeader className="pb-3 flex-row items-center justify-between space-y-0 flex-wrap gap-2">
+          <CardTitle className="text-base flex items-center gap-2"><MessageSquareQuote className="size-4" /> Remarks library ({templates.length})</CardTitle>
+          <Button size="sm" variant="outline" className="h-8 gap-1.5" disabled={busy === "seed" || templates.length > 0} onClick={() => act({ action: "seed-remark-templates" }, "seed", "Starter library loaded")}>
+            <Sparkles className="size-3.5" /> Load starters
+          </Button>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-xs text-muted-foreground">
+            When report cards are generated, a remark is drawn at random from the matching band — subject remarks by score, head remarks by the learner&apos;s average. Keep several per band for natural variety.
+          </p>
+          {templates.length === 0 ? (
+            <div className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">
+              No custom remarks yet — the generator falls back to built-in phrases. Load the starter library or add your own below.
+            </div>
+          ) : (
+            <div className="rounded-xl border max-h-[320px] overflow-y-auto nice-scroll divide-y">
+              {templates.map((t) => {
+                const cat = TEMPLATE_CATEGORIES.find((c) => c.value === t.category);
+                return (
+                  <div key={t.id} className="p-2.5 flex items-start gap-2.5">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <Badge variant="secondary" className="text-[10px]">{cat?.label ?? t.category}</Badge>
+                        {t.category === "HEAD_RANGE" && <Badge variant="outline" className="text-[10px]">{t.minPercent}–{t.maxPercent}%</Badge>}
+                        {!t.active && <Badge variant="outline" className="text-[10px] text-muted-foreground">off</Badge>}
+                      </div>
+                      <p className="text-[13px] mt-1 leading-snug">{t.text}</p>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <Button size="sm" variant="ghost" className="h-6 px-2 text-[11px]" disabled={busy === t.id} onClick={() => act({ action: "toggle-remark-template", id: t.id, active: !t.active }, t.id, t.active ? "Template disabled" : "Template enabled")}>{t.active ? "Disable" : "Enable"}</Button>
+                      <Button size="sm" variant="ghost" className="h-6 px-2 text-[11px] text-destructive" disabled={busy === t.id} onClick={() => act({ action: "delete-remark-template", id: t.id }, t.id, "Template deleted")}><Trash2 className="size-3" /></Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {/* add form */}
+          <div className="rounded-xl border bg-secondary/30 p-3 space-y-2.5">
+            <div className="grid grid-cols-2 gap-2">
+              <Select value={draft.category} onValueChange={(v) => setDraft({ ...draft, category: v })}>
+                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {TEMPLATE_CATEGORIES.map((c) => (
+                    <SelectItem key={c.value} value={c.value} className="text-xs">
+                      <span className="flex flex-col"><span>{c.label}</span><span className="text-[10px] text-muted-foreground">{c.hint}</span></span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {draft.category === "HEAD_RANGE" ? (
+                <div className="flex gap-1.5">
+                  <Input className="h-8 text-xs" placeholder="from %" value={draft.minPercent} onChange={(e) => setDraft({ ...draft, minPercent: e.target.value })} />
+                  <Input className="h-8 text-xs" placeholder="to %" value={draft.maxPercent} onChange={(e) => setDraft({ ...draft, maxPercent: e.target.value })} />
+                </div>
+              ) : <div className="text-[11px] text-muted-foreground self-center">Applies by subject score automatically.</div>}
+            </div>
+            <Textarea rows={2} className="text-[13px]" placeholder="e.g. A promising term — neater work and steadier revision will lift the scores further." value={draft.text} onChange={(e) => setDraft({ ...draft, text: e.target.value })} />
+            <div className="flex justify-end">
+              <Button size="sm" className="h-8 gap-1.5" disabled={!draft.text.trim() || busy === "add"} onClick={() => act({ action: "save-remark-template", category: draft.category, minPercent: draft.minPercent, maxPercent: draft.maxPercent, text: draft.text }, "add", "Remark template added").then(() => setDraft({ ...draft, text: "" }))}>
+                <Plus className="size-3.5" /> Add remark
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* conduct & interests */}
+      <Card>
+        <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><GraduationCap className="size-4" /> Conduct & interests ({conductItems.length})</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-xs text-muted-foreground">
+            Traits the class teacher can pick for the &quot;Conduct&quot; and &quot;Interests&quot; boxes on terminal report sheets.
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {conductItems.length === 0 && <span className="text-sm text-muted-foreground">None yet — add the ones your school reports on.</span>}
+            {conductItems.map((c) => (
+              <Badge key={c.id} variant={c.kind === "INTEREST" ? "outline" : "secondary"} className="gap-1 py-1 pl-2.5 pr-1">
+                {c.name}
+                <button className="rounded-full hover:bg-destructive/15 p-0.5" disabled={busy === c.id} onClick={() => act({ action: "delete-conduct-item", id: c.id }, c.id, "Removed")} aria-label={`Remove ${c.name}`}>
+                  <Trash2 className="size-3 text-destructive" />
+                </button>
+              </Badge>
+            ))}
+          </div>
+          <div className="rounded-xl border bg-secondary/30 p-3 flex gap-2">
+            <Input className="h-8 text-xs flex-1" placeholder="e.g. Polite & respectful" value={conductDraft.name} onChange={(e) => setConductDraft({ ...conductDraft, name: e.target.value })} />
+            <Select value={conductDraft.kind} onValueChange={(v) => setConductDraft({ ...conductDraft, kind: v })}>
+              <SelectTrigger className="h-8 w-28 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="CONDUCT" className="text-xs">Conduct</SelectItem>
+                <SelectItem value="INTEREST" className="text-xs">Interest</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button size="sm" className="h-8 gap-1.5" disabled={!conductDraft.name.trim() || busy === "addc"} onClick={() => act({ action: "save-conduct-item", name: conductDraft.name, kind: conductDraft.kind }, "addc", "Added").then(() => setConductDraft({ name: "", kind: conductDraft.kind }))}>
+              <Plus className="size-3.5" /> Add
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   );
 }

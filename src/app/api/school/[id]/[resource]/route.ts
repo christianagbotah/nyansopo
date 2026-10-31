@@ -208,12 +208,16 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       const classrooms = await db.classroom.findMany({ where: { schoolId }, orderBy: { name: "asc" } });
       const subjects = await db.subject.findMany({ where: { schoolId } });
       const staff = await db.staff.findMany({ where: { schoolId } });
+      const remarkTemplates = await db.remarkTemplate.findMany({ where: { schoolId }, orderBy: [{ category: "asc" }, { minPercent: "asc" }] });
+      const conductItems = await db.conductItem.findMany({ where: { schoolId }, orderBy: [{ kind: "asc" }, { sortOrder: "asc" }] });
       return NextResponse.json({
         school: { ...school, group: school.group ? { id: school.group.id, name: school.group.name, proprietorName: school.group.proprietorName } : null },
         years: years.map((y) => ({ id: y.id, name: y.name, isCurrent: y.isCurrent, terms: y.terms.map((t) => ({ id: t.id, name: t.name, startsAt: t.startsAt, endsAt: t.endsAt, isCurrent: t.isCurrent })) })),
         classrooms: classrooms.map((c) => ({ id: c.id, name: c.name, grade: c.gradeLevel, stage: c.stageLabel, capacity: c.capacity })),
         subjects: subjects.map((s) => ({ id: s.id, name: s.name, code: s.code })),
         staff: staff.map((s) => ({ id: s.id, fullName: s.fullName, role: s.role, title: s.title })),
+        remarkTemplates: remarkTemplates.map((t) => ({ id: t.id, category: t.category, minPercent: t.minPercent, maxPercent: t.maxPercent, text: t.text, active: t.active })),
+        conductItems: conductItems.map((c) => ({ id: c.id, name: c.name, kind: c.kind, active: c.active })),
       });
     }
 
@@ -550,6 +554,53 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         const { name, code } = body;
         const s = await db.subject.create({ data: { schoolId, name, code: (code ?? name.slice(0, 3)).toUpperCase(), curriculum: school.curriculum } });
         return NextResponse.json({ subject: s });
+      }
+      // ── report sheet library: remark templates & conduct traits ──
+      if (action === "save-remark-template") {
+        const { id, category, minPercent, maxPercent, text } = body;
+        if (!text?.trim()) return NextResponse.json({ error: "Remark text is required" }, { status: 400 });
+        const data = { category: category ?? "TEACHER_POSITIVE", minPercent: category === "HEAD_RANGE" ? Number(minPercent) || 0 : null, maxPercent: category === "HEAD_RANGE" ? Number(maxPercent) || 100 : null, text: text.trim() };
+        const t = id ? await db.remarkTemplate.update({ where: { id }, data }) : await db.remarkTemplate.create({ data: { ...data, schoolId } });
+        return NextResponse.json({ template: t });
+      }
+      if (action === "toggle-remark-template") {
+        const t = await db.remarkTemplate.update({ where: { id: body.id }, data: { active: !!body.active } });
+        return NextResponse.json({ template: t });
+      }
+      if (action === "delete-remark-template") {
+        await db.remarkTemplate.delete({ where: { id: body.id } });
+        return NextResponse.json({ ok: true });
+      }
+      if (action === "seed-remark-templates") {
+        // starter library (Ghana classroom idiom) when the school has none yet
+        const existing = await db.remarkTemplate.count({ where: { schoolId } });
+        if (existing) return NextResponse.json({ created: 0, message: "Library already has entries" });
+        const starters: { category: string; minPercent?: number; maxPercent?: number; text: string }[] = [
+          { category: "TEACHER_POSITIVE", text: "An outstanding term — consistently thorough work and excellent participation." },
+          { category: "TEACHER_POSITIVE", text: "A bright and eager learner who contributes confidently to class discussion." },
+          { category: "TEACHER_POSITIVE", text: "Very hardworking; accuracy and presentation keep improving each term." },
+          { category: "TEACHER_NEUTRAL", text: "A steady effort. With more practice at home the result will improve further." },
+          { category: "TEACHER_NEUTRAL", text: "Capable of much more; needs to complete class exercises on time." },
+          { category: "TEACHER_NEGATIVE", text: "Performance is below expectation; please give closer supervision at home." },
+          { category: "TEACHER_NEGATIVE", text: "Frequent lateness with assignments affected this term's scores." },
+          { category: "HEAD_RANGE", minPercent: 80, maxPercent: 100, text: "An excellent result. A model learner for the school — keep it up." },
+          { category: "HEAD_RANGE", minPercent: 68, maxPercent: 79, text: "A very good result. Aim for distinction next term." },
+          { category: "HEAD_RANGE", minPercent: 55, maxPercent: 67, text: "A good result. With sustained effort the learner will excel." },
+          { category: "HEAD_RANGE", minPercent: 40, maxPercent: 54, text: "A fair result. The learner needs closer support at home and at school." },
+          { category: "HEAD_RANGE", minPercent: 0, maxPercent: 39, text: "This result calls for urgent joint effort between home and school." },
+        ];
+        for (const s of starters) await db.remarkTemplate.create({ data: { schoolId, category: s.category, minPercent: s.minPercent ?? null, maxPercent: s.maxPercent ?? null, text: s.text } });
+        return NextResponse.json({ created: starters.length });
+      }
+      if (action === "save-conduct-item") {
+        const { name, kind } = body;
+        if (!name?.trim()) return NextResponse.json({ error: "Name is required" }, { status: 400 });
+        const c = await db.conductItem.create({ data: { schoolId, name: name.trim(), kind: kind === "INTEREST" ? "INTEREST" : "CONDUCT", sortOrder: 0 } });
+        return NextResponse.json({ item: c });
+      }
+      if (action === "delete-conduct-item") {
+        await db.conductItem.delete({ where: { id: body.id } });
+        return NextResponse.json({ ok: true });
       }
     }
 

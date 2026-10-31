@@ -13,8 +13,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatCard, ModuleHeader, LoadingBlock, StatusBadge, EmptyState } from "@/components/ui-helpers";
 import { fmtCedi, fmtDate, PAYMENT_LABELS } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
-import { Banknote, Receipt, AlertTriangle, CheckCircle2, Plus, Flag, Printer, Wallet, Ticket, Percent, UserPlus, XCircle, ListChecks } from "lucide-react";
-import { ReceiptDocument, BulkReceiptsDocument } from "@/components/receipts";
+import { Banknote, Receipt, AlertTriangle, CheckCircle2, Plus, Flag, Printer, Wallet, Ticket, Percent, UserPlus, XCircle, ListChecks, Copy as CopyIcon, Eye } from "lucide-react";
+import { ReceiptDocument, BulkReceiptsDocument, RECEIPT_STYLES, type ReceiptStyle } from "@/components/receipts";
+import { Checkbox } from "@/components/ui/checkbox";
 
 type FeeData = {
   terms: { id: string; name: string; isCurrent: boolean }[];
@@ -48,6 +49,29 @@ export function Fees() {
   const [checkedReceipts, setCheckedReceipts] = useState<Set<string>>(new Set());
   const [bulkReceipts, setBulkReceipts] = useState<any[] | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
+
+  /* reprint machinery — full receipt payloads come back from the API */
+  async function fetchPayloads(ids: string[]): Promise<any[]> {
+    const res = await apiPost<any>(`/api/school/${currentSchoolId}/fees`, { action: "receipt-payloads", paymentIds: ids });
+    return res.receipts ?? [];
+  }
+  async function viewReceipt(p: { id: string; receiptNo: string }) {
+    try {
+      const [payload] = await fetchPayloads([p.id]);
+      if (payload) setReceipt(payload);
+      else toast({ title: "Receipt unavailable", description: `${p.receiptNo} could not be reconstructed — it may reference archived data.`, variant: "destructive" });
+    } catch (e: any) { toast({ title: "Load failed", description: e.message, variant: "destructive" }); }
+  }
+  async function reprintSelected() {
+    if (!checkedReceipts.size || !currentSchoolId) return;
+    setBulkBusy(true);
+    try {
+      const receipts = await fetchPayloads([...checkedReceipts]);
+      if (receipts.length) setBulkReceipts(receipts);
+      else toast({ title: "No printable receipts", description: "None of the selected receipts could be reconstructed.", variant: "destructive" });
+    } catch (e: any) { toast({ title: "Bulk print failed", description: e.message, variant: "destructive" }); }
+    finally { setBulkBusy(false); }
+  }
 
   const load = (t?: string) => {
     if (!currentSchoolId) return;
@@ -131,6 +155,67 @@ export function Fees() {
                               <Wallet className="size-3.5" /> Pay
                             </Button>
                           </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="receipts">
+          <Card>
+            <CardHeader className="pb-3 flex-row items-center justify-between space-y-0 flex-wrap gap-2">
+              <CardTitle className="text-base flex items-center gap-2"><Receipt className="size-4" /> Issued receipts — {allPayments.length} this term</CardTitle>
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  checked={allPayments.length > 0 && checkedReceipts.size === allPayments.length}
+                  onCheckedChange={(v) => setCheckedReceipts(v ? new Set(allPayments.map((p) => p.id)) : new Set())}
+                  aria-label="Select all receipts"
+                />
+                <span className="text-xs text-muted-foreground select-all-label">Select all</span>
+                <Button size="sm" className="gap-1.5" disabled={!checkedReceipts.size || bulkBusy} onClick={reprintSelected}>
+                  <Printer className={cn("size-4", bulkBusy && "animate-spin")} /> Reprint {checkedReceipts.size || ""} selected
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="overflow-x-auto nice-scroll max-h-[560px]">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-secondary/70 backdrop-blur">
+                    <tr className="text-left border-b">
+                      <th className="px-3 py-2.5 w-8"></th>
+                      <th className="px-3 py-2.5 font-medium">Receipt</th>
+                      <th className="px-3 py-2.5 font-medium">Learner</th>
+                      <th className="px-3 py-2.5 font-medium hidden md:table-cell">Class</th>
+                      <th className="px-3 py-2.5 font-medium hidden lg:table-cell">Invoice</th>
+                      <th className="px-3 py-2.5 font-medium text-right">Amount</th>
+                      <th className="px-3 py-2.5 font-medium hidden sm:table-cell">Method</th>
+                      <th className="px-3 py-2.5 font-medium hidden xl:table-cell">Date</th>
+                      <th className="px-3 py-2.5"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {allPayments.slice(0, 150).map((p) => (
+                      <tr key={p.id} className="border-b last:border-0 hover:bg-secondary/30">
+                        <td className="px-3 py-2.5">
+                          <Checkbox
+                            checked={checkedReceipts.has(p.id)}
+                            onCheckedChange={(v) => { const next = new Set(checkedReceipts); v ? next.add(p.id) : next.delete(p.id); setCheckedReceipts(next); }}
+                            aria-label={`Select receipt ${p.receiptNo}`}
+                          />
+                        </td>
+                        <td className="px-3 py-2.5 font-mono text-xs">{p.receiptNo}</td>
+                        <td className="px-3 py-2.5 font-medium">{p.student}</td>
+                        <td className="px-3 py-2.5 hidden md:table-cell text-muted-foreground">{p.classroom ?? "—"}</td>
+                        <td className="px-3 py-2.5 hidden lg:table-cell font-mono text-[11px] text-muted-foreground">{p.invoiceNo}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-emerald-600">{fmtCedi(p.amount)}</td>
+                        <td className="px-3 py-2.5 hidden sm:table-cell text-xs">{PAYMENT_LABELS[p.method] ?? p.method}</td>
+                        <td className="px-3 py-2.5 hidden xl:table-cell text-xs text-muted-foreground">{fmtDate(p.paidAt)}</td>
+                        <td className="px-3 py-2.5 text-right">
+                          <Button size="sm" variant="outline" className="h-7 gap-1" onClick={() => viewReceipt(p)}><Eye className="size-3.5" /> Reprint</Button>
                         </td>
                       </tr>
                     ))}
@@ -230,6 +315,7 @@ export function Fees() {
         onDone={() => { setApplyDialog(null); load(termId ?? undefined); }}
       />
       <ReceiptDialog receipt={receipt} onOpenChange={(o) => !o && setReceipt(null)} />
+      {bulkReceipts && <BulkReceiptsDocument receipts={bulkReceipts} onDone={() => { setBulkReceipts(null); setCheckedReceipts(new Set()); }} />}
     </div>
   );
 }
@@ -358,14 +444,27 @@ function FlagDialog({ invoice, onOpenChange, onDone }: { invoice: any; onOpenCha
 
 function ReceiptDialog({ receipt, onOpenChange }: { receipt: any; onOpenChange: (o: boolean) => void }) {
   const isPayload = receipt && receipt.type && receipt.school;
+  const [style, setStyle] = useState<ReceiptStyle>((receipt?.style as ReceiptStyle) ?? "A5");
+  const [copy, setCopy] = useState<"ORIGINAL" | "DUPLICATE">("ORIGINAL");
+  useEffect(() => { if (receipt?.style) setStyle(receipt.style); }, [receipt]);
   return (
     <Dialog open={!!receipt} onOpenChange={onOpenChange}>
       <DialogContent className={isPayload ? "max-w-[560px] max-h-[92vh] overflow-y-auto nice-scroll" : "max-w-sm"}>
         <DialogHeader className="text-center no-print">
-          <DialogTitle className="flex items-center justify-center gap-2"><CheckCircle2 className="size-5 text-emerald-600" /> Payment received</DialogTitle>
+          <DialogTitle className="flex items-center justify-center gap-2"><CheckCircle2 className="size-5 text-emerald-600" /> {isPayload ? "Official receipt" : "Payment received"}</DialogTitle>
         </DialogHeader>
         {isPayload ? (
-          <div className="print-area"><ReceiptDocument data={receipt} /></div>
+          <>
+            <div className="print-area"><ReceiptDocument data={{ ...receipt, style }} copy={copy} /></div>
+            <div className="no-print flex flex-wrap items-center justify-center gap-1.5">
+              {RECEIPT_STYLES.map((s) => (
+                <Button key={s.value} size="sm" variant={style === s.value ? "default" : "outline"} className="h-7 text-xs" title={s.hint} onClick={() => setStyle(s.value)}>{s.label}</Button>
+              ))}
+              <Button size="sm" variant={copy === "DUPLICATE" ? "default" : "outline"} className="h-7 text-xs gap-1" onClick={() => setCopy(copy === "ORIGINAL" ? "DUPLICATE" : "ORIGINAL")} title="Mark this print as a duplicate copy">
+                <CopyIcon className="size-3.5" /> {copy}
+              </Button>
+            </div>
+          </>
         ) : (
           <div className="text-center space-y-1 py-2">
             <div className="text-3xl font-bold text-primary">{fmtCedi(receipt?.amountCents ?? 0)}</div>
@@ -699,3 +798,5 @@ function InvoiceDiscountDialog({ invoice, catalog, onOpenChange, onDone }: {
     </Dialog>
   );
 }
+
+function cn(...args: any[]) { return args.filter(Boolean).join(" "); }
