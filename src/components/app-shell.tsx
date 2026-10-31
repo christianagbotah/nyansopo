@@ -41,6 +41,15 @@ import {
 
 type NavItem = { id: ModuleId; label: string; icon: any; section?: string };
 
+/* role-scoped modules — iedupro teacher-portal parity: a class teacher sees the
+   classroom toolchain only; the bursar sees the money side; admin/proprietor see all */
+const ROLE_MODULES: Record<string, ModuleId[] | "*"> = {
+  SCHOOL_ADMIN: "*",
+  GROUP_OWNER: "*",
+  TEACHER: ["dashboard", "students", "attendance", "classes", "gradebook", "reports", "sms", "ai"],
+  ACCOUNTANT: ["dashboard", "students", "admissions", "fees", "daily", "transport", "inventory", "finance", "sms", "ai"],
+};
+
 const SCHOOL_NAV: NavItem[] = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, section: "Overview" },
   { id: "students", label: "Students", icon: Users, section: "People" },
@@ -128,15 +137,23 @@ export function AppShell() {
     const items: NavItem[] = [];
     if (assocScope) items.push({ id: "association", label: "Association Portal", icon: Landmark });
     if (schoolScope) {
-      items.push(...SCHOOL_NAV);
+      const allowed = ROLE_MODULES[session?.role ?? ""] ?? "*";
+      const schoolNav = allowed === "*" ? SCHOOL_NAV : SCHOOL_NAV.filter((i) => (allowed as ModuleId[]).includes(i.id));
+      items.push(...schoolNav);
       if (isGroupOwner) {
         // insert branch console after reports
         const idx = items.findIndex((i) => i.id === "reports");
-        items.splice(idx + 1, 0, { id: "branches", label: "Branch Console", icon: Building2 });
+        if (idx >= 0) items.splice(idx + 1, 0, { id: "branches", label: "Branch Console", icon: Building2 });
       }
     }
     return items;
-  }, [assocScope, schoolScope, isGroupOwner]);
+  }, [assocScope, schoolScope, isGroupOwner, session?.role]);
+
+  /* guard: never sit on a module outside the role's reach (deep links, stale store) */
+  useEffect(() => {
+    if (!navItems.length) return;
+    if (!navItems.some((i) => i.id === module)) setModule("dashboard");
+  }, [navItems, module, setModule]);
 
   async function manualSync() {
     if (!queue.length) { toast({ title: "Nothing to sync", description: "Your queue is empty." }); return; }
