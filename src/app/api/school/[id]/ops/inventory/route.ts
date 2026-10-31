@@ -6,7 +6,7 @@ import { receiptSchool, posSaleReceipt } from "@/lib/receipt-payload";
 // ── GET /api/school/[id]/ops/inventory — items, movements, suppliers ──
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: schoolId } = await params;
-  const auth = await opsAuth(req, schoolId, "GET");
+  const auth = await opsAuth(req, schoolId, "GET", { perms: ["inventory.view"] });
   if (!auth.ok) return auth.res;
 
   const items = await db.inventoryItem.findMany({ where: { schoolId }, orderBy: { name: "asc" } });
@@ -87,11 +87,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 // ── POST /api/school/[id]/ops/inventory ──
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: schoolId } = await params;
-  const auth = await opsAuth(req, schoolId, "POST");
-  if (!auth.ok) return auth.res;
-  const user = auth.user;
   const body = await req.json().catch(() => ({}));
   const action: string = body.action;
+  const auth = await opsAuth(req, schoolId, "POST", { perms: action === "sale" ? ["inventory.pos", "inventory.manage"] : ["inventory.manage"] });
+  if (!auth.ok) return auth.res;
+  const user = auth.user;
 
   if (action === "save-item") {
     const { id, name, sku, category, unit, unitCostCents, sellPriceCents, reorderLevel, location, initialQty } = body;

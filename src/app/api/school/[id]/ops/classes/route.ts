@@ -5,7 +5,7 @@ import { opsAuth } from "@/lib/ops-auth";
 // ── GET /api/school/[id]/ops/classes — classes, teachers, subjects, timetable ──
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: schoolId } = await params;
-  const auth = await opsAuth(req, schoolId, "GET");
+  const auth = await opsAuth(req, schoolId, "GET", { perms: ["classes.view"] });
   if (!auth.ok) return auth.res;
 
   const url = new URL(req.url);
@@ -63,10 +63,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 // ── POST /api/school/[id]/ops/classes ──
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: schoolId } = await params;
-  const auth = await opsAuth(req, schoolId, "POST");
-  if (!auth.ok) return auth.res;
   const body = await req.json().catch(() => ({}));
   const action: string = body.action;
+  const auth = await opsAuth(req, schoolId, "POST", { perms: ["classes.manage"] });
+  if (!auth.ok) return auth.res;
 
   if (action === "save-classroom") {
     const { id, name, gradeLevel, stageLabel, capacity, classTeacherId } = body;

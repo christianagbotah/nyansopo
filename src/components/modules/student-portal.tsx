@@ -1,0 +1,300 @@
+"use client";
+import { useEffect, useMemo, useState } from "react";
+import { useStore } from "@/lib/store";
+import { apiGet } from "@/lib/api";
+import { ModuleHeader, LoadingBlock, EmptyState } from "@/components/ui-helpers";
+import { fmtCedi, fmtDate } from "@/lib/format";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { toast } from "@/hooks/use-toast";
+import { avatarColor } from "@/lib/format";
+import { Backpack, CalendarDays, BookOpen, GraduationCap, Wallet, Megaphone, Clock, AlertTriangle, CheckCircle2, UserRound } from "lucide-react";
+
+type Slot = { day: number; start: number; end: number; subject: string; teacher: string | null };
+type Mark = { subject: string; assessment: string; type: string; score: number; max: number };
+type ReportCard = {
+  id: string; term: string; classroom: string; average: number | null; position: number | null; classSize: number | null;
+  conduct: string | null; interest: string | null; attendance: string | null; teacherRemark: string | null; headRemark: string | null;
+  promotion: string | null; published: boolean;
+  results: { subject: string; isCore: boolean; total: number | null; grade: string | null; remark: string | null }[];
+};
+type StudentData = {
+  role: string; school: { name: string; motto: string | null; town: string; region: string } | null;
+  year: string | null; term: string | null;
+  me: {
+    id: string; name: string; nyansapoIndex: string; gender: string;
+    classroom: string | null; classTeacher: string | null;
+    attendance: { total: number; present: number; late: number; absent: number; rate: number | null; recent: { date: string; status: string }[] };
+    timetable: Slot[];
+    marks: Mark[];
+    reportCards: ReportCard[];
+    library: { book: string; dueAt: string; overdue: boolean }[];
+    wallet: { prepaid: number; transport: number } | null;
+    feesBalance: number;
+  };
+  announcements: { id: string; title: string; body: string; postedByName: string; postedAt: string; priority: string }[];
+};
+
+const DAYS = ["", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+const ATT_COLOR: Record<string, string> = { PRESENT: "bg-emerald-600", LATE: "bg-amber-500", ABSENT: "bg-destructive", SICK: "bg-sky-500", EXCUSED: "bg-zinc-400" };
+const fmtTime = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+
+export function StudentPortal() {
+  const { currentSchoolId } = useStore();
+  const [data, setData] = useState<StudentData | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!currentSchoolId) return;
+    apiGet<StudentData>(`/api/school/${currentSchoolId}/ops/portal?view=student`)
+      .then(setData)
+      .catch((e) => setErr(e.message));
+  }, [currentSchoolId]);
+
+  const byDay = useMemo(() => {
+    const g: Record<number, Slot[]> = {};
+    (data?.me.timetable ?? []).forEach((s) => { (g[s.day] ??= []).push(s); });
+    Object.values(g).forEach((list) => list.sort((a, b) => a.start - b.start));
+    return g;
+  }, [data]);
+
+  if (err) return <div className="text-destructive text-sm">{err}</div>;
+  if (!data) return <LoadingBlock label="Loading your portal…" />;
+  const me = data.me;
+  const overdueBooks = me.library.filter((l) => l.overdue);
+
+  return (
+    <div>
+      <ModuleHeader
+        title={`My Learning — ${me.name}`}
+        description={`${me.classroom ?? "—"} · ${data.term ?? "Term"} ${data.year ? `· ${data.year}` : ""} · Class teacher: ${me.classTeacher ?? "—"}`}
+        actions={<Badge variant="outline" className="font-mono">{me.nyansapoIndex}</Badge>}
+      />
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+        <Tile icon={<CalendarDays className="size-4" />} label="My attendance" value={me.attendance.rate !== null ? `${me.attendance.rate}%` : "—"} sub={`${me.attendance.present} present of ${me.attendance.total}`} tone={me.attendance.rate !== null && me.attendance.rate >= 90 ? "good" : undefined} />
+        <Tile icon={<GraduationCap className="size-4" />} label="Latest average" value={me.reportCards[0]?.average != null ? `${me.reportCards[0].average}%` : "—"} sub={me.reportCards[0]?.term ?? "awaiting reports"} />
+        <Tile icon={<BookOpen className="size-4" />} label="Library books" value={me.library.length} sub={overdueBooks.length ? `${overdueBooks.length} overdue — return soon!` : "none overdue"} tone={overdueBooks.length ? "danger" : undefined} />
+        <Tile icon={<Wallet className="size-4" />} label="Fees" value={me.feesBalance > 0 ? fmtCedi(me.feesBalance, { compact: true }) : "Settled"} sub={me.feesBalance > 0 ? "outstanding balance" : "nothing owing — keep it up!"} tone={me.feesBalance > 0 ? "danger" : "good"} />
+      </div>
+
+      <Tabs defaultValue="overview">
+        <TabsList className="flex-wrap h-auto">
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="timetable">Timetable</TabsTrigger>
+          <TabsTrigger value="results">My results</TabsTrigger>
+          <TabsTrigger value="library">Library</TabsTrigger>
+          <TabsTrigger value="attendance">Attendance</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="overview" className="mt-3 grid lg:grid-cols-3 gap-4">
+          <Card className="lg:col-span-2">
+            <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><CalendarDays className="size-4" /> Today & this week</CardTitle></CardHeader>
+            <CardContent>
+              {me.timetable.length ? (
+                <div className="grid sm:grid-cols-2 gap-2">
+                  {[1, 2, 3, 4, 5].map((d) => (
+                    <div key={d} className={`rounded-lg border p-3 ${d === (new Date().getDay() || 5) ? "border-primary/50 bg-primary/5" : ""}`}>
+                      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">{DAYS[d]}{d === (new Date().getDay() || 5) ? " · today" : ""}</div>
+                      {(byDay[d] ?? []).length ? (byDay[d] ?? []).map((s, i) => (
+                        <div key={i} className="flex items-center justify-between text-sm py-0.5">
+                          <span className="truncate">{s.subject}</span>
+                          <span className="text-[10px] text-muted-foreground tabular-nums shrink-0 ml-2">{fmtTime(s.start)}–{fmtTime(s.end)}</span>
+                        </div>
+                      )) : <div className="text-xs text-muted-foreground">free day</div>}
+                    </div>
+                  ))}
+                </div>
+              ) : <EmptyState title="No timetable yet" hint="Your class routine will appear here." />}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><Megaphone className="size-4" /> Notices</CardTitle></CardHeader>
+            <CardContent className="space-y-2.5 max-h-80 overflow-y-auto nice-scroll">
+              {data.announcements.length ? data.announcements.map((a) => (
+                <div key={a.id} className="rounded-lg border p-2.5">
+                  <div className="flex items-center gap-1.5">
+                    {a.priority === "HIGH" && <Badge className="bg-destructive text-[9px]">urgent</Badge>}
+                    <span className="text-sm font-medium">{a.title}</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1 line-clamp-3">{a.body}</p>
+                  <div className="text-[10px] text-muted-foreground mt-1">{fmtDate(a.postedAt)}</div>
+                </div>
+              )) : <EmptyState title="No notices" />}
+            </CardContent>
+          </Card>
+
+          {me.marks.length > 0 && (
+            <Card className="lg:col-span-3">
+              <CardHeader className="pb-2"><CardTitle className="text-base">Latest exercises this term</CardTitle></CardHeader>
+              <CardContent>
+                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                  {me.marks.slice(0, 6).map((m, i) => {
+                    const pct = Math.round((m.score / Math.max(1, m.max)) * 100);
+                    return (
+                      <div key={i} className="rounded-lg border p-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium truncate">{m.subject}</span>
+                          <span className="text-sm font-bold tabular-nums">{m.score}/{m.max}</span>
+                        </div>
+                        <div className="text-[10px] text-muted-foreground mb-1.5 truncate">{m.assessment}</div>
+                        <Progress value={pct} className="h-1.5" />
+                      </div>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="timetable" className="mt-3">
+          <Card>
+            <CardHeader className="pb-2"><CardTitle className="text-base">Weekly routine — {me.classroom}</CardTitle></CardHeader>
+            <CardContent>
+              {me.timetable.length ? (
+                <div className="grid md:grid-cols-5 gap-2">
+                  {[1, 2, 3, 4, 5].map((d) => (
+                    <div key={d} className="rounded-lg border p-2.5 min-h-32">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">{DAYS[d]}</div>
+                      <div className="space-y-1">
+                        {(byDay[d] ?? []).map((s, i) => (
+                          <div key={i} className="rounded-md bg-secondary/60 px-2 py-1.5">
+                            <div className="text-xs font-medium truncate">{s.subject}</div>
+                            <div className="text-[10px] text-muted-foreground flex items-center gap-1"><Clock className="size-2.5" /> {fmtTime(s.start)}–{fmtTime(s.end)}</div>
+                            {s.teacher && <div className="text-[10px] text-muted-foreground truncate flex items-center gap-1"><UserRound className="size-2.5" /> {s.teacher}</div>}
+                          </div>
+                        ))}
+                        {!(byDay[d] ?? []).length && <div className="text-xs text-muted-foreground">—</div>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : <EmptyState title="No timetable published yet" />}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="results" className="mt-3 space-y-4">
+          {me.reportCards.length ? me.reportCards.map((rc) => (
+            <Card key={rc.id}>
+              <CardHeader className="pb-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <CardTitle className="text-base">{rc.term} — {rc.classroom}</CardTitle>
+                  <div className="flex items-center gap-2">
+                    {rc.position != null && <Badge variant="secondary">{rc.position} of {rc.classSize}</Badge>}
+                    {rc.promotion && <Badge className={rc.promotion === "PROMOTED" ? "bg-emerald-600" : "bg-amber-600"}>{rc.promotion}</Badge>}
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-3 gap-3 mb-3">
+                  <Mini label="Average" value={rc.average != null ? `${rc.average}%` : "—"} tone="good" />
+                  <Mini label="Conduct" value={rc.conduct ?? "—"} />
+                  <Mini label="Interest" value={rc.interest ?? "—"} />
+                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow><TableHead>Subject</TableHead><TableHead>Score</TableHead><TableHead>Grade</TableHead><TableHead className="hidden sm:table-cell">Remark</TableHead></TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {rc.results.map((r, i) => (
+                      <TableRow key={i}>
+                        <TableCell className="font-medium">{r.subject}{r.isCore && <Badge variant="outline" className="ml-1.5 text-[9px]">core</Badge>}</TableCell>
+                        <TableCell className="tabular-nums">{r.total != null ? `${r.total}%` : "—"}</TableCell>
+                        <TableCell>{r.grade ? <Badge variant="secondary">{r.grade}</Badge> : "—"}</TableCell>
+                        <TableCell className="hidden sm:table-cell text-xs text-muted-foreground">{r.remark ?? "—"}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                {rc.teacherRemark && <p className="mt-3 text-sm rounded-lg bg-secondary/50 p-3"><b>Class teacher:</b> {rc.teacherRemark}</p>}
+                {rc.headRemark && <p className="mt-2 text-sm rounded-lg bg-secondary/50 p-3"><b>Head of school:</b> {rc.headRemark}</p>}
+              </CardContent>
+            </Card>
+          )) : <EmptyState icon={<GraduationCap className="size-8" />} title="No reports yet" hint="Your terminal reports appear here once published." />}
+        </TabsContent>
+
+        <TabsContent value="library" className="mt-3">
+          <Card>
+            <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><BookOpen className="size-4" /> Books out in my name</CardTitle></CardHeader>
+            <CardContent>
+              {me.library.length ? (
+                <div className="space-y-2">
+                  {me.library.map((l, i) => (
+                    <div key={i} className={`flex items-center justify-between rounded-lg border px-3 py-2.5 ${l.overdue ? "border-destructive/40 bg-destructive/5" : ""}`}>
+                      <div className="flex items-center gap-2.5">
+                        <span className="flex size-8 items-center justify-center rounded-full text-white" style={{ background: avatarColor(l.book) }}><BookOpen className="size-4" /></span>
+                        <div>
+                          <div className="text-sm font-medium">{l.book}</div>
+                          <div className="text-xs text-muted-foreground">due {fmtDate(l.dueAt)}</div>
+                        </div>
+                      </div>
+                      {l.overdue
+                        ? <Badge className="bg-destructive gap-1"><AlertTriangle className="size-3" /> overdue</Badge>
+                        : <Badge variant="secondary" className="gap-1"><CheckCircle2 className="size-3" /> on time</Badge>}
+                    </div>
+                  ))}
+                </div>
+              ) : <EmptyState title="No books out" hint="Visit the library to borrow — your loans show up here." />}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="attendance" className="mt-3">
+          <Card>
+            <CardHeader className="pb-3"><CardTitle className="text-base">My attendance</CardTitle></CardHeader>
+            <CardContent>
+              {me.attendance.total ? (
+                <>
+                  <div className="grid grid-cols-4 gap-3 mb-4">
+                    <Mini label="Present" value={me.attendance.present} tone="good" />
+                    <Mini label="Late" value={me.attendance.late} tone="warn" />
+                    <Mini label="Absent" value={me.attendance.absent} tone="bad" />
+                    <Mini label="Sessions" value={me.attendance.total} />
+                  </div>
+                  <div className="mb-1 flex justify-between text-xs text-muted-foreground"><span>Attendance rate</span><span className="font-semibold">{me.attendance.rate}%</span></div>
+                  <Progress value={me.attendance.rate ?? 0} className="h-2" />
+                  <div className="mt-4 flex gap-1.5 flex-wrap">
+                    {me.attendance.recent.map((r, i) => (
+                      <div key={i} className="w-16 rounded-lg border overflow-hidden">
+                        <div className={`h-1.5 ${ATT_COLOR[r.status] ?? "bg-zinc-300"}`} />
+                        <div className="px-1.5 py-1">
+                          <div className="text-[10px] font-medium">{r.status}</div>
+                          <div className="text-[9px] text-muted-foreground">{fmtDate(r.date).slice(0, 6)}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : <EmptyState title="No attendance recorded yet" />}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+function Tile({ icon, label, value, sub, tone }: { icon: React.ReactNode; label: string; value: React.ReactNode; sub?: string; tone?: "good" | "danger" }) {
+  return (
+    <div className={`rounded-xl border bg-card p-4 ${tone === "danger" ? "border-destructive/30" : ""}`}>
+      <div className="flex items-center justify-between"><span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</span>{icon}</div>
+      <div className={`mt-1.5 text-xl font-bold tabular-nums ${tone === "danger" ? "text-destructive" : tone === "good" ? "text-emerald-600 dark:text-emerald-400" : ""}`}>{value}</div>
+      <div className="text-[11px] text-muted-foreground truncate">{sub}</div>
+    </div>
+  );
+}
+
+function Mini({ label, value, tone }: { label: string; value: React.ReactNode; tone?: "good" | "warn" | "bad" }) {
+  return (
+    <div className="rounded-lg border p-2.5 text-center">
+      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className={`text-lg font-bold tabular-nums ${tone === "good" ? "text-emerald-600 dark:text-emerald-400" : tone === "bad" ? "text-destructive" : tone === "warn" ? "text-amber-600" : ""}`}>{value}</div>
+    </div>
+  );
+}

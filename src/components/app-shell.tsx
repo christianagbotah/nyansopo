@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useStore, hasSchoolScope, isAssociationRole, ROLE_LABELS, ModuleId } from "@/lib/store";
+import { canModule, canAny, ROLE_LEVELS, ROLE_LEVEL_LABELS } from "@/lib/rbac";
 import { apiGet } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -33,26 +34,29 @@ import { SmsCenter } from "@/components/modules/sms-center";
 import { Payroll } from "@/components/modules/payroll";
 import { Inventory } from "@/components/modules/inventory";
 import { Finance } from "@/components/modules/finance";
+import { LibraryPortal } from "@/components/modules/library-portal";
+import { RbacConsole } from "@/components/modules/rbac-console";
+import { CashierConsole } from "@/components/modules/cashier-console";
+import { ConductorPortal } from "@/components/modules/conductor-portal";
+import { StaffPortal } from "@/components/modules/staff-portal";
+import { ParentPortal } from "@/components/modules/parent-portal";
+import { StudentPortal } from "@/components/modules/student-portal";
 import {
   LayoutDashboard, Users, Banknote, CalendarCheck, ClipboardList, GraduationCap, ArrowLeftRight, Building2,
   BrainCircuit, Settings as SettingsIcon, Landmark, Menu, CloudOff, Cloud, RefreshCcw, LogOut, Moon, Sun,
   Download, ChevronDown, School, MessageSquareText, UtensilsCrossed, Bus, Smartphone, Calculator, Package, PieChart, LayoutList,
+  BookOpen, ShieldCheck, Receipt, Route, UserRound, Home, Backpack,
 } from "lucide-react";
 
 type NavItem = { id: ModuleId; label: string; icon: any; section?: string };
 
-/* role-scoped modules — iedupro teacher-portal parity: a class teacher sees the
-   classroom toolchain (plus daily-fee classroom collection); the bursar sees the
-   money side; admin/proprietor see all */
-const ROLE_MODULES: Record<string, ModuleId[] | "*"> = {
-  SCHOOL_ADMIN: "*",
-  GROUP_OWNER: "*",
-  TEACHER: ["dashboard", "students", "attendance", "classes", "gradebook", "reports", "sms", "ai", "daily"],
-  ACCOUNTANT: ["dashboard", "students", "admissions", "fees", "daily", "transport", "inventory", "finance", "sms", "ai"],
-};
-
+/* permission-based navigation (RBAC): each module is gated by the session's
+   effective permissions — role defaults plus any per-user overrides from the
+   Users & Access console. iEduPro admin levels 1–5 map onto the same rules. */
 const SCHOOL_NAV: NavItem[] = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, section: "Overview" },
+  { id: "cashier", label: "Cashier Console", icon: Receipt, section: "Overview" },
+  { id: "conductor", label: "Conductor Portal", icon: Route, section: "Overview" },
   { id: "students", label: "Students", icon: Users, section: "People" },
   { id: "admissions", label: "Admissions & Transfers", icon: ArrowLeftRight, section: "People" },
   { id: "fees", label: "Fees & Billing", icon: Banknote, section: "Finance" },
@@ -65,9 +69,17 @@ const SCHOOL_NAV: NavItem[] = [
   { id: "classes", label: "Classes & Timetable", icon: LayoutList, section: "Academic" },
   { id: "gradebook", label: "Gradebook", icon: ClipboardList, section: "Academic" },
   { id: "reports", label: "Exams & Reports", icon: GraduationCap, section: "Academic" },
+  { id: "library", label: "Library", icon: BookOpen, section: "Academic" },
   { id: "sms", label: "SMS Centre", icon: Smartphone, section: "Communication" },
   { id: "ai", label: "AI Assistant", icon: BrainCircuit, section: "Support" },
+  { id: "staffhub", label: "My Staff Portal", icon: UserRound, section: "Support" },
   { id: "settings", label: "Settings", icon: SettingsIcon, section: "Support" },
+  { id: "rbac", label: "Users & Access", icon: ShieldCheck, section: "Support" },
+];
+
+const PORTAL_NAV: NavItem[] = [
+  { id: "portal", label: "Parent Portal", icon: Home, section: "My Children" },
+  { id: "campus", label: "My Learning", icon: Backpack, section: "My Record" },
 ];
 
 function NavList({ items, current, onSelect }: { items: NavItem[]; current: ModuleId; onSelect: (m: ModuleId) => void }) {
@@ -106,7 +118,7 @@ function NavList({ items, current, onSelect }: { items: NavItem[]; current: Modu
 }
 
 export function AppShell() {
-  const { session, schools, currentSchoolId, setCurrentSchool, module, setModule, online, queue, syncing, logout, aiOpen, setAiOpen } = useStore();
+  const { session, schools, currentSchoolId, setCurrentSchool, module, setModule, online, queue, syncing, logout, setAiOpen } = useStore();
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     if (typeof window === "undefined") return "light";
     return ((localStorage.getItem("theme") as "light" | "dark") ?? "light");
@@ -115,9 +127,9 @@ export function AppShell() {
   const [navOpen, setNavOpen] = useState(false);
 
   const currentSchool = useMemo(() => schools.find((s) => s.id === currentSchoolId) ?? null, [schools, currentSchoolId]);
-  const schoolScope = hasSchoolScope(session?.role);
   const assocScope = isAssociationRole(session?.role);
   const isGroupOwner = session?.role === "GROUP_OWNER";
+  const roleLevel = session ? ROLE_LEVELS[session.role] : undefined;
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
@@ -137,24 +149,30 @@ export function AppShell() {
   const navItems = useMemo(() => {
     const items: NavItem[] = [];
     if (assocScope) items.push({ id: "association", label: "Association Portal", icon: Landmark });
-    if (schoolScope) {
-      const allowed = ROLE_MODULES[session?.role ?? ""] ?? "*";
-      const schoolNav = allowed === "*" ? SCHOOL_NAV : SCHOOL_NAV.filter((i) => (allowed as ModuleId[]).includes(i.id));
-      items.push(...schoolNav);
-      if (isGroupOwner) {
-        // insert branch console after reports
-        const idx = items.findIndex((i) => i.id === "reports");
-        if (idx >= 0) items.splice(idx + 1, 0, { id: "branches", label: "Branch Console", icon: Building2 });
-      }
+    // permission-gated school modules
+    for (const item of SCHOOL_NAV) {
+      if (item.id === "branches") continue;
+      if (canModule(session?.role, session?.permissions, item.id)) items.push(item);
+    }
+    // proprietor branch console
+    if (isGroupOwner) {
+      const idx = items.findIndex((i) => i.id === "reports");
+      if (idx >= 0) items.splice(idx + 1, 0, { id: "branches", label: "Branch Console", icon: Building2, section: "Academic" });
+    }
+    // parent & learner portals
+    for (const item of PORTAL_NAV) {
+      if (canModule(session?.role, session?.permissions, item.id)) items.push(item);
     }
     return items;
-  }, [assocScope, schoolScope, isGroupOwner, session?.role]);
+  }, [assocScope, isGroupOwner, session?.role, session?.permissions]);
 
   /* guard: never sit on a module outside the role's reach (deep links, stale store) */
   useEffect(() => {
     if (!navItems.length) return;
-    if (!navItems.some((i) => i.id === module)) setModule("dashboard");
+    if (!navItems.some((i) => i.id === module)) setModule(navItems[0].id);
   }, [navItems, module, setModule]);
+
+  const show = useCallback((m: string) => navItems.some((i) => i.id === m), [navItems]);
 
   async function manualSync() {
     if (!queue.length) { toast({ title: "Nothing to sync", description: "Your queue is empty." }); return; }
@@ -162,6 +180,8 @@ export function AppShell() {
     if (res.synced) toast({ title: `Synced ${res.synced} action${res.synced > 1 ? "s" : ""}` });
     if (res.failed) toast({ title: `${res.failed} failed`, description: res.messages.join(" · "), variant: "destructive" });
   }
+
+  const roleLabel = session ? (ROLE_LABELS[session.role] ?? session.role) : "Staff";
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
@@ -179,7 +199,7 @@ export function AppShell() {
                 <LogoMark size={30} />
                 <div>
                   <div className="font-bold leading-none">Nyansapo</div>
-                  <div className="text-[10px] uppercase tracking-widest text-sidebar-foreground/60 mt-1">{ROLE_LABELS[session?.role ?? ""] ?? "Staff"}</div>
+                  <div className="text-[10px] uppercase tracking-widest text-sidebar-foreground/60 mt-1">{roleLabel}</div>
                 </div>
               </div>
               <NavList items={navItems} current={module} onSelect={(m) => { setModule(m); setNavOpen(false); }} />
@@ -229,6 +249,13 @@ export function AppShell() {
           </div>
 
           <div className="ml-auto flex items-center gap-1.5">
+            {/* admin level chip */}
+            {roleLevel !== undefined && (
+              <Badge variant="secondary" className="hidden md:inline-flex gap-1 text-[11px]">
+                <ShieldCheck className="size-3" /> {ROLE_LEVEL_LABELS[roleLevel]}
+              </Badge>
+            )}
+
             {/* offline / sync */}
             {online ? (
               queue.length > 0 ? (
@@ -254,7 +281,7 @@ export function AppShell() {
             )}
 
             {/* AI quick open */}
-            {schoolScope && (
+            {canAny(session?.permissions, ["ai.use"]) && (
               <Button size="sm" variant="ghost" className="size-8 p-0" title="AI Assistant" onClick={() => setModule("ai")}>
                 <MessageSquareText className="size-4.5" />
               </Button>
@@ -278,7 +305,7 @@ export function AppShell() {
               <DropdownMenuContent align="end" className="w-64">
                 <DropdownMenuLabel>
                   <div className="font-semibold">{session?.fullName}</div>
-                  <div className="text-xs text-muted-foreground font-normal">{session?.title ?? ROLE_LABELS[session?.role ?? ""]}</div>
+                  <div className="text-xs text-muted-foreground font-normal">{roleLabel}{roleLevel !== undefined ? ` · ${ROLE_LEVEL_LABELS[roleLevel]}` : ""}</div>
                   <div className="text-xs text-muted-foreground font-normal">{session?.email}</div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
@@ -300,7 +327,7 @@ export function AppShell() {
             <LogoMark size={30} />
             <div>
               <div className="font-bold leading-none text-sidebar-foreground">Nyansapo</div>
-              <div className="text-[10px] uppercase tracking-widest text-sidebar-foreground/60 mt-1">{ROLE_LABELS[session?.role ?? ""] ?? "Staff"}</div>
+              <div className="text-[10px] uppercase tracking-widest text-sidebar-foreground/60 mt-1">{roleLabel}</div>
             </div>
           </div>
           <NavList items={navItems} current={module} onSelect={setModule} />
@@ -316,28 +343,45 @@ export function AppShell() {
           </div>
         </aside>
 
-        {/* module content */}
+        {/* module content — permission-guarded */}
         <main className="flex-1 min-w-0 p-4 sm:p-6">
           <div className="mx-auto max-w-7xl">
             {module === "association" && assocScope ? <AssociationPortal /> :
-             module === "students" && schoolScope ? <Students /> :
-             module === "admissions" && schoolScope ? <Admissions /> :
-             module === "fees" && schoolScope ? <Fees /> :
-             module === "daily" && schoolScope ? <DailyServices /> :
-             module === "transport" && schoolScope ? <Transportation /> :
-             module === "sms" && schoolScope ? <SmsCenter /> :
-             module === "payroll" && schoolScope ? <Payroll /> :
-             module === "inventory" && schoolScope ? <Inventory /> :
-             module === "finance" && schoolScope ? <Finance /> :
-             module === "attendance" && schoolScope ? <Attendance /> :
-             module === "classes" && schoolScope ? <Classes /> :
-             module === "gradebook" && schoolScope ? <Gradebook /> :
-             module === "reports" && schoolScope ? <Reports /> :
-             module === "branches" && schoolScope ? <BranchConsole /> :
-             module === "ai" && schoolScope ? <AiCenter /> :
-             module === "settings" && schoolScope ? <Settings /> :
-             schoolScope ? <Dashboard /> :
-             assocScope ? <AssociationPortal /> : <Dashboard />}
+             module === "students" && show("students") ? <Students /> :
+             module === "admissions" && show("admissions") ? <Admissions /> :
+             module === "fees" && show("fees") ? <Fees /> :
+             module === "daily" && show("daily") ? <DailyServices /> :
+             module === "transport" && show("transport") ? <Transportation /> :
+             module === "sms" && show("sms") ? <SmsCenter /> :
+             module === "payroll" && show("payroll") ? <Payroll /> :
+             module === "inventory" && show("inventory") ? <Inventory /> :
+             module === "finance" && show("finance") ? <Finance /> :
+             module === "attendance" && show("attendance") ? <Attendance /> :
+             module === "classes" && show("classes") ? <Classes /> :
+             module === "gradebook" && show("gradebook") ? <Gradebook /> :
+             module === "reports" && show("reports") ? <Reports /> :
+             module === "library" && show("library") ? <LibraryPortal /> :
+             module === "rbac" && show("rbac") ? <RbacConsole /> :
+             module === "cashier" && show("cashier") ? <CashierConsole /> :
+             module === "conductor" && show("conductor") ? <ConductorPortal /> :
+             module === "staffhub" && show("staffhub") ? <StaffPortal /> :
+             module === "portal" && show("portal") ? <ParentPortal /> :
+             module === "campus" && show("campus") ? <StudentPortal /> :
+             module === "branches" && show("branches") ? <BranchConsole /> :
+             module === "ai" && show("ai") ? <AiCenter /> :
+             module === "settings" && show("settings") ? <Settings /> :
+             show("dashboard") ? <Dashboard /> :
+             navItems.length ? (
+               (() => {
+                 const First = navItems[0];
+                 return First.id === "portal" ? <ParentPortal /> :
+                   First.id === "campus" ? <StudentPortal /> :
+                   First.id === "staffhub" ? <StaffPortal /> :
+                   First.id === "conductor" ? <ConductorPortal /> :
+                   First.id === "cashier" ? <CashierConsole /> :
+                   First.id === "library" ? <LibraryPortal /> : <Dashboard />;
+               })()
+             ) : <Dashboard />}
           </div>
         </main>
       </div>

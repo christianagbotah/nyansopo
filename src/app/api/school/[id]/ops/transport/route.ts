@@ -7,7 +7,7 @@ import { transportFareReceipt } from "@/lib/receipt-payload";
 // ── GET /api/school/[id]/ops/transport — routes, assignments, trips ──
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: schoolId } = await params;
-  const auth = await opsAuth(req, schoolId, "GET");
+  const auth = await opsAuth(req, schoolId, "GET", { perms: ["transport.view"] });
   if (!auth.ok) return auth.res;
 
   const routes = await db.transportRoute.findMany({
@@ -40,18 +40,30 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const paidByStudent: Record<string, number> = {};
   transportPayments.forEach((p) => { if (p.studentId) paidByStudent[p.studentId] = (paidByStudent[p.studentId] ?? 0) + p.amountCents; });
 
+  // recent boardings (last 14 days) — conductor manifest marking
+  const boardings = await db.transportBoarding.findMany({
+    where: { route: { schoolId }, date: { gte: new Date(Date.now() - 14 * 864e5) } },
+    orderBy: { date: "desc" },
+  });
+  const boardingByAssignment: Record<string, { date: string; direction: string; fareCents: number; paidCents: number; recordedByName: string | null }[]> = {};
+  boardings.forEach((b) => {
+    const d = b.date.toISOString().slice(0, 10);
+    (boardingByAssignment[b.assignmentId] ??= []).push({ date: d, direction: b.direction, fareCents: b.fareCents, paidCents: b.paidCents, recordedByName: b.recordedByName });
+  });
+
   return NextResponse.json({
     termLabel: currentTerm ? `${currentTerm.name} · ${year!.name}` : "current term",
     routes: routes.map((r) => ({
       id: r.id, name: r.name, vehicleReg: r.vehicleReg, vehicleModel: r.vehicleModel,
       driverName: r.driverName, driverPhone: r.driverPhone, capacity: r.capacity,
-      fare: r.farePerTermCents, stops: r.stops.split(",").map((s) => s.trim()), active: r.active,
+      fare: r.farePerTermCents, farePerTrip: r.farePerTripCents, stops: r.stops.split(",").map((s) => s.trim()), active: r.active,
       riders: r.assignments.map((a) => ({
         id: a.id, studentId: a.studentId, student: `${a.student.firstName} ${a.student.lastName}`,
         classroom: a.student.enrollments[0]?.classroom?.name ?? null,
         pickupStop: a.pickupStop, dropStop: a.dropStop, fareOverride: a.fareOverrideCents,
         guardianPhone: a.student.guardianPhone,
         farePaid: paidByStudent[a.studentId] ?? 0,
+        boardings: boardingByAssignment[a.id] ?? [],
       })),
       utilisation: Math.round((r.assignments.length / Math.max(1, r.capacity)) * 100),
       fareRevenue: r.assignments.reduce((s, a) => s + (a.fareOverrideCents ?? r.farePerTermCents), 0),
@@ -72,10 +84,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 // ── POST /api/school/[id]/ops/transport ──
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: schoolId } = await params;
-  const auth = await opsAuth(req, schoolId, "POST");
-  if (!auth.ok) return auth.res;
   const body = await req.json().catch(() => ({}));
   const action: string = body.action;
+  // conduct-level actions (bus conductor) vs route management (transport manager)
+  const CONDUCT = ["transport.conduct", "transport.manage"];
+  const auth = await opsAuth(req, schoolId, "POST", {
+    perms: ["record-trip", "boarding-save", "collect-fare"].includes(action) ? CONDUCT : ["transport.manage"],
+  });
+  if (!auth.ok) return auth.res;
 
   if (action === "save-route") {
     const { id, name, vehicleReg, vehicleModel, driverName, driverPhone, capacity, farePerTermCents, stops } = body;
@@ -121,6 +137,22 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       create: { routeId, date: new Date(date), morningCount: morningCount == null ? null : Number(morningCount), eveningCount: eveningCount == null ? null : Number(eveningCount), notes: notes ?? null, recordedByName: auth.user.fullName },
     });
     return NextResponse.json({ trip });
+  }
+
+  // conductor marks a learner's boarding for the day (IN / OUT / BOTH / NONE) with optional cash fare
+  if (action === "boarding-save") {
+    const { assignmentId, date, direction, paidCents } = body;
+    if (!assignmentId || !date || !direction) return NextResponse.json({ error: "assignmentId, date and direction are required" }, { status: 400 });
+    const a = await db.transportAssignment.findUnique({ where: { id: assignmentId }, include: { route: true } });
+    if (!a || a.route.schoolId !== schoolId) return NextResponse.json({ error: "Assignment not found" }, { status: 404 });
+    const routeFare = a.route.farePerTripCents || 0;
+    const fare = direction === "BOTH" ? routeFare * 2 : direction === "NONE" ? 0 : routeFare;
+    const boarding = await db.transportBoarding.upsert({
+      where: { assignmentId_date: { assignmentId, date: new Date(date) } },
+      update: { direction, fareCents: fare, paidCents: Number(paidCents) || 0, recordedByName: auth.user.fullName },
+      create: { assignmentId, routeId: a.routeId, date: new Date(date), direction, fareCents: fare, paidCents: Number(paidCents) || 0, recordedByName: auth.user.fullName },
+    });
+    return NextResponse.json({ boarding });
   }
 
   // bill transport fares onto current-term invoices for assigned learners

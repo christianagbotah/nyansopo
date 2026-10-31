@@ -19,7 +19,7 @@ async function loadRates(schoolId: string): Promise<StatutoryRates> {
 // ── GET /api/school/[id]/ops/payroll — staff setup, runs, payslips, statutory rates ──
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: schoolId } = await params;
-  const auth = await opsAuth(req, schoolId, "GET");
+  const auth = await opsAuth(req, schoolId, "GET", { perms: ["payroll.view"] });
   if (!auth.ok) return auth.res;
 
   const url = new URL(req.url);
@@ -79,11 +79,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 // ── POST /api/school/[id]/ops/payroll ──
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: schoolId } = await params;
-  const auth = await opsAuth(req, schoolId, "POST");
-  if (!auth.ok) return auth.res;
-  const user = auth.user;
   const body = await req.json().catch(() => ({}));
   const action: string = body.action;
+  const auth = await opsAuth(req, schoolId, "POST", { perms: (action === "save-staff" || action === "create-staff") ? ["staff.manage", "payroll.process"] : ["payroll.process"] });
+  if (!auth.ok) return auth.res;
+  const user = auth.user;
 
   if (action === "save-staff") {
     const { staffId, salaryCents, employmentType, ssnitNumber, momoNumber, active,

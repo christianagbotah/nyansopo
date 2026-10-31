@@ -6,7 +6,7 @@ import { opsAuth } from "@/lib/ops-auth";
    iedupro parity: Income & Revenue analytics, AR aging, expenditure dashboard. */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: schoolId } = await params;
-  const auth = await opsAuth(req, schoolId, "GET");
+  const auth = await opsAuth(req, schoolId, "GET", { perms: ["finance.view"] });
   if (!auth.ok) return auth.res;
 
   const url = new URL(req.url);
@@ -111,11 +111,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 /* ── POST /api/school/[id]/ops/finance — ledger, terminal bills, expenses ── */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: schoolId } = await params;
-  const auth = await opsAuth(req, schoolId, "POST");
-  if (!auth.ok) return auth.res;
-  const user = auth.user;
   const body = await req.json().catch(() => ({}));
   const action: string = body.action;
+  const auth = await opsAuth(req, schoolId, "POST", { perms: action === "save-expense" || action === "delete-expense" ? ["finance.manage"] : action === "cashier-report" ? ["cashier.reports"] : action === "terminal-bills" ? ["fees.view", "cashier.reports", "daily.view"] : ["fees.view"] });
+  if (!auth.ok) return auth.res;
+  const user = auth.user;
 
   // ── student ledger: full statement of invoices (debits) & payments (credits) ──
   if (action === "ledger") {

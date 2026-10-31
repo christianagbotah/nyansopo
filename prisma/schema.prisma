@@ -39,7 +39,7 @@ model User {
   password          String
   fullName          String
   phone             String?
-  role              String // ASSOCIATION_NATIONAL | ASSOCIATION_REGIONAL | ASSOCIATION_DISTRICT | ASSOCIATION_ZONAL | GROUP_OWNER | SCHOOL_ADMIN | TEACHER | ACCOUNTANT | PARENT
+  role              String // ASSOCIATION_* | GROUP_OWNER | SUPER_ADMIN | SCHOOL_ADMIN | ACCOUNTANT | CASHIER | BUS_CONDUCTOR | TEACHER | NON_TEACHING | LIBRARIAN | PARENT | STUDENT
   title             String? // display title e.g. "National Executive Director", "Headteacher"
   associationNodeId String?
   associationNode   AssociationNode? @relation(fields: [associationNodeId], references: [id])
@@ -48,6 +48,14 @@ model User {
   schoolId          String?
   school            School?          @relation(fields: [schoolId], references: [id])
   avatarSeed        String?
+  // ── RBAC (iEduPro admin-level parity) ──
+  status            String           @default("ACTIVE") // ACTIVE | SUSPENDED
+  permissionsJson   String? // JSON { extra: string[], denied: string[] } — overrides on top of role defaults
+  lastLoginAt       DateTime?
+  staffId           String? // link to Staff record — staff self-service portal (payslips, profile)
+  staff             Staff?          @relation("UserStaff", fields: [staffId], references: [id])
+  studentId         String? // link to Student record — student portal (own record only)
+  linkedStudentIds  String? // JSON array of student ids — parent portal (own children only)
   createdAt         DateTime         @default(now())
 }
 
@@ -135,6 +143,8 @@ model School {
   opsSettings          OpsSetting[]
   studentWallets       StudentWallet[]
   walletTxns           WalletTxn[]
+  libraryBooks        LibraryBook[]
+  libraryLoans        LibraryLoan[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -226,9 +236,10 @@ model Staff {
   bankName       String?
   hiredAt        DateTime?
   active         Boolean         @default(true)
-  classrooms     Classroom[]
-  payslips       Payslip[]
-  timetableSlots TimetableSlot[]
+  classrooms       Classroom[]
+  payslips         Payslip[]
+  timetableSlots  TimetableSlot[]
+  users            User[]         @relation("UserStaff")
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -271,6 +282,7 @@ model Student {
   transportAssignments TransportAssignment[]
   smsMessages          SmsMessage[]
   discountApplications DiscountApplication[]
+  libraryLoans         LibraryLoan[]
   stockIssues          StockMovement[]
   posPayments          Payment[]
 }
@@ -1107,6 +1119,39 @@ model PurchaseOrder {
   createdByName String?
   note          String?
   createdAt     DateTime  @default(now())
+}
+
+// ─────────────────────────────────────────────────────────────
+// LIBRARY (librarian portal) — catalogue & circulation
+// ─────────────────────────────────────────────────────────────
+model LibraryBook {
+  id          String        @id @default(cuid())
+  schoolId    String
+  school      School        @relation(fields: [schoolId], references: [id])
+  title       String
+  author      String?
+  isbn        String?
+  category    String        @default("General") // Storybook | Textbook | Reference | Fiction | Science | History ...
+  copies      Int           @default(1)
+  available   Int           @default(1) // denormalised: copies − active loans
+  shelf       String? // location e.g. "Shelf B-3"
+  createdAt   DateTime      @default(now())
+  loans       LibraryLoan[]
+}
+
+model LibraryLoan {
+  id             String       @id @default(cuid())
+  bookId         String
+  book           LibraryBook  @relation(fields: [bookId], references: [id])
+  studentId      String
+  student        Student      @relation(fields: [studentId], references: [id])
+  schoolId       String
+  school         School       @relation(fields: [schoolId], references: [id])
+  issuedAt       DateTime     @default(now())
+  dueAt          DateTime
+  returnedAt     DateTime?
+  issuedByName   String?
+  conditionNote  String? // condition on issue / return
 }
 
 // ─────────────────────────────────────────────────────────────

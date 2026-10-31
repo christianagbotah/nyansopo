@@ -6,7 +6,7 @@ import { sendSms, sendAutomated, renderTemplate } from "@/lib/sms";
 // ── GET /api/school/[id]/ops/sms — settings, templates, history, audiences ──
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: schoolId } = await params;
-  const auth = await opsAuth(req, schoolId, "GET");
+  const auth = await opsAuth(req, schoolId, "GET", { perms: ["sms.view"] });
   if (!auth.ok) return auth.res;
   const school = await db.school.findUnique({ where: { id: schoolId } });
   const curTerm = await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId } } });
@@ -54,11 +54,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 // ── POST /api/school/[id]/ops/sms ──
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: schoolId } = await params;
-  const auth = await opsAuth(req, schoolId, "POST");
-  if (!auth.ok) return auth.res;
-  const user = auth.user;
   const body = await req.json().catch(() => ({}));
   const action: string = body.action;
+  const auth = await opsAuth(req, schoolId, "POST", { perms: ["sms.send"] });
+  if (!auth.ok) return auth.res;
+  const user = auth.user;
 
   if (action === "save-settings") {
     const { provider, senderId, autoFeeReminders, autoAbsenceAlerts, autoPaymentReceipts } = body;

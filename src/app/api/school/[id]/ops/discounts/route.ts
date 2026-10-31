@@ -6,7 +6,7 @@ import { applyDailySubsidy, removeDailySubsidy, effectiveValue } from "@/lib/dis
 // ── GET /api/school/[id]/ops/discounts — catalog + profiles + applications ──
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: schoolId } = await params;
-  const auth = await opsAuth(req, schoolId, "GET");
+  const auth = await opsAuth(req, schoolId, "GET", { perms: ["discounts.manage"] });
   if (!auth.ok) return auth.res;
 
   const [discounts, profiles, applications, services, classrooms] = await Promise.all([
@@ -65,11 +65,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 // ── POST /api/school/[id]/ops/discounts ──
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: schoolId } = await params;
-  const auth = await opsAuth(req, schoolId, "POST");
-  if (!auth.ok) return auth.res;
-  const user = auth.user;
   const body = await req.json().catch(() => ({}));
   const action: string = body.action;
+  const auth = await opsAuth(req, schoolId, "POST", { perms: ["discounts.manage"] });
+  if (!auth.ok) return auth.res;
+  const user = auth.user;
 
   // ── profile CRUD (iedupro "Discount Profiles") ──────────────
   if (action === "save-profile") {

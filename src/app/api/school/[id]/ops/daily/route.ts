@@ -8,7 +8,7 @@ import { dailyServicesReceipt } from "@/lib/receipt-payload";
 // ── GET /api/school/[id]/ops/daily — services, ledger, POS, wallets, settings ──
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: schoolId } = await params;
-  const auth = await opsAuth(req, schoolId, "GET");
+  const auth = await opsAuth(req, schoolId, "GET", { perms: ["daily.view"] });
   if (!auth.ok) return auth.res;
 
   const url = new URL(req.url);
@@ -180,15 +180,16 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 // ── POST /api/school/[id]/ops/daily — services, enrolment, POS, generation ──
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: schoolId } = await params;
-  const auth = await opsAuth(req, schoolId, "POST");
-  if (!auth.ok) return auth.res;
-  const user = auth.user;
   const body = await req.json().catch(() => ({}));
   const action: string = body.action;
-  // management actions are for admins & the bursar — teachers may only collect (pos-collect)
-  const isManager = user.role === "SCHOOL_ADMIN" || user.role === "GROUP_OWNER" || user.role === "ACCOUNTANT";
-  const needsManager = ["save-service", "toggle-service", "enroll", "unenroll", "settings-save", "wallet-topup", "wallet-adjust", "waive-charge", "waive-student-day"].includes(action);
-  if (needsManager && !isManager) return NextResponse.json({ error: "Teachers may collect payments — see the bursar for service, wallet and waiver changes." }, { status: 403 });
+  // RBAC (iEduPro collection-policy parity): collecting is for teachers & cashiers
+  // (daily.collect); configuration, enrolment, wallets & waivers need daily.manage.
+  const MANAGE_ACTIONS = ["save-service", "toggle-service", "enroll", "unenroll", "settings-save", "wallet-adjust", "waive-charge", "waive-student-day"];
+  const auth = await opsAuth(req, schoolId, "POST", {
+    perms: MANAGE_ACTIONS.includes(action) ? ["daily.manage"] : ["daily.collect", "daily.manage"],
+  });
+  if (!auth.ok) return auth.res;
+  const user = auth.user;
 
   if (action === "save-service") {
     const { id, name, category, priceCents, chargeMode, weekdays } = body;

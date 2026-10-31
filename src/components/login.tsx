@@ -5,26 +5,56 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { BrandWord, KenteStrip } from "@/components/brand";
-import { useStore, ROLE_LABELS } from "@/lib/store";
+import { useStore, ROLE_LABELS, ModuleId } from "@/lib/store";
 import { apiGet, apiPost } from "@/lib/api";
 import { toast } from "@/hooks/use-toast";
-import { ArrowLeft, KeyRound, Loader2, LogIn, ShieldCheck } from "lucide-react";
+import { ArrowLeft, KeyRound, Loader2, LogIn, ShieldCheck, Users } from "lucide-react";
 
-const QUICK = [
-  { email: "head@nyansapo.gh", who: "Headteacher · Golden Excellence (GES)" },
-  { email: "proprietor@nyansapo.gh", who: "Proprietor · 3-branch group" },
-  { email: "teacher@nyansapo.gh", who: "Class Teacher · Basic 4 Gold" },
-  { email: "bursar@nyansapo.gh", who: "Bursar · fee collection" },
-  { email: "head.gka@nyansapo.gh", who: "Head · Great Kings Adenta" },
-  { email: "zone.adenta@nyansapo.gh", who: "Zonal Rep · Adenta" },
-  { email: "district.gaeast@nyansapo.gh", who: "District · Ga East" },
-  { email: "regional.gar@nyansapo.gh", who: "Regional · Greater Accra" },
-  { email: "national@nyansapo.gh", who: "National · GNACOPS" },
+// grouped one-click demo accounts — every portal in the ecosystem
+const QUICK_GROUPS: { group: string; accounts: { email: string; who: string }[] }[] = [
+  {
+    group: "Administration (Levels 1–2)",
+    accounts: [
+      { email: "super@nyansapo.gh", who: "Super Admin · Level 1 — users, roles & permissions" },
+      { email: "head@nyansapo.gh", who: "Administrator · Level 2 — Head of School" },
+      { email: "proprietor@nyansapo.gh", who: "Proprietor — 3-branch group" },
+    ],
+  },
+  {
+    group: "Finance (Levels 3–4)",
+    accounts: [
+      { email: "bursar@nyansapo.gh", who: "Accountant · Level 3 — Bursar" },
+      { email: "cashier@nyansapo.gh", who: "Cashier · Level 4 — collections" },
+    ],
+  },
+  {
+    group: "Operations & Staff",
+    accounts: [
+      { email: "conductor@nyansapo.gh", who: "Bus Conductor · Level 5 — transport" },
+      { email: "librarian@nyansapo.gh", who: "Librarian — library portal" },
+      { email: "teacher@nyansapo.gh", who: "Teacher — classroom toolchain" },
+      { email: "staff@nyansapo.gh", who: "Non-Teaching Staff — self-service" },
+    ],
+  },
+  {
+    group: "Community",
+    accounts: [
+      { email: "parent@nyansapo.gh", who: "Parent — children, fees & reports" },
+      { email: "student@nyansapo.gh", who: "Learner — my classes & results" },
+    ],
+  },
+  {
+    group: "Association Network",
+    accounts: [
+      { email: "zone.adenta@nyansapo.gh", who: "Zonal Rep · Adenta" },
+      { email: "national@nyansapo.gh", who: "National · GNACOPS" },
+    ],
+  },
 ];
 
 export function Login() {
   const { setSession, setSchools, setScreen } = useStore();
-  const [email, setEmail] = useState("head@nyansapo.gh");
+  const [email, setEmail] = useState("super@nyansapo.gh");
   const [password, setPassword] = useState("nyansapo");
   const [busy, setBusy] = useState(false);
 
@@ -35,22 +65,16 @@ export function Login() {
       setSession(res.user);
       const ctx = await apiGet<any>(`/api/context`);
       setSchools(ctx.schools);
-      // association users land in the portal; school users in the school app
-      const role = res.user.role;
-      setModuleFor(role);
-      toast({ title: `Akwaaba, ${res.user.fullName.split(" ").slice(-1)[0]}!`, description: `${ROLE_LABELS[role] ?? role} — you are signed in.` });
+      // land each role on its own portal (RBAC landing map from the server)
+      const st = useStore.getState();
+      const landing = (res.user.landingModule ?? "dashboard") as ModuleId;
+      st.setModule(landing);
+      toast({ title: `Akwaaba, ${res.user.fullName.split(" ").slice(-1)[0]}!`, description: `${ROLE_LABELS[res.user.role] ?? res.user.role} — you are signed in.` });
     } catch (e: any) {
       toast({ title: "Sign-in failed", description: e.message, variant: "destructive" });
     } finally {
       setBusy(false);
     }
-  }
-
-  function setModuleFor(role: string) {
-    const st = useStore.getState();
-    if (role.startsWith("ASSOCIATION_")) st.setModule("association");
-    else if (role === "GROUP_OWNER") st.setModule("dashboard");
-    else st.setModule("dashboard");
   }
 
   return (
@@ -61,12 +85,14 @@ export function Login() {
         <div className="my-auto max-w-md">
           <h1 className="text-3xl font-bold leading-snug">One login. <span className="text-[#e5b83b]">The whole ecosystem.</span></h1>
           <p className="mt-4 text-white/80 leading-relaxed">
-            School leaders run their branches. Proprietors compare every campus. Association officers — national, regional, district and
-            zonal — see the living picture of private education in Ghana.
+            Five admin levels — Super Admin, Administrator, Accountant, Cashier, Bus Conductor — plus teachers,
+            non-teaching staff, librarians, parents and learners. Every portal is permission-based: you see exactly
+            what your role allows, nothing more.
           </p>
           <div className="mt-8 space-y-3">
             {[
-              { icon: ShieldCheck, t: "Verified flags", d: "Defaulter flags confirmed by association officers carry weight across the network." },
+              { icon: ShieldCheck, t: "Level-based RBAC", d: "iEduPro-style admin ladder with per-user permission overrides." },
+              { icon: Users, t: "A portal for everyone", d: "Library circulation, bus manifests, payslips, fee statements — scoped to each account." },
               { icon: KeyRound, t: "Nyansapo Index", d: "Every learner gets a national index that follows them school to school." },
             ].map((x) => (
               <div key={x.t} className="flex gap-3 items-start rounded-xl bg-white/10 border border-white/15 p-3">
@@ -109,19 +135,26 @@ export function Login() {
               </Button>
               <div className="relative">
                 <div className="absolute inset-0 flex items-center"><span className="w-full border-t" /></div>
-                <div className="relative flex justify-center text-xs uppercase"><span className="bg-card px-2 text-muted-foreground">One-click demo roles</span></div>
+                <div className="relative flex justify-center text-xs uppercase"><span className="bg-card px-2 text-muted-foreground">One-click demo portals</span></div>
               </div>
-              <div className="grid grid-cols-1 gap-1.5 max-h-64 overflow-y-auto nice-scroll pr-1">
-                {QUICK.map((q) => (
-                  <button
-                    key={q.email}
-                    onClick={() => { setEmail(q.email); setPassword("nyansapo"); signIn(q.email, "nyansapo"); }}
-                    className="text-left rounded-lg border px-3 py-2 hover:bg-secondary/60 transition-colors"
-                    disabled={busy}
-                  >
-                    <div className="text-sm font-medium">{q.who}</div>
-                    <div className="text-xs text-muted-foreground font-mono">{q.email}</div>
-                  </button>
+              <div className="max-h-80 overflow-y-auto nice-scroll pr-1 space-y-3">
+                {QUICK_GROUPS.map((g) => (
+                  <div key={g.group}>
+                    <div className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">{g.group}</div>
+                    <div className="space-y-1.5">
+                      {g.accounts.map((q) => (
+                        <button
+                          key={q.email}
+                          onClick={() => { setEmail(q.email); setPassword("nyansapo"); signIn(q.email, "nyansapo"); }}
+                          className="w-full text-left rounded-lg border px-3 py-2 hover:bg-secondary/60 transition-colors"
+                          disabled={busy}
+                        >
+                          <div className="text-sm font-medium">{q.who}</div>
+                          <div className="text-xs text-muted-foreground font-mono">{q.email}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 ))}
               </div>
             </CardContent>

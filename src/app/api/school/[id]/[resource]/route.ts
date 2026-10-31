@@ -258,6 +258,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const body = await req.json().catch(() => ({}));
   const action: string = body.action;
 
+  // ── RBAC per-resource permission gate (any-of) ──
+  const GATE: Record<string, string[]> = {
+    fees: ["record-payment", "receipt-payloads"].includes(action) ? ["fees.collect", "fees.manage"] : ["fees.manage"],
+    attendance: ["attendance.take"],
+    gradebook: ["gradebook.enter"],
+    reports: ["reports.publish"],
+    students: ["students.manage"],
+    settings: ["settings.manage"],
+    announcements: ["sms.send"],
+  };
+  const gate = GATE[resource];
+  if (gate && !user.permissions.some((p) => gate.includes(p))) {
+    return NextResponse.json({ error: "Forbidden — your role does not include permission for this action" }, { status: 403 });
+  }
+
   switch (resource) {
     // ── FEES ──────────────────────────────────────────────
     case "fees": {

@@ -4,7 +4,7 @@
    - Static assets: stale-while-revalidate.
    - Writes (POST) are queued client-side (lib/api.ts) and flushed via /api/sync.
 */
-const VERSION = "nyansapo-v3";
+const VERSION = "nyansapo-v4";
 const SHELL = ["/", "/manifest.webmanifest", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png", "/apple-touch-icon.png"];
 
 self.addEventListener("install", (e) => {

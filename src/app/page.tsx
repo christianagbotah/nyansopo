@@ -1,6 +1,7 @@
 "use client";
 import { useEffect } from "react";
 import { useStore } from "@/lib/store";
+import { LANDING_MODULE } from "@/lib/rbac";
 import { Landing } from "@/components/landing";
 import { Login } from "@/components/login";
 import { AppShell } from "@/components/app-shell";
@@ -17,7 +18,9 @@ export default function Home() {
         setSchools(ctx.schools);
         const role = ctx.user.role;
         if (role.startsWith("ASSOCIATION_")) setModule("association");
-        else setModule("dashboard");
+        // land on this role's portal (RBAC landing map) — keeps deep links
+        // and out-of-scope resets consistent with the app-shell guard
+        else setModule(((useStore.getState().session?.landingModule as string) ?? LANDING_MODULE[role] ?? "dashboard") as any);
       })
       .catch(() => {
         // session stale — sign out

@@ -8,6 +8,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const user = await getUser(req);
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
+  // portal accounts are scoped to their own children / own record
+  if (user.role === "PARENT" && !user.linkedStudentIds.includes(id)) {
+    return NextResponse.json({ error: "Forbidden — you can only view your own children" }, { status: 403 });
+  }
+  if (user.role === "STUDENT" && user.studentId !== id) {
+    return NextResponse.json({ error: "Forbidden — you can only view your own record" }, { status: 403 });
+  }
+
   const student = await db.student.findUnique({
     where: { id },
     include: {

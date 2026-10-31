@@ -7,6 +7,8 @@ export type SessionUser = {
   id: string; email: string; fullName: string; phone: string | null;
   role: string; title: string | null;
   associationNodeId: string | null; schoolGroupId: string | null; schoolId: string | null;
+  permissions: string[]; // effective RBAC permissions (role defaults + overrides)
+  landingModule?: string;
 };
 
 export type SchoolLite = {
@@ -21,7 +23,8 @@ export type QueuedOp = { clientId: string; kind: "payment" | "attendance" | "mar
 export type ModuleId =
   | "dashboard" | "students" | "admissions" | "fees" | "attendance" | "gradebook"
   | "reports" | "branches" | "ai" | "association" | "settings"
-  | "daily" | "transport" | "sms" | "payroll" | "inventory" | "finance" | "classes";
+  | "daily" | "transport" | "sms" | "payroll" | "inventory" | "finance" | "classes"
+  | "library" | "rbac" | "cashier" | "conductor" | "staffhub" | "portal" | "campus";
 
 type Store = {
   session: SessionUser | null;
@@ -98,11 +101,17 @@ export const ROLE_LABELS: Record<string, string> = {
   ASSOCIATION_DISTRICT: "District Coordinator",
   ASSOCIATION_ZONAL: "Zonal Representative",
   GROUP_OWNER: "Proprietor",
-  SCHOOL_ADMIN: "Head of School",
+  SUPER_ADMIN: "Super Admin · Level 1",
+  SCHOOL_ADMIN: "Administrator · Level 2",
+  ACCOUNTANT: "Accountant · Level 3",
+  CASHIER: "Cashier · Level 4",
+  BUS_CONDUCTOR: "Bus Conductor · Level 5",
   TEACHER: "Teacher",
-  ACCOUNTANT: "Bursar",
-  PARENT: "Parent",
+  NON_TEACHING: "Non-Teaching Staff",
+  LIBRARIAN: "Librarian",
+  PARENT: "Parent / Guardian",
+  STUDENT: "Learner",
 };
 
 export const isAssociationRole = (r?: string) => !!r && r.startsWith("ASSOCIATION_");
-export const hasSchoolScope = (r?: string) => ["GROUP_OWNER", "SCHOOL_ADMIN", "TEACHER", "ACCOUNTANT"].includes(r as string);
+export const hasSchoolScope = (r?: string) => !!r && !r.startsWith("ASSOCIATION_");
