@@ -8,10 +8,11 @@ import { useStore } from "@/lib/store";
 import {
   ArrowRight, Banknote, BookOpenCheck, BrainCircuit, CloudOff, GraduationCap, Handshake,
   MonitorSmartphone, Monitor, Smartphone, Network, RefreshCcw, ShieldCheck, Sparkles, Users, WifiOff, CheckCircle2,
+  UtensilsCrossed, Bus, Calculator, Package, Ticket,
 } from "lucide-react";
 
 const DEMO = [
-  { email: "head@nyansapo.gh", label: "Headteacher — Golden Excellence Academy", desc: "Full school operations: fees, attendance, gradebook, reports" },
+  { email: "head@nyansapo.gh", label: "Headteacher — Golden Excellence Academy", desc: "Full operations: fees, tuck, transport, payroll, attendance, gradebook" },
   { email: "proprietor@nyansapo.gh", label: "Proprietor — Great Kings & Queens (3 branches)", desc: "Centralised multi-branch control & comparison" },
   { email: "zone.adenta@nyansapo.gh", label: "Zonal Rep — Adenta Zone", desc: "Association oversight, flagged students, verification" },
   { email: "district.gaeast@nyansapo.gh", label: "District Coordinator — Ga East", desc: "District-wide dashboards & compliance" },
@@ -20,14 +21,18 @@ const DEMO = [
 ];
 
 const FEATURES = [
-  { icon: Banknote, title: "Fees & Defaulters", text: "Term billing in GH₵ with tuition, exam, books, ICT, meals & transport items. MoMo, cash and bank receipts, payment plans, arrears chase-lists and defaulter flagging." },
+  { icon: Banknote, title: "Fees, Invoicing & Discounts", text: "Term billing in GH₵ — tuition, exam, books, ICT, meals & transport items. MoMo receipts, payment plans, sibling & scholarship discounts, arrears chase-lists and defaulter flagging." },
+  { icon: UtensilsCrossed, title: "Daily Services & Tuck", text: "Lunch, breakfast, sachet water, remedial classes — billed by the school day with a fast POS counter, weekly water days, subsidised rates and automatic SMS receipts." },
+  { icon: Bus, title: "Transportation", text: "Bus routes, vehicles and drivers. Assign learners to pickup stops, log daily trips and bill the termly fare straight onto invoices." },
+  { icon: Calculator, title: "Payroll & HR", text: "Ghana-compliant payroll: SSNIT Tier 1 (5%/13%) and Tier 2 (5%), progressive PAYE, allowances and deductions — with payslips and MoMo payout lists." },
+  { icon: Package, title: "Inventory & Stores", text: "Uniforms, exercise books, textbooks and kitchen supplies — stock levels, reorder alerts, suppliers, and issues charged straight to learners' invoices." },
+  { icon: Smartphone, title: "SMS Alerts", text: "Fee reminders, absence alerts, payment receipts and announcements to guardians — broadcast by class or arrears list, with templates and auto-alerts." },
   { icon: Network, title: "Cross-School Transfer Tracker", text: "The Nyansapo Index follows every learner. A school admits → the registry instantly pulls records, contacts and flags from every prior school." },
   { icon: BookOpenCheck, title: "Attendance & Gradebook", text: "Daily class registers, continuous assessment, exercises, quizzes, projects and mid-term marks — all offline-capable." },
   { icon: GraduationCap, title: "Exams & Terminal Reports", text: "GES SBC/CCP proficiency grades, BECE & WASSCE scales, Cambridge and IB pathways. Positioned report cards with AI-drafted remarks." },
   { icon: ShieldCheck, title: "Association Oversight", text: "National → Regional → District → Zone. Live school directories, NaSIA licensing status, GNACOPS verification and a national flagged-students registry." },
   { icon: BrainCircuit, title: "AI Suite", text: "Ask the assistant anything about your school, predict fee-default risk per learner, auto-draft report remarks and catch anomalies early." },
-  { icon: CloudOff, title: "Offline-First", text: "Dumsa or no data? Mark attendance, take payments and enrol learners offline — everything syncs the moment network returns." },
-  { icon: MonitorSmartphone, title: "Every Platform", text: "One installable app for Windows, macOS, iOS, Android and the web. Install straight from the browser." },
+  { icon: CloudOff, title: "Offline-First", text: "Dumsa or no data? Mark attendance, take payments, sell tuck and enrol learners offline — everything syncs the moment network returns." },
 ];
 
 export function Landing() {

@@ -13,10 +13,37 @@ export async function POST(req: NextRequest) {
   for (const op of ops) {
     try {
       if (op.kind === "payment") {
-        const { schoolId, invoiceId, amountCents, method, reference, paidAt } = op.payload;
+        const { schoolId, invoiceId, amountCents, method, reference, paidAt, category, studentId } = op.payload;
         if (!user.schoolIds.includes(schoolId)) throw new Error("forbidden");
         const dup = await db.payment.findFirst({ where: { reference: `SYNC:${op.clientId}` } });
         if (dup) { results.push({ clientId: op.clientId, ok: true, detail: "already synced" }); continue; }
+
+        if (category === "DAILY") {
+          // POS collection on daily services (canteen, water, classes)
+          const owed = await db.dailyCharge.aggregate({ where: { studentId, status: "OWED" }, _sum: { amountCents: true } });
+          const owedCents = owed._sum.amountCents ?? 0;
+          if (owedCents <= 0) throw new Error("no daily balance");
+          const amt = Math.max(0, Math.min(Number(amountCents), owedCents));
+          const seq = (await db.payment.count({ where: { schoolId } })) + 1001;
+          const payment = await db.payment.create({ data: { receiptNo: `RCP-2026-${String(seq).padStart(5, "0")}`, studentId, category: "DAILY", schoolId, amountCents: amt, method, reference: `SYNC:${op.clientId}`, receivedByName: `${user.fullName} (offline)`, paidAt: paidAt ? new Date(paidAt) : new Date(), offlineQueued: true, syncedAt: new Date() } });
+          let remaining = amt;
+          const owedCharges = await db.dailyCharge.findMany({ where: { studentId, status: "OWED" }, orderBy: { date: "asc" } });
+          for (const c of owedCharges) {
+            if (remaining <= 0) break;
+            if (remaining >= c.amountCents) {
+              await db.dailyCharge.update({ where: { id: c.id }, data: { status: "PAID", paymentId: payment.id } });
+              remaining -= c.amountCents;
+            } else {
+              const paidPart = remaining;
+              await db.dailyCharge.update({ where: { id: c.id }, data: { status: "PAID", paymentId: payment.id, amountCents: paidPart } });
+              await db.dailyCharge.create({ data: { serviceId: c.serviceId, studentId, schoolId, date: c.date, amountCents: c.amountCents - paidPart, status: "OWED" } });
+              remaining = 0;
+            }
+          }
+          results.push({ clientId: op.clientId, ok: true, detail: "daily receipt issued" });
+          continue;
+        }
+
         const inv = await db.invoice.findUnique({ where: { id: invoiceId } });
         if (!inv) throw new Error("invoice missing");
         const amt = Math.max(0, Math.min(Number(amountCents), inv.totalCents - inv.discountCents - inv.paidCents));

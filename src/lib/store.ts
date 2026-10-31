@@ -20,7 +20,8 @@ export type QueuedOp = { clientId: string; kind: "payment" | "attendance" | "mar
 
 export type ModuleId =
   | "dashboard" | "students" | "admissions" | "fees" | "attendance" | "gradebook"
-  | "reports" | "branches" | "ai" | "association" | "settings";
+  | "reports" | "branches" | "ai" | "association" | "settings"
+  | "daily" | "transport" | "sms" | "payroll" | "inventory";
 
 type Store = {
   session: SessionUser | null;

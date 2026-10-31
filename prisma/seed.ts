@@ -646,6 +646,10 @@ async function main() {
 
   const counts = { schools: await db.school.count(), students: await db.student.count(), invoices: await db.invoice.count(), payments: await db.payment.count(), flags: await db.studentFlag.count(), transfers: await db.transferRecord.count(), users: await db.user.count(), attendance: await db.attendanceRecord.count() };
   console.log("✅ Seed complete", JSON.stringify(counts, null, 2));
+
+  // ops modules: daily services, transport, SMS, payroll, inventory, discounts
+  const { seedOps } = await import("./seed-ops");
+  await seedOps();
 }
 
 main().catch((e) => { console.error(e); process.exit(1); }).finally(() => db.$disconnect());

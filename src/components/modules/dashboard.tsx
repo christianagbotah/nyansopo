@@ -8,21 +8,30 @@ import { Button } from "@/components/ui/button";
 import { StatCard, ModuleHeader, LoadingBlock, SeverityBadge, StatusBadge } from "@/components/ui-helpers";
 import { fmtCedi, fmtDate, PAYMENT_LABELS, FLAG_LABELS, fmtDateShort } from "@/lib/format";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
-import { Banknote, CalendarCheck, Flag, TrendingUp, Users, AlertTriangle, ArrowLeftRight, Inbox } from "lucide-react";
+import { Banknote, CalendarCheck, Flag, TrendingUp, Users, AlertTriangle, ArrowLeftRight, Inbox, UtensilsCrossed, Calculator, Package, Smartphone, Bus } from "lucide-react";
 
 type Dash = {
   school: any; year: { name: string } | null; term: any;
   stats: { students: number; gender: { M: number; F: number }; staffCount: number; classes: number; billed: number; collected: number; arrears: number; collectionRate: number; flagged: number; riskHigh: number; pendingRequests: number; attendanceRate: number | null };
-  recentPayments: { id: string; receiptNo: string; amount: number; method: string; paidAt: string; student: string }[];
+  recentPayments: { id: string; receiptNo: string; amount: number; method: string; paidAt: string; student: string; category?: string }[];
   arrearsByClass: { name: string; billed: number; collected: number; arrears: number; students: number }[];
   attendanceTrend: { date: string; rate: number }[];
   flags: { id: string; type: string; severity: string; status: string; amountOwed: number | null; student: string; raisedAt: string; description: string }[];
   inquiries: any[];
 };
 
+type OpsOverview = {
+  daily: { todayCharged: number; todayCollected: number; todayCount: number; monthCollected: number; outstanding: number };
+  payroll: { latest: { period: string; status: string; net: number; employerSsnit: number } | null; currentPeriod: string; needsRun: boolean };
+  inventory: { stockValue: number; lowStock: number; lowStockItems: { name: string; qty: number; reorder: number; unit: string }[] };
+  sms: { credits: number; sentThisMonth: number; autoReceipts: boolean };
+  transport: { routes: number; learners: number; capacity: number; fareRevenue: number };
+};
+
 export function Dashboard() {
   const { currentSchoolId, setModule } = useStore();
   const [data, setData] = useState<Dash | null>(null);
+  const [ops, setOps] = useState<OpsOverview | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   const load = () => {
@@ -30,6 +39,7 @@ export function Dashboard() {
     apiGet<Dash>(`/api/school/${currentSchoolId}/dashboard`)
       .then(setData)
       .catch((e) => setErr(e.message));
+    apiGet<OpsOverview>(`/api/school/${currentSchoolId}/ops/overview`).then(setOps).catch(() => null);
   };
   useEffect(load, [currentSchoolId]);
 
@@ -62,6 +72,37 @@ export function Dashboard() {
         <StatCard icon={<AlertTriangle className="size-4" />} label="Arrears" value={fmtCedi(stats.arrears, { compact: true })} sub={`${stats.collectionRate}% collection rate`} tone="danger" />
         <StatCard icon={<CalendarCheck className="size-4" />} label="Attendance" value={stats.attendanceRate !== null ? `${stats.attendanceRate}%` : "—"} sub={`last ${data.attendanceTrend.length} school days`} />
       </div>
+
+      {/* ops strip — daily services, payroll, inventory, sms, transport */}
+      {ops && (
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4 mt-3">
+          <button onClick={() => setModule("daily")} className="text-left rounded-xl border bg-card hover:bg-secondary/40 transition-colors p-4">
+            <div className="flex items-center justify-between"><span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Tuck today</span><UtensilsCrossed className="size-4 text-muted-foreground" /></div>
+            <div className="mt-1.5 text-xl font-bold tabular-nums text-primary">{fmtCedi(ops.daily.todayCollected, { compact: true })}</div>
+            <div className="text-[11px] text-muted-foreground">{ops.daily.todayCount} charges · {fmtCedi(ops.daily.outstanding, { compact: true })} arrears</div>
+          </button>
+          <button onClick={() => setModule("payroll")} className="text-left rounded-xl border bg-card hover:bg-secondary/40 transition-colors p-4">
+            <div className="flex items-center justify-between"><span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Payroll</span><Calculator className="size-4 text-muted-foreground" /></div>
+            <div className="mt-1.5 text-xl font-bold tabular-nums">{ops.payroll.latest ? fmtCedi(ops.payroll.latest.net, { compact: true }) : "—"}</div>
+            <div className="text-[11px] text-muted-foreground">{ops.payroll.needsRun ? <span className="text-amber-600 font-medium">Run {ops.payroll.currentPeriod} payroll</span> : `${ops.payroll.latest?.period} · ${ops.payroll.latest?.status.toLowerCase()}`}</div>
+          </button>
+          <button onClick={() => setModule("inventory")} className="text-left rounded-xl border bg-card hover:bg-secondary/40 transition-colors p-4">
+            <div className="flex items-center justify-between"><span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Stock value</span><Package className="size-4 text-muted-foreground" /></div>
+            <div className="mt-1.5 text-xl font-bold tabular-nums text-[#a97c0b]">{fmtCedi(ops.inventory.stockValue, { compact: true })}</div>
+            <div className="text-[11px] text-muted-foreground">{ops.inventory.lowStock > 0 ? <span className="text-destructive font-medium">{ops.inventory.lowStock} items low</span> : "all stocked"}</div>
+          </button>
+          <button onClick={() => setModule("sms")} className="text-left rounded-xl border bg-card hover:bg-secondary/40 transition-colors p-4">
+            <div className="flex items-center justify-between"><span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">SMS credits</span><Smartphone className="size-4 text-muted-foreground" /></div>
+            <div className="mt-1.5 text-xl font-bold tabular-nums">{ops.sms.credits.toLocaleString()}</div>
+            <div className="text-[11px] text-muted-foreground">{ops.sms.sentThisMonth} sent this month</div>
+          </button>
+          <button onClick={() => setModule("transport")} className="text-left rounded-xl border bg-card hover:bg-secondary/40 transition-colors p-4 col-span-2 lg:col-span-1">
+            <div className="flex items-center justify-between"><span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">On the buses</span><Bus className="size-4 text-muted-foreground" /></div>
+            <div className="mt-1.5 text-xl font-bold tabular-nums">{ops.transport.learners}</div>
+            <div className="text-[11px] text-muted-foreground">{ops.transport.routes} routes · {fmtCedi(ops.transport.fareRevenue, { compact: true })}/term</div>
+          </button>
+        </div>
+      )}
 
       <div className="grid lg:grid-cols-3 gap-4 mt-4">
         <Card className="lg:col-span-2">
@@ -163,7 +204,7 @@ export function Dashboard() {
                   <tr key={p.id} className="border-b last:border-0">
                     <td className="py-2.5">
                       <div className="font-medium">{p.student}</div>
-                      <div className="text-xs text-muted-foreground">{p.receiptNo} · {PAYMENT_LABELS[p.method] ?? p.method}</div>
+                      <div className="text-xs text-muted-foreground">{p.receiptNo} · {PAYMENT_LABELS[p.method] ?? p.method}{p.category === "DAILY" ? " · tuck" : ""}</div>
                     </td>
                     <td className="py-2.5 text-right text-muted-foreground text-xs">{fmtDate(p.paidAt)}</td>
                     <td className="py-2.5 text-right font-semibold tabular-nums">{fmtCedi(p.amount)}</td>

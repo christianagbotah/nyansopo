@@ -1,0 +1,470 @@
+     1→import { NextRequest, NextResponse } from "next/server";
+     2→import { db } from "@/lib/db";
+     3→import { getUser, canOperateSchool } from "@/lib/session";
+     4→import { gradeFor } from "@/lib/grading";
+     5→
+     6→const C = (cedis: number) => Math.round(cedis * 100);
+     7→
+     8→// ── GET /api/school/[id]/[resource] ───────────────────────────
+     9→export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string; resource: string }> }) {
+    10→  const { id: schoolId, resource } = await params;
+    11→  const user = await getUser(req);
+    12→  if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+    13→  const school = await db.school.findUnique({ where: { id: schoolId }, include: { associationNode: true, group: true } });
+    14→  if (!school) return NextResponse.json({ error: "School not found" }, { status: 404 });
+    15→  const allowed = canOperateSchool(user, schoolId) || user.nodeIds.includes(school.associationNodeId);
+    16→  if (!allowed) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    17→
+    18→  const url = new URL(req.url);
+    19→  const q = (k: string) => url.searchParams.get(k) ?? undefined;
+    20→
+    21→  switch (resource) {
+    22→    case "dashboard": {
+    23→      const year = await db.academicYear.findFirst({ where: { schoolId, isCurrent: true }, include: { terms: true } });
+    24→      const term = year?.terms.find((t) => t.isCurrent) ?? null;
+    25→      const enrollments = await db.enrollment.findMany({ where: { schoolId, status: "ACTIVE" }, include: { classroom: true, student: true } });
+    26→      const invoices = await db.invoice.findMany({ where: { schoolId, termId: term?.id } });
+    27→      const billed = invoices.reduce((s, i) => s + i.totalCents - i.discountCents, 0);
+    28→      const collected = invoices.reduce((s, i) => s + i.paidCents, 0);
+    29→      const arrears = billed - collected;
+    30→      const flags = await db.studentFlag.findMany({ where: { schoolId, status: "ACTIVE" }, include: { student: true } });
+    31→      const recentPayments = await db.payment.findMany({ where: { schoolId, voided: false }, orderBy: { paidAt: "desc" }, take: 8, include: { invoice: { include: { student: true } } } });
+    32→      const pendingRequests = await db.recordRequest.count({ where: { targetSchoolId: schoolId, status: "PENDING" } });
+    33→      const inquiries = await db.admissionInquiry.findMany({ where: { schoolId }, orderBy: { createdAt: "desc" }, take: 6 });
+    34→      // attendance trend (last 8 sessions)
+    35→      const sessions = await db.attendanceSession.findMany({ where: { schoolId }, orderBy: { date: "desc" }, take: 12, include: { records: true } });
+    36→      const trend = sessions.slice(0, 8).reverse().map((s) => {
+    37→        const present = s.records.filter((r) => r.status === "PRESENT" || r.status === "LATE").length;
+    38→        return { date: s.date.toISOString().slice(0, 10), rate: s.records.length ? Math.round((present / s.records.length) * 100) : 0 };
+    39→      });
+    40→      // arrears by class
+    41→      const byClass: Record<string, { billed: number; collected: number; arrears: number; students: number }> = {};
+    42→      for (const e of enrollments) {
+    43→        const cn = e.classroom.name;
+    44→        byClass[cn] ??= { billed: 0, collected: 0, arrears: 0, students: 0 };
+    45→        byClass[cn].students++;
+    46→      }
+    47→      for (const inv of invoices) {
+    48→        const cn = inv.classroomName ?? "—";
+    49→        byClass[cn] ??= { billed: 0, collected: 0, arrears: 0, students: 0 };
+    50→        byClass[cn].billed += inv.totalCents - inv.discountCents;
+    51→        byClass[cn].collected += inv.paidCents;
+    52→      }
+    53→      Object.values(byClass).forEach((c) => (c.arrears = c.billed - c.collected));
+    54→      const riskHigh = await db.riskScore.count({ where: { schoolId, level: { in: ["HIGH", "CRITICAL"] } } });
+    55→      const staffCount = await db.staff.count({ where: { schoolId } });
+    56→      const gender = { M: enrollments.filter((e) => e.student.gender === "M").length, F: enrollments.filter((e) => e.student.gender === "F").length };
+    57→      return NextResponse.json({
+    58→        school: { ...school, group: school.group ? { id: school.group.id, name: school.group.name } : null },
+    59→        year: year ? { id: year.id, name: year.name } : null,
+    60→        term: term ? { id: term.id, name: term.name, startsAt: term.startsAt, endsAt: term.endsAt } : null,
+    61→        stats: {
+    62→          students: enrollments.length, gender, staffCount, classes: Object.keys(byClass).length,
+    63→          billed, collected, arrears,
+    64→          collectionRate: billed ? Math.round((collected / billed) * 100) : 0,
+    65→          flagged: flags.length, riskHigh, pendingRequests,
+    66→          attendanceRate: trend.length ? Math.round(trend.reduce((s, t) => s + t.rate, 0) / trend.length) : null,
+    67→        },
+    68→        recentPayments: recentPayments.map((p) => ({ id: p.id, receiptNo: p.receiptNo, amount: p.amountCents, method: p.method, paidAt: p.paidAt, student: `${p.invoice.student.firstName} ${p.invoice.student.lastName}` })),
+    69→        arrearsByClass: Object.entries(byClass).map(([name, v]) => ({ name, ...v })).sort((a, b) => b.arrears - a.arrears),
+    70→        attendanceTrend: trend,
+    71→        flags: flags.map((f) => ({ id: f.id, type: f.type, severity: f.severity, status: f.status, amountOwed: f.amountOwedCents, student: `${f.student.firstName} ${f.student.lastName}`, raisedAt: f.raisedAt, description: f.description })),
+    72→        inquiries,
+    73→      });
+    74→    }
+    75→
+    76→    case "students": {
+    77→      const search = (q("search") ?? "").toLowerCase();
+    78→      const classId = q("classId");
+    79→      const enrollments = await db.enrollment.findMany({
+    80→        where: { schoolId, status: q("status") === "all" ? undefined : q("status") ?? "ACTIVE", ...(classId ? { classroomId: classId } : {}) },
+    81→        include: { student: { include: { flags: { where: { status: { in: ["ACTIVE", "CONTESTED"] } } }, invoices: { where: { termId: q("termId") ?? undefined } }, riskScores: { orderBy: { computedAt: "desc" }, take: 1 } } }, classroom: true },
+    82→        orderBy: { rollNo: "asc" },
+    83→      });
+    84→      const termId = q("termId");
+    85→      const curTerm = termId ? null : await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId } } });
+    86→      const tid = termId ?? curTerm?.id;
+    87→      let list = enrollments;
+    88→      if (search) list = list.filter((e) => `${e.student.firstName} ${e.student.lastName} ${e.student.otherNames ?? ""} ${e.student.nyansapoIndex} ${e.student.guardianName} ${e.student.guardianPhone}`.toLowerCase().includes(search));
+    89→      const invoicesAll = await db.invoice.findMany({ where: { schoolId, termId: tid } });
+    90→      const invByStudent: Record<string, { billed: number; paid: number; status: string; invoiceNo: string; id: string }> = {};
+    91→      invoicesAll.forEach((i) => (invByStudent[i.studentId] = { billed: i.totalCents - i.discountCents, paid: i.paidCents, status: i.status, invoiceNo: i.invoiceNo, id: i.id }));
+    92→      return NextResponse.json({
+    93→        termId: tid,
+    94→        students: list.map((e) => {
+    95→          const inv = invByStudent[e.studentId];
+    96→          return {
+    97→            id: e.student.id, nyansapoIndex: e.student.nyansapoIndex, name: `${e.student.firstName} ${e.student.lastName}`,
+    98→            otherNames: e.student.otherNames, gender: e.student.gender, dob: e.student.dateOfBirth,
+    99→            classroom: e.classroom.name, classroomId: e.classroomId, rollNo: e.rollNo,
+   100→            guardianName: e.student.guardianName, guardianPhone: e.student.guardianPhone, relationship: e.student.relationship,
+   101→            admissionDate: e.admissionDate, status: e.status,
+   102→            invoice: inv ?? null,
+   103→            flags: e.student.flags.map((f) => ({ id: f.id, type: f.type, severity: f.severity, status: f.status, amountOwed: f.amountOwedCents, raisedAt: f.raisedAt, description: f.description, raisedByName: f.raisedByName, schoolId: f.schoolId })),
+   104→            risk: e.student.riskScores[0] ? { score: e.student.riskScores[0].score, level: e.student.riskScores[0].level } : null,
+   105→          };
+   106→        }),
+   107→      });
+   108→    }
+   109→
+   110→    case "fees": {
+   111→      const year = await db.academicYear.findFirst({ where: { schoolId, isCurrent: true }, include: { terms: { include: { academicYear: true } } } });
+   112→      const allYears = await db.academicYear.findMany({ where: { schoolId }, include: { terms: true } });
+   113→      const termId = q("termId") ?? year?.terms.find((t) => t.isCurrent)?.id;
+   114→      const structures = await db.feeStructure.findMany({ where: { schoolId, termId }, include: { classroom: true, items: true } });
+   115→      const invoices = await db.invoice.findMany({
+   116→        where: { schoolId, termId },
+   117→        include: { student: true, payments: { where: { voided: false }, orderBy: { paidAt: "desc" } } },
+   118→        orderBy: { invoiceNo: "asc" },
+   119→      });
+   120→      const billed = invoices.reduce((s, i) => s + i.totalCents - i.discountCents, 0);
+   121→      const collected = invoices.reduce((s, i) => s + i.paidCents, 0);
+   122→      return NextResponse.json({
+   123→        terms: allYears.flatMap((y) => y.terms.map((t) => ({ id: t.id, name: `${t.name} ${y.name}`, isCurrent: t.isCurrent }))),
+   124→        termId,
+   125→        structures: structures.map((s) => ({ id: s.id, classroom: s.classroom.name, classroomId: s.classroomId, total: s.totalCents, items: s.items.map((i) => ({ name: i.name, amount: i.amountCents, optional: i.isOptional })) })),
+   126→        invoices: invoices.map((i) => ({
+   127→          id: i.id, invoiceNo: i.invoiceNo, student: `${i.student.firstName} ${i.student.lastName}`, studentId: i.studentId,
+   128→          classroom: i.classroomName, total: i.totalCents, discount: i.discountCents, discountReason: i.discountReason,
+   129→          paid: i.paidCents, balance: i.totalCents - i.discountCents - i.paidCents, status: i.status, dueDate: i.dueDate,
+   130→          guardianPhone: i.student.guardianPhone,
+   131→          payments: i.payments.map((p) => ({ id: p.id, receiptNo: p.receiptNo, amount: p.amountCents, method: p.method, paidAt: p.paidAt, reference: p.reference })),
+   132→        })),
+   133→        stats: { billed, collected, arrears: billed - collected, count: invoices.length, paid: invoices.filter((i) => i.status === "PAID").length, partial: invoices.filter((i) => i.status === "PARTIAL").length, unpaid: invoices.filter((i) => i.status === "UNPAID" || i.status === "OVERDUE").length },
+   134→      });
+   135→    }
+   136→
+   137→    case "attendance": {
+   138→      const classId = q("classId");
+   139→      const dateStr = q("date") ?? new Date().toISOString().slice(0, 10);
+   140→      const date = new Date(dateStr);
+   141→      const classrooms = await db.classroom.findMany({ where: { schoolId }, orderBy: { name: "asc" } });
+   142→      if (!classId) return NextResponse.json({ classrooms: classrooms.map((c) => ({ id: c.id, name: c.name, grade: c.gradeLevel, stage: c.stageLabel })), session: null, date: dateStr, termId: null, students: [] });
+   143→      const term = await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId } } });
+   144→      let session = await db.attendanceSession.findFirst({ where: { classroomId: classId, date }, include: { records: { include: { student: true } } } });
+   145→      if (!session) {
+   146→        const enrolled = await db.enrollment.findMany({ where: { classroomId: classId, status: "ACTIVE" }, include: { student: true }, orderBy: { rollNo: "asc" } });
+   147→        return NextResponse.json({
+   148→          classrooms: classrooms.map((c) => ({ id: c.id, name: c.name, grade: c.gradeLevel, stage: c.stageLabel })),
+   149→          session: null, date: dateStr, termId: term?.id,
+   150→          students: enrolled.map((e) => ({ id: e.student.id, name: `${e.student.firstName} ${e.student.lastName}`, rollNo: e.rollNo, status: null })),
+   151→        });
+   152→      }
+   153→      return NextResponse.json({
+   154→        classrooms: classrooms.map((c) => ({ id: c.id, name: c.name, grade: c.gradeLevel, stage: c.stageLabel })),
+   155→        session: { id: session.id, takenByName: session.takenByName },
+   156→        date: dateStr, termId: session.termId,
+   157→        students: session.records.map((r) => ({ id: r.student.id, name: `${r.student.firstName} ${r.student.lastName}`, status: r.status, markedOffline: r.markedOffline })).sort((a, b) => a.name.localeCompare(b.name)),
+   158→      });
+   159→    }
+   160→
+   161→    case "gradebook": {
+   162→      const classId = q("classId");
+   163→      const classrooms = await db.classroom.findMany({ where: { schoolId }, orderBy: { name: "asc" } });
+   164→      const subjects = await db.subject.findMany({ where: { schoolId }, orderBy: { name: "asc" } });
+   165→      const term = await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId } } });
+   166→      if (!classId) return NextResponse.json({ classrooms: classrooms.map((c) => ({ id: c.id, name: c.name })), subjects: subjects.map((s) => ({ id: s.id, name: s.name, code: s.code })), termId: term?.id, classroom: null, students: [], assessments: [] });
+   167→      const cls = classrooms.find((c) => c.id === classId);
+   168→      const enrolled = await db.enrollment.findMany({ where: { classroomId: classId, status: "ACTIVE" }, include: { student: true }, orderBy: { rollNo: "asc" } });
+   169→      const assessments = await db.assessment.findMany({ where: { classroomId: classId, termId: term?.id }, include: { subject: true, marks: true }, orderBy: [{ date: "asc" }] });
+   170→      return NextResponse.json({
+   171→        classrooms: classrooms.map((c) => ({ id: c.id, name: c.name })),
+   172→        classroom: cls ? { id: cls.id, name: cls.name, stage: cls.stageLabel } : null,
+   173→        subjects: subjects.map((s) => ({ id: s.id, name: s.name, code: s.code })),
+   174→        termId: term?.id, termName: term?.name,
+   175→        students: enrolled.map((e) => ({ id: e.student.id, name: `${e.student.firstName} ${e.student.lastName}`, rollNo: e.rollNo })),
+   176→        assessments: assessments.map((a) => ({
+   177→          id: a.id, title: a.title, type: a.type, maxScore: a.maxScore, date: a.date,
+   178→          subject: a.subject.name, subjectId: a.subjectId,
+   179→          marks: Object.fromEntries(a.marks.map((m) => [m.studentId, m.score])),
+   180→        })),
+   181→      });
+   182→    }
+   183→
+   184→    case "reports": {
+   185→      const termId = q("termId");
+   186→      const years = await db.academicYear.findMany({ where: { schoolId }, include: { terms: true } }, );
+   187→      const allTerms = years.flatMap((y) => y.terms.map((t) => ({ id: t.id, name: `${t.name} — ${y.name}`, isCurrent: t.isCurrent })));
+   188→      const tid = termId ?? allTerms.find((t) => t.isCurrent)?.id;
+   189→      const classrooms = await db.classroom.findMany({ where: { schoolId }, orderBy: { name: "asc" } });
+   190→      const cards = await db.reportCard.findMany({ where: { termId: tid }, include: { student: true, results: true }, orderBy: { classPosition: "asc" } });
+   191→      return NextResponse.json({
+   192→        terms: allTerms, termId: tid,
+   193→        classrooms: classrooms.map((c) => ({ id: c.id, name: c.name })),
+   194→        reportCards: cards.map((rc) => ({
+   195→          id: rc.id, student: `${rc.student.firstName} ${rc.student.lastName}`, studentId: rc.studentId,
+   196→          classroom: rc.classroomName, average: rc.average, position: rc.classPosition, classSize: rc.classSize,
+   197→          conduct: rc.conduct, promotion: rc.promotion, published: rc.published,
+   198→          teacherRemark: rc.teacherRemark, headRemark: rc.headRemark, aiGenerated: rc.aiGenerated,
+   199→          attendance: rc.attendance, subjectCount: rc.results.length,
+   200→        })),
+   201→      });
+   202→    }
+   203→
+   204→    case "settings": {
+   205→      const years = await db.academicYear.findMany({ where: { schoolId }, include: { terms: true } });
+   206→      const classrooms = await db.classroom.findMany({ where: { schoolId }, orderBy: { name: "asc" } });
+   207→      const subjects = await db.subject.findMany({ where: { schoolId } });
+   208→      const staff = await db.staff.findMany({ where: { schoolId } });
+   209→      return NextResponse.json({
+   210→        school: { ...school, group: school.group ? { id: school.group.id, name: school.group.name, proprietorName: school.group.proprietorName } : null },
+   211→        years: years.map((y) => ({ id: y.id, name: y.name, isCurrent: y.isCurrent, terms: y.terms.map((t) => ({ id: t.id, name: t.name, startsAt: t.startsAt, endsAt: t.endsAt, isCurrent: t.isCurrent })) })),
+   212→        classrooms: classrooms.map((c) => ({ id: c.id, name: c.name, grade: c.gradeLevel, stage: c.stageLabel, capacity: c.capacity })),
+   213→        subjects: subjects.map((s) => ({ id: s.id, name: s.name, code: s.code })),
+   214→        staff: staff.map((s) => ({ id: s.id, fullName: s.fullName, role: s.role, title: s.title })),
+   215→      });
+   216→    }
+   217→
+   218→    case "announcements": {
+   219→      const ann = await db.announcement.findMany({
+   220→        where: { OR: [{ schoolId }, { associationNodeId: { in: [school.associationNodeId, ...(await siblingNodeIds(school.associationNodeId))] } }] },
+   221→        orderBy: { postedAt: "desc" }, take: 20, include: { school: true, associationNode: true },
+   222→      });
+   223→      return NextResponse.json({ announcements: ann.map((a) => ({ id: a.id, title: a.title, body: a.body, audience: a.audience, category: a.category, priority: a.priority, postedByName: a.postedByName, postedAt: a.postedAt, source: a.school?.name ?? a.associationNode?.name ?? "Association" })) });
+   224→    }
+   225→
+   226→    default:
+   227→      return NextResponse.json({ error: "Unknown resource" }, { status: 404 });
+   228→  }
+   229→}
+   230→
+   231→async function siblingNodeIds(nodeId: string): Promise<string[]> {
+   232→  const all = await db.associationNode.findMany();
+   233→  const out: string[] = [];
+   234→  let cur = all.find((n) => n.id === nodeId);
+   235→  while (cur?.parentId) {
+   236→    out.push(cur.parentId);
+   237→    cur = all.find((n) => n.id === cur!.parentId);
+   238→  }
+   239→  return out;
+   240→}
+   241→
+   242→// ── POST /api/school/[id]/[resource] ──────────────────────────
+   243→export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string; resource: string }> }) {
+   244→  const { id: schoolId, resource } = await params;
+   245→  const user = await getUser(req);
+   246→  if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+   247→  if (!canOperateSchool(user, schoolId)) return NextResponse.json({ error: "Forbidden — you cannot operate this school" }, { status: 403 });
+   248→  const school = await db.school.findUnique({ where: { id: schoolId } });
+   249→  if (!school) return NextResponse.json({ error: "School not found" }, { status: 404 });
+   250→  const body = await req.json().catch(() => ({}));
+   251→  const action: string = body.action;
+   252→
+   253→  switch (resource) {
+   254→    // ── FEES ──────────────────────────────────────────────
+   255→    case "fees": {
+   256→      if (action === "record-payment") {
+   257→        const { invoiceId, amountCents, method, reference, offline, clientId } = body;
+   258→        if (clientId) {
+   259→          const existing = await db.payment.findFirst({ where: { reference: `SYNC:${clientId}` } });
+   260→          if (existing) return NextResponse.json({ payment: existing, duplicate: true });
+   261→        }
+   262→        const inv = await db.invoice.findUnique({ where: { id: invoiceId }, include: { student: true } });
+   263→        if (!inv) return NextResponse.json({ error: "Invoice not found" }, { status: 404 });
+   264→        const amt = Math.max(0, Math.min(Number(amountCents), inv.totalCents - inv.discountCents - inv.paidCents));
+   265→        if (amt <= 0) return NextResponse.json({ error: "Amount exceeds balance or is invalid" }, { status: 400 });
+   266→        const seq = (await db.payment.count({ where: { schoolId } })) + 1001;
+   267→        const payment = await db.payment.create({
+   268→          data: {
+   269→            receiptNo: `RCP-2026-${String(seq).padStart(5, "0")}`, invoiceId, schoolId, amountCents: amt,
+   270→            method: method ?? "CASH", reference: clientId ? `SYNC:${clientId}` : reference ?? null,
+   271→            receivedByName: user.fullName, paidAt: new Date(body.paidAt ?? Date.now()),
+   272→            offlineQueued: !!offline, syncedAt: offline ? new Date() : null,
+   273→          },
+   274→        });
+   275→        const paid = inv.paidCents + amt;
+   276→        await db.invoice.update({ where: { id: invoiceId }, data: { paidCents: paid, status: paid >= inv.totalCents - inv.discountCents ? "PAID" : "PARTIAL" } });
+   277→        return NextResponse.json({ payment: { ...payment, student: `${inv.student.firstName} ${inv.student.lastName}` } });
+   278→      }
+   279→      if (action === "generate-invoices") {
+   280→        const { classroomId } = body;
+   281→        const term = await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId } } });
+   282→        if (!term) return NextResponse.json({ error: "No current term" }, { status: 400 });
+   283→        const fs = await db.feeStructure.findFirst({ where: { classroomId, termId: term.id }, include: { items: true } });
+   284→        if (!fs) return NextResponse.json({ error: "No fee structure for this class — set one up first" }, { status: 400 });
+   285→        const enrolled = await db.enrollment.findMany({ where: { classroomId, status: "ACTIVE" } });
+   286→        const existing = await db.invoice.findMany({ where: { termId: term.id, schoolId }, select: { studentId: true } });
+   287→        const have = new Set(existing.map((e) => e.studentId));
+   288→        let created = 0;
+   289→        const seq = await db.invoice.count({ where: { schoolId } });
+   290→        for (const e of enrolled) {
+   291→          if (have.has(e.studentId)) continue;
+   292→          const inv = await db.invoice.create({ data: { invoiceNo: `INV-2026-${String(seq + created + 1).padStart(4, "0")}`, studentId: e.studentId, schoolId, termId: term.id, classroomName: fs.classroomId ? (await db.classroom.findUnique({ where: { id: fs.classroomId } }))?.name ?? "" : "", totalCents: fs.totalCents, status: "UNPAID", dueDate: new Date(Date.now() + 14 * 864e5) } });
+   293→          for (const it of fs.items.filter((i) => !i.isOptional)) await db.invoiceItem.create({ data: { invoiceId: inv.id, name: it.name, amountCents: it.amountCents } });
+   294→          created++;
+   295→        }
+   296→        return NextResponse.json({ created });
+   297→      }
+   298→      if (action === "flag-defaulter") {
+   299→        const { studentId, amountCents, description, type = "FEE_ARREARS", severity = "HIGH" } = body;
+   300→        const flag = await db.studentFlag.create({ data: { studentId, schoolId, raisedByName: user.fullName, type, severity, status: "ACTIVE", amountOwedCents: Number(amountCents) || null, description: description ?? "Outstanding fees after repeated reminders." } });
+   301→        return NextResponse.json({ flag });
+   302→      }
+   303→      if (action === "resolve-flag") {
+   304→        const { flagId, note } = body;
+   305→        const f = await db.studentFlag.update({ where: { id: flagId }, data: { status: "RESOLVED", resolvedAt: new Date(), resolutionNote: note ?? "Resolved.", resolvedByName: user.fullName } });
+   306→        return NextResponse.json({ flag: f });
+   307→      }
+   308→    }
+   309→
+   310→    // ── ATTENDANCE ────────────────────────────────────────
+   311→    case "attendance": {
+   312→      if (action === "save") {
+   313→        const { classroomId, date, records, offline, clientId } = body;
+   314→        if (clientId) {
+   315→          const existing = await db.attendanceSession.findFirst({ where: { classroomId, date: new Date(date), takenByName: { contains: `SYNC:${clientId}` } } });
+   316→          if (existing) return NextResponse.json({ session: existing, duplicate: true });
+   317→        }
+   318→        const term = await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId } } });
+   319→        let session = await db.attendanceSession.findFirst({ where: { classroomId, date: new Date(date) } });
+   320→        if (session) await db.attendanceRecord.deleteMany({ where: { sessionId: session.id } });
+   321→        else session = await db.attendanceSession.create({ data: { classroomId, schoolId, termId: term!.id, date: new Date(date), takenByName: `${user.fullName}${clientId ? ` (SYNC:${clientId})` : ""}` } });
+   322→        for (const r of records) {
+   323→          await db.attendanceRecord.create({ data: { sessionId: session.id, studentId: r.studentId, status: r.status, markedOffline: !!offline } });
+   324→        }
+   325→        return NextResponse.json({ session: { id: session.id }, saved: records.length });
+   326→      }
+   327→    }
+   328→
+   329→    // ── GRADEBOOK ─────────────────────────────────────────
+   330→    case "gradebook": {
+   331→      if (action === "create-assessment") {
+   332→        const { classroomId, subjectId, title, type, maxScore, date } = body;
+   333→        const term = await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId } } });
+   334→        const a = await db.assessment.create({ data: { classroomId, schoolId, termId: term!.id, subjectId, title, type: type ?? "EXERCISE", maxScore: Number(maxScore) || 100, date: date ? new Date(date) : new Date() } });
+   335→        return NextResponse.json({ assessment: a });
+   336→      }
+   337→      if (action === "save-marks") {
+   338→        const { assessmentId, marks, offline } = body;
+   339→        const a = await db.assessment.findUnique({ where: { id: assessmentId } });
+   340→        if (!a) return NextResponse.json({ error: "Assessment not found" }, { status: 404 });
+   341→        await db.mark.deleteMany({ where: { assessmentId } });
+   342→        for (const m of marks) {
+   343→          if (m.score !== null && m.score !== undefined && m.score !== "") {
+   344→            await db.mark.create({ data: { assessmentId, studentId: m.studentId, score: Number(m.score), enteredOffline: !!offline } });
+   345→          }
+   346→        }
+   347→        return NextResponse.json({ saved: marks.length });
+   348→      }
+   349→      if (action === "delete-assessment") {
+   350→        await db.mark.deleteMany({ where: { assessmentId: body.assessmentId } });
+   351→        await db.assessment.delete({ where: { id: body.assessmentId } });
+   352→        return NextResponse.json({ ok: true });
+   353→      }
+   354→    }
+   355→
+   356→    // ── REPORT CARDS ──────────────────────────────────────
+   357→    case "reports": {
+   358→      if (action === "generate") {
+   359→        const { classroomId, termId } = body;
+   360→        const term = await db.term.findUnique({ where: { id: termId }, include: { academicYear: true } });
+   361→        if (!term) return NextResponse.json({ error: "Term not found" }, { status: 404 });
+   362→        const classroom = await db.classroom.findUnique({ where: { id: classroomId } });
+   363→        const enrolled = await db.enrollment.findMany({ where: { classroomId, status: "ACTIVE" }, include: { student: true } });
+   364→        const assessments = await db.assessment.findMany({ where: { classroomId, termId }, include: { subject: true, marks: true } });
+   365→        if (!assessments.length) return NextResponse.json({ error: "No assessments recorded for this class and term yet — enter marks in the Gradebook first." }, { status: 400 });
+   366→        // group by subject
+   367→        const bySubject: Record<string, { subjectId: string; name: string; marks: Record<string, number>; max: number }> = {};
+   368→        for (const a of assessments) {
+   369→          const key = a.subject.name;
+   370→          bySubject[key] ??= { subjectId: a.subjectId, name: key, marks: {}, max: 0 };
+   371→          for (const m of a.marks) {
+   372→            if (m.score === null) continue;
+   373→            bySubject[key].marks[m.studentId] = (bySubject[key].marks[m.studentId] ?? 0) + m.score;
+   374→          }
+   375→          bySubject[key].max += a.maxScore;
+   376→        }
+   377→        const results: { studentId: string; subjects: { name: string; pct: number }[] }[] = enrolled.map((e) => ({
+   378→          studentId: e.student.id,
+   379→          subjects: Object.values(bySubject).map((s) => ({ name: s.name, pct: s.marks[e.student.id] !== undefined ? Math.round((s.marks[e.student.id] / s.max) * 100) : 0 })),
+   380→        }));
+   381→        const withAvg = results.map((r) => ({ ...r, avg: r.subjects.length ? r.subjects.reduce((s, x) => s + x.pct, 0) / r.subjects.length : 0 })).sort((a, b) => b.avg - a.avg);
+   382→        let created = 0;
+   383→        for (let i = 0; i < withAvg.length; i++) {
+   384→          const r = withAvg[i];
+   385→          const existing = await db.reportCard.findFirst({ where: { studentId: r.studentId, termId } });
+   386→          if (existing) { await db.reportCardResult.deleteMany({ where: { reportCardId: existing.id } }); await db.reportCard.delete({ where: { id: existing.id } }); }
+   387→          const rc = await db.reportCard.create({ data: { studentId: r.studentId, termId, classroomName: classroom?.name ?? "", totalScore: Math.round(r.avg * r.subjects.length), average: Math.round(r.avg), classPosition: i + 1, classSize: withAvg.length, promotion: r.avg >= 40 ? "PROMOTED" : "PROBATION", published: false } });
+   388→          for (const s of r.subjects) {
+   389→            const g = gradeFor(school.curriculum, s.pct);
+   390→            await db.reportCardResult.create({ data: { reportCardId: rc.id, subjectName: s.name, total: s.pct, grade: `${g.grade} — ${g.label}`, remark: s.pct >= 68 ? "Commendable" : s.pct >= 55 ? "Good effort" : s.pct >= 40 ? "Fair — needs practice" : "Needs close support" } });
+   391→          }
+   392→          created++;
+   393→        }
+   394→        return NextResponse.json({ created });
+   395→      }
+   396→      if (action === "publish") {
+   397→        await db.reportCard.update({ where: { id: body.reportCardId }, data: { published: true, publishedAt: new Date() } });
+   398→        return NextResponse.json({ ok: true });
+   399→      }
+   400→      if (action === "publish-all") {
+   401→        await db.reportCard.updateMany({ where: { termId: body.termId }, data: { published: true, publishedAt: new Date() } });
+   402→        return NextResponse.json({ ok: true });
+   403→      }
+   404→      if (action === "update-remarks") {
+   405→        const { reportCardId, teacherRemark, headRemark, conduct, promotion } = body;
+   406→        const rc = await db.reportCard.update({ where: { id: reportCardId }, data: { teacherRemark, headRemark, conduct, promotion } });
+   407→        return NextResponse.json({ reportCard: rc });
+   408→      }
+   409→    }
+   410→
+   411→    // ── STUDENTS ──────────────────────────────────────────
+   412→    case "students": {
+   413→      if (action === "create") {
+   414→        const { firstName, lastName, otherNames, gender, dateOfBirth, guardianName, guardianPhone, guardianOccupation, relationship, classroomId, previousSchool, inquiryId } = body;
+   415→        if (!firstName || !lastName || !guardianName || !guardianPhone || !classroomId) return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+   416→        const classroom = await db.classroom.findUnique({ where: { id: classroomId } });
+   417→        if (!classroom) return NextResponse.json({ error: "Classroom not found" }, { status: 404 });
+   418→        const count = await db.student.count();
+   419→        const birthYear = dateOfBirth ? new Date(dateOfBirth).getFullYear() : 2016;
+   420→        const student = await db.student.create({ data: { nyansapoIndex: `NY-${birthYear}-${String(100000 + count + 1).slice(1)}`, firstName, lastName, otherNames, gender, dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null, guardianName, guardianPhone, guardianOccupation, relationship: relationship ?? "Parent", previousSchool, status: "ACTIVE" } });
+   421→        const roll = (await db.enrollment.count({ where: { classroomId } })) + 1;
+   422→        await db.enrollment.create({ data: { studentId: student.id, classroomId, schoolId, rollNo: roll, admissionDate: new Date(), status: "ACTIVE" } });
+   423→        // auto-bill for current term
+   424→        const term = await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId } } });
+   425→        if (term) {
+   426→          const fs = await db.feeStructure.findFirst({ where: { classroomId, termId: term.id }, include: { items: true } });
+   427→          if (fs) {
+   428→            const seq = (await db.invoice.count({ where: { schoolId } })) + 1;
+   429→            const inv = await db.invoice.create({ data: { invoiceNo: `INV-2026-${String(seq).padStart(4, "0")}`, studentId: student.id, schoolId, termId: term.id, classroomName: classroom.name, totalCents: fs.totalCents, status: "UNPAID", dueDate: new Date(Date.now() + 14 * 864e5) } });
+   430→            for (const it of fs.items.filter((i) => !i.isOptional)) await db.invoiceItem.create({ data: { invoiceId: inv.id, name: it.name, amountCents: it.amountCents } });
+   431→          }
+   432→        }
+   433→        if (inquiryId) await db.admissionInquiry.update({ where: { id: inquiryId }, data: { status: "ENROLLED", handledByName: user.fullName, matchedStudentId: student.id } });
+   434→        const n = await db.enrollment.count({ where: { schoolId, status: "ACTIVE" } });
+   435→        await db.school.update({ where: { id: schoolId }, data: { studentsOnRoll: n } });
+   436→        return NextResponse.json({ student, enrolled: true });
+   437→      }
+   438→    }
+   439→
+   440→    // ── SETTINGS ──────────────────────────────────────────
+   441→    case "settings": {
+   442→      if (action === "update-school") {
+   443→        const { curriculum, motto, phone, email, nasiaStatus, gnacopsStatus } = body;
+   444→        const s = await db.school.update({ where: { id: schoolId }, data: { curriculum: curriculum ?? school.curriculum, motto: motto ?? school.motto, phone: phone ?? school.phone, email: email ?? school.email, nasiaStatus: nasiaStatus ?? school.nasiaStatus, gnacopsStatus: gnacopsStatus ?? school.gnacopsStatus } });
+   445→        return NextResponse.json({ school: s });
+   446→      }
+   447→      if (action === "create-classroom") {
+   448→        const { name, grade, stage, capacity } = body;
+   449→        const c = await db.classroom.create({ data: { schoolId, name, gradeLevel: grade, stageLabel: stage, capacity: Number(capacity) || 30 } });
+   450→        return NextResponse.json({ classroom: c });
+   451→      }
+   452→      if (action === "create-subject") {
+   453→        const { name, code } = body;
+   454→        const s = await db.subject.create({ data: { schoolId, name, code: (code ?? name.slice(0, 3)).toUpperCase(), curriculum: school.curriculum } });
+   455→        return NextResponse.json({ subject: s });
+   456→      }
+   457→    }
+   458→
+   459→    // ── ANNOUNCEMENTS ─────────────────────────────────────
+   460→    case "announcements": {
+   461→      if (action === "create") {
+   462→        const { title, body: bodyText, audience, category, priority } = body;
+   463→        const a = await db.announcement.create({ data: { schoolId, title, body: bodyText, audience: audience ?? "PARENTS", category: category ?? "GENERAL", priority: priority ?? "NORMAL", postedByName: user.fullName } });
+   464→        return NextResponse.json({ announcement: a });
+   465→      }
+   466→    }
+   467→  }
+   468→  return NextResponse.json({ error: `Unknown action ${resource}:${action}` }, { status: 400 });
+   469→}
+   470→

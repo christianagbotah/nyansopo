@@ -13,7 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatCard, ModuleHeader, LoadingBlock, StatusBadge, EmptyState } from "@/components/ui-helpers";
 import { fmtCedi, fmtDate, PAYMENT_LABELS } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
-import { Banknote, Receipt, AlertTriangle, CheckCircle2, Plus, Flag, Printer, Wallet } from "lucide-react";
+import { Banknote, Receipt, AlertTriangle, CheckCircle2, Plus, Flag, Printer, Wallet, Ticket, Percent, UserPlus, XCircle } from "lucide-react";
 
 type FeeData = {
   terms: { id: string; name: string; isCurrent: boolean }[];
@@ -27,13 +27,21 @@ type FeeData = {
   stats: { billed: number; collected: number; arrears: number; count: number; paid: number; partial: number; unpaid: number };
 };
 
+type DiscountRow = { id: string; name: string; type: string; value: number; scope: string; autoApply: boolean; active: boolean; notes: string | null; applied: number };
+type ApplicationRow = { id: string; discountId: string; discountName: string; type: string; value: number; scope: string; serviceId: string | null; student: string; studentId: string; guardianPhone: string; status: string; reason: string | null; appliedByName: string; createdAt: string };
+type DiscountData = { discounts: DiscountRow[]; applications: ApplicationRow[]; services: { id: string; name: string; price: number }[] };
+
 export function Fees() {
   const { currentSchoolId, online } = useStore();
   const [data, setData] = useState<FeeData | null>(null);
+  const [discounts, setDiscounts] = useState<DiscountData | null>(null);
   const [termId, setTermId] = useState<string | null>(null);
   const [tab, setTab] = useState("invoices");
   const [payFor, setPayFor] = useState<FeeData["invoices"][0] | null>(null);
   const [flagFor, setFlagFor] = useState<FeeData["invoices"][0] | null>(null);
+  const [discFor, setDiscFor] = useState<FeeData["invoices"][0] | null>(null);
+  const [discDialog, setDiscDialog] = useState<DiscountRow | "new" | null>(null);
+  const [applyDialog, setApplyDialog] = useState<DiscountRow | null>(null);
   const [receipt, setReceipt] = useState<any | null>(null);
 
   const load = (t?: string) => {
@@ -41,6 +49,7 @@ export function Fees() {
     apiGet<FeeData>(`/api/school/${currentSchoolId}/fees${t ? `?termId=${t}` : ""}`)
       .then((d) => { setData(d); setTermId(d.termId); })
       .catch((e) => toast({ title: "Load failed", description: e.message, variant: "destructive" }));
+    apiGet<DiscountData>(`/api/school/${currentSchoolId}/ops/discounts`).then(setDiscounts).catch(() => null);
   };
   useEffect(() => { load(); }, [currentSchoolId]);
 
@@ -72,6 +81,7 @@ export function Fees() {
         <TabsList>
           <TabsTrigger value="invoices">Invoices</TabsTrigger>
           <TabsTrigger value="structures">Fee structures</TabsTrigger>
+          <TabsTrigger value="discounts">Discounts ({discounts?.discounts.length ?? 0})</TabsTrigger>
           <TabsTrigger value="arrears">Arrears chase-list ({overdue.length})</TabsTrigger>
         </TabsList>
 
@@ -106,9 +116,12 @@ export function Fees() {
                         <td className="px-3 py-2.5 text-right tabular-nums font-semibold">{inv.balance > 0 ? <span className="text-destructive">{fmtCedi(inv.balance)}</span> : "—"}</td>
                         <td className="px-3 py-2.5 hidden lg:table-cell"><StatusBadge status={inv.status} /></td>
                         <td className="px-3 py-2.5 text-right">
-                          <Button size="sm" variant="outline" className="h-7 gap-1" disabled={inv.balance <= 0} onClick={() => setPayFor(inv)}>
-                            <Wallet className="size-3.5" /> Pay
-                          </Button>
+                          <div className="flex gap-1 justify-end">
+                            <Button size="sm" variant="ghost" className="h-7 gap-1" title="Apply discount" onClick={() => setDiscFor(inv)}><Percent className="size-3.5" /></Button>
+                            <Button size="sm" variant="outline" className="h-7 gap-1" disabled={inv.balance <= 0} onClick={() => setPayFor(inv)}>
+                              <Wallet className="size-3.5" /> Pay
+                            </Button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -141,6 +154,16 @@ export function Fees() {
               </Card>
             ))}
           </div>
+        </TabsContent>
+
+        <TabsContent value="discounts">
+          <DiscountsTab
+            discounts={discounts}
+            invoices={data.invoices}
+            onEdit={(d) => setDiscDialog(d)}
+            onApply={(d) => setApplyDialog(d)}
+            onRefresh={() => load(termId ?? undefined)}
+          />
         </TabsContent>
 
         <TabsContent value="arrears">
@@ -178,6 +201,24 @@ export function Fees() {
         invoice={flagFor}
         onOpenChange={(o) => !o && setFlagFor(null)}
         onDone={() => { setFlagFor(null); load(termId ?? undefined); }}
+      />
+      <InvoiceDiscountDialog
+        invoice={discFor}
+        catalog={discounts?.discounts ?? []}
+        onOpenChange={(o) => !o && setDiscFor(null)}
+        onDone={() => { setDiscFor(null); load(termId ?? undefined); }}
+      />
+      <DiscountCatalogDialog
+        discount={discDialog}
+        onOpenChange={(o) => !o && setDiscDialog(null)}
+        onDone={() => { setDiscDialog(null); load(termId ?? undefined); }}
+      />
+      <ApplyDiscountDialog
+        discount={applyDialog}
+        invoices={data.invoices}
+        services={discounts?.services ?? []}
+        onOpenChange={(o) => !o && setApplyDialog(null)}
+        onDone={() => { setApplyDialog(null); load(termId ?? undefined); }}
       />
       <ReceiptDialog receipt={receipt} onOpenChange={(o) => !o && setReceipt(null)} />
     </div>
@@ -323,6 +364,323 @@ function ReceiptDialog({ receipt, onOpenChange }: { receipt: any; onOpenChange: 
         <DialogFooter className="sm:justify-center gap-2">
           <Button variant="outline" size="sm" onClick={() => window.print()}><Printer className="size-4" /> Print receipt</Button>
           <Button size="sm" onClick={() => onOpenChange(false)}>Done</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── DISCOUNTS TAB ───────────────────────────────────────────
+function DiscountsTab({ discounts, invoices, onEdit, onApply, onRefresh }: {
+  discounts: DiscountData | null;
+  invoices: FeeData["invoices"];
+  onEdit: (d: DiscountRow | "new") => void;
+  onApply: (d: DiscountRow) => void;
+  onRefresh: () => void;
+}) {
+  const { currentSchoolId } = useStore();
+
+  async function revoke(applicationId: string) {
+    await apiPost(`/api/school/${currentSchoolId}/ops/discounts`, { action: "revoke", applicationId });
+    toast({ title: "Discount revoked" });
+    onRefresh();
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground max-w-2xl">
+          Scholarships, sibling rates and needy-family support — applied to termly invoices or to daily services as a subsidised rate.
+          Auto-apply discounts are computed every time invoices are generated.
+        </p>
+        <Button size="sm" className="gap-1.5" onClick={() => onEdit("new")}><Plus className="size-4" /> New discount</Button>
+      </div>
+
+      <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
+        {(discounts?.discounts ?? []).map((d) => (
+          <Card key={d.id} className={d.active ? "" : "opacity-60"}>
+            <CardHeader className="pb-2 flex-row items-center justify-between space-y-0">
+              <CardTitle className="text-sm flex items-center gap-2"><Ticket className="size-4 text-primary" /> {d.name}</CardTitle>
+              <Badge variant="secondary">{d.type === "PERCENT" ? `${d.value}%` : fmtCedi(d.value)}</Badge>
+            </CardHeader>
+            <CardContent className="space-y-2.5">
+              <div className="flex flex-wrap gap-1.5">
+                <Badge variant="outline" className="text-[10px]">{d.scope === "INVOICE" ? "Termly invoices" : "Daily services"}</Badge>
+                {d.autoApply && <Badge className="text-[10px] bg-primary">auto-apply</Badge>}
+                {!d.active && <Badge variant="outline" className="text-[10px]">paused</Badge>}
+                <Badge variant="secondary" className="text-[10px]">{d.applied} learner{d.applied === 1 ? "" : "s"}</Badge>
+              </div>
+              {d.notes && <p className="text-xs text-muted-foreground leading-relaxed">{d.notes}</p>}
+              <div className="flex gap-2 pt-1">
+                <Button size="sm" className="h-7 flex-1 gap-1" onClick={() => onApply(d)}><UserPlus className="size-3.5" /> Apply to learner</Button>
+                <Button size="sm" variant="ghost" className="h-7" onClick={() => onEdit(d)}>Edit</Button>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+        {(discounts?.discounts ?? []).length === 0 && (
+          <Card className="md:col-span-2 xl:col-span-3"><CardContent><EmptyState icon={<Ticket className="size-5" />} title="No discounts yet" hint="Create sibling, scholarship or needy-support discounts." /></CardContent></Card>
+        )}
+      </div>
+
+      <Card>
+        <CardHeader className="pb-3"><CardTitle className="text-base">Active applications</CardTitle></CardHeader>
+        <CardContent className="p-0">
+          <div className="overflow-x-auto nice-scroll max-h-80">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-secondary/70 backdrop-blur">
+                <tr className="text-left border-b">
+                  <th className="px-3 py-2.5 font-medium">Learner</th>
+                  <th className="px-3 py-2.5 font-medium">Discount</th>
+                  <th className="px-3 py-2.5 font-medium hidden sm:table-cell">Reason</th>
+                  <th className="px-3 py-2.5 font-medium hidden lg:table-cell">Applied by</th>
+                  <th className="px-3 py-2.5 font-medium">Status</th>
+                  <th className="px-3 py-2.5 text-right"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {(discounts?.applications ?? []).length === 0 && <tr><td colSpan={6}><EmptyState title="No applications" /></td></tr>}
+                {(discounts?.applications ?? []).map((a) => (
+                  <tr key={a.id} className={`border-b last:border-0 hover:bg-secondary/30 ${a.status !== "ACTIVE" ? "opacity-50" : ""}`}>
+                    <td className="px-3 py-2.5 font-medium">{a.student}</td>
+                    <td className="px-3 py-2.5">{a.discountName} <Badge variant="secondary" className="text-[10px] ml-1">{a.type === "PERCENT" ? `${a.value}%` : fmtCedi(a.value)}</Badge></td>
+                    <td className="px-3 py-2.5 hidden sm:table-cell text-muted-foreground text-xs max-w-64 truncate">{a.reason ?? "—"}</td>
+                    <td className="px-3 py-2.5 hidden lg:table-cell text-muted-foreground text-xs">{a.appliedByName}</td>
+                    <td className="px-3 py-2.5"><StatusBadge status={a.status === "ACTIVE" ? "APPROVED" : a.status} /></td>
+                    <td className="px-3 py-2.5 text-right">
+                      {a.status === "ACTIVE" && (
+                        <Button size="sm" variant="ghost" className="h-7 gap-1 text-destructive" onClick={() => revoke(a.id)}><XCircle className="size-3.5" /> Revoke</Button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+      <p className="text-xs text-muted-foreground">{invoices.length} current-term invoices · discounts show as a green line under the invoice total.</p>
+    </div>
+  );
+}
+
+function DiscountCatalogDialog({ discount, onOpenChange, onDone }: { discount: DiscountRow | "new" | null; onOpenChange: (o: boolean) => void; onDone: () => void }) {
+  const { currentSchoolId } = useStore();
+  const [name, setName] = useState("");
+  const [type, setType] = useState("PERCENT");
+  const [value, setValue] = useState("");
+  const [scope, setScope] = useState("INVOICE");
+  const [autoApply, setAutoApply] = useState(false);
+  const [notes, setNotes] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (discount && discount !== "new") {
+      setName(discount.name); setType(discount.type); setValue(String(discount.value)); setScope(discount.scope); setAutoApply(discount.autoApply); setNotes(discount.notes ?? "");
+    } else if (discount === "new") { setName(""); setType("PERCENT"); setValue(""); setScope("INVOICE"); setAutoApply(false); setNotes(""); }
+  }, [discount]);
+
+  async function submit() {
+    if (!name || !value) { toast({ title: "Name and value are required" }); return; }
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/discounts`, {
+        action: "save-discount", id: discount && discount !== "new" ? discount.id : undefined,
+        name, type, value: Number(value), scope, autoApply, notes,
+      });
+      toast({ title: discount === "new" ? "Discount created" : "Discount updated" });
+      onDone();
+    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
+  }
+
+  return (
+    <Dialog open={!!discount} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{discount === "new" ? "New discount" : "Edit discount"}</DialogTitle>
+          <DialogDescription>Percentage or fixed amount, on termly invoices or daily services.</DialogDescription>
+        </DialogHeader>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5 col-span-2"><Label>Name *</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Sibling discount (2+ learners)" /></div>
+          <div className="space-y-1.5">
+            <Label>Type</Label>
+            <Select value={type} onValueChange={setType}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="PERCENT">Percentage</SelectItem><SelectItem value="FIXED">Fixed amount</SelectItem></SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5"><Label>Value *</Label><Input type="number" value={value} onChange={(e) => setValue(e.target.value)} placeholder={type === "PERCENT" ? "10" : "5000 (pesewas)"} /></div>
+          <div className="space-y-1.5">
+            <Label>Applies to</Label>
+            <Select value={scope} onValueChange={setScope}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="INVOICE">Termly invoices</SelectItem><SelectItem value="DAILY_SERVICE">Daily services</SelectItem></SelectContent>
+            </Select>
+          </div>
+          {scope === "INVOICE" && (
+            <div className="space-y-1.5">
+              <Label>Auto-apply at generation</Label>
+              <div className="flex gap-2 pt-1.5">
+                {[true, false].map((v) => (
+                  <button key={String(v)} type="button" onClick={() => setAutoApply(v)}
+                    className={`px-3 py-1.5 rounded-lg border text-xs font-medium ${autoApply === v ? "bg-primary text-primary-foreground border-primary" : "hover:bg-secondary"}`}>
+                    {v ? "Yes" : "Manual only"}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="space-y-1.5 col-span-2"><Label>Notes</Label><Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Policy or eligibility note" /></div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={submit} disabled={busy}>{busy ? "Saving…" : "Save discount"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ApplyDiscountDialog({ discount, invoices, services, onOpenChange, onDone }: {
+  discount: DiscountRow | null; invoices: FeeData["invoices"]; services: DiscountData["services"];
+  onOpenChange: (o: boolean) => void; onDone: () => void;
+}) {
+  const { currentSchoolId } = useStore();
+  const [studentId, setStudentId] = useState("");
+  const [serviceId, setServiceId] = useState("");
+  const [reason, setReason] = useState("");
+  const [search, setSearch] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => { setStudentId(""); setServiceId(""); setReason(""); setSearch(""); }, [discount]);
+
+  const list = invoices.filter((i) => !search || i.student.toLowerCase().includes(search) || (i.classroom ?? "").toLowerCase().includes(search));
+
+  async function submit() {
+    if (!discount || !studentId) { toast({ title: "Choose a learner" }); return; }
+    if (discount.scope === "DAILY_SERVICE" && !serviceId) { toast({ title: "Choose the service" }); return; }
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/discounts`, {
+        action: "apply", discountId: discount.id, studentId,
+        serviceId: discount.scope === "DAILY_SERVICE" ? serviceId : undefined, reason: reason || undefined,
+      });
+      toast({
+        title: "Discount applied",
+        description: discount.scope === "DAILY_SERVICE" ? "The learner's daily rate is now subsidised." : "Will be applied when this term's invoice is generated (auto-apply), or add it manually on the invoice with the % button.",
+      });
+      onDone();
+    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
+  }
+
+  return (
+    <Dialog open={!!discount} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><Ticket className="size-4 text-primary" /> Apply — {discount?.name}</DialogTitle>
+          <DialogDescription>{discount?.type === "PERCENT" ? `${discount.value}% off` : fmtCedi(discount?.value ?? 0)} · {discount?.scope === "INVOICE" ? "termly invoices" : "daily services"}</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <Input placeholder="Search learner…" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <div className="border rounded-lg max-h-48 overflow-y-auto nice-scroll">
+            {list.slice(0, 40).map((i) => (
+              <button key={i.studentId} type="button" onClick={() => setStudentId(i.studentId)}
+                className={`w-full flex items-center justify-between px-3 py-2 border-b last:border-0 text-sm text-left ${studentId === i.studentId ? "bg-primary text-primary-foreground" : "hover:bg-secondary/50"}`}>
+                <span>{i.student}</span><span className="text-xs opacity-70">{i.classroom}</span>
+              </button>
+            ))}
+          </div>
+          {discount?.scope === "DAILY_SERVICE" && (
+            <div className="space-y-1.5">
+              <Label>Service to subsidise</Label>
+              <Select value={serviceId} onValueChange={setServiceId}>
+                <SelectTrigger><SelectValue placeholder="Choose service" /></SelectTrigger>
+                <SelectContent>{services.map((s) => <SelectItem key={s.id} value={s.id}>{s.name} ({fmtCedi(s.price)})</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+          )}
+          <div className="space-y-1.5">
+            <Label>Reason / evidence</Label>
+            <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Two siblings enrolled · PTA welfare verified" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={submit} disabled={busy || !studentId}>{busy ? "Applying…" : "Apply discount"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function InvoiceDiscountDialog({ invoice, catalog, onOpenChange, onDone }: {
+  invoice: FeeData["invoices"][0] | null; catalog: DiscountRow[];
+  onOpenChange: (o: boolean) => void; onDone: () => void;
+}) {
+  const { currentSchoolId } = useStore();
+  const [discountId, setDiscountId] = useState("ADHOC");
+  const [type, setType] = useState("PERCENT");
+  const [value, setValue] = useState("10");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => { if (invoice) { setDiscountId("ADHOC"); setType("PERCENT"); setValue("10"); } }, [invoice]);
+
+  const chosen = catalog.find((c) => c.id === discountId);
+
+  async function submit() {
+    if (!invoice) return;
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/discounts`, {
+        action: "apply-to-invoice", invoiceId: invoice.id,
+        discountId: discountId !== "ADHOC" ? discountId : undefined,
+        type: discountId !== "ADHOC" ? undefined : type,
+        value: discountId !== "ADHOC" ? undefined : Number(value),
+        reason: discountId !== "ADHOC" ? undefined : "Manual discount",
+      });
+      toast({ title: "Discount applied", description: `${invoice.student}'s invoice updated.` });
+      onDone();
+    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
+  }
+
+  return (
+    <Dialog open={!!invoice} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><Percent className="size-4" /> Discount — {invoice?.student}</DialogTitle>
+          <DialogDescription>
+            {invoice?.invoiceNo} · total {invoice ? fmtCedi(invoice.total) : ""}{invoice && invoice.discount > 0 ? ` · already discounted ${fmtCedi(invoice.discount)} (${invoice.discountReason ?? ""})` : ""}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label>Discount</Label>
+            <Select value={discountId} onValueChange={(v) => setDiscountId(v)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ADHOC">Ad-hoc (custom)</SelectItem>
+                {catalog.filter((c) => c.scope === "INVOICE" && c.active).map((c) => <SelectItem key={c.id} value={c.id}>{c.name} ({c.type === "PERCENT" ? `${c.value}%` : fmtCedi(c.value)})</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          {discountId === "ADHOC" && (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Type</Label>
+                <Select value={type} onValueChange={setType}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent><SelectItem value="PERCENT">Percentage</SelectItem><SelectItem value="FIXED">Fixed (GH₵)</SelectItem></SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5"><Label>Value</Label><Input type="number" value={value} onChange={(e) => setValue(e.target.value)} /></div>
+            </div>
+          )}
+          {chosen && <p className="text-xs text-muted-foreground">{chosen.notes ?? "From the discount catalog."}</p>}
+          <p className="text-xs text-muted-foreground">Discounts reduce the balance owed; if the learner has already paid beyond the new balance, the difference becomes a credit.</p>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={submit} disabled={busy}>{busy ? "Applying…" : "Apply to invoice"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

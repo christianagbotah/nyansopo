@@ -26,42 +26,66 @@ import { BranchConsole } from "@/components/modules/branch-console";
 import { AiCenter } from "@/components/modules/ai-center";
 import { AssociationPortal } from "@/components/modules/association-portal";
 import { Settings } from "@/components/modules/settings";
+import { DailyServices } from "@/components/modules/daily-services";
+import { Transportation } from "@/components/modules/transport";
+import { SmsCenter } from "@/components/modules/sms-center";
+import { Payroll } from "@/components/modules/payroll";
+import { Inventory } from "@/components/modules/inventory";
 import {
   LayoutDashboard, Users, Banknote, CalendarCheck, ClipboardList, GraduationCap, ArrowLeftRight, Building2,
   BrainCircuit, Settings as SettingsIcon, Landmark, Menu, CloudOff, Cloud, RefreshCcw, LogOut, Moon, Sun,
-  Download, ChevronDown, School, MessageSquareText,
+  Download, ChevronDown, School, MessageSquareText, UtensilsCrossed, Bus, Smartphone, Calculator, Package,
 } from "lucide-react";
 
-type NavItem = { id: ModuleId; label: string; icon: any };
+type NavItem = { id: ModuleId; label: string; icon: any; section?: string };
 
 const SCHOOL_NAV: NavItem[] = [
-  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { id: "students", label: "Students", icon: Users },
-  { id: "admissions", label: "Admissions & Transfers", icon: ArrowLeftRight },
-  { id: "fees", label: "Fees & Billing", icon: Banknote },
-  { id: "attendance", label: "Attendance", icon: CalendarCheck },
-  { id: "gradebook", label: "Gradebook", icon: ClipboardList },
-  { id: "reports", label: "Exams & Reports", icon: GraduationCap },
-  { id: "ai", label: "AI Assistant", icon: BrainCircuit },
-  { id: "settings", label: "Settings", icon: SettingsIcon },
+  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, section: "Overview" },
+  { id: "students", label: "Students", icon: Users, section: "People" },
+  { id: "admissions", label: "Admissions & Transfers", icon: ArrowLeftRight, section: "People" },
+  { id: "fees", label: "Fees & Billing", icon: Banknote, section: "Finance" },
+  { id: "daily", label: "Daily Services & Tuck", icon: UtensilsCrossed, section: "Finance" },
+  { id: "transport", label: "Transportation", icon: Bus, section: "Finance" },
+  { id: "payroll", label: "HR & Payroll", icon: Calculator, section: "Finance" },
+  { id: "inventory", label: "Inventory & Stores", icon: Package, section: "Finance" },
+  { id: "attendance", label: "Attendance", icon: CalendarCheck, section: "Academic" },
+  { id: "gradebook", label: "Gradebook", icon: ClipboardList, section: "Academic" },
+  { id: "reports", label: "Exams & Reports", icon: GraduationCap, section: "Academic" },
+  { id: "sms", label: "SMS Centre", icon: Smartphone, section: "Communication" },
+  { id: "ai", label: "AI Assistant", icon: BrainCircuit, section: "Support" },
+  { id: "settings", label: "Settings", icon: SettingsIcon, section: "Support" },
 ];
 
 function NavList({ items, current, onSelect }: { items: NavItem[]; current: ModuleId; onSelect: (m: ModuleId) => void }) {
+  // group consecutive items by section
+  const groups: { section?: string; items: NavItem[] }[] = [];
+  for (const item of items) {
+    const last = groups[groups.length - 1];
+    if (last && last.section === item.section) last.items.push(item);
+    else groups.push({ section: item.section, items: [item] });
+  }
   return (
     <nav className="flex-1 space-y-1 px-3 py-4 overflow-y-auto nice-scroll">
-      {items.map((item) => (
-        <button
-          key={item.id}
-          onClick={() => onSelect(item.id)}
-          className={cn(
-            "w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-left",
-            current === item.id ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm" : "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
+      {groups.map((g, gi) => (
+        <div key={gi}>
+          {g.section && (
+            <div className="pt-3 pb-1.5 px-3 text-[10px] font-semibold uppercase tracking-widest text-sidebar-foreground/40">{g.section}</div>
           )}
-        >
-          <item.icon className="size-4.5 shrink-0" />
-          <span className="truncate">{item.label}</span>
-          {item.id === "admissions" && <Badge className="ml-auto bg-red-600 text-[10px] px-1.5">demo</Badge>}
-        </button>
+          {g.items.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => onSelect(item.id)}
+              className={cn(
+                "w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-left",
+                current === item.id ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm" : "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
+              )}
+            >
+              <item.icon className="size-4.5 shrink-0" />
+              <span className="truncate">{item.label}</span>
+              {item.id === "admissions" && <Badge className="ml-auto bg-red-600 text-[10px] px-1.5">demo</Badge>}
+            </button>
+          ))}
+        </div>
       ))}
     </nav>
   );
@@ -147,7 +171,7 @@ export function AppShell() {
           <div className="flex items-center gap-2 min-w-0">
             <School className="size-4.5 text-muted-foreground hidden sm:block shrink-0" />
             {schools.length > 1 ? (
-              <Select value={currentSchoolId ?? undefined} onValueChange={setCurrentSchool}>
+              <Select value={currentSchoolId ?? ""} onValueChange={setCurrentSchool}>
                 <SelectTrigger className="h-9 w-auto max-w-[260px] gap-1.5 font-medium">
                   <SelectValue placeholder="Select school" />
                 </SelectTrigger>
@@ -271,6 +295,11 @@ export function AppShell() {
              module === "students" && schoolScope ? <Students /> :
              module === "admissions" && schoolScope ? <Admissions /> :
              module === "fees" && schoolScope ? <Fees /> :
+             module === "daily" && schoolScope ? <DailyServices /> :
+             module === "transport" && schoolScope ? <Transportation /> :
+             module === "sms" && schoolScope ? <SmsCenter /> :
+             module === "payroll" && schoolScope ? <Payroll /> :
+             module === "inventory" && schoolScope ? <Inventory /> :
              module === "attendance" && schoolScope ? <Attendance /> :
              module === "gradebook" && schoolScope ? <Gradebook /> :
              module === "reports" && schoolScope ? <Reports /> :

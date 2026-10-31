@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getUser, canOperateSchool } from "@/lib/session";
 import { gradeFor } from "@/lib/grading";
+import { sendSms } from "@/lib/sms";
 
 const C = (cedis: number) => Math.round(cedis * 100);
 
@@ -28,7 +29,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       const collected = invoices.reduce((s, i) => s + i.paidCents, 0);
       const arrears = billed - collected;
       const flags = await db.studentFlag.findMany({ where: { schoolId, status: "ACTIVE" }, include: { student: true } });
-      const recentPayments = await db.payment.findMany({ where: { schoolId, voided: false }, orderBy: { paidAt: "desc" }, take: 8, include: { invoice: { include: { student: true } } } });
+      const recentPayments = await db.payment.findMany({ where: { schoolId, voided: false }, orderBy: { paidAt: "desc" }, take: 8, include: { invoice: { include: { student: true } }, student: true } });
       const pendingRequests = await db.recordRequest.count({ where: { targetSchoolId: schoolId, status: "PENDING" } });
       const inquiries = await db.admissionInquiry.findMany({ where: { schoolId }, orderBy: { createdAt: "desc" }, take: 6 });
       // attendance trend (last 8 sessions)
@@ -65,7 +66,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
           flagged: flags.length, riskHigh, pendingRequests,
           attendanceRate: trend.length ? Math.round(trend.reduce((s, t) => s + t.rate, 0) / trend.length) : null,
         },
-        recentPayments: recentPayments.map((p) => ({ id: p.id, receiptNo: p.receiptNo, amount: p.amountCents, method: p.method, paidAt: p.paidAt, student: `${p.invoice.student.firstName} ${p.invoice.student.lastName}` })),
+        recentPayments: recentPayments.map((p) => ({ id: p.id, receiptNo: p.receiptNo, amount: p.amountCents, method: p.method, paidAt: p.paidAt, category: p.category, student: p.invoice?.student ? `${p.invoice.student.firstName} ${p.invoice.student.lastName}` : p.student ? `${p.student.firstName} ${p.student.lastName}` : "—" })),
         arrearsByClass: Object.entries(byClass).map(([name, v]) => ({ name, ...v })).sort((a, b) => b.arrears - a.arrears),
         attendanceTrend: trend,
         flags: flags.map((f) => ({ id: f.id, type: f.type, severity: f.severity, status: f.status, amountOwed: f.amountOwedCents, student: `${f.student.firstName} ${f.student.lastName}`, raisedAt: f.raisedAt, description: f.description })),
@@ -274,6 +275,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         });
         const paid = inv.paidCents + amt;
         await db.invoice.update({ where: { id: invoiceId }, data: { paidCents: paid, status: paid >= inv.totalCents - inv.discountCents ? "PAID" : "PARTIAL" } });
+        // auto receipt SMS to the guardian
+        const smsSetting = await db.smsSetting.findUnique({ where: { schoolId } });
+        if (smsSetting?.autoPaymentReceipts) {
+          const balanceAfter = inv.totalCents - inv.discountCents - paid;
+          await sendSms({
+            db, schoolId, studentId: inv.studentId, recipientName: inv.student.guardianName, recipientPhone: inv.student.guardianPhone,
+            body: `We have received GH₵${(amt / 100).toFixed(2)} for ${inv.student.firstName} (${payment.receiptNo}). Balance: GH₵${(Math.max(0, balanceAfter) / 100).toFixed(2)}. Thank you.`,
+            category: "PAYMENT", sentByName: user.fullName,
+          });
+        }
         return NextResponse.json({ payment: { ...payment, student: `${inv.student.firstName} ${inv.student.lastName}` } });
       }
       if (action === "generate-invoices") {
@@ -286,14 +297,38 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         const existing = await db.invoice.findMany({ where: { termId: term.id, schoolId }, select: { studentId: true } });
         const have = new Set(existing.map((e) => e.studentId));
         let created = 0;
+        let discounted = 0;
         const seq = await db.invoice.count({ where: { schoolId } });
+        // active invoice-scope discount applications (auto-apply rules e.g. sibling 10%)
+        const autoApps = await db.discountApplication.findMany({
+          where: { schoolId, status: "ACTIVE", discount: { scope: "INVOICE", autoApply: true, active: true } },
+          include: { discount: true },
+        });
+        const appByStudent: Record<string, typeof autoApps> = {};
+        autoApps.forEach((a) => (appByStudent[a.studentId] ??= []).push(a));
         for (const e of enrolled) {
           if (have.has(e.studentId)) continue;
           const inv = await db.invoice.create({ data: { invoiceNo: `INV-2026-${String(seq + created + 1).padStart(4, "0")}`, studentId: e.studentId, schoolId, termId: term.id, classroomName: fs.classroomId ? (await db.classroom.findUnique({ where: { id: fs.classroomId } }))?.name ?? "" : "", totalCents: fs.totalCents, status: "UNPAID", dueDate: new Date(Date.now() + 14 * 864e5) } });
           for (const it of fs.items.filter((i) => !i.isOptional)) await db.invoiceItem.create({ data: { invoiceId: inv.id, name: it.name, amountCents: it.amountCents } });
+          // apply auto discounts (percent → floor at 100% total)
+          const apps = appByStudent[e.studentId] ?? [];
+          if (apps.length) {
+            let pct = 0, names: string[] = [];
+            for (const a of apps) {
+              const v = a.valueOverride ?? a.discount.value;
+              pct += a.discount.type === "PERCENT" ? v : 0;
+              names.push(a.discount.name);
+            }
+            if (pct > 0) {
+              pct = Math.min(100, pct);
+              const amount = Math.round((fs.totalCents * pct) / 100);
+              await db.invoice.update({ where: { id: inv.id }, data: { discountCents: amount, discountReason: names.join(" + ") } });
+              discounted++;
+            }
+          }
           created++;
         }
-        return NextResponse.json({ created });
+        return NextResponse.json({ created, discounted });
       }
       if (action === "flag-defaulter") {
         const { studentId, amountCents, description, type = "FEE_ARREARS", severity = "HIGH" } = body;
@@ -321,6 +356,22 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         else session = await db.attendanceSession.create({ data: { classroomId, schoolId, termId: term!.id, date: new Date(date), takenByName: `${user.fullName}${clientId ? ` (SYNC:${clientId})` : ""}` } });
         for (const r of records) {
           await db.attendanceRecord.create({ data: { sessionId: session.id, studentId: r.studentId, status: r.status, markedOffline: !!offline } });
+        }
+        // auto absence alerts to guardians (deduplicated per learner + date)
+        const smsSetting = await db.smsSetting.findUnique({ where: { schoolId } });
+        if (smsSetting?.autoAbsenceAlerts && !offline) {
+          const absent = records.filter((r: any) => r.status === "ABSENT");
+          for (const r of absent) {
+            const already = await db.smsMessage.findFirst({ where: { schoolId, studentId: r.studentId, category: "ATTENDANCE", sentAt: { gte: new Date(new Date(date).setHours(0, 0, 0, 0)) } } });
+            if (already) continue;
+            const st = await db.student.findUnique({ where: { id: r.studentId } });
+            if (!st) continue;
+            await sendSms({
+              db, schoolId, studentId: st.id, recipientName: st.guardianName, recipientPhone: st.guardianPhone,
+              body: `${st.firstName} was marked ABSENT today (${new Date(date).toLocaleDateString("en-GB")}). Please contact the school if this is unexpected.`,
+              category: "ATTENDANCE", sentByName: user.fullName,
+            });
+          }
         }
         return NextResponse.json({ session: { id: session.id }, saved: records.length });
       }
