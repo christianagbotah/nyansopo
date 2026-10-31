@@ -16,6 +16,7 @@ import { toast } from "@/hooks/use-toast";
 import { Banknote, Receipt, AlertTriangle, CheckCircle2, Plus, Flag, Printer, Wallet, Ticket, Percent, UserPlus, XCircle, ListChecks, Copy as CopyIcon, Eye, Link2 } from "lucide-react";
 import { ReceiptDocument, BulkReceiptsDocument, RECEIPT_STYLES, type ReceiptStyle } from "@/components/receipts";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DiscountProfilesTab, DiscountApprovalsTab, type DiscountData } from "@/components/modules/discounts-workspace";
 
 type FeeData = {
   terms: { id: string; name: string; isCurrent: boolean }[];
@@ -30,8 +31,7 @@ type FeeData = {
 };
 
 type DiscountRow = { id: string; name: string; type: string; value: number; scope: string; autoApply: boolean; active: boolean; notes: string | null; applied: number };
-type ApplicationRow = { id: string; discountId: string; discountName: string; type: string; value: number; scope: string; serviceId: string | null; student: string; studentId: string; guardianPhone: string; status: string; reason: string | null; appliedByName: string; createdAt: string };
-type DiscountData = { discounts: DiscountRow[]; applications: ApplicationRow[]; services: { id: string; name: string; price: number }[] };
+export type { DiscountData };
 
 export function Fees() {
   const { currentSchoolId, online } = useStore();
@@ -454,9 +454,9 @@ function FlagDialog({ invoice, onOpenChange, onDone }: { invoice: any; onOpenCha
 
 function ReceiptDialog({ receipt, onOpenChange }: { receipt: any; onOpenChange: (o: boolean) => void }) {
   const isPayload = receipt && receipt.type && receipt.school;
-  const [style, setStyle] = useState<ReceiptStyle>((receipt?.style as ReceiptStyle) ?? "A5");
+  const [style, setStyle] = useState<ReceiptStyle>("A5");
   const [copy, setCopy] = useState<"ORIGINAL" | "DUPLICATE">("ORIGINAL");
-  useEffect(() => { if (receipt?.style) setStyle(receipt.style); }, [receipt]);
+  const activeStyle = (receipt?.style as ReceiptStyle) ?? style;
   return (
     <Dialog open={!!receipt} onOpenChange={onOpenChange}>
       <DialogContent className={isPayload ? "max-w-[560px] max-h-[92vh] overflow-y-auto nice-scroll" : "max-w-sm"}>
@@ -465,10 +465,10 @@ function ReceiptDialog({ receipt, onOpenChange }: { receipt: any; onOpenChange: 
         </DialogHeader>
         {isPayload ? (
           <>
-            <div className="print-area"><ReceiptDocument data={{ ...receipt, style }} copy={copy} /></div>
+            <div className="print-area"><ReceiptDocument data={{ ...receipt, style: activeStyle }} copy={copy} /></div>
             <div className="no-print flex flex-wrap items-center justify-center gap-1.5">
               {RECEIPT_STYLES.map((s) => (
-                <Button key={s.value} size="sm" variant={style === s.value ? "default" : "outline"} className="h-7 text-xs" title={s.hint} onClick={() => setStyle(s.value)}>{s.label}</Button>
+                <Button key={s.value} size="sm" variant={activeStyle === s.value ? "default" : "outline"} className="h-7 text-xs" title={s.hint} onClick={() => setStyle(s.value)}>{s.label}</Button>
               ))}
               <Button size="sm" variant={copy === "DUPLICATE" ? "default" : "outline"} className="h-7 text-xs gap-1" onClick={() => setCopy(copy === "ORIGINAL" ? "DUPLICATE" : "ORIGINAL")} title="Mark this print as a duplicate copy">
                 <CopyIcon className="size-3.5" /> {copy}
@@ -501,6 +501,12 @@ function DiscountsTab({ discounts, invoices, onEdit, onApply, onRefresh }: {
   onRefresh: () => void;
 }) {
   const { currentSchoolId } = useStore();
+  const [sub, setSub] = useState("catalog");
+  const students = useMemo(() => {
+    const seen = new Map<string, { id: string; name: string; classroom: string | null }>();
+    invoices.forEach((i) => seen.set(i.studentId, { id: i.studentId, name: i.student, classroom: i.classroom }));
+    return [...seen.values()];
+  }, [invoices]);
 
   async function revoke(applicationId: string) {
     await apiPost(`/api/school/${currentSchoolId}/ops/discounts`, { action: "revoke", applicationId });
@@ -510,6 +516,18 @@ function DiscountsTab({ discounts, invoices, onEdit, onApply, onRefresh }: {
 
   return (
     <div className="space-y-4">
+      <Tabs value={sub} onValueChange={setSub}>
+        <TabsList>
+          <TabsTrigger value="catalog">Catalog ({discounts?.discounts.length ?? 0})</TabsTrigger>
+          <TabsTrigger value="profiles">Profiles ({discounts?.profiles.length ?? 0})</TabsTrigger>
+          <TabsTrigger value="approvals">
+            Approvals{discounts?.counts.pending ? ` (${discounts.counts.pending})` : ""}
+          </TabsTrigger>
+          <TabsTrigger value="assignments">All assignments</TabsTrigger>
+        </TabsList>
+
+        {/* ── catalog ── */}
+        <TabsContent value="catalog" className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground max-w-2xl">
           Scholarships, sibling rates and needy-family support — applied to termly invoices or to daily services as a subsidised rate.
@@ -546,7 +564,7 @@ function DiscountsTab({ discounts, invoices, onEdit, onApply, onRefresh }: {
       </div>
 
       <Card>
-        <CardHeader className="pb-3"><CardTitle className="text-base">Active applications</CardTitle></CardHeader>
+        <CardHeader className="pb-3"><CardTitle className="text-base">Applications</CardTitle></CardHeader>
         <CardContent className="p-0">
           <div className="overflow-x-auto nice-scroll max-h-80">
             <table className="w-full text-sm">
@@ -582,6 +600,19 @@ function DiscountsTab({ discounts, invoices, onEdit, onApply, onRefresh }: {
         </CardContent>
       </Card>
       <p className="text-xs text-muted-foreground">{invoices.length} current-term invoices · discounts show as a green line under the invoice total.</p>
+        </TabsContent>
+
+        {/* ── profiles + approvals + assignments (iedupro parity) ── */}
+        <TabsContent value="profiles">
+          <DiscountProfilesTab data={discounts} students={students} onRefresh={onRefresh} />
+        </TabsContent>
+        <TabsContent value="approvals">
+          <DiscountApprovalsTab data={discounts} onRefresh={onRefresh} defaultFilter="PENDING" />
+        </TabsContent>
+        <TabsContent value="assignments">
+          <DiscountApprovalsTab data={discounts} onRefresh={onRefresh} defaultFilter="ALL" />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

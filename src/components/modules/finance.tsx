@@ -119,11 +119,17 @@ export function Finance() {
       <Tabs value={tab} onValueChange={setTab} className="mt-5">
         <TabsList className="flex-wrap">
           <TabsTrigger value="income">Income</TabsTrigger>
+          <TabsTrigger value="cashier">Cashier reports</TabsTrigger>
           <TabsTrigger value="ledger">Student ledger</TabsTrigger>
           <TabsTrigger value="aging">Receivables ageing</TabsTrigger>
           <TabsTrigger value="bills">Terminal bills</TabsTrigger>
           <TabsTrigger value="expenditure">Expenditure</TabsTrigger>
         </TabsList>
+
+        {/* ── CASHIER REPORTS ── */}
+        <TabsContent value="cashier">
+          <CashierTab />
+        </TabsContent>
 
         {/* ── INCOME ── */}
         <TabsContent value="income">
@@ -619,6 +625,224 @@ function ExpenditureTab({ data, onRefresh }: { data: FinanceData; onRefresh: () 
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+/* ── CASHIER REPORTS (iedupro parity: cashier dashboard / summary / collections) ──
+   Daily account rendering & reconciliation — filter by collector, date range,
+   class and payment method; per-service breakdown, method mix, per-cashier
+   performance and a printable transactions register. */
+type CashierReport = {
+  period: { from: string; to: string; collector: string | null };
+  totals: { collected: number; transactions: number; studentsServed: number };
+  byService: { name: string; amount: number }[];
+  byMethod: { name: string; amount: number }[];
+  collectors: { name: string; total: number; txns: number }[];
+  transactions: { id: string; receiptNo: string; date: string; student: string; classroom: string | null; split: Record<string, number>; total: number; method: string; collector: string }[];
+  cashiers: string[];
+  classrooms: { id: string; name: string }[];
+};
+
+function CashierTab() {
+  const { currentSchoolId, schools } = useStore();
+  const schoolName = schools.find((s) => s.id === currentSchoolId)?.name ?? "";
+  const today = new Date().toISOString().slice(0, 10);
+  const [collector, setCollector] = useState("ALL");
+  const [from, setFrom] = useState(today);
+  const [to, setTo] = useState(today);
+  const [classroomId, setClassroomId] = useState("ALL");
+  const [method, setMethod] = useState("ALL");
+  const [report, setReport] = useState<CashierReport | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [search, setSearch] = useState("");
+
+  async function load() {
+    setBusy(true);
+    try {
+      const res = await apiPost<CashierReport>(`/api/school/${currentSchoolId}/ops/finance`, {
+        action: "cashier-report",
+        collector: collector === "ALL" ? undefined : collector,
+        dateFrom: from, dateTo: to,
+        classroomId: classroomId === "ALL" ? undefined : classroomId,
+        method: method === "ALL" ? undefined : method,
+      });
+      setReport(res);
+    } catch (e: any) { toast({ title: "Failed to load report", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
+  }
+
+  useEffect(() => { load(); }, []);
+
+  const txns = useMemo(() => (report?.transactions ?? []).filter((t) =>
+    !search || t.student.toLowerCase().includes(search) || t.receiptNo.toLowerCase().includes(search) || (t.classroom ?? "").toLowerCase().includes(search)
+  ), [report, search]);
+
+  const allSplitKeys = useMemo(() => {
+    const keys = new Set<string>();
+    (report?.transactions ?? []).forEach((t) => Object.keys(t.split).forEach((k) => keys.add(k)));
+    return [...keys];
+  }, [report]);
+
+  return (
+    <div className="space-y-4">
+      {/* filters */}
+      <Card>
+        <CardContent className="p-4">
+          <div className="text-sm font-medium mb-3 flex items-center gap-2"><Search className="size-4 text-primary" /> Filter cashier report</div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+            <div className="space-y-1"><Label className="text-xs">Cashier</Label>
+              <Select value={collector} onValueChange={setCollector}>
+                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">All cashiers</SelectItem>
+                  {(report?.cashiers ?? []).map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1"><Label className="text-xs">From</Label><Input type="date" className="h-8 text-xs" value={from} onChange={(e) => setFrom(e.target.value)} /></div>
+            <div className="space-y-1"><Label className="text-xs">To</Label><Input type="date" className="h-8 text-xs" value={to} onChange={(e) => setTo(e.target.value)} /></div>
+            <div className="space-y-1"><Label className="text-xs">Class</Label>
+              <Select value={classroomId} onValueChange={setClassroomId}>
+                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">All classes</SelectItem>
+                  {(report?.classrooms ?? []).map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1"><Label className="text-xs">Method</Label>
+              <Select value={method} onValueChange={setMethod}>
+                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">All methods</SelectItem>
+                  {Object.entries(PAYMENT_LABELS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-end"><Button size="sm" className="w-full gap-1.5" onClick={load} disabled={busy}><ReceiptText className="size-4" /> {busy ? "Loading…" : "Load report"}</Button></div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* headline stats */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <StatCard icon={<Banknote className="size-4" />} label="Total collected" value={fmtCedi(report?.totals.collected ?? 0, { compact: true })} tone="primary" sub={report ? `${fmtDate(report.period.from)} – ${fmtDate(report.period.to)}` : ""} />
+        <StatCard icon={<ReceiptText className="size-4" />} label="Transactions" value={String(report?.totals.transactions ?? 0)} />
+        <StatCard icon={<Users className="size-4" />} label="Learners served" value={String(report?.totals.studentsServed ?? 0)} tone="gold" />
+        <StatCard icon={<Wallet className="size-4" />} label="Report mode" value={collector === "ALL" ? "All cashiers" : "One cashier"} sub={collector === "ALL" ? "dashboard & summary" : "collections rendering"} />
+      </div>
+
+      <div className="grid lg:grid-cols-2 gap-4">
+        {/* collections by service */}
+        <Card>
+          <CardHeader className="pb-3"><CardTitle className="text-base">Collections by service</CardTitle></CardHeader>
+          <CardContent className="space-y-2">
+            {(report?.byService ?? []).length === 0 && <EmptyState title="Nothing collected in this window" />}
+            {(report?.byService ?? []).map((s) => (
+              <div key={s.name} className="flex items-center justify-between rounded-lg border px-3 py-2">
+                <div className="flex items-center gap-2 text-sm"><Receipt className="size-3.5 text-primary" /> {s.name}</div>
+                <div className="font-semibold tabular-nums">{fmtCedi(s.amount)}</div>
+              </div>
+            ))}
+            {(report?.byService ?? []).length > 0 && (
+              <div className="flex items-center justify-between rounded-lg bg-primary/10 border border-primary/30 px-3 py-2 mt-1">
+                <div className="text-sm font-semibold">Grand total</div>
+                <div className="font-bold tabular-nums text-primary">{fmtCedi(report?.totals.collected ?? 0)}</div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* payment methods + collector performance */}
+        <Card>
+          <CardHeader className="pb-3"><CardTitle className="text-base">Payment methods & cashier performance</CardTitle></CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {(report?.byMethod ?? []).map((m) => (
+                <div key={m.name} className="rounded-lg border p-2.5">
+                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{PAYMENT_LABELS[m.name] ?? m.name}</div>
+                  <div className="text-sm font-semibold tabular-nums">{fmtCedi(m.amount, { compact: true })}</div>
+                </div>
+              ))}
+              {(report?.byMethod ?? []).length === 0 && <div className="col-span-full text-xs text-muted-foreground">No payments in this window.</div>}
+            </div>
+            {collector === "ALL" && (
+              <div className="overflow-x-auto nice-scroll">
+                <table className="w-full text-sm">
+                  <thead className="bg-secondary/70">
+                    <tr className="text-left border-b text-xs uppercase tracking-wide text-muted-foreground">
+                      <th className="px-3 py-2 font-medium">Cashier</th>
+                      <th className="px-3 py-2 font-medium text-right">Collected</th>
+                      <th className="px-3 py-2 font-medium text-right hidden sm:table-cell">Txns</th>
+                      <th className="px-3 py-2 font-medium text-right">% of total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(report?.collectors ?? []).map((c) => (
+                      <tr key={c.name} className="border-b last:border-0">
+                        <td className="px-3 py-2 font-medium">{c.name}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{fmtCedi(c.total)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums hidden sm:table-cell">{c.txns}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{report?.totals.collected ? Math.round((c.total / report.totals.collected) * 100) : 0}%</td>
+                      </tr>
+                    ))}
+                    {(report?.collectors ?? []).length === 0 && <tr><td colSpan={4} className="px-3 py-3 text-xs text-muted-foreground">No collections recorded.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* transactions register */}
+      <Card>
+        <CardHeader className="pb-3 flex-row items-center justify-between space-y-0">
+          <CardTitle className="text-base">Transactions ({report?.totals.transactions ?? 0})</CardTitle>
+          <div className="flex items-center gap-2">
+            <Input placeholder="Search learner / receipt…" className="h-8 w-56 text-xs" value={search} onChange={(e) => setSearch(e.target.value)} />
+            <Button size="sm" variant="outline" className="h-8 gap-1" onClick={() => window.print()}><Printer className="size-3.5" /> Print</Button>
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="overflow-x-auto nice-scroll max-h-[480px]">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-secondary/70 backdrop-blur">
+                <tr className="text-left border-b text-xs uppercase tracking-wide text-muted-foreground">
+                  <th className="px-3 py-2.5 font-medium">#</th>
+                  <th className="px-3 py-2.5 font-medium">Date</th>
+                  <th className="px-3 py-2.5 font-medium">Learner</th>
+                  <th className="px-3 py-2.5 font-medium hidden md:table-cell">Class</th>
+                  {allSplitKeys.map((k) => <th key={k} className="px-3 py-2.5 font-medium text-right hidden lg:table-cell">{k}</th>)}
+                  <th className="px-3 py-2.5 font-medium text-right">Total</th>
+                  <th className="px-3 py-2.5 font-medium hidden sm:table-cell">Method</th>
+                  <th className="px-3 py-2.5 font-medium hidden xl:table-cell">Cashier</th>
+                </tr>
+              </thead>
+              <tbody>
+                {txns.length === 0 && <tr><td colSpan={5 + allSplitKeys.length}><EmptyState title="No transactions in this window" /></td></tr>}
+                {txns.map((t, i) => (
+                  <tr key={t.id} className="border-b last:border-0 hover:bg-secondary/30">
+                    <td className="px-3 py-2.5 text-xs text-muted-foreground">{i + 1}</td>
+                    <td className="px-3 py-2.5 text-xs whitespace-nowrap">{new Date(t.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</td>
+                    <td className="px-3 py-2.5 font-medium">{t.student}</td>
+                    <td className="px-3 py-2.5 hidden md:table-cell text-muted-foreground text-xs">{t.classroom ?? "—"}</td>
+                    {allSplitKeys.map((k) => (
+                      <td key={k} className="px-3 py-2.5 text-right tabular-nums text-xs hidden lg:table-cell">{t.split[k] ? fmtCedi(t.split[k], { compact: true }) : "—"}</td>
+                    ))}
+                    <td className="px-3 py-2.5 text-right font-semibold tabular-nums">{fmtCedi(t.total)}</td>
+                    <td className="px-3 py-2.5 hidden sm:table-cell"><Badge variant="outline" className="text-[10px]">{PAYMENT_LABELS[t.method] ?? t.method}</Badge></td>
+                    <td className="px-3 py-2.5 hidden xl:table-cell text-xs text-muted-foreground">{t.collector}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="px-3 py-2 text-[10px] text-muted-foreground border-t">
+            {schoolName} · cashier collections report · rendered {new Date().toLocaleString("en-GB")}
+          </p>
+        </CardContent>
+      </Card>
     </div>
   );
 }

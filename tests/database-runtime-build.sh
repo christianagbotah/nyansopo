@@ -6,70 +6,49 @@ SCRIPT_DIR="$(cd "$(dirname "$0")/../.zscripts" && pwd)"
 TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
-FAKE_BIN="$TEST_ROOT/bin"
-mkdir -p "$FAKE_BIN"
-cat >"$FAKE_BIN/bun" <<'EOF'
-#!/bin/bash
-set -euo pipefail
+# PostgreSQL 打包流程测试：
+# 1. 项目里存在嵌入式 PostgreSQL（scripts/pg）时，应打包 bin/lib/share/data + start-postgres.sh，
+#    且产物 data 目录不含运行时残留（postmaster.pid）。
+# 2. 项目里没有 PostgreSQL 时，跳过打包且不报错（生产需外部 DATABASE_URL）。
 
-if [ "$#" -ne 2 ] || [ "$1" != "run" ] || [ "$2" != "db:push" ]; then
-    echo "unexpected bun invocation: $*" >&2
-    exit 1
-fi
+# ── Case 1: 有 PostgreSQL ──────────────────────────────────────
+EXISTING_PROJECT="$TEST_ROOT/existing-project"
+EXISTING_BUILD="$TEST_ROOT/existing-build"
+mkdir -p "$EXISTING_PROJECT/scripts/pg/bin" \
+         "$EXISTING_PROJECT/scripts/pg/lib" \
+         "$EXISTING_PROJECT/scripts/pg/share" \
+         "$EXISTING_PROJECT/scripts/pg/data" \
+         "$EXISTING_PROJECT/scripts/pg/sockets"
 
-case "${DATABASE_URL:-}" in
-    file:*) db_path="${DATABASE_URL#file:}" ;;
-    *)
-        echo "DATABASE_URL must be an absolute SQLite file URL" >&2
-        exit 1
-        ;;
-esac
+printf 'postgres-binary\n' >"$EXISTING_PROJECT/scripts/pg/bin/postgres"
+printf 'pg-lib\n' >"$EXISTING_PROJECT/scripts/pg/lib/libpq.so.5"
+printf 'pg-share\n' >"$EXISTING_PROJECT/scripts/pg/share/postgresql.conf-sample"
+printf 'pg-data\n' >"$EXISTING_PROJECT/scripts/pg/data/PG_VERSION"
+printf 'stale-pid\n' >"$EXISTING_PROJECT/scripts/pg/data/postmaster.pid"
+printf '#!/bin/bash\necho start\n' >"$EXISTING_PROJECT/scripts/pg/start-postgres.sh"
+chmod +x "$EXISTING_PROJECT/scripts/pg/start-postgres.sh"
 
-case "$db_path" in
-    /*) ;;
-    *)
-        echo "database path must be absolute: $db_path" >&2
-        exit 1
-        ;;
-esac
+PROJECT_DIR="$EXISTING_PROJECT" BUILD_DIR="$EXISTING_BUILD" \
+    bash "$SCRIPT_DIR/database-runtime-build.sh" >/dev/null
 
-mkdir -p "$(dirname "$db_path")"
-if [ ! -f "$db_path" ]; then
-    printf 'initialized\n' >"$db_path"
-fi
-printf '%s\n' "$DATABASE_URL" >>"${DB_PUSH_CALLS:?}"
-EOF
-chmod +x "$FAKE_BIN/bun"
+test -f "$EXISTING_BUILD/pg/bin/postgres"
+test -f "$EXISTING_BUILD/pg/lib/libpq.so.5"
+test -f "$EXISTING_BUILD/pg/share/postgresql.conf-sample"
+test -f "$EXISTING_BUILD/pg/data/PG_VERSION"
+test -x "$EXISTING_BUILD/pg/start-postgres.sh"
+test ! -e "$EXISTING_BUILD/pg/data/postmaster.pid"       # 运行时 pid 不应被打包
+test "$(cat "$EXISTING_BUILD/pg/start-postgres.sh")" = "$(cat "$EXISTING_PROJECT/scripts/pg/start-postgres.sh")"
+# 源目录不被修改
+test -f "$EXISTING_PROJECT/scripts/pg/data/postmaster.pid"
 
-export PATH="$FAKE_BIN:$PATH"
-export DB_PUSH_CALLS="$TEST_ROOT/db-push-calls"
-
-# 没有 Preview 数据库时，应只在部署产物中初始化空库，不修改项目目录。
+# ── Case 2: 没有 PostgreSQL ────────────────────────────────────
 EMPTY_PROJECT="$TEST_ROOT/empty-project"
 EMPTY_BUILD="$TEST_ROOT/empty-build"
 mkdir -p "$EMPTY_PROJECT"
 
 PROJECT_DIR="$EMPTY_PROJECT" BUILD_DIR="$EMPTY_BUILD" \
-    bash "$SCRIPT_DIR/database-runtime-build.sh"
+    bash "$SCRIPT_DIR/database-runtime-build.sh" >/dev/null
 
-test -f "$EMPTY_BUILD/db/custom.db"
-test "$(cat "$EMPTY_BUILD/db/custom.db")" = "initialized"
-test ! -e "$EMPTY_PROJECT/db/custom.db"
-
-# 有 Preview 数据库时，应保留数据和同目录文件，再对产物执行 schema 同步。
-EXISTING_PROJECT="$TEST_ROOT/existing-project"
-EXISTING_BUILD="$TEST_ROOT/existing-build"
-mkdir -p "$EXISTING_PROJECT/db"
-printf 'preview-data\n' >"$EXISTING_PROJECT/db/custom.db"
-printf 'sidecar\n' >"$EXISTING_PROJECT/db/README.txt"
-
-PROJECT_DIR="$EXISTING_PROJECT" BUILD_DIR="$EXISTING_BUILD" \
-    bash "$SCRIPT_DIR/database-runtime-build.sh"
-
-test "$(cat "$EXISTING_BUILD/db/custom.db")" = "preview-data"
-test "$(cat "$EXISTING_BUILD/db/README.txt")" = "sidecar"
-test "$(wc -l <"$DB_PUSH_CALLS" | tr -d ' ')" = "2"
-grep -Fx "file:$EMPTY_BUILD/db/custom.db" "$DB_PUSH_CALLS"
-grep -Fx "file:$EXISTING_BUILD/db/custom.db" "$DB_PUSH_CALLS"
+test ! -e "$EMPTY_BUILD/pg"
 
 echo "database runtime build tests passed"

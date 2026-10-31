@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
 import { sendSms } from "@/lib/sms";
 import { invoicePaymentReceipt } from "@/lib/receipt-payload";
+import { nextInvoiceNo } from "@/lib/invoice-no";
 
 // ── GET /api/school/[id]/ops/admissions — admission workspace ──
 // classrooms with capacity/fees, invoice discounts, recent admissions
@@ -148,10 +149,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           data: { discountId: discount.id, studentId: student.id, schoolId, reason: `Admission bill — ${discount.name}`, appliedByName: user.fullName },
         });
       }
-      const invSeq = (await db.invoice.count({ where: { schoolId } })) + 1;
       invoice = await db.invoice.create({
         data: {
-          invoiceNo: `INV-${year}-${String(invSeq).padStart(4, "0")}`,
+          invoiceNo: await nextInvoiceNo(),
           studentId: student.id, schoolId, termId: term.id, classroomName: classroom.name,
           totalCents: gross, discountCents, discountReason: discountName, paidCents: 0, status: "UNPAID",
           dueDate: new Date(Date.now() + 14 * 864e5),

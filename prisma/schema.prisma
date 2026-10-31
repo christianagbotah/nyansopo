@@ -9,7 +9,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -990,7 +990,7 @@ model DiscountProfile {
   id           String                @id @default(cuid())
   schoolId     String
   school       School                @relation(fields: [schoolId], references: [id])
-  name         String                @unique
+  name         String
   category     String                @default("INVOICE") // INVOICE | DAILY_SERVICE
   method       String                @default("PERCENT") // PERCENT | FIXED
   value        Int // percent or pesewas
@@ -1000,6 +1000,8 @@ model DiscountProfile {
   createdAt    DateTime              @default(now())
   rules        DiscountRule[]
   applications DiscountApplication[]
+
+  @@unique([schoolId, name])
 }
 
 // Per-class / per-fee-item overrides inside a profile

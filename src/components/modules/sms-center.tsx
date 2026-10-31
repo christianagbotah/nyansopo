@@ -18,6 +18,7 @@ import { toast } from "@/hooks/use-toast";
 import { Smartphone, Send, FileText, History, Settings2, Plus, CheckCheck, XCircle, AlertTriangle, Wallet, Zap } from "lucide-react";
 
 type Template = { id: string; name: string; category: string; body: string; isDefault: boolean };
+type Automation = { id: string; name: string; trigger: string; recipients: string; body: string; offsetDays: number; active: boolean; lastRunAt: string | null; sentCount: number };
 type Message = { id: string; recipientName: string; recipientPhone: string; body: string; category: string; status: string; sentByName: string | null; sentAt: string; errorReason: string | null };
 type SmsData = {
   setting: { provider: string; senderId: string; credits: number; autoFeeReminders: boolean; autoAbsenceAlerts: boolean; autoPaymentReceipts: boolean } | null;
@@ -27,6 +28,15 @@ type SmsData = {
   classes: { id: string; name: string; learners: number }[];
   guardians: number;
   arrearsCount: number;
+  automations: Automation[];
+};
+
+const TRIGGER_LABELS: Record<string, string> = {
+  PAYMENT_RECEIVED: "Payment received",
+  INVOICE_ISSUED: "Invoice issued",
+  ABSENCE_MARKED: "Absence marked",
+  RESULTS_PUBLISHED: "Results published",
+  BILL_REMINDER: "Bill reminder",
 };
 
 const CAT_COLORS: Record<string, string> = {
@@ -76,6 +86,7 @@ export function SmsCenter() {
       <Tabs value={tab} onValueChange={setTab} className="mt-5">
         <TabsList>
           <TabsTrigger value="compose">Compose & send</TabsTrigger>
+          <TabsTrigger value="automations">Automations ({data.automations.length})</TabsTrigger>
           <TabsTrigger value="templates">Templates ({data.templates.length})</TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>
           <TabsTrigger value="settings">Settings</TabsTrigger>
@@ -83,6 +94,10 @@ export function SmsCenter() {
 
         <TabsContent value="compose">
           <ComposeTab data={data} onSent={() => { load(category); setTab("history"); }} />
+        </TabsContent>
+
+        <TabsContent value="automations">
+          <AutomationsTab data={data} onRefresh={() => load(category)} />
         </TabsContent>
 
         <TabsContent value="templates">
@@ -424,6 +439,162 @@ function TemplateDialog({ template, onOpenChange, onDone }: { template: Template
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button onClick={submit} disabled={busy}>{busy ? "Saving…" : "Save template"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ── AUTOMATIONS (iedupro parity) — event-driven SMS rules ── */
+function AutomationsTab({ data, onRefresh }: { data: SmsData; onRefresh: () => void }) {
+  const { currentSchoolId } = useStore();
+  const [edit, setEdit] = useState<Automation | "new" | null>(null);
+  const [runningId, setRunningId] = useState<string | null>(null);
+
+  async function toggle(a: Automation) {
+    await apiPost(`/api/school/${currentSchoolId}/ops/sms`, { action: "toggle-automation", id: a.id });
+    toast({ title: a.active ? "Rule paused" : "Rule activated" });
+    onRefresh();
+  }
+
+  async function remove(a: Automation) {
+    await apiPost(`/api/school/${currentSchoolId}/ops/sms`, { action: "delete-automation", id: a.id });
+    toast({ title: "Rule deleted" });
+    onRefresh();
+  }
+
+  async function run(a: Automation) {
+    setRunningId(a.id);
+    try {
+      const res = await apiPost<{ sent: number; failed: number; message?: string }>(`/api/school/${currentSchoolId}/ops/sms`, { action: "run-automation", id: a.id });
+      toast({ title: res.message ?? `Reminders sent — ${res.sent} delivered, ${res.failed} failed` });
+      onRefresh();
+    } catch (e: any) { toast({ title: "Run failed", description: e.message, variant: "destructive" }); } finally { setRunningId(null); }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-muted-foreground max-w-2xl">
+          Event-driven messaging — when a payment is received, an invoice is issued, a learner is marked absent or term bills fall due,
+          the active rule&apos;s message (with placeholders like {"{student}"} and {"{balance}"}) is sent to guardians automatically.
+        </p>
+        <Button size="sm" className="gap-1.5 shrink-0" onClick={() => setEdit("new")}><Plus className="size-4" /> New rule</Button>
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-4">
+        {data.automations.map((a) => (
+          <Card key={a.id} className={a.active ? "" : "opacity-60"}>
+            <CardHeader className="pb-2 flex-row items-center justify-between space-y-0">
+              <CardTitle className="text-sm flex items-center gap-2"><Zap className={`size-4 ${a.active ? "text-amber-500" : "text-muted-foreground"}`} /> {a.name}</CardTitle>
+              <Badge variant="outline" className="text-[10px]">{TRIGGER_LABELS[a.trigger] ?? a.trigger}</Badge>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-xs text-muted-foreground leading-relaxed border-l-2 border-primary/30 pl-2.5 italic">{a.body}</p>
+              <div className="flex flex-wrap gap-1.5">
+                <Badge variant="secondary" className="text-[10px]">to {a.recipients === "GUARDIANS" ? "guardians" : a.recipients === "TEACHERS" ? "teachers" : "everyone"}</Badge>
+                {a.trigger === "BILL_REMINDER" && <Badge variant="secondary" className="text-[10px]">due ≤ {a.offsetDays}d ahead</Badge>}
+                <Badge variant="secondary" className="text-[10px]">{a.sentCount} sent</Badge>
+                {a.lastRunAt && <Badge variant="outline" className="text-[10px]">last {fmtDateTime(a.lastRunAt)}</Badge>}
+              </div>
+              <div className="flex flex-wrap gap-2 pt-1">
+                {a.trigger === "BILL_REMINDER" && (
+                  <Button size="sm" className="h-7 gap-1" disabled={runningId === a.id} onClick={() => run(a)}>
+                    <Send className="size-3.5" /> {runningId === a.id ? "Sending…" : "Run now"}
+                  </Button>
+                )}
+                <Button size="sm" variant="outline" className="h-7" onClick={() => setEdit(a)}>Edit</Button>
+                <Button size="sm" variant="ghost" className="h-7 gap-1" onClick={() => toggle(a)}>{a.active ? "Pause" : "Activate"}</Button>
+                <Button size="sm" variant="ghost" className="h-7 text-destructive gap-1" onClick={() => remove(a)}><XCircle className="size-3.5" /></Button>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+        {data.automations.length === 0 && (
+          <Card className="md:col-span-2"><CardContent><EmptyState icon={<Zap className="size-5" />} title="No automation rules yet" hint="e.g. 'Fee reminder' — when bills fall due within 3 days, text guardians the balance." /></CardContent></Card>
+        )}
+      </div>
+
+      <AutomationDialog rule={edit} onOpenChange={(o) => !o && setEdit(null)} onDone={() => { setEdit(null); onRefresh(); }} />
+    </div>
+  );
+}
+
+function AutomationDialog({ rule, onOpenChange, onDone }: { rule: Automation | "new" | null; onOpenChange: (o: boolean) => void; onDone: () => void }) {
+  const { currentSchoolId } = useStore();
+  const isNew = rule === "new";
+  const [name, setName] = useState("");
+  const [trigger, setTrigger] = useState("BILL_REMINDER");
+  const [recipients, setRecipients] = useState("GUARDIANS");
+  const [body, setBody] = useState("");
+  const [offsetDays, setOffsetDays] = useState("3");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (rule && rule !== "new") {
+      setName(rule.name); setTrigger(rule.trigger); setRecipients(rule.recipients); setBody(rule.body); setOffsetDays(String(rule.offsetDays));
+    } else { setName(""); setTrigger("BILL_REMINDER"); setRecipients("GUARDIANS"); setBody("Friendly reminder: {student}'s term balance is {balance}. Kindly settle at the office or via MoMo. Thank you — {school}."); setOffsetDays("3"); }
+  }, [rule]);
+
+  async function submit() {
+    if (!name.trim() || !body.trim()) { toast({ title: "Rule name and message are required" }); return; }
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/sms`, {
+        action: "save-automation", id: isNew ? undefined : (rule as Automation).id,
+        name, trigger, recipients, body, offsetDays: Number(offsetDays) || 0,
+      });
+      toast({ title: isNew ? "Rule created" : "Rule updated" });
+      onDone();
+    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
+  }
+
+  return (
+    <Dialog open={!!rule} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><Zap className="size-4 text-amber-500" /> {isNew ? "New automation rule" : "Edit automation rule"}</DialogTitle>
+          <DialogDescription>Message sent automatically when the event fires. Placeholders: {"{student}"} {"{amount}"} {"{balance}"} {"{receipt}"} {"{term}"} {"{date}"} {"{school}"} {"{class}"}</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5"><Label>Rule name</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Fee reminder — 3 days before due" /></div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Trigger</Label>
+              <Select value={trigger} onValueChange={setTrigger}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {Object.entries(TRIGGER_LABELS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Recipients</Label>
+              <Select value={recipients} onValueChange={setRecipients}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="GUARDIANS">Guardians</SelectItem>
+                  <SelectItem value="TEACHERS">Teachers</SelectItem>
+                  <SelectItem value="ALL">Everyone</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          {trigger === "BILL_REMINDER" && (
+            <div className="space-y-1.5">
+              <Label>Days before due date</Label>
+              <Input type="number" value={offsetDays} onChange={(e) => setOffsetDays(e.target.value)} placeholder="3" />
+              <p className="text-xs text-muted-foreground">Reminders cover unpaid invoices due within this many days (and anything overdue). Run manually from the rule card.</p>
+            </div>
+          )}
+          <div className="space-y-1.5">
+            <Label>Message</Label>
+            <Textarea rows={4} value={body} onChange={(e) => setBody(e.target.value)} />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={submit} disabled={busy}>{busy ? "Saving…" : isNew ? "Create rule" : "Save rule"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

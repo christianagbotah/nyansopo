@@ -214,6 +214,90 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ termLabel: `${term.name} · ${year.name}`, bills });
   }
 
+  // ── cashier reports (iedupro parity: dashboard / summary / collections) ──
+  // Daily account rendering & reconciliation: collector + date + class + method
+  // filters, service-category breakdown, method breakdown and per-cashier performance.
+  if (action === "cashier-report") {
+    const { collector, dateFrom, dateTo, classroomId, method } = body;
+    const from = dateFrom ? new Date(dateFrom) : new Date(new Date().toDateString());
+    const toDefault = new Date();
+    toDefault.setHours(23, 59, 59, 999);
+    const to = dateTo ? new Date(new Date(dateTo).getTime() + 864e5 - 1) : toDefault;
+
+    let studentIds: string[] | null = null;
+    if (classroomId) {
+      const en = await db.enrollment.findMany({ where: { classroomId, status: "ACTIVE" }, select: { studentId: true } });
+      studentIds = en.map((e) => e.studentId);
+    }
+
+    const payments = await db.payment.findMany({
+      where: {
+        schoolId, voided: false, paidAt: { gte: from, lte: to },
+        ...(collector ? { receivedByName: collector } : {}),
+        ...(method ? { method } : {}),
+        ...(studentIds ? { studentId: { in: studentIds } } : {}),
+      },
+      include: {
+        student: { include: { enrollments: { where: { status: "ACTIVE" }, take: 1, include: { classroom: true } } } },
+        dailyCharges: { include: { service: true } },
+      },
+      orderBy: { paidAt: "desc" },
+    });
+
+    // ── buckets: per-service (daily charges split), methods, collectors ──
+    const byService: Record<string, number> = {};
+    const byMethod: Record<string, number> = {};
+    const byCollector: Record<string, { name: string; total: number; txns: number }> = {};
+    const studentsServed = new Set<string>();
+    let grand = 0;
+    for (const p of payments) {
+      grand += p.amountCents;
+      byMethod[p.method] = (byMethod[p.method] ?? 0) + p.amountCents;
+      const cname = p.receivedByName ?? "Unassigned";
+      byCollector[cname] = byCollector[cname] ?? { name: cname, total: 0, txns: 0 };
+      byCollector[cname].total += p.amountCents;
+      byCollector[cname].txns += 1;
+      if (p.studentId) studentsServed.add(p.studentId);
+      // service split: daily charges carry their service; POS/TRANSPORT/INVOICE use their category label
+      if (p.category === "DAILY" && p.dailyCharges.length) {
+        for (const c of p.dailyCharges) byService[c.service.name] = (byService[c.service.name] ?? 0) + c.amountCents;
+      } else {
+        const label = p.category === "POS" ? "Store sales" : p.category === "TRANSPORT" ? "Transport fares" : "Termly fees";
+        byService[label] = (byService[label] ?? 0) + p.amountCents;
+      }
+    }
+
+    const transactions = payments.slice(0, 400).map((p) => {
+      const split: Record<string, number> = {};
+      if (p.category === "DAILY" && p.dailyCharges.length) {
+        for (const c of p.dailyCharges) split[c.service.name] = (split[c.service.name] ?? 0) + c.amountCents;
+      } else {
+        split[p.category === "POS" ? "Store sales" : p.category === "TRANSPORT" ? "Transport fares" : "Termly fees"] = p.amountCents;
+      }
+      return {
+        id: p.id, receiptNo: p.receiptNo, date: p.paidAt.toISOString(),
+        student: p.student ? `${p.student.firstName} ${p.student.lastName}` : "—",
+        classroom: p.student?.enrollments[0]?.classroom?.name ?? null,
+        split, total: p.amountCents, method: p.method, collector: p.receivedByName ?? "Unassigned",
+      };
+    });
+
+    // roster of cashiers for the filter dropdown (anyone who ever recorded a payment)
+    const cashiersRaw = await db.payment.findMany({ where: { schoolId, receivedByName: { not: null } }, select: { receivedByName: true }, distinct: ["receivedByName"] });
+    const classrooms = await db.classroom.findMany({ where: { schoolId }, orderBy: { name: "asc" }, select: { id: true, name: true } });
+
+    return NextResponse.json({
+      period: { from: from.toISOString(), to: to.toISOString(), collector: collector ?? null },
+      totals: { collected: grand, transactions: payments.length, studentsServed: studentsServed.size },
+      byService: Object.entries(byService).map(([name, amount]) => ({ name, amount })).sort((a, b) => b.amount - a.amount),
+      byMethod: Object.entries(byMethod).map(([name, amount]) => ({ name, amount })).sort((a, b) => b.amount - a.amount),
+      collectors: Object.values(byCollector).sort((a, b) => b.total - a.total),
+      transactions,
+      cashiers: cashiersRaw.map((c) => c.receivedByName!).filter(Boolean).sort(),
+      classrooms: classrooms.map((c) => ({ id: c.id, name: c.name })),
+    });
+  }
+
   // ── expenses CRUD ──
   if (action === "save-expense") {
     const { category, description, amountCents, method, expenseDate } = body;

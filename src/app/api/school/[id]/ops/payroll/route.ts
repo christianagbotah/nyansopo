@@ -36,6 +36,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const payslips = selectedRun
     ? await db.payslip.findMany({ where: { payrollRunId: selectedRun.id }, include: { staff: true }, orderBy: { staff: { fullName: "asc" } } })
     : [];
+  // licensed Tier-2 / Tier-3 pension managers (iedupro parity directory)
+  const providers = await db.pensionProvider.findMany({ where: { schoolId }, orderBy: { name: "asc" } });
 
   return NextResponse.json({
     school: school ? { name: school.name, motto: school.motto, town: school.town, region: school.region, phone: school.phone, email: school.email } : null,
@@ -70,6 +72,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       ssnit: ssnitBreakdown(p.baseSalaryCents, rates),
     })),
     currentPeriod: currentPeriod(),
+    providers: providers.map((p) => ({ id: p.id, name: p.name, code: p.code, contactPhone: p.contactPhone, active: p.active })),
   });
 }
 
@@ -191,6 +194,31 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         });
       }
     }
+    return NextResponse.json({ ok: true });
+  }
+
+  // ── pension providers (licensed Tier-2 / Tier-3 managers directory) ──
+  if (action === "save-provider") {
+    const { id, name, code, contactPhone } = body;
+    if (!name?.trim() || !code?.trim()) return NextResponse.json({ error: "Provider name and code are required" }, { status: 400 });
+    const clash = await db.pensionProvider.findFirst({ where: { code: String(code).trim().toUpperCase(), ...(id ? { id: { not: id } } : {}) } });
+    if (clash) return NextResponse.json({ error: "That provider code is already in use" }, { status: 400 });
+    const data = { name: String(name).trim(), code: String(code).trim().toUpperCase(), contactPhone: contactPhone?.trim() || null };
+    const p = id ? await db.pensionProvider.update({ where: { id }, data }) : await db.pensionProvider.create({ data: { ...data, schoolId } });
+    return NextResponse.json({ provider: p });
+  }
+
+  if (action === "toggle-provider") {
+    const p = await db.pensionProvider.findUnique({ where: { id: body.id } });
+    if (!p || p.schoolId !== schoolId) return NextResponse.json({ error: "Provider not found" }, { status: 404 });
+    const updated = await db.pensionProvider.update({ where: { id: p.id }, data: { active: !p.active } });
+    return NextResponse.json({ provider: updated });
+  }
+
+  if (action === "delete-provider") {
+    const p = await db.pensionProvider.findUnique({ where: { id: body.id } });
+    if (!p || p.schoolId !== schoolId) return NextResponse.json({ error: "Provider not found" }, { status: 404 });
+    await db.pensionProvider.delete({ where: { id: p.id } });
     return NextResponse.json({ ok: true });
   }
 

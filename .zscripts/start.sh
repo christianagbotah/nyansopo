@@ -53,8 +53,8 @@ cd "$BUILD_DIR" || exit 1
 
 ls -lah
 
-DEFAULT_PACKAGED_DB_PATH="/app/db/custom.db"
-DEFAULT_PACKAGED_DATABASE_URL="file:$DEFAULT_PACKAGED_DB_PATH"
+DEFAULT_PACKAGED_PG_DIR="/app/pg"
+DEFAULT_PACKAGED_DATABASE_URL="postgresql://nyansapo@127.0.0.1:5433/nyansapo?schema=public"
 
 # Python 依赖在构建阶段安装进部署产物，不复用 Sandbox 的 /home/z/.venv。
 # Next.js 及其启动的子进程都会继承这组路径。
@@ -78,13 +78,19 @@ if [ -f "./next-service-dist/server.js" ]; then
     export DATABASE_URL="${DATABASE_URL:-$DEFAULT_PACKAGED_DATABASE_URL}"
 
     if [ "$DATABASE_URL" = "$DEFAULT_PACKAGED_DATABASE_URL" ]; then
-        if [ ! -f "$DEFAULT_PACKAGED_DB_PATH" ]; then
-            echo "❌ 未找到打包后的数据库文件 $DEFAULT_PACKAGED_DB_PATH"
-            echo "   为避免生产环境启动到空数据库，启动已终止"
+        # 启动打包的嵌入式 PostgreSQL 17
+        echo "🗄️  启动打包的 PostgreSQL 17..."
+        if [ -x "$DEFAULT_PACKAGED_PG_DIR/start-postgres.sh" ]; then
+            sh "$DEFAULT_PACKAGED_PG_DIR/start-postgres.sh" || {
+                echo "❌ 嵌入式 PostgreSQL 启动失败"
+                exit 1
+            }
+            echo "🗄️  当前使用打包 PostgreSQL: $DEFAULT_PACKAGED_PG_DIR"
+        else
+            echo "❌ 未找到打包的 PostgreSQL ($DEFAULT_PACKAGED_PG_DIR/start-postgres.sh)"
+            echo "   请通过 DATABASE_URL 环境变量指定外部 PostgreSQL 连接串"
             exit 1
         fi
-
-        echo "🗄️  当前使用打包数据库: $DEFAULT_PACKAGED_DB_PATH"
     else
         echo "🗄️  当前使用外部指定数据库: $DATABASE_URL"
     fi

@@ -35,6 +35,7 @@ type PayrollData = {
   selectedRun: { id: string; period: string; status: string } | null;
   payslips: Slip[];
   currentPeriod: string;
+  providers: { id: string; name: string; code: string; contactPhone: string | null; active: boolean }[];
 };
 
 export function Payroll() {
@@ -318,7 +319,7 @@ export function Payroll() {
 
         {/* ── STATUTORY SETTINGS ── */}
         <TabsContent value="statutory">
-          <StatutorySettings rates={data.rates} onSaved={() => load(runId ?? undefined)} />
+          <StatutorySettings rates={data.rates} providers={data.providers} onSaved={() => load(runId ?? undefined)} />
         </TabsContent>
 
         {/* ── GHANA MATHS ── */}
@@ -369,7 +370,7 @@ export function Payroll() {
 }
 
 /* ── STATUTORY SETTINGS (iedupro parity) ────────────────────── */
-function StatutorySettings({ rates, onSaved }: { rates: Rates; onSaved: () => void }) {
+function StatutorySettings({ rates, providers, onSaved }: { rates: Rates; providers: ProviderRow[]; onSaved: () => void }) {
   const { currentSchoolId } = useStore();
   const [r, setR] = useState(rates);
   const [busy, setBusy] = useState(false);
@@ -393,7 +394,8 @@ function StatutorySettings({ rates, onSaved }: { rates: Rates; onSaved: () => vo
   }
 
   return (
-    <div className="grid lg:grid-cols-3 gap-4">
+    <div className="space-y-4">
+      <div className="grid lg:grid-cols-3 gap-4">
       <Card className="lg:col-span-2">
         <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><Settings2 className="size-4 text-primary" /> Statutory deduction rates (%)</CardTitle></CardHeader>
         <CardContent className="space-y-4">
@@ -420,7 +422,83 @@ function StatutorySettings({ rates, onSaved }: { rates: Rates; onSaved: () => vo
           </p>
         </CardContent>
       </Card>
+      </div>
+      <ProvidersPanel providers={providers} onSaved={onSaved} />
     </div>
+  );
+}
+
+/* ── licensed Tier-2 / Tier-3 pension managers directory (iedupro parity) ── */
+type ProviderRow = { id: string; name: string; code: string; contactPhone: string | null; active: boolean };
+
+function ProvidersPanel({ providers, onSaved }: { providers: ProviderRow[]; onSaved: () => void }) {
+  const { currentSchoolId } = useStore();
+  const [name, setName] = useState("");
+  const [code, setCode] = useState("");
+  const [phone, setPhone] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function add() {
+    if (!name.trim() || !code.trim()) { toast({ title: "Provider name and code are required" }); return; }
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/payroll`, { action: "save-provider", name, code, contactPhone: phone });
+      toast({ title: "Provider added" }); setName(""); setCode(""); setPhone(""); onSaved();
+    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
+  }
+
+  async function toggle(id: string) {
+    await apiPost(`/api/school/${currentSchoolId}/ops/payroll`, { action: "toggle-provider", id });
+    onSaved();
+  }
+
+  async function remove(id: string) {
+    await apiPost(`/api/school/${currentSchoolId}/ops/payroll`, { action: "delete-provider", id }).catch(() => null);
+    toast({ title: "Provider removed" });
+    onSaved();
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><ShieldCheck className="size-4 text-primary" /> Pension providers — licensed Tier 2 / Tier 3 managers</CardTitle></CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-muted-foreground">Your licensed occupational-pension and provident-fund managers, to whom Tier 2 (5%) and voluntary Tier 3 contributions are remitted.</p>
+        <div className="overflow-x-auto nice-scroll">
+          <table className="w-full text-sm">
+            <thead className="bg-secondary/70">
+              <tr className="text-left border-b text-xs uppercase tracking-wide text-muted-foreground">
+                <th className="px-3 py-2.5 font-medium">Provider</th>
+                <th className="px-3 py-2.5 font-medium hidden sm:table-cell">Code</th>
+                <th className="px-3 py-2.5 font-medium hidden md:table-cell">Contact</th>
+                <th className="px-3 py-2.5 font-medium">Status</th>
+                <th className="px-3 py-2.5 text-right font-medium">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {providers.length === 0 && <tr><td colSpan={5} className="px-3 py-3 text-xs text-muted-foreground">No providers registered yet — add the managers your school remits to.</td></tr>}
+              {providers.map((p) => (
+                <tr key={p.id} className={`border-b last:border-0 hover:bg-secondary/30 ${p.active ? "" : "opacity-60"}`}>
+                  <td className="px-3 py-2.5 font-medium">{p.name}</td>
+                  <td className="px-3 py-2.5 hidden sm:table-cell font-mono text-xs">{p.code}</td>
+                  <td className="px-3 py-2.5 hidden md:table-cell text-muted-foreground text-xs">{p.contactPhone ?? "—"}</td>
+                  <td className="px-3 py-2.5"><Badge className={p.active ? "bg-emerald-600" : ""} variant={p.active ? "default" : "secondary"}>{p.active ? "Active" : "Inactive"}</Badge></td>
+                  <td className="px-3 py-2.5 text-right">
+                    <Button size="sm" variant="ghost" className="h-7" onClick={() => toggle(p.id)}>{p.active ? "Deactivate" : "Reactivate"}</Button>
+                    <Button size="sm" variant="ghost" className="h-7 text-destructive" onClick={() => remove(p.id)}>Delete</Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="grid sm:grid-cols-[1fr_130px_150px_auto] gap-2 items-end border-t pt-4">
+          <div className="space-y-1"><Label className="text-xs">Provider name</Label><Input className="h-8" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Petra Trust" /></div>
+          <div className="space-y-1"><Label className="text-xs">Code</Label><Input className="h-8" value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g. PTRA" /></div>
+          <div className="space-y-1"><Label className="text-xs">Contact phone</Label><Input className="h-8" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+233 …" /></div>
+          <Button size="sm" className="gap-1.5" onClick={add} disabled={busy}><Plus className="size-4" /> Add</Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

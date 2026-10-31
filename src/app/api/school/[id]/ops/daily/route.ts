@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
 import { generateDayCharges, settleDailyCharges, effectivePrice } from "@/lib/daily-billing";
-import { sendSms } from "@/lib/sms";
+import { sendSms, sendAutomated } from "@/lib/sms";
 import { dailyServicesReceipt } from "@/lib/receipt-payload";
 
 // ── GET /api/school/[id]/ops/daily — services, ledger, POS workspace ──
@@ -214,7 +214,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     // auto receipt SMS
     const setting = await db.smsSetting.findUnique({ where: { schoolId } });
     if (setting?.autoPaymentReceipts) {
-      await sendSms({ db, schoolId, studentId, recipientName: student.guardianName, recipientPhone: student.guardianPhone, body: `We have received GH₵${(amt / 100).toFixed(2)} for ${student.firstName} (${payment.receiptNo}) towards daily services. Thank you.`, category: "PAYMENT", sentByName: user.fullName });
+      await sendAutomated({
+        db, schoolId, trigger: "PAYMENT_RECEIVED",
+        defaultBody: `We have received GH₵${(amt / 100).toFixed(2)} for ${student.firstName} (${payment.receiptNo}) towards daily services. Thank you.`,
+        vars: { student: student.firstName, amount: `GH₵${(amt / 100).toFixed(2)}`, receipt: payment.receiptNo, date: new Date().toLocaleDateString("en-GB") },
+        studentId, recipientName: student.guardianName, recipientPhone: student.guardianPhone, sentByName: user.fullName,
+      });
     }
     const receipt = await dailyServicesReceipt(db, payment.id);
     return NextResponse.json({ payment: { ...payment, applied }, student: `${student.firstName} ${student.lastName}`, receipt });

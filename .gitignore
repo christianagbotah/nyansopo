@@ -60,3 +60,13 @@ server.log
 /examples/
 /mini-services/
 /dev.log
+
+# embedded PostgreSQL runtime (binaries + data dir) — re-fetch via scripts/pg/README
+/scripts/pg/*
+!/scripts/pg/start-postgres.sh
+!/scripts/pg/README.md
+# generated prisma clients (sqlite reader for migrations)
+/generated/
+# legacy sqlite backup
+/db/legacy-sqlite-backup.db
+scripts/verify-out.txt

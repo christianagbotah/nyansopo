@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
-import { sendSms, renderTemplate } from "@/lib/sms";
+import { sendSms, sendAutomated, renderTemplate } from "@/lib/sms";
 
 // ── GET /api/school/[id]/ops/sms — settings, templates, history, audiences ──
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -29,6 +29,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   // audiences: classes for targeted sending
   const classrooms = await db.classroom.findMany({ where: { schoolId }, orderBy: { name: "asc" } });
   const enrolled = await db.enrollment.findMany({ where: { schoolId, status: "ACTIVE" }, include: { student: true, classroom: true } });
+  const automations = await db.smsAutomation.findMany({ where: { schoolId }, orderBy: { createdAt: "asc" } });
 
   // arrears audience (current term)
   const term = await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId } } });
@@ -46,6 +47,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     classes: classrooms.map((c) => ({ id: c.id, name: c.name, learners: enrolled.filter((e) => e.classroomId === c.id).length })),
     guardians: enrolled.length,
     arrearsCount,
+    automations: automations.map((a) => ({ id: a.id, name: a.name, trigger: a.trigger, recipients: a.recipients, body: a.body, offsetDays: a.offsetDays, active: a.active, lastRunAt: a.lastRunAt, sentCount: a.sentCount })),
   });
 }
 
@@ -85,6 +87,70 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (action === "delete-template") {
     await db.smsTemplate.delete({ where: { id: body.id } }).catch(() => null);
     return NextResponse.json({ ok: true });
+  }
+
+  // ── automation rules (iedupro parity) ──────────────────
+  const TRIGGERS = ["PAYMENT_RECEIVED", "INVOICE_ISSUED", "ABSENCE_MARKED", "RESULTS_PUBLISHED", "BILL_REMINDER"];
+  if (action === "save-automation") {
+    const { id, name, trigger, recipients, body: ruleBody, offsetDays } = body;
+    if (!name?.trim() || !ruleBody?.trim()) return NextResponse.json({ error: "Rule name and message body are required" }, { status: 400 });
+    if (!TRIGGERS.includes(trigger)) return NextResponse.json({ error: "Unknown trigger" }, { status: 400 });
+    const data = {
+      name: String(name).trim(), trigger, recipients: recipients ?? "GUARDIANS",
+      body: String(ruleBody), offsetDays: Number.isFinite(Number(offsetDays)) ? Number(offsetDays) : 0,
+    };
+    const a = id ? await db.smsAutomation.update({ where: { id }, data }) : await db.smsAutomation.create({ data: { ...data, schoolId } });
+    return NextResponse.json({ automation: a });
+  }
+
+  if (action === "toggle-automation") {
+    const a = await db.smsAutomation.findUnique({ where: { id: body.id } });
+    if (!a || a.schoolId !== schoolId) return NextResponse.json({ error: "Rule not found" }, { status: 404 });
+    const updated = await db.smsAutomation.update({ where: { id: a.id }, data: { active: !a.active } });
+    return NextResponse.json({ automation: updated });
+  }
+
+  if (action === "delete-automation") {
+    const a = await db.smsAutomation.findUnique({ where: { id: body.id } });
+    if (!a || a.schoolId !== schoolId) return NextResponse.json({ error: "Rule not found" }, { status: 404 });
+    await db.smsAutomation.delete({ where: { id: a.id } });
+    return NextResponse.json({ ok: true });
+  }
+
+  // run a BILL_REMINDER rule now: unpaid current-term invoices due within |offsetDays|
+  if (action === "run-automation") {
+    const a = await db.smsAutomation.findUnique({ where: { id: body.id } });
+    if (!a || a.schoolId !== schoolId) return NextResponse.json({ error: "Rule not found" }, { status: 404 });
+    if (a.trigger !== "BILL_REMINDER") return NextResponse.json({ error: "Only bill-reminder rules can be run manually — others fire on their events" }, { status: 400 });
+    const term = await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId } } });
+    if (!term) return NextResponse.json({ error: "No current term" }, { status: 400 });
+    const school = await db.school.findUnique({ where: { id: schoolId } });
+    const invoices = await db.invoice.findMany({ where: { schoolId, termId: term.id, status: { in: ["UNPAID", "PARTIAL", "OVERDUE"] } }, include: { student: true } });
+    const horizon = Date.now() + Math.max(0, a.offsetDays) * 864e5;
+    const due = invoices.filter((i) => {
+      const bal = i.totalCents - i.discountCents - i.paidCents;
+      return bal > 0 && (!i.dueDate || i.dueDate.getTime() <= horizon);
+    });
+    if (!due.length) return NextResponse.json({ sent: 0, failed: 0, message: "No invoices due within the rule window — nothing to send." });
+    const setting = await db.smsSetting.findUnique({ where: { schoolId } });
+    if (setting && setting.credits < due.length) return NextResponse.json({ error: `Not enough credits (${setting.credits} left, ${due.length} needed)` }, { status: 400 });
+    let sent = 0, failed = 0;
+    for (const inv of due) {
+      const s = inv.student;
+      const msg = await sendAutomated({
+        db, schoolId, trigger: "BILL_REMINDER", rule: a,
+        defaultBody: `Friendly reminder: {student}'s term balance is {balance}. Kindly settle at the office or via MoMo. Thank you — {school}.`,
+        vars: {
+          student: `${s.firstName} ${s.lastName}`, school: school?.name ?? "the school",
+          balance: `GH₵${((inv.totalCents - inv.discountCents - inv.paidCents) / 100).toFixed(2)}`,
+          date: new Date().toLocaleDateString("en-GB"), term: term.name,
+        },
+        studentId: s.id, recipientName: s.guardianName, recipientPhone: s.guardianPhone, sentByName: user.fullName,
+      });
+      if (msg.status === "FAILED") failed++; else sent++;
+    }
+    await db.smsAutomation.update({ where: { id: a.id }, data: { lastRunAt: new Date() } });
+    return NextResponse.json({ sent, failed });
   }
 
   if (action === "send") {
@@ -141,7 +207,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       if (audience === "ARREARS" && msg.status !== "FAILED") {
         await db.smsMessage.update({ where: { id: msg.id }, data: { category: "FEES" } });
       }
-      msg.status === "FAILED" ? failed++ : sent++;
+      if (msg.status === "FAILED") failed++; else sent++;
     }
     return NextResponse.json({ sent, failed });
   }

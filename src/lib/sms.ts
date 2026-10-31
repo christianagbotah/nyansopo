@@ -37,3 +37,30 @@ export async function sendSms({ db, schoolId, studentId, recipientName, recipien
 export function renderTemplate(body: string, vars: Record<string, string>) {
   return body.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? `{${k}}`);
 }
+
+/* ── Automation rules (iedupro parity) ───────────────────────
+   An active SmsAutomation for a trigger overrides the built-in default
+   message body; counts and last-run are tracked on the rule itself. */
+export type AutomationTrigger = "PAYMENT_RECEIVED" | "INVOICE_ISSUED" | "ABSENCE_MARKED" | "RESULTS_PUBLISHED" | "BILL_REMINDER";
+
+export async function sendAutomated(opts: {
+  db: PrismaClient; schoolId: string; trigger: AutomationTrigger;
+  defaultBody: string; vars: Record<string, string>;
+  studentId?: string | null; recipientName: string; recipientPhone: string; sentByName?: string;
+  rule?: { id: string; name: string; body: string } | null;
+}) {
+  const rule = opts.rule !== undefined
+    ? opts.rule
+    : await opts.db.smsAutomation.findFirst({ where: { schoolId: opts.schoolId, trigger: opts.trigger, active: true }, orderBy: { createdAt: "asc" } });
+  const body = rule ? renderTemplate(rule.body, opts.vars) : opts.defaultBody;
+  const msg = await sendSms({
+    db: opts.db, schoolId: opts.schoolId, studentId: opts.studentId ?? null,
+    recipientName: opts.recipientName, recipientPhone: opts.recipientPhone,
+    body, category: opts.trigger === "BILL_REMINDER" ? "FEES" : opts.trigger === "PAYMENT_RECEIVED" ? "PAYMENT" : opts.trigger === "ABSENCE_MARKED" ? "ATTENDANCE" : "ANNOUNCEMENT",
+    sentByName: opts.sentByName ?? (rule ? `automation: ${rule.name}` : undefined),
+  });
+  if (rule && msg.status !== "FAILED") {
+    await opts.db.smsAutomation.update({ where: { id: rule.id }, data: { sentCount: { increment: 1 }, lastRunAt: new Date() } });
+  }
+  return msg;
+}
