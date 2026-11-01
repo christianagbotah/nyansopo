@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useStore, hasSchoolScope, isAssociationRole, ROLE_LABELS, ModuleId } from "@/lib/store";
+import { useStore, hasSchoolScope, isAssociationRole, ROLE_LABELS, ModuleId, NavTarget } from "@/lib/store";
 import { canModule, canAny, ROLE_LEVELS, ROLE_LEVEL_LABELS } from "@/lib/rbac";
 import { apiGet } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -44,11 +44,13 @@ import { StudentPortal } from "@/components/modules/student-portal";
 import {
   LayoutDashboard, Users, Banknote, CalendarCheck, ClipboardList, GraduationCap, ArrowLeftRight, Building2,
   BrainCircuit, Settings as SettingsIcon, Landmark, Menu, CloudOff, Cloud, RefreshCcw, LogOut, Moon, Sun,
-  Download, ChevronDown, School, MessageSquareText, UtensilsCrossed, Bus, Smartphone, Calculator, Package, PieChart, LayoutList,
+  Download, ChevronDown, ChevronRight, School, MessageSquareText, UtensilsCrossed, Bus, Smartphone, Calculator, Package, PieChart, LayoutList,
   BookOpen, ShieldCheck, Receipt, Route, UserRound, Home, Backpack,
 } from "lucide-react";
 
-type NavItem = { id: ModuleId; label: string; icon: any; section?: string };
+type NavLeaf = { id: string; label: string; icon?: any; target?: NavTarget };
+type NavChild = NavLeaf & { children?: NavLeaf[] };
+type NavItem = { id: ModuleId; label: string; icon: any; section?: string; children?: NavChild[] };
 
 /* permission-based navigation (RBAC): each module is gated by the session's
    effective permissions — role defaults plus any per-user overrides from the
@@ -82,7 +84,35 @@ const PORTAL_NAV: NavItem[] = [
   { id: "campus", label: "My Learning", icon: Backpack, section: "My Record" },
 ];
 
-function NavList({ items, current, onSelect }: { items: NavItem[]; current: ModuleId; onSelect: (m: ModuleId) => void }) {
+/* iEduPro level bands — classroom gradeLevel → the CI3 class groups
+   (CRECHE / NURSERY / KG / BASIC / JHS …), in the canonical order. */
+type LevelBand = { key: string; label: string; match: (grade: string, stage?: string | null) => boolean };
+const LEVEL_BANDS: LevelBand[] = [
+  { key: "CRECHE", label: "Creche & Nursery", match: (g) => /^(CRECHE|NURSERY|CR|PLAY)/i.test(g) || /^B0/.test(g) },
+  { key: "KG", label: "Kindergarten (KG)", match: (g, s) => /KG/i.test(g) || /kindergarten/i.test(s ?? "") },
+  { key: "PRIMARY", label: "Primary (B1–B6)", match: (g) => /^B[1-6]$/.test(g.trim()) || /^YEAR [1-6]$|^Y[1-6]$/i.test(g.trim()) || /^PYP [1-6]$/i.test(g.trim()) },
+  { key: "JHS", label: "Junior High (B7–B9)", match: (g) => /^B[7-9]$/.test(g.trim()) || /^JHS/i.test(g) },
+  { key: "SENIOR", label: "Senior (Y10+)", match: (g) => /^YEAR (1[0-3])$|^Y1[0-3]$/i.test(g.trim()) || /MYP [4-5]/i.test(g.trim()) },
+];
+const bandOf = (grade: string, stage?: string | null): LevelBand =>
+  LEVEL_BANDS.find((b) => b.match(grade, stage)) ?? { key: "OTHER", label: "Other classes", match: () => false };
+
+function levelGroups(classrooms: { id: string; name: string; grade: string; stage?: string | null }[]): { band: string; label: string; classes: { id: string; name: string }[] }[] {
+  const byBand = new Map<string, { label: string; classes: { id: string; name: string }[] }>();
+  for (const c of [...classrooms].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))) {
+    const band = bandOf(c.grade, c.stage);
+    const e = byBand.get(band.key) ?? { label: band.label, classes: [] };
+    e.classes.push({ id: c.id, name: c.name });
+    byBand.set(band.key, e);
+  }
+  // canonical CI3 order: Creche → KG → Primary → JHS → Senior → other
+  const rank = (key: string) => (LEVEL_BANDS.findIndex((b) => b.key === key) + 1) || (LEVEL_BANDS.length + 1);
+  return [...byBand.entries()]
+    .sort((a, b) => rank(a[0]) - rank(b[0]))
+    .map(([band, v]) => ({ band, label: v.label, classes: v.classes }));
+}
+
+function NavList({ items, current, target, onSelect }: { items: NavItem[]; current: ModuleId; target: NavTarget; onSelect: (m: ModuleId, t?: NavTarget) => void }) {
   // group consecutive items by section
   const groups: { section?: string; items: NavItem[] }[] = [];
   for (const item of items) {
@@ -98,18 +128,7 @@ function NavList({ items, current, onSelect }: { items: NavItem[]; current: Modu
             <div className="pt-3 pb-1.5 px-3 text-[10px] font-semibold uppercase tracking-widest text-sidebar-foreground/40">{g.section}</div>
           )}
           {g.items.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => onSelect(item.id)}
-              className={cn(
-                "w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-left",
-                current === item.id ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm" : "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
-              )}
-            >
-              <item.icon className="size-4.5 shrink-0" />
-              <span className="truncate">{item.label}</span>
-              {item.id === "admissions" && <Badge className="ml-auto bg-red-600 text-[10px] px-1.5">demo</Badge>}
-            </button>
+            <NavNode key={item.id} item={item} current={current} target={target} onSelect={onSelect} />
           ))}
         </div>
       ))}
@@ -117,14 +136,109 @@ function NavList({ items, current, onSelect }: { items: NavItem[]; current: Modu
   );
 }
 
+/* one top-level entry — renders its children (level 2) and grandchildren
+   (level 3) as collapsible branches, iEduPro navigation.php style:
+   parent → child menu → per-class grandchild links */
+function NavNode({ item, current, target, onSelect }: { item: NavItem; current: ModuleId; target: NavTarget; onSelect: (m: ModuleId, t?: NavTarget) => void }) {
+  /* tri-state open: null = follow the active branch (auto-expand on deep
+     links), true/false = the user's explicit choice */
+  const [open, setOpen] = useState<boolean | null>(null);
+  const branchContainsActive = !!item.children?.some(
+    (c) => (current === item.id && (!c.target || (!c.target.tab && !c.target.classroomId))) ||
+      (current === item.id && c.target && ((c.target.tab && target?.tab === c.target.tab) || (c.target.classroomId && target?.classroomId === c.target.classroomId))) ||
+      c.children?.some((g) => current === item.id && g.target?.classroomId && target?.classroomId === g.target.classroomId),
+  );
+  const expanded = open ?? branchContainsActive;
+  const isPlainLink = !item.children?.length;
+  return (
+    <div>
+      <button
+        onClick={() => (isPlainLink ? onSelect(item.id) : setOpen(!expanded))}
+        aria-expanded={isPlainLink ? undefined : expanded}
+        className={cn(
+          "w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-left",
+          current === item.id && (!target || !item.children?.some((c) => c.target?.tab || c.target?.classroomId) || branchContainsActive === false && isPlainLink)
+            ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm"
+            : "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
+          current === item.id && isPlainLink && "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm",
+        )}
+      >
+        <item.icon className="size-4.5 shrink-0" />
+        <span className="truncate">{item.label}</span>
+        {item.id === "admissions" && <Badge className="ml-auto bg-red-600 text-[10px] px-1.5">demo</Badge>}
+        {!isPlainLink && (
+          <ChevronRight className={cn("ml-auto size-3.5 shrink-0 transition-transform", expanded && "rotate-90")} />
+        )}
+      </button>
+      {expanded && !!item.children?.length && (
+        <ul className="mt-0.5 mb-1 ml-4 space-y-0.5 border-l border-sidebar-border/60 pl-2">
+          {item.children.map((c) =>
+            c.children?.length ? (
+              <li key={c.id}>
+                <div className="px-2 pt-1.5 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">{c.label}</div>
+                <ul className="space-y-0.5">
+                  {c.children.map((g) => (
+                    <li key={g.id}>
+                      <button
+                        onClick={() => onSelect(item.id, g.target)}
+                        className={cn(
+                          "w-full text-left rounded-md px-2.5 py-1.5 text-[12.5px] transition-colors truncate",
+                          current === item.id && target?.classroomId === g.target?.classroomId && g.target?.classroomId
+                            ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+                            : "text-sidebar-foreground/60 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground",
+                        )}
+                        title={g.label}
+                      >
+                        {g.label}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            ) : (
+              <li key={c.id}>
+                <button
+                  onClick={() => onSelect(item.id, c.target)}
+                  className={cn(
+                    "w-full text-left rounded-md px-2.5 py-1.5 text-[13px] transition-colors truncate flex items-center gap-2",
+                    current === item.id && ((!c.target && !target) || (c.target?.tab && target?.tab === c.target.tab) || (!c.target?.tab && !c.target?.classroomId && !target))
+                      ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+                      : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground",
+                  )}
+                  title={c.label}
+                >
+                  {c.icon && <c.icon className="size-3.5 shrink-0" />}
+                  <span className="truncate">{c.label}</span>
+                </button>
+              </li>
+            ),
+          )}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export function AppShell() {
-  const { session, schools, currentSchoolId, setCurrentSchool, module, setModule, online, queue, syncing, logout, setAiOpen } = useStore();
+  const { session, schools, currentSchoolId, setCurrentSchool, module, navTarget, setModule, online, queue, syncing, logout, setAiOpen } = useStore();
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     if (typeof window === "undefined") return "light";
     return ((localStorage.getItem("theme") as "light" | "dark") ?? "light");
   });
   const [installEvent, setInstallEvent] = useState<any>(null);
   const [navOpen, setNavOpen] = useState(false);
+  /* iEduPro nested navigation: class directory for the level bands
+     (Students → level → class; Classes → level → class timetable). Loaded
+     from the settings resource of the active school. */
+  const [classrooms, setClassrooms] = useState<{ id: string; name: string; grade: string; stage?: string | null }[]>([]);
+
+  useEffect(() => {
+    if (!currentSchoolId || !session) return;
+    if (!(canModule(session.role, session.permissions, "students") || canModule(session.role, session.permissions, "classes"))) return;
+    apiGet<any>(`/api/school/${currentSchoolId}/settings`)
+      .then((d) => setClassrooms(d.classrooms ?? []))
+      .catch(() => setClassrooms([]));
+  }, [currentSchoolId, session?.id, session?.role, session?.permissions]);
 
   const currentSchool = useMemo(() => schools.find((s) => s.id === currentSchoolId) ?? null, [schools, currentSchoolId]);
   const assocScope = isAssociationRole(session?.role);
@@ -149,10 +263,55 @@ export function AppShell() {
   const navItems = useMemo(() => {
     const items: NavItem[] = [];
     if (assocScope) items.push({ id: "association", label: "Association Portal", icon: Landmark });
+
+    // ── dynamic iEduPro-style children ──
+    const classGroups = levelGroups(classrooms);
+    const studentChildren: NavChild[] = [
+      { id: "students-all", label: "Directory — all learners", icon: LayoutList },
+      ...classGroups.map<NavChild>((g) => ({
+        id: `students-${g.band}`,
+        label: `${g.label} (${g.classes.length})`,
+        children: g.classes.map((c) => ({ id: `students-${c.id}`, label: c.name, target: { classroomId: c.id } })),
+      })),
+    ];
+    const classChildren: NavChild[] = [
+      { id: "classes-all", label: "All classes & timetable", icon: LayoutList },
+      ...classGroups.map<NavChild>((g) => ({
+        id: `classes-${g.band}`,
+        label: `${g.label} (${g.classes.length})`,
+        children: g.classes.map((c) => ({ id: `classes-${c.id}`, label: c.name, target: { classroomId: c.id } })),
+      })),
+    ];
+    const isTeacher = session?.role === "TEACHER";
+    const dailyChildren: NavChild[] = [
+      { id: "daily-pos", label: "Counter / POS", target: { tab: "pos" } },
+      { id: "daily-wallets", label: "Wallets", target: { tab: "wallets" } },
+      { id: "daily-ledger", label: "Ledger & arrears", target: { tab: "ledger" } },
+      ...(isTeacher ? [] : [
+        { id: "daily-services", label: "Services & enrolment", target: { tab: "services" } },
+        { id: "daily-rates", label: "Fee rates", target: { tab: "rates" } },
+        { id: "daily-recon", label: "Reconciliation", target: { tab: "recon" } },
+      ]),
+      { id: "daily-trend", label: "14-day trend", target: { tab: "trend" } },
+    ];
+    const feesChildren: NavChild[] = [
+      { id: "fees-invoices", label: "Invoices", target: { tab: "invoices" } },
+      { id: "fees-receipts", label: "Receipts", target: { tab: "receipts" } },
+      { id: "fees-structures", label: "Fee structures", target: { tab: "structures" } },
+      { id: "fees-discounts", label: "Discounts", target: { tab: "discounts" } },
+      { id: "fees-arrears", label: "Arrears chase-list", target: { tab: "arrears" } },
+    ];
+
     // permission-gated school modules
     for (const item of SCHOOL_NAV) {
       if (item.id === "branches") continue;
-      if (canModule(session?.role, session?.permissions, item.id)) items.push(item);
+      if (!canModule(session?.role, session?.permissions, item.id)) continue;
+      const enriched: NavItem = { ...item };
+      if (item.id === "students" && classGroups.length) enriched.children = studentChildren;
+      if (item.id === "classes" && classGroups.length) enriched.children = classChildren;
+      if (item.id === "daily") enriched.children = dailyChildren;
+      if (item.id === "fees") enriched.children = feesChildren;
+      items.push(enriched);
     }
     // proprietor branch console
     if (isGroupOwner) {
@@ -164,7 +323,7 @@ export function AppShell() {
       if (canModule(session?.role, session?.permissions, item.id)) items.push(item);
     }
     return items;
-  }, [assocScope, isGroupOwner, session?.role, session?.permissions]);
+  }, [assocScope, isGroupOwner, session?.role, session?.permissions, classrooms]);
 
   /* guard: never sit on a module outside the role's reach (deep links, stale store) */
   useEffect(() => {
@@ -202,7 +361,7 @@ export function AppShell() {
                   <div className="text-[10px] uppercase tracking-widest text-sidebar-foreground/60 mt-1">{roleLabel}</div>
                 </div>
               </div>
-              <NavList items={navItems} current={module} onSelect={(m) => { setModule(m); setNavOpen(false); }} />
+              <NavList items={navItems} current={module} target={navTarget} onSelect={(m, t) => { setModule(m, t); setNavOpen(false); }} />
               <div className="p-3 border-t border-sidebar-border text-xs text-sidebar-foreground/60">
                 {online ? <span className="flex items-center gap-1.5"><Cloud className="size-3.5 text-emerald-400" /> Online</span> : <span className="flex items-center gap-1.5"><CloudOff className="size-3.5 text-amber-400" /> Offline — {queue.length} queued</span>}
               </div>
@@ -330,7 +489,7 @@ export function AppShell() {
               <div className="text-[10px] uppercase tracking-widest text-sidebar-foreground/60 mt-1">{roleLabel}</div>
             </div>
           </div>
-          <NavList items={navItems} current={module} onSelect={setModule} />
+          <NavList items={navItems} current={module} target={navTarget} onSelect={setModule} />
           <div className="p-3 border-t border-sidebar-border text-[11px] text-sidebar-foreground/60 leading-relaxed">
             {currentSchool ? (
               <div>

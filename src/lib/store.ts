@@ -26,12 +26,18 @@ export type ModuleId =
   | "daily" | "transport" | "sms" | "payroll" | "inventory" | "finance" | "classes"
   | "library" | "rbac" | "cashier" | "conductor" | "staffhub" | "portal" | "campus";
 
+/** Deep-link target within a module (iedupro nested navigation):
+ *  tab — a named tab inside the module (e.g. daily → rates / recon)
+ *  classroomId — a preselected class (e.g. Students → Basic 4 Gold) */
+export type NavTarget = { tab?: string; classroomId?: string } | null;
+
 type Store = {
   session: SessionUser | null;
   schools: SchoolLite[];
   currentSchoolId: string | null;
   screen: "landing" | "login" | "app";
   module: ModuleId;
+  navTarget: NavTarget;
   queue: QueuedOp[];
   online: boolean;
   syncing: boolean;
@@ -42,7 +48,7 @@ type Store = {
   setSchools: (s: SchoolLite[]) => void;
   setCurrentSchool: (id: string | null) => void;
   setScreen: (s: "landing" | "login" | "app") => void;
-  setModule: (m: ModuleId) => void;
+  setModule: (m: ModuleId, target?: NavTarget) => void;
   setOnline: (v: boolean) => void;
   setSyncing: (v: boolean) => void;
   setLastSync: (t: number | null) => void;
@@ -61,6 +67,7 @@ export const useStore = create<Store>()(
       currentSchoolId: null,
       screen: "landing",
       module: "dashboard",
+      navTarget: null,
       queue: [],
       online: true,
       syncing: false,
@@ -78,7 +85,7 @@ export const useStore = create<Store>()(
       },
       setCurrentSchool: (id) => set({ currentSchoolId: id }),
       setScreen: (screen) => set({ screen }),
-      setModule: (module) => set({ module }),
+      setModule: (module, target) => set({ module, navTarget: target ?? null }),
       setOnline: (online) => set({ online }),
       setSyncing: (syncing) => set({ syncing }),
       setLastSync: (lastSyncAt) => set({ lastSyncAt }),
@@ -86,7 +93,7 @@ export const useStore = create<Store>()(
       clearQueue: () => set({ queue: [] }),
       removeFromQueue: (clientId) => set((st) => ({ queue: st.queue.filter((q) => q.clientId !== clientId) })),
       setAiOpen: (aiOpen) => set({ aiOpen }),
-      logout: () => set({ session: null, schools: [], currentSchoolId: null, screen: "landing", module: "dashboard", queue: [] }),
+      logout: () => set({ session: null, schools: [], currentSchoolId: null, screen: "landing", module: "dashboard", navTarget: null, queue: [] }),
     }),
     {
       name: "nyansapo-store",

@@ -63,7 +63,7 @@ const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const weekdayLabel = (wd: string) => wd.split(",").map((n) => DAY_LABELS[Number(n)]).join(" · ");
 
 export function DailyServices() {
-  const { currentSchoolId, online, session } = useStore();
+  const { currentSchoolId, online, session, navTarget } = useStore();
   const [data, setData] = useState<DailyData | null>(null);
   const [tab, setTab] = useState("pos");
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
@@ -75,6 +75,13 @@ export function DailyServices() {
   const [search, setSearch] = useState("");
   const [topUpFor, setTopUpFor] = useState<PosStudent | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  /* iEduPro nested nav: open on the deep-linked tab (POS / wallets / rates…) */
+  const [appliedTarget, setAppliedTarget] = useState<any>(null);
+  if (navTarget !== appliedTarget) {
+    setAppliedTarget(navTarget);
+    if (navTarget?.tab && ["pos", "wallets", "ledger", "services", "rates", "recon", "trend"].includes(navTarget.tab)) setTab(navTarget.tab);
+  }
 
   const isAdmin = session?.role === "SCHOOL_ADMIN" || session?.role === "GROUP_OWNER";
   const isTeacher = session?.role === "TEACHER";

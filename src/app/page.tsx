@@ -19,10 +19,13 @@ const DEEPLINK_MODULES = [
 export default function Home() {
   const { session, screen, setSchools, setScreen, setModule } = useStore();
 
-  // If a persisted session exists, re-hydrate school scope + deep link (?module=)
+  // If a persisted session exists, re-hydrate school scope + deep link (?module=…&tab=…&class=…)
   useEffect(() => {
     if (!session) return;
-    const deep = new URLSearchParams(window.location.search).get("module");
+    const params = new URLSearchParams(window.location.search);
+    const deep = params.get("module");
+    const tab = params.get("tab");
+    const cls = params.get("class");
     apiGet<any>("/api/context")
       .then((ctx) => {
         setSchools(ctx.schools);
@@ -39,7 +42,7 @@ export default function Home() {
         setScreen("landing");
       });
     if (deep && DEEPLINK_MODULES.includes(deep)) {
-      setModule(deep as any);
+      setModule(deep as any, (tab || cls) ? { tab: tab ?? undefined, classroomId: cls ?? undefined } : undefined);
     }
   }, [session?.id]);
 

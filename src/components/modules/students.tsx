@@ -29,7 +29,7 @@ type StudentRow = {
 };
 
 export function Students() {
-  const { currentSchoolId, online } = useStore();
+  const { currentSchoolId, online, navTarget } = useStore();
   const [rows, setRows] = useState<StudentRow[] | null>(null);
   const [classrooms, setClassrooms] = useState<{ id: string; name: string }[]>([]);
   const [search, setSearch] = useState("");
@@ -38,6 +38,15 @@ export function Students() {
   const [profile, setProfile] = useState<any | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [withdrawFor, setWithdrawFor] = useState<StudentRow | null>(null);
+
+  /* iEduPro nested nav: preselect the class when arriving from a
+     Students → level → class deep link (state adjusted during render —
+     the recommended pattern for reacting to store changes) */
+  const [appliedTarget, setAppliedTarget] = useState<any>(null);
+  if (navTarget !== appliedTarget) {
+    setAppliedTarget(navTarget);
+    if (navTarget?.classroomId) setClassId(navTarget.classroomId);
+  }
 
   const load = () => {
     if (!currentSchoolId) return;

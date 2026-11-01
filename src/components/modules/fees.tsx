@@ -34,7 +34,7 @@ type DiscountRow = { id: string; name: string; type: string; value: number; scop
 export type { DiscountData };
 
 export function Fees() {
-  const { currentSchoolId, online } = useStore();
+  const { currentSchoolId, online, navTarget } = useStore();
   const [data, setData] = useState<FeeData | null>(null);
   const [discounts, setDiscounts] = useState<DiscountData | null>(null);
   const [termId, setTermId] = useState<string | null>(null);
@@ -42,6 +42,13 @@ export function Fees() {
   const [payFor, setPayFor] = useState<FeeData["invoices"][0] | null>(null);
   const [flagFor, setFlagFor] = useState<FeeData["invoices"][0] | null>(null);
   const [discFor, setDiscFor] = useState<FeeData["invoices"][0] | null>(null);
+
+  /* iEduPro nested nav: open on the deep-linked tab (invoices / receipts / discounts…) */
+  const [appliedTarget, setAppliedTarget] = useState<any>(null);
+  if (navTarget !== appliedTarget) {
+    setAppliedTarget(navTarget);
+    if (navTarget?.tab && ["invoices", "receipts", "structures", "discounts", "arrears"].includes(navTarget.tab)) setTab(navTarget.tab);
+  }
   const [discDialog, setDiscDialog] = useState<DiscountRow | "new" | null>(null);
   const [applyDialog, setApplyDialog] = useState<DiscountRow | null>(null);
   const [receipt, setReceipt] = useState<any | null>(null);
