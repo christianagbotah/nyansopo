@@ -17,12 +17,14 @@ import { fmtCedi, fmtDate, FLAG_LABELS, PAYMENT_LABELS, fmtDateTime } from "@/li
 import { toast } from "@/hooks/use-toast";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { initials, avatarColor } from "@/lib/format";
-import { Search, UserPlus, Download, Flag, LogOut, Phone, Mail, MapPin, IdCard, GraduationCap, Banknote, ClipboardList, ArrowLeftRight, ShieldAlert } from "lucide-react";
+import { Search, UserPlus, Download, Flag, LogOut, Phone, Mail, MapPin, IdCard, GraduationCap, Banknote, ClipboardList, ArrowLeftRight, ShieldAlert, ArrowUpRight, Utensils, UserX, Undo2, ChevronRight, CheckSquare } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 type StudentRow = {
   id: string; nyansapoIndex: string; name: string; otherNames: string | null; gender: string; dob: string | null;
   classroom: string; classroomId: string; rollNo: number | null; guardianName: string; guardianPhone: string;
   relationship: string; admissionDate: string; status: string;
+  dietNote: string | null; promotedFrom: string | null; promotedAt: string | null;
   invoice: { billed: number; paid: number; status: string; invoiceNo: string } | null;
   flags: { id: string; type: string; severity: string; status: string; amountOwed: number | null; description: string; raisedAt: string; raisedByName: string }[];
   risk: { score: number; level: string } | null;
@@ -38,6 +40,8 @@ export function Students() {
   const [profile, setProfile] = useState<any | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [withdrawFor, setWithdrawFor] = useState<StudentRow | null>(null);
+  const [statusView, setStatusView] = useState<"ACTIVE" | "WITHDRAWN" | "GRADUATED">("ACTIVE");
+  const [promoOpen, setPromoOpen] = useState(false);
 
   /* iEduPro nested nav: preselect the class when arriving from a
      Students → level → class deep link (state adjusted during render —
@@ -50,12 +54,12 @@ export function Students() {
 
   const load = () => {
     if (!currentSchoolId) return;
-    apiGet<any>(`/api/school/${currentSchoolId}/students`)
+    apiGet<any>(`/api/school/${currentSchoolId}/students?status=${statusView}`)
       .then((d) => { setRows(d.students); })
       .catch((e) => toast({ title: "Could not load students", description: e.message, variant: "destructive" }));
     apiGet<any>(`/api/school/${currentSchoolId}/settings`).then((d) => setClassrooms(d.classrooms)).catch(() => {});
   };
-  useEffect(load, [currentSchoolId]);
+  useEffect(load, [currentSchoolId, statusView]); // eslint-disable-line react-hooks/set-state-in-effect
 
   const filtered = useMemo(() => {
     if (!rows) return [];
@@ -72,6 +76,23 @@ export function Students() {
     setSelected(s);
     setProfile(null);
     try { setProfile(await apiGet<any>(`/api/student/${s.id}`)); } catch (e: any) { toast({ title: "Profile load failed", description: e.message, variant: "destructive" }); }
+  }
+
+  /* iEduPro mute/unmute (temporarily off roll) — placement status flips and
+     the school's on-roll count is kept in sync server-side */
+  async function mute(s: StudentRow, reason: string) {
+    try {
+      const r = await apiPost<any>(`/api/school/${currentSchoolId}/students`, { action: "mute", studentId: s.id, reason });
+      toast({ title: `${s.name} muted`, description: `Off roll — ${r.onRoll} learners remaining.` });
+      setSelected(null); load();
+    } catch (e: any) { toast({ title: "Could not mute", description: e.message, variant: "destructive" }); }
+  }
+  async function unmute(s: StudentRow) {
+    try {
+      const r = await apiPost<any>(`/api/school/${currentSchoolId}/students`, { action: "unmute", studentId: s.id });
+      toast({ title: `${s.name} restored`, description: `Back on roll — ${r.onRoll} learners.` });
+      setSelected(null); load();
+    } catch (e: any) { toast({ title: "Could not restore", description: e.message, variant: "destructive" }); }
   }
 
   const exportCsv = () => {
@@ -93,6 +114,7 @@ export function Students() {
         actions={
           <>
             <Button size="sm" variant="outline" className="gap-1.5" onClick={exportCsv}><Download className="size-4" /> Export CSV</Button>
+            <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setPromoOpen(true)}><ArrowUpRight className="size-4" /> Promotion</Button>
             <Button size="sm" className="gap-1.5" onClick={() => setAddOpen(true)}><UserPlus className="size-4" /> Enrol learner</Button>
           </>
         }
@@ -110,6 +132,24 @@ export function Students() {
             {classrooms.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
           </SelectContent>
         </Select>
+        {/* iEduPro roster views: on roll / muted / alumni */}
+        <div className="inline-flex rounded-lg border bg-muted/40 p-0.5" role="group" aria-label="Roster view">
+          {([
+            ["ACTIVE", "On roll"],
+            ["WITHDRAWN", "Muted"],
+            ["GRADUATED", "Alumni"],
+          ] as const).map(([k, label]) => (
+            <button
+              key={k}
+              onClick={() => setStatusView(k)}
+              aria-pressed={statusView === k}
+              className={cn(
+                "rounded-md px-3 py-1.5 text-xs font-semibold transition-all",
+                statusView === k ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-background hover:text-foreground",
+              )}
+            >{label}</button>
+          ))}
+        </div>
       </div>
 
       <Card>
@@ -143,7 +183,11 @@ export function Students() {
                         </div>
                       </td>
                       <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground hidden md:table-cell">{r.nyansapoIndex}</td>
-                      <td className="px-3 py-2.5 hidden sm:table-cell">{r.classroom}</td>
+                      <td className="px-3 py-2.5 hidden sm:table-cell">
+                        {r.classroom}
+                        {r.promotedFrom && <div className="text-[10px] text-amber-600">↑ from {r.promotedFrom}</div>}
+                        {r.dietNote && <div className="text-[10px] text-sky-700 dark:text-sky-400">{"🍽 "}{r.dietNote}</div>}
+                      </td>
                       <td className="px-3 py-2.5 hidden lg:table-cell">
                         <div>{r.guardianName}</div>
                         <div className="text-xs text-muted-foreground">{r.guardianPhone}</div>
@@ -186,8 +230,20 @@ export function Students() {
                 </SheetTitle>
                 <div className="flex flex-wrap gap-1.5 mt-1">
                   <StatusBadge status={selected.status} />
+                  {selected.promotedFrom && <Badge variant="outline" className="gap-1 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800"><ArrowUpRight className="size-3" /> promoted from {selected.promotedFrom}</Badge>}
                   {selected.flags.map((f) => <Badge key={f.id} variant="destructive" className="gap-1"><ShieldAlert className="size-3" />{FLAG_LABELS[f.type] ?? f.type}</Badge>)}
                   {selected.risk && <RiskPill level={selected.risk.level} score={selected.risk.score} />}
+                </div>
+                {/* iEduPro per-learner tools: special diet, mute/unmute (temporarily off roll) */}
+                <div className="mt-3 pt-3 border-t space-y-2">
+                  <DietEditor student={selected} onDone={load} />
+                  <div className="flex flex-wrap gap-1.5">
+                    {selected.status === "ACTIVE" ? (
+                      <Button size="sm" variant="outline" className="h-7 gap-1.5" onClick={() => mute(selected, "Muted from the students module")}><UserX className="size-3.5" /> Mute (off roll)</Button>
+                    ) : selected.status === "WITHDRAWN" ? (
+                      <Button size="sm" variant="outline" className="h-7 gap-1.5" onClick={() => unmute(selected)}><Undo2 className="size-3.5" /> Restore to roll</Button>
+                    ) : null}
+                  </div>
                 </div>
               </SheetHeader>
               {!profile ? <LoadingBlock label="Pulling full records…" /> : <ProfileTabs profile={profile} onChanged={() => { load(); openProfile(selected); }} />}
@@ -198,6 +254,7 @@ export function Students() {
 
       <EnrolDialog open={addOpen} onOpenChange={setAddOpen} classrooms={classrooms} onDone={load} />
       <WithdrawDialog student={withdrawFor} onOpenChange={(o) => !o && setWithdrawFor(null)} onDone={() => { load(); }} />
+      <PromotionWizard open={promoOpen} onOpenChange={(o) => !o && setPromoOpen(false)} rows={rows ?? []} classrooms={classrooms} onDone={load} />
     </div>
   );
 }
@@ -504,6 +561,143 @@ function WithdrawDialog({ student, onOpenChange, onDone }: { student: StudentRow
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button variant="destructive" onClick={submit} disabled={busy}>{busy ? "Processing…" : flag ? "Withdraw & flag" : "Withdraw"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ── special-diet editor (iEduPro student_on_special_diet parity) ── */
+function DietEditor({ student, onDone }: { student: StudentRow; onDone: () => void }) {
+  const { currentSchoolId } = useStore();
+  const [note, setNote] = useState(student.dietNote ?? "");
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/students`, { action: "set-diet", studentId: student.id, dietNote: note });
+      toast({ title: note.trim() ? "Special diet recorded" : "Diet note cleared", description: note.trim() || "—" });
+      onDone();
+    } catch (e: any) { toast({ title: "Could not save", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="rounded-lg border bg-card p-2.5">
+      <div className="flex items-center gap-2 text-sm font-medium"><Utensils className="size-4 text-sky-600" /> Special diet</div>
+      <div className="mt-1.5 flex gap-1.5">
+        <Input
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="e.g. no pork (halal) · lactose-free · vegetarian"
+          className="h-8"
+        />
+        <Button size="sm" className="h-8" disabled={busy || note === (student.dietNote ?? "")} onClick={save}>Save</Button>
+      </div>
+      <p className="text-[11px] text-muted-foreground mt-1">Shown on the class list & feeding rota — the kitchen sees it at lunch service.</p>
+    </div>
+  );
+}
+
+/* ── promotion wizard (iEduPro student_promotion parity): pick a class,
+     review its learners, move them up — or graduate the finalists ── */
+function PromotionWizard({ open, onOpenChange, rows, classrooms, onDone }: { open: boolean; onOpenChange: (o: boolean) => void; rows: StudentRow[]; classrooms: { id: string; name: string }[]; onDone: () => void }) {
+  const { currentSchoolId } = useStore();
+  const [fromId, setFromId] = useState("");
+  const [toId, setToId] = useState("");
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (open) { setFromId(""); setToId(""); setPicked(new Set()); }
+  }, [open]);
+
+  const from = classrooms.find((c) => c.id === fromId);
+  const to = classrooms.find((c) => c.id === toId);
+  const cohort = useMemo(() => (fromId ? rows.filter((r) => r.classroomId === fromId && r.status === "ACTIVE") : []), [rows, fromId]);
+  const graduateMode = !toId;
+
+  async function run() {
+    if (!fromId || !picked.size) return;
+    setBusy(true);
+    try {
+      const r = await apiPost<any>(`/api/school/${currentSchoolId}/students`, {
+        action: "promote", studentIds: [...picked], toClassroomId: toId || undefined, graduateInstead: graduateMode || undefined,
+      });
+      toast({
+        title: graduateMode ? "Cohort graduated" : "Cohort promoted",
+        description: r.graduated ? `${r.graduated} alumni (off roll, ${r.onRoll} remaining)` : `${r.moved} moved to ${to?.name} — from ${from?.name}`,
+      });
+      onOpenChange(false);
+      onDone();
+    } catch (e: any) { toast({ title: "Promotion failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-xl max-h-[92vh] overflow-y-auto nice-scroll">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><ArrowUpRight className="size-4" /> Promotion</DialogTitle>
+          <DialogDescription>Move a cohort up to the next class — or graduate the finalists to alumni (iEduPro student_promotion).</DialogDescription>
+        </DialogHeader>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <Label>From class</Label>
+            <Select value={fromId} onValueChange={(v) => { setFromId(v); setPicked(new Set()); }}>
+              <SelectTrigger><SelectValue placeholder="Pick class" /></SelectTrigger>
+              <SelectContent>
+                {classrooms.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>To class — leave empty to graduate</Label>
+            <Select value={toId} onValueChange={setToId}>
+              <SelectTrigger><SelectValue placeholder="Graduate (alumni)" /></SelectTrigger>
+              <SelectContent>
+                {classrooms.filter((c) => c.id !== fromId).map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        {fromId && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-sm">
+              <span className="font-medium">{cohort.length} on roll in {from?.name}</span>
+              <div className="flex gap-1.5">
+                <Button size="sm" variant="ghost" className="h-7" onClick={() => setPicked(new Set(cohort.map((r) => r.id)))}>All</Button>
+                <Button size="sm" variant="ghost" className="h-7" onClick={() => setPicked(new Set())}>None</Button>
+              </div>
+            </div>
+            <div className="max-h-64 overflow-y-auto nice-scroll rounded-xl border divide-y">
+              {cohort.map((r) => {
+                const on = picked.has(r.id);
+                return (
+                  <button
+                    key={r.id}
+                    onClick={() => setPicked((p) => { const n = new Set(p); on ? n.delete(r.id) : n.add(r.id); return n; })}
+                    className={cn("w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors", on ? "bg-primary/10" : "hover:bg-secondary/40")}
+                  >
+                    <CheckSquare className={cn("size-4", on ? "text-primary" : "text-muted-foreground/50")} />
+                    <span className="flex-1 truncate">{r.name}</span>
+                    <span className="text-[11px] text-muted-foreground">{r.dietNote ? "🍽 " : ""}{r.nyansapoIndex}</span>
+                  </button>
+                );
+              })}
+              {!cohort.length && <div className="p-3 text-sm text-muted-foreground">No active learners in this class.</div>}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {graduateMode
+                ? "No destination class chosen — the selected learners will be graduated to alumni (off roll)."
+                : `Selected learners move to ${to?.name ?? "—"}. Their placement is stamped "promoted from {from}".`}
+            </p>
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={run} disabled={busy || !fromId || !picked.size} className="gap-1.5">
+            {busy ? "Working…" : graduateMode ? `Graduate ${picked.size}` : `Promote ${picked.size}`}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -132,7 +132,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       role: "STUDENT", school, year: year?.name ?? null, term: term?.name ?? null,
       me: {
         id: s.id, name: `${s.firstName} ${s.lastName}`, nyansapoIndex: s.nyansapoIndex, gender: s.gender,
-        classroom: classroom?.name ?? null, classTeacher: classroom?.classTeacher?.fullName ?? null,
+        classroom: classroom?.name ?? null, classroomId: classroom?.id ?? null, classTeacher: classroom?.classTeacher?.fullName ?? null,
         attendance: {
           total: att.length, present: att.filter((r) => r.status === "PRESENT").length,
           late: att.filter((r) => r.status === "LATE").length, absent: att.filter((r) => r.status === "ABSENT").length,

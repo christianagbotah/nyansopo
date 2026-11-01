@@ -15,7 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatCard, ModuleHeader, LoadingBlock, EmptyState } from "@/components/ui-helpers";
 import { fmtDateTime } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
-import { Smartphone, Send, FileText, History, Settings2, Plus, CheckCheck, XCircle, AlertTriangle, Wallet, Zap } from "lucide-react";
+import { Smartphone, Send, FileText, History, Settings2, Plus, CheckCheck, XCircle, AlertTriangle, Wallet, Zap, Megaphone } from "lucide-react";
 
 type Template = { id: string; name: string; category: string; body: string; isDefault: boolean };
 type Automation = { id: string; name: string; trigger: string; recipients: string; body: string; offsetDays: number; active: boolean; lastRunAt: string | null; sentCount: number };
@@ -84,16 +84,23 @@ export function SmsCenter() {
       </div>
 
       <Tabs value={tab} onValueChange={setTab} className="mt-5">
-        <TabsList>
+        <TabsList className="flex-wrap h-auto">
           <TabsTrigger value="compose">Compose & send</TabsTrigger>
           <TabsTrigger value="automations">Automations ({data.automations.length})</TabsTrigger>
           <TabsTrigger value="templates">Templates ({data.templates.length})</TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>
+          <TabsTrigger value="noticeboard">Noticeboard</TabsTrigger>
           <TabsTrigger value="settings">Settings</TabsTrigger>
         </TabsList>
 
         <TabsContent value="compose">
           <ComposeTab data={data} onSent={() => { load(category); setTab("history"); }} />
+        </TabsContent>
+
+        {/* ── NOTICEBOARD (iEduPro noticeboard parity) — school notices for
+            parents/staff, shown in the parent & student portals ── */}
+        <TabsContent value="noticeboard">
+          <NoticeboardTab />
         </TabsContent>
 
         <TabsContent value="automations">
@@ -598,5 +605,99 @@ function AutomationDialog({ rule, onOpenChange, onDone }: { rule: Automation | "
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/* ── Noticeboard tab (iEduPro noticeboard parity): school notices for
+    parents & staff — surfaced in the parent and student portals ── */
+type NoticeRow = { id: string; title: string; body: string; audience: string; category: string; priority: string; postedByName: string; postedAt: string; source: string };
+
+function NoticeboardTab() {
+  const { currentSchoolId } = useStore();
+  const [notices, setNotices] = useState<NoticeRow[] | null>(null);
+  const [title, setTitle] = useState("");
+  const [bodyText, setBodyText] = useState("");
+  const [audience, setAudience] = useState("PARENTS");
+  const [priority, setPriority] = useState("NORMAL");
+  const [busy, setBusy] = useState(false);
+
+  const load = () => {
+    apiGet<any>(`/api/school/${currentSchoolId}/announcements`)
+      .then((d) => setNotices(d.announcements ?? []))
+      .catch(() => setNotices([]));
+  };
+  useEffect(() => { load(); }, [currentSchoolId]); // eslint-disable-line react-hooks/set-state-in-effect
+
+  async function post() {
+    if (!title.trim() || !bodyText.trim()) { toast({ title: "Title and body are required" }); return; }
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/announcements`, { action: "create", title, body: bodyText, audience, priority });
+      toast({ title: "Notice posted", description: "It appears in the parent & student portals straight away." });
+      setTitle(""); setBodyText(""); setPriority("NORMAL");
+      load();
+    } catch (e: any) { toast({ title: "Could not post", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="grid lg:grid-cols-3 gap-4">
+      <Card className="lg:col-span-2">
+        <CardHeader className="pb-3"><CardTitle className="text-base">Notices</CardTitle></CardHeader>
+        <CardContent className="space-y-2 max-h-[560px] overflow-y-auto nice-scroll">
+          {notices === null ? <LoadingBlock label="Loading…" /> : notices.length ? notices.map((n) => (
+            <div key={n.id} className="rounded-xl border p-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="font-medium">{n.title}</div>
+                <div className="flex gap-1 shrink-0">
+                  {n.priority === "HIGH" && <Badge className="bg-red-600 text-[9px]">urgent</Badge>}
+                  <Badge variant="outline" className="text-[9px]">{n.audience}</Badge>
+                </div>
+              </div>
+              <p className="text-sm text-muted-foreground mt-1">{n.body}</p>
+              <div className="text-[11px] text-muted-foreground mt-2">{n.source} · {n.postedByName} · {new Date(n.postedAt).toLocaleString("en-GB")}</div>
+            </div>
+          )) : <EmptyState title="No notices yet" hint="Post the first one — it shows in the parent & student portals." />}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader className="pb-3"><CardTitle className="text-base">Post a notice</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          <div className="space-y-1.5">
+            <Label className="text-xs">Title</Label>
+            <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. PTA meeting — Friday 4pm" />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Body</Label>
+            <Input value={bodyText} onChange={(e) => setBodyText(e.target.value)} placeholder="What should families know?" />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Audience</Label>
+              <Select value={audience} onValueChange={setAudience}>
+                <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="PARENTS">Parents</SelectItem>
+                  <SelectItem value="SCHOOLS">Staff & schools</SelectItem>
+                  <SelectItem value="ZONAL">Zone</SelectItem>
+                  <SelectItem value="DISTRICT">District</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Priority</Label>
+              <Select value={priority} onValueChange={setPriority}>
+                <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="NORMAL">Normal</SelectItem>
+                  <SelectItem value="HIGH">High</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <Button className="w-full gap-1.5" onClick={post} disabled={busy}>{busy ? "Posting…" : <><Megaphone className="size-4" /> Post notice</>}</Button>
+          <p className="text-[11px] text-muted-foreground">Notices appear instantly in the Parent Portal and My Learning.</p>
+        </CardContent>
+      </Card>
+    </div>
   );
 }

@@ -11,7 +11,7 @@ import { apiGet } from "@/lib/api";
 // guard still resets out-of-scope modules for the role, so this is safe
 const DEEPLINK_MODULES = [
   "dashboard", "students", "admissions", "fees", "attendance", "gradebook",
-  "reports", "branches", "ai", "association", "settings", "daily", "transport",
+  "reports", "exams", "branches", "ai", "association", "settings", "daily", "transport",
   "payroll", "inventory", "finance", "classes", "library", "rbac", "cashier",
   "conductor", "staffhub", "portal", "campus", "sms",
 ];

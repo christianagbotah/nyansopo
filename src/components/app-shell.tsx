@@ -35,6 +35,7 @@ import { Payroll } from "@/components/modules/payroll";
 import { Inventory } from "@/components/modules/inventory";
 import { Finance } from "@/components/modules/finance";
 import { LibraryPortal } from "@/components/modules/library-portal";
+import { OnlineExams } from "@/components/modules/online-exams";
 import { RbacConsole } from "@/components/modules/rbac-console";
 import { CashierConsole } from "@/components/modules/cashier-console";
 import { ConductorPortal } from "@/components/modules/conductor-portal";
@@ -45,7 +46,7 @@ import {
   LayoutDashboard, Users, Banknote, CalendarCheck, ClipboardList, GraduationCap, ArrowLeftRight, Building2,
   BrainCircuit, Settings as SettingsIcon, Landmark, Menu, CloudOff, Cloud, RefreshCcw, LogOut, Moon, Sun,
   Download, ChevronDown, ChevronRight, School, MessageSquareText, UtensilsCrossed, Bus, Smartphone, Calculator, Package, PieChart, LayoutList,
-  BookOpen, ShieldCheck, Receipt, Route, UserRound, Home, Backpack,
+  BookOpen, ShieldCheck, Receipt, Route, UserRound, Home, Backpack, Laptop,
 } from "lucide-react";
 
 type NavLeaf = { id: string; label: string; icon?: any; target?: NavTarget };
@@ -71,6 +72,7 @@ const SCHOOL_NAV: NavItem[] = [
   { id: "classes", label: "Classes & Timetable", icon: LayoutList, section: "Academic" },
   { id: "gradebook", label: "Gradebook", icon: ClipboardList, section: "Academic" },
   { id: "reports", label: "Exams & Reports", icon: GraduationCap, section: "Academic" },
+  { id: "exams", label: "Online Exams", icon: Laptop, section: "Academic" },
   { id: "library", label: "Library", icon: BookOpen, section: "Academic" },
   { id: "sms", label: "SMS Centre", icon: Smartphone, section: "Communication" },
   { id: "ai", label: "AI Assistant", icon: BrainCircuit, section: "Support" },
@@ -519,6 +521,7 @@ export function AppShell() {
              module === "classes" && show("classes") ? <Classes /> :
              module === "gradebook" && show("gradebook") ? <Gradebook /> :
              module === "reports" && show("reports") ? <Reports /> :
+             module === "exams" && show("exams") ? <OnlineExams /> :
              module === "library" && show("library") ? <LibraryPortal /> :
              module === "rbac" && show("rbac") ? <RbacConsole /> :
              module === "cashier" && show("cashier") ? <CashierConsole /> :

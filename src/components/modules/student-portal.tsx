@@ -1,17 +1,20 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
-import { apiGet } from "@/lib/api";
+import { apiGet, apiPost } from "@/lib/api";
 import { ModuleHeader, LoadingBlock, EmptyState } from "@/components/ui-helpers";
 import { fmtCedi, fmtDate } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "@/hooks/use-toast";
 import { avatarColor } from "@/lib/format";
-import { Backpack, CalendarDays, BookOpen, GraduationCap, Wallet, Megaphone, Clock, AlertTriangle, CheckCircle2, UserRound } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { Backpack, CalendarDays, BookOpen, GraduationCap, Wallet, Megaphone, Clock, AlertTriangle, CheckCircle2, UserRound, Laptop, Send } from "lucide-react";
 
 type Slot = { day: number; start: number; end: number; subject: string; teacher: string | null };
 type Mark = { subject: string; assessment: string; type: string; score: number; max: number };
@@ -26,7 +29,7 @@ type StudentData = {
   year: string | null; term: string | null;
   me: {
     id: string; name: string; nyansapoIndex: string; gender: string;
-    classroom: string | null; classTeacher: string | null;
+    classroom: string | null; classroomId: string | null; classTeacher: string | null;
     attendance: { total: number; present: number; late: number; absent: number; rate: number | null; recent: { date: string; status: string }[] };
     timetable: Slot[];
     marks: Mark[];
@@ -88,6 +91,7 @@ export function StudentPortal() {
           <TabsTrigger value="results">My results</TabsTrigger>
           <TabsTrigger value="library">Library</TabsTrigger>
           <TabsTrigger value="attendance">Attendance</TabsTrigger>
+          <TabsTrigger value="exams">Online exams</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="mt-3 grid lg:grid-cols-3 gap-4">
@@ -275,6 +279,10 @@ export function StudentPortal() {
             </CardContent>
           </Card>
         </TabsContent>
+        {/* ── ONLINE EXAMS (iEduPro parity — learners sit published MCQ papers) ── */}
+        <TabsContent value="exams" className="mt-3">
+          <StudentExams studentId={me.id} classroomId={me.classroomId ?? null} />
+        </TabsContent>
       </Tabs>
     </div>
   );
@@ -295,6 +303,127 @@ function Mini({ label, value, tone }: { label: string; value: React.ReactNode; t
     <div className="rounded-lg border p-2.5 text-center">
       <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
       <div className={`text-lg font-bold tabular-nums ${tone === "good" ? "text-emerald-600 dark:text-emerald-400" : tone === "bad" ? "text-destructive" : tone === "warn" ? "text-amber-600" : ""}`}>{value}</div>
+    </div>
+  );
+}
+
+/* ── Online exams tab — the learner sits published MCQ papers for their class
+    (iEduPro online_exam parity; auto-marked against the answer key) ── */
+type PortalExam = {
+  id: string; title: string; subjectName: string; description: string | null;
+  classroom: string | null; classroomId: string | null; durationMins: number;
+  status: string; questionCount: number; totalMarks: number;
+  questions: { id: string; prompt: string; optionA: string; optionB: string; optionC: string; optionD: string }[];
+  attempts: { studentId: string; score: number | null; max: number }[];
+};
+
+function StudentExams({ studentId, classroomId }: { studentId: string; classroomId: string | null }) {
+  const { currentSchoolId } = useStore();
+  const [exams, setExams] = useState<PortalExam[] | null>(null);
+  const [sitting, setSitting] = useState<PortalExam | null>(null);
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [justScored, setJustScored] = useState<{ score: number; max: number } | null>(null);
+
+  const load = () => {
+    if (!currentSchoolId) return;
+    apiGet<{ exams: PortalExam[] }>(`/api/school/${currentSchoolId}/ops/exams`)
+      .then((d) => setExams(d.exams))
+      .catch(() => setExams([]));
+  };
+  useEffect(() => { load(); }, [currentSchoolId]); // eslint-disable-line react-hooks/set-state-in-effect
+
+  if (!exams) return <LoadingBlock label="Loading exams…" />;
+  const forMe = exams.filter((e) => e.status === "PUBLISHED" && (!e.classroomId || e.classroomId === classroomId));
+  const myAttempts = new Map(exams.flatMap((e) => e.attempts).map((a) => [a.studentId, a]));
+
+  async function submit() {
+    if (!sitting) return;
+    try {
+      const res = await apiPost<any>(`/api/school/${currentSchoolId}/ops/exams`, {
+        action: "submit-attempt", examId: sitting.id, studentId, answers,
+      });
+      setJustScored({ score: res.score, max: res.max });
+      setSitting(null);
+      setAnswers({});
+      load();
+    } catch (e: any) { toast({ title: "Submit failed", description: e.message, variant: "destructive" }); }
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><Laptop className="size-4" /> Open exams</CardTitle></CardHeader>
+        <CardContent className="space-y-2">
+          {forMe.length ? forMe.map((e) => {
+            const done = myAttempts.has(studentId);
+            return (
+              <div key={e.id} className="rounded-xl border p-3 flex flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="font-medium">{e.title}</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    {e.subjectName} · {e.classroom ?? "all classes"} · {e.questionCount} questions · {e.durationMins} min
+                    {e.description ? ` · ${e.description}` : ""}
+                  </div>
+                </div>
+                {done ? (
+                  <Badge variant="secondary" className="gap-1"><CheckCircle2 className="size-3" /> submitted — {myAttempts.get(studentId)!.score}/{myAttempts.get(studentId)!.max}</Badge>
+                ) : (
+                  <Button size="sm" className="gap-1.5" onClick={() => { setSitting(e); setAnswers({}); setJustScored(null); }}><Send className="size-3.5" /> Sit exam</Button>
+                )}
+              </div>
+            );
+          }) : <EmptyState title="No open exams" hint="Your teachers will publish online exams here." />}
+        </CardContent>
+      </Card>
+      {justScored && (
+        <Card className="border-emerald-300 dark:border-emerald-900 bg-emerald-50/50 dark:bg-emerald-950/20">
+          <CardContent className="pt-4 text-center">
+            <div className="text-lg font-semibold">Medaase — submitted!</div>
+            <div className="text-sm text-muted-foreground">You scored {justScored.score} of {justScored.max} ({Math.round((justScored.score / Math.max(1, justScored.max)) * 100)}%)</div>
+          </CardContent>
+        </Card>
+      )}
+      <Dialog open={!!sitting} onOpenChange={(o) => { if (!o) { setSitting(null); setAnswers({}); } }}>
+        <DialogContent className="max-w-xl max-h-[92vh] overflow-y-auto nice-scroll">
+          <DialogHeader>
+            <DialogTitle>{sitting?.title}</DialogTitle>
+            <DialogDescription>
+              {sitting?.subjectName} · {sitting?.questionCount} questions · {sitting?.durationMins} minutes · pick one option each.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            {(sitting?.questions ?? []).map((q, i) => (
+              <div key={q.id} className="rounded-xl border p-3">
+                <div className="font-medium text-sm mb-2">{i + 1}. {q.prompt}</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {(["A", "B", "C", "D"] as const).map((L) => {
+                    const opt = (q as any)[`option${L}`] as string;
+                    const picked = answers[String(i)] === L;
+                    return (
+                      <button
+                        key={L}
+                        onClick={() => setAnswers((a) => ({ ...a, [String(i)]: L }))}
+                        className={cn(
+                          "rounded-lg border p-2 text-left text-sm transition-colors",
+                          picked ? "border-primary bg-primary/10 font-medium" : "hover:bg-secondary/50",
+                        )}
+                      >
+                        <b className="mr-1.5">{L}.</b>{opt}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setSitting(null); setAnswers({}); }}>Cancel</Button>
+            <Button className="gap-1.5" onClick={submit} disabled={Object.keys(answers).length !== (sitting?.questions.length ?? 0)}>
+              Submit {Object.keys(answers).length}/{sitting?.questions.length ?? 0}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

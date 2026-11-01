@@ -103,6 +103,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
             classroom: e.classroom.name, classroomId: e.classroomId, rollNo: e.rollNo,
             guardianName: e.student.guardianName, guardianPhone: e.student.guardianPhone, relationship: e.student.relationship,
             admissionDate: e.admissionDate, status: e.status,
+            dietNote: e.student.dietNote,
+            promotedFrom: e.promotedFromName, promotedAt: e.promotedAt,
             invoice: inv ?? null,
             flags: e.student.flags.map((f) => ({ id: f.id, type: f.type, severity: f.severity, status: f.status, amountOwed: f.amountOwedCents, raisedAt: f.raisedAt, description: f.description, raisedByName: f.raisedByName, schoolId: f.schoolId })),
             risk: e.student.riskScores[0] ? { score: e.student.riskScores[0].score, level: e.student.riskScores[0].level } : null,
@@ -561,6 +563,59 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     // ── STUDENTS ──────────────────────────────────────────
     case "students": {
+      // ── iEduPro student management actions (promotion / mute / diet) ──
+      if (action === "promote") {
+        // promotion wizard: move selected learners up a class (or graduate them).
+        // The active placement row is reassigned and stamped with its trail.
+        const { studentIds, toClassroomId, graduateInstead } = body as { studentIds: string[]; toClassroomId?: string; graduateInstead?: boolean };
+        if (!Array.isArray(studentIds) || !studentIds.length) return NextResponse.json({ error: "studentIds[] required" }, { status: 400 });
+        let moved = 0, graduated = 0;
+        for (const studentId of studentIds) {
+          const en = await db.enrollment.findFirst({ where: { studentId, schoolId, status: "ACTIVE" }, include: { classroom: true } });
+          if (!en) continue;
+          if (graduateInstead) {
+            await db.enrollment.update({
+              where: { id: en.id },
+              data: { status: "GRADUATED", exitDate: new Date(), exitReason: `Graduated from ${en.classroom.name} (promotion cycle)`, promotedFromName: en.classroom.name, promotedAt: new Date() },
+            });
+            graduated++;
+          } else {
+            const to = toClassroomId ? await db.classroom.findUnique({ where: { id: toClassroomId } }) : null;
+            if (!to || to.schoolId !== schoolId) continue;
+            await db.enrollment.update({
+              where: { id: en.id },
+              data: { classroomId: to.id, promotedFromName: en.classroom.name, promotedAt: new Date() },
+            });
+            moved++;
+          }
+        }
+        const n = await db.enrollment.count({ where: { schoolId, status: "ACTIVE" } });
+        await db.school.update({ where: { id: schoolId }, data: { studentsOnRoll: n } });
+        return NextResponse.json({ moved, graduated, onRoll: n });
+      }
+      if (action === "mute") {
+        const { studentId, reason } = body;
+        const en = await db.enrollment.findFirst({ where: { studentId, schoolId, status: "ACTIVE" } });
+        if (!en) return NextResponse.json({ error: "No active placement" }, { status: 404 });
+        await db.enrollment.update({ where: { id: en.id }, data: { status: "WITHDRAWN", exitDate: new Date(), exitReason: reason ?? "Muted (temporarily off roll)" } });
+        const n = await db.enrollment.count({ where: { schoolId, status: "ACTIVE" } });
+        await db.school.update({ where: { id: schoolId }, data: { studentsOnRoll: n } });
+        return NextResponse.json({ muted: true, onRoll: n });
+      }
+      if (action === "unmute") {
+        const { studentId } = body;
+        const en = await db.enrollment.findFirst({ where: { studentId, schoolId, status: "WITHDRAWN" }, orderBy: { exitDate: "desc" } });
+        if (!en) return NextResponse.json({ error: "No muted placement found" }, { status: 404 });
+        await db.enrollment.update({ where: { id: en.id }, data: { status: "ACTIVE", exitDate: null, exitReason: null } });
+        const n = await db.enrollment.count({ where: { schoolId, status: "ACTIVE" } });
+        await db.school.update({ where: { id: schoolId }, data: { studentsOnRoll: n } });
+        return NextResponse.json({ unmuted: true, onRoll: n });
+      }
+      if (action === "set-diet") {
+        const { studentId, dietNote } = body;
+        const st = await db.student.update({ where: { id: studentId }, data: { dietNote: dietNote?.trim() ? dietNote.trim() : null } });
+        return NextResponse.json({ student: { id: st.id, dietNote: st.dietNote } });
+      }
       if (action === "create") {
         const { firstName, lastName, otherNames, gender, dateOfBirth, guardianName, guardianPhone, guardianOccupation, relationship, classroomId, previousSchool, inquiryId } = body;
         if (!firstName || !lastName || !guardianName || !guardianPhone || !classroomId) return NextResponse.json({ error: "Missing required fields" }, { status: 400 });

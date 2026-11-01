@@ -24,6 +24,8 @@ export async function POST(req: NextRequest) {
         groupName: user.schoolGroup?.name ?? null,
         permissions: effectivePermissions(user.role, user.permissionsJson),
         landingModule: LANDING_MODULE[user.role] ?? "dashboard",
+        staffId: user.staffId ?? null,
+        studentId: user.studentId ?? null,
       },
     });
   } catch {
