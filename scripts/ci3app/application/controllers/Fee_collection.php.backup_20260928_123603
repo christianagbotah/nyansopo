@@ -1,0 +1,2128 @@
+<?php
+defined('BASEPATH') OR exit('No direct script access allowed');
+
+class Fee_collection extends CI_Controller {
+    
+    public function __construct() {
+        parent::__construct();
+        $this->load->library('session');
+        $this->load->database();
+        $this->load->model('Attendance_enterprise_model');
+        
+        if ($this->session->userdata('admin_login') != 1) {
+            redirect(site_url('login'), 'refresh');
+        }
+    }
+    
+    // Unified collection portal for Admin/Cashier
+    public function index() {
+        // Check if cashier mode is enabled
+        $collection_mode = get_settings('daily_fee_collection_mode') ?: 'classroom';
+        
+        // In classroom mode, redirect to dashboard (fees collected during attendance only)
+        if ($collection_mode == 'classroom') {
+            $this->session->set_flashdata('error_message', get_phrase('fee_collection_portal_disabled_use_attendance_portal'));
+            redirect(site_url('admin/dashboard'), 'refresh');
+        }
+        
+        // In cashier or hybrid mode, allow access to cashier portal
+        $role = $this->session->userdata('login_type');
+        
+        // Check permissions using enhanced system
+        if (!$this->Daily_fee_model->can_collect_daily_fees(null, 'cashier_portal')) {
+            $this->session->set_flashdata('error_message', get_phrase('you_do_not_have_permission_to_access_fee_collection'));
+            redirect(site_url('admin/dashboard'), 'refresh');
+        }
+        
+        // Conductors should use their own portal
+        if ($role == 'conductor') {
+            redirect(site_url('fee_collection/conductor_portal'), 'refresh');
+        }
+        
+        $page_data['page_name'] = 'fee_collection_portal';
+        $page_data['page_title'] = get_phrase('fee_collection_portal');
+        $page_data['collection_mode'] = $collection_mode;
+        $this->load->view('backend/main', $page_data);
+    }
+    
+    // Statistics and Reports Dashboard
+    public function statistics() {
+        // Check admin privileges
+        $login_type = $this->session->userdata('login_type');
+        $admin_id = $this->session->userdata('admin_id');
+        
+        if ($login_type != 'admin') {
+            $this->session->set_flashdata('error_message', get_phrase('you_do_not_have_permission_to_access_this_page'));
+            redirect(site_url('admin/dashboard'), 'refresh');
+        }
+        
+        $admin = $this->db->get_where('admin', ['admin_id' => $admin_id])->row();
+        if (!$admin || $admin->level > 3) {
+            $this->session->set_flashdata('error_message', get_phrase('you_do_not_have_permission_to_access_this_page'));
+            redirect(site_url('admin/dashboard'), 'refresh');
+        }
+        
+        $page_data['page_name'] = 'fee_collection_statistics';
+        $page_data['page_title'] = get_phrase('fee_collection_statistics_reports');
+        $this->load->view('backend/main', $page_data);
+    }
+    
+    // Get statistics data (AJAX)
+    public function get_statistics_data() {
+        // Check admin privileges
+        $login_type = $this->session->userdata('login_type');
+        $admin_id = $this->session->userdata('admin_id');
+        
+        if ($login_type != 'admin') {
+            echo json_encode(['status' => 'error', 'message' => get_phrase('access_denied')]);
+            return;
+        }
+        
+        $admin = $this->db->get_where('admin', ['admin_id' => $admin_id])->row();
+        if (!$admin || $admin->level > 3) {
+            echo json_encode(['status' => 'error', 'message' => get_phrase('access_denied')]);
+            return;
+        }
+        
+        $date_from = $this->input->get('date_from') ? strtotime($this->input->get('date_from')) : strtotime('first day of this month');
+        $date_to = $this->input->get('date_to') ? strtotime($this->input->get('date_to')) : strtotime('today');
+        $class_id = $this->input->get('class_id');
+        $collector_id = $this->input->get('collector_id');
+        $payment_method = $this->input->get('payment_method');
+        $running_year = get_settings('running_year');
+        $running_term = get_settings('running_term');
+        
+        $this->db->select('t.*, s.name as student_name, s.student_code, c.name as class_name, 
+                          a.name as collector_name, a.level as collector_level,
+                          (t.feeding_amount + t.breakfast_amount + t.classes_amount + t.water_amount + t.transport_amount) as total_amount');
+        $this->db->from('daily_fee_transactions t');
+        $this->db->join('student s', 's.student_id = t.student_id');
+        $this->db->join('enroll e', 'e.student_id = s.student_id AND e.year = "'.$running_year.'" AND e.term = "'.$running_term.'"');
+        $this->db->join('class c', 'c.class_id = e.class_id');
+        $this->db->join('admin a', 'a.admin_id = t.collected_by', 'left');
+        $this->db->where('t.payment_date >=', $date_from);
+        $this->db->where('t.payment_date <=', $date_to + 86400);
+        
+        if ($class_id) $this->db->where('e.class_id', $class_id);
+        if ($collector_id) $this->db->where('t.collected_by', $collector_id);
+        if ($payment_method) $this->db->where('t.payment_method', $payment_method);
+        
+        $this->db->order_by('t.payment_date', 'DESC');
+        $transactions = $this->db->get()->result_array();
+        
+        // Calculate summary
+        $summary = [
+            'total_collected' => 0,
+            'feeding_total' => 0,
+            'breakfast_total' => 0,
+            'classes_total' => 0,
+            'water_total' => 0,
+            'transport_total' => 0,
+            'arrears_cleared' => 0,
+            'advance_collected' => 0,
+            'current_collected' => 0,
+            'transaction_count' => count($transactions),
+            'by_payment_type' => ['arrears' => 0, 'advance' => 0, 'mixed' => 0],
+            'by_collector' => [],
+            'by_class' => []
+        ];
+        
+        foreach ($transactions as $t) {
+            $summary['total_collected'] += $t['total_amount'];
+            $summary['feeding_total'] += $t['feeding_amount'];
+            $summary['breakfast_total'] += $t['breakfast_amount'];
+            $summary['classes_total'] += $t['classes_amount'];
+            $summary['water_total'] += $t['water_amount'];
+            $summary['transport_total'] += $t['transport_amount'];
+            
+            // By payment type
+            $payment_type = $t['payment_type'] ?: 'current';
+            if (!isset($summary['by_payment_type'][$payment_type])) {
+                $summary['by_payment_type'][$payment_type] = 0;
+            }
+            $summary['by_payment_type'][$payment_type] += $t['total_amount'];
+            
+            if ($payment_type == 'arrears') {
+                $summary['arrears_cleared'] += $t['total_amount'];
+            } elseif ($payment_type == 'advance') {
+                $summary['advance_collected'] += $t['total_amount'];
+            } elseif ($payment_type == 'mixed') {
+                $summary['arrears_cleared'] += $t['total_amount'] / 2;
+                $summary['advance_collected'] += $t['total_amount'] / 2;
+            }
+            
+            // By collector
+            $collector = $t['collector_name'] ?: 'Unknown';
+            if (!isset($summary['by_collector'][$collector])) {
+                $summary['by_collector'][$collector] = 0;
+            }
+            $summary['by_collector'][$collector] += $t['total_amount'];
+            
+            // By class
+            $class = $t['class_name'];
+            if (!isset($summary['by_class'][$class])) {
+                $summary['by_class'][$class] = 0;
+            }
+            $summary['by_class'][$class] += $t['total_amount'];
+        }
+        
+        // Get outstanding arrears
+        $this->db->select('SUM(feeding_arrears + breakfast_arrears + classes_arrears + water_arrears + transport_arrears) as total_arrears');
+        $this->db->from('daily_fee_wallet');
+        $arrears_data = $this->db->get()->row();
+        $summary['outstanding_arrears'] = $arrears_data ? $arrears_data->total_arrears : 0;
+        
+        // Get prepaid balances
+        $this->db->select('SUM(feeding_balance + breakfast_balance + classes_balance + water_balance + transport_balance) as total_prepaid');
+        $this->db->from('daily_fee_wallet');
+        $prepaid_data = $this->db->get()->row();
+        $summary['total_prepaid'] = $prepaid_data ? $prepaid_data->total_prepaid : 0;
+        
+        // Calculate KPIs
+        $summary['kpis'] = [
+            'collection_rate' => $summary['outstanding_arrears'] > 0 ? 
+                round(($summary['arrears_cleared'] / ($summary['arrears_cleared'] + $summary['outstanding_arrears'])) * 100, 2) : 100,
+            'avg_transaction' => $summary['transaction_count'] > 0 ? 
+                round($summary['total_collected'] / $summary['transaction_count'], 2) : 0,
+            'advance_ratio' => $summary['total_collected'] > 0 ? 
+                round(($summary['advance_collected'] / $summary['total_collected']) * 100, 2) : 0,
+            'arrears_ratio' => $summary['total_collected'] > 0 ? 
+                round(($summary['arrears_cleared'] / $summary['total_collected']) * 100, 2) : 0,
+            'students_paid' => count(array_unique(array_column($transactions, 'student_id'))),
+            'collectors_active' => count($summary['by_collector']),
+            'classes_covered' => count($summary['by_class'])
+        ];
+        
+        // Compare with previous period
+        $period_days = ($date_to - $date_from) / 86400;
+        $prev_from = $date_from - ($period_days * 86400);
+        $prev_to = $date_from - 1;
+        
+        $this->db->select('SUM(feeding_amount + breakfast_amount + classes_amount + water_amount + transport_amount) as prev_total');
+        $this->db->from('daily_fee_transactions');
+        $this->db->where('payment_date >=', $prev_from);
+        $this->db->where('payment_date <=', $prev_to);
+        if ($class_id) $this->db->where('student_id IN (SELECT student_id FROM enroll WHERE class_id = '.$class_id.')');
+        $prev_data = $this->db->get()->row();
+        $prev_total = $prev_data ? $prev_data->prev_total : 0;
+        
+        $summary['kpis']['growth_rate'] = $prev_total > 0 ? 
+            round((($summary['total_collected'] - $prev_total) / $prev_total) * 100, 2) : 0;
+        
+        echo json_encode([
+            'status' => 'success',
+            'summary' => $summary,
+            'transactions' => $transactions
+        ]);
+    }
+    
+    // Generate receipt - Redirect to existing receipt system
+    public function generate_receipt() {
+        // Check admin privileges
+        $login_type = $this->session->userdata('login_type');
+        $admin_id = $this->session->userdata('admin_id');
+        
+        if ($login_type != 'admin') {
+            $this->session->set_flashdata('error_message', get_phrase('you_do_not_have_permission_to_access_this_page'));
+            redirect(site_url('admin/dashboard'), 'refresh');
+        }
+        
+        $admin = $this->db->get_where('admin', ['admin_id' => $admin_id])->row();
+        if (!$admin || $admin->level > 3) {
+            $this->session->set_flashdata('error_message', get_phrase('you_do_not_have_permission_to_access_this_page'));
+            redirect(site_url('admin/dashboard'), 'refresh');
+        }
+        
+        // Redirect to existing print receipts page
+        redirect(site_url('admin/print_receipts'), 'refresh');
+    }
+    
+    // Conductor-specific portal (transport only)
+    public function conductor_portal() {
+        $role = $this->session->userdata('login_type');
+        
+        if ($role != 'conductor') {
+            $this->session->set_flashdata('error_message', get_phrase('this_portal_is_only_for_conductors'));
+            redirect(site_url('admin/dashboard'), 'refresh');
+        }
+        
+        $page_data['page_name'] = 'conductor_collection_portal';
+        $page_data['page_title'] = get_phrase('transport_collection');
+        $this->load->view('backend/main', $page_data);
+    }
+    
+    // Get class rates (for AJAX)
+    public function get_class_rates($class_id) {
+        $rates = $this->Daily_fee_model->get_class_rates(
+            $class_id,
+            get_settings('running_year'),
+            get_settings('running_term')
+        );
+        echo json_encode($rates);
+    }
+    
+    // Get route info (for AJAX)
+    public function get_route_info($route_id) {
+        $route = $this->db->get_where('transport_routes', ['route_id' => $route_id])->row_array();
+        if ($route) {
+            echo json_encode(['status' => 'success', 'route' => $route]);
+        } else {
+            echo json_encode(['status' => 'error', 'message' => get_phrase('route_not_found')]);
+        }
+    }
+    
+    // Debug endpoint for student 91
+    public function debug_student_91()
+    {
+        $student_id = 91;
+        $check_timestamp = strtotime(date('Y-m-d'));
+        $yesterday_timestamp = $check_timestamp - 86400;
+        
+        echo "<h2>Debug Student 91 - Today: " . date('Y-m-d', $check_timestamp) . " (timestamp: $check_timestamp)</h2>";
+        
+        // Check wallet
+        $wallet = $this->Daily_fee_model->get_student_wallet($student_id);
+        echo "<h3>Wallet Current Balances:</h3>";
+        echo "Feeding: " . $wallet['feeding_balance'] . "<br>";
+        echo "Classes: " . $wallet['classes_balance'] . "<br>";
+        echo "Water: " . $wallet['water_balance'] . "<br><br>";
+        
+        // Check attendance TODAY
+        $attendance = $this->db->get_where('attendance', [
+            'student_id' => $student_id,
+            'timestamp' => $check_timestamp
+        ])->row_array();
+        echo "<h3>Attendance Today:</h3>";
+        echo $attendance ? "YES - Marked" : "NO - Not marked";
+        echo "<br><br>";
+        
+        // Check attendance YESTERDAY
+        $attendance_yesterday = $this->db->get_where('attendance', [
+            'student_id' => $student_id,
+            'timestamp' => $yesterday_timestamp
+        ])->row_array();
+        echo "<h3>Attendance Yesterday (" . date('Y-m-d', $yesterday_timestamp) . "):</h3>";
+        echo $attendance_yesterday ? "YES - Marked" : "NO - Not marked";
+        echo "<br><br>";
+        
+        // Check audit log for YESTERDAY
+        $audit_yesterday = $this->db->query("
+            SELECT fee_type, amount, balance_before, balance_after, created_at
+            FROM daily_fee_audit_log
+            WHERE student_id = ? 
+              AND created_at >= ?
+              AND created_at < ?
+              AND action_type = 'payment'
+              AND balance_before > balance_after
+            ORDER BY created_at DESC
+        ", [$student_id, $yesterday_timestamp, $check_timestamp])->result_array();
+        
+        echo "<h3>Audit Log YESTERDAY (Prepaid Payments):</h3>";
+        if ($audit_yesterday) {
+            echo "<table border='1'><tr><th>Fee Type</th><th>Amount</th><th>Balance Before</th><th>Balance After</th><th>Time</th></tr>";
+            foreach ($audit_yesterday as $a) {
+                echo "<tr><td>{$a['fee_type']}</td><td>{$a['amount']}</td><td>{$a['balance_before']}</td><td>{$a['balance_after']}</td><td>" . date('Y-m-d H:i:s', $a['created_at']) . "</td></tr>";
+            }
+            echo "</table>";
+        } else {
+            echo "No prepaid payments found for yesterday<br>";
+        }
+        echo "<br>";
+        
+        // Check audit log for TODAY
+        $audit = $this->db->query("
+            SELECT fee_type, amount, balance_before, balance_after, created_at
+            FROM daily_fee_audit_log
+            WHERE student_id = ? 
+              AND created_at >= ?
+              AND created_at < ?
+              AND action_type = 'payment'
+              AND balance_before > balance_after
+            ORDER BY created_at DESC
+        ", [$student_id, $check_timestamp, $check_timestamp + 86400])->result_array();
+        
+        echo "<h3>Audit Log TODAY (Prepaid Payments):</h3>";
+        if ($audit) {
+            echo "<table border='1'><tr><th>Fee Type</th><th>Amount</th><th>Balance Before</th><th>Balance After</th><th>Time</th></tr>";
+            foreach ($audit as $a) {
+                echo "<tr><td>{$a['fee_type']}</td><td>{$a['amount']}</td><td>{$a['balance_before']}</td><td>{$a['balance_after']}</td><td>" . date('Y-m-d H:i:s', $a['created_at']) . "</td></tr>";
+            }
+            echo "</table>";
+        } else {
+            echo "No prepaid payments found for today<br>";
+        }
+        echo "<br>";
+        
+        // Check all top-ups (deposits)
+        $topups = $this->db->query("
+            SELECT fee_type, amount, balance_before, balance_after, created_at
+            FROM daily_fee_audit_log
+            WHERE student_id = ? 
+              AND action_type = 'topup'
+            ORDER BY created_at DESC
+            LIMIT 5
+        ", [$student_id])->result_array();
+        
+        echo "<h3>Recent Top-ups:</h3>";
+        if ($topups) {
+            echo "<table border='1'><tr><th>Fee Type</th><th>Amount</th><th>Balance Before</th><th>Balance After</th><th>Time</th></tr>";
+            foreach ($topups as $t) {
+                echo "<tr><td>{$t['fee_type']}</td><td>{$t['amount']}</td><td>{$t['balance_before']}</td><td>{$t['balance_after']}</td><td>" . date('Y-m-d H:i:s', $t['created_at']) . "</td></tr>";
+            }
+            echo "</table>";
+        } else {
+            echo "No recent top-ups<br>";
+        }
+        echo "<br>";
+        
+        // Get rates
+        try {
+            $settings = $this->db->get_where('settings', ['type' => 'running_year'])->row();
+            $running_year = $settings ? $settings->description : null;
+            $settings = $this->db->get_where('settings', ['type' => 'running_term'])->row();
+            $running_term = $settings ? $settings->description : null;
+            
+            echo "<h3>System Settings:</h3>";
+            echo "Running Year: " . $running_year . "<br>";
+            echo "Running Term: " . $running_term . "<br><br>";
+            
+            $student = $this->db->get_where('enroll', ['student_id' => $student_id])->row_array();
+            
+            if ($student) {
+                echo "<h3>Student Info:</h3>";
+                echo "Class ID: " . $student['class_id'] . "<br>";
+                echo "Student ID: " . $student_id . "<br><br>";
+                
+                $rates = $this->Daily_fee_model->get_class_rates($student['class_id'], $running_year, $running_term);
+                
+                echo "<h3>Expected Rates for Today:</h3>";
+                echo "Feeding: ₵" . $rates['feeding'] . "<br>";
+                echo "Classes: ₵" . $rates['classes'] . "<br>";
+                echo "Water: ₵" . $rates['water'] . "<br>";
+                echo "Breakfast: ₵" . $rates['breakfast'] . "<br>";
+                echo "Transport In: ₵" . $rates['transport_in'] . "<br>";
+                echo "Transport Out: ₵" . $rates['transport_out'] . "<br>";
+                echo "<br>";
+                
+                echo "<h3>Logic Result (Should checkboxes be unchecked?):</h3>";
+                echo "Feeding: Balance ₵" . $wallet['feeding_balance'] . " vs Rate ₵" . $rates['feeding'] . " → ";
+                echo (floatval($wallet['feeding_balance']) >= floatval($rates['feeding'])) ? "<strong style='color:green'>UNCHECK (has prepaid)</strong>" : "<strong style='color:red'>CHECK (needs payment)</strong>";
+                echo "<br>";
+                echo "Classes: Balance ₵" . $wallet['classes_balance'] . " vs Rate ₵" . $rates['classes'] . " → ";
+                echo (floatval($wallet['classes_balance']) >= floatval($rates['classes'])) ? "<strong style='color:green'>UNCHECK (has prepaid)</strong>" : "<strong style='color:red'>CHECK (needs payment)</strong>";
+                echo "<br>";
+                echo "Water: Balance ₵" . $wallet['water_balance'] . " vs Rate ₵" . $rates['water'] . " → ";
+                echo (floatval($wallet['water_balance']) >= floatval($rates['water'])) ? "<strong style='color:green'>UNCHECK (has prepaid)</strong>" : "<strong style='color:red'>CHECK (needs payment)</strong>";
+                echo "<br>";
+            } else {
+                echo "Student not found in enroll table!<br>";
+            }
+        } catch (Exception $e) {
+            echo "Error getting rates: " . $e->getMessage() . "<br>";
+        }
+        
+        // Now show what the actual get_student_info would return
+        echo "<br><h2 style='color:blue'>What get_student_info() Returns:</h2>";
+        $result = $this->get_student_info($student_id);
+        echo "<pre>";
+        echo "feeding_available_for_date: " . $result['wallet']['feeding_available_for_date'] . "<br>";
+        echo "classes_available_for_date: " . $result['wallet']['classes_available_for_date'] . "<br>";
+        echo "water_available_for_date: " . $result['wallet']['water_available_for_date'] . "<br>";
+        echo "</pre>";
+    }
+    
+    // Get student info with rates
+    public function get_student_info($student_id) {
+        $running_year = get_settings('running_year');
+        $running_term = get_settings('running_term');
+        
+        // Get date from query parameter (for checking specific date transactions)
+        $check_date = $this->input->get('date');
+        if ($check_date) {
+            $check_timestamp = strtotime($check_date . ' 00:00:00');
+        } else {
+            $check_timestamp = strtotime(date('Y-m-d'));
+        }
+        
+        $student = $this->db->query("
+            SELECT s.*, e.transport_id, c.class_id, c.name as class_name, c.name_numeric, sec.name as section_name
+            FROM student s
+            JOIN enroll e ON s.student_id = e.student_id
+            JOIN class c ON e.class_id = c.class_id
+            LEFT JOIN section sec ON e.section_id = sec.section_id
+            WHERE s.student_id = ? AND e.year = ? AND e.term = ?
+        ", [$student_id, $running_year, $running_term])->row_array();
+        
+        // Add route info if transport_id exists
+        if ($student && !empty($student['transport_id'])) {
+            $route = $this->db->get_where('transport', ['transport_id' => $student['transport_id']])->row_array();
+            if ($route) {
+                $student['route_fare'] = $route['route_fare'];
+                $student['route_name'] = $route['route_name'];
+            }
+        }
+        
+        if (!$student) {
+            echo json_encode(['status' => 'error', 'message' => get_phrase('student_not_found')]);
+            return;
+        }
+        
+        // Get rates
+        $rates = $this->Daily_fee_model->get_class_rates(
+            $student['class_id'], 
+            $running_year, 
+            $running_term
+        );
+        
+        // Calculate NEW discount system discounts
+        $discount_info = $this->calculate_discount_amounts($student_id, $student['class_id'], $rates, $running_year, $running_term, null);
+        
+        // Get wallet
+        $wallet = $this->Daily_fee_model->get_student_wallet($student_id);
+        
+        // Calculate available balance for the selected date
+        // Step 1: Check if attendance was marked for this date
+        $attendance_marked = $this->db->get_where('attendance', [
+            'student_id' => $student_id,
+            'timestamp' => $check_timestamp
+        ])->num_rows() > 0;
+        
+        log_message('debug', 'Student ' . $student_id . ' attendance_marked: ' . ($attendance_marked ? 'YES' : 'NO') . ' for date ' . date('Y-m-d', $check_timestamp));
+        
+        if ($attendance_marked) {
+            // Attendance was marked - check if student paid with prepaid on this date
+            // Look for payment records in daily_fee_audit_log for this specific date
+            $audit_records = $this->db
+                ->select('fee_type, amount')
+                ->where('student_id', $student_id)
+                ->where('created_at >=', $check_timestamp)
+                ->where('created_at <', $check_timestamp + 86400)
+                ->where('action_type', 'payment')
+                ->where('balance_before > balance_after', null, false)
+                ->get('daily_fee_audit_log')
+                ->result_array();
+            
+            // Calculate totals per fee type
+            $date_prepaid_payments = [
+                'feeding_paid' => 0,
+                'breakfast_paid' => 0,
+                'classes_paid' => 0,
+                'water_paid' => 0,
+                'transport_paid' => 0
+            ];
+            
+            foreach ($audit_records as $record) {
+                $date_prepaid_payments[$record['fee_type'] . '_paid'] += floatval($record['amount']);
+            }
+            
+            log_message('debug', 'Prepaid payments on this date: ' . json_encode($date_prepaid_payments));
+            
+            // Check if there's a cash transaction for this date
+            $cash_transaction = $this->db->get_where('daily_fee_transactions', [
+                'student_id' => $student_id,
+                'payment_date' => $check_timestamp
+            ])->row_array();
+            
+            log_message('debug', 'Cash transaction exists: ' . ($cash_transaction ? 'YES' : 'NO'));
+            
+            // For each fee, if paid with prepaid (audit log shows payment but no cash transaction),
+            // add back to current balance to get available balance
+            $wallet['feeding_available_for_date'] = floatval($wallet['feeding_balance']);
+            $wallet['breakfast_available_for_date'] = floatval($wallet['breakfast_balance']);
+            $wallet['classes_available_for_date'] = floatval($wallet['classes_balance']);
+            $wallet['water_available_for_date'] = floatval($wallet['water_balance']);
+            $wallet['transport_available_for_date'] = floatval($wallet['transport_balance']);
+            
+            // Add back prepaid payments that happened on this date
+            if ($date_prepaid_payments) {
+                // Only add back if there was NO cash payment for that fee
+                if (!$cash_transaction || floatval($cash_transaction['feeding_amount']) == 0) {
+                    $wallet['feeding_available_for_date'] += floatval($date_prepaid_payments['feeding_paid']);
+                }
+                if (!$cash_transaction || floatval($cash_transaction['breakfast_amount']) == 0) {
+                    $wallet['breakfast_available_for_date'] += floatval($date_prepaid_payments['breakfast_paid']);
+                }
+                if (!$cash_transaction || floatval($cash_transaction['classes_amount']) == 0) {
+                    $wallet['classes_available_for_date'] += floatval($date_prepaid_payments['classes_paid']);
+                }
+                if (!$cash_transaction || floatval($cash_transaction['water_amount']) == 0) {
+                    $wallet['water_available_for_date'] += floatval($date_prepaid_payments['water_paid']);
+                }
+                if (!$cash_transaction || floatval($cash_transaction['transport_amount']) == 0) {
+                    $wallet['transport_available_for_date'] += floatval($date_prepaid_payments['transport_paid']);
+                }
+            }
+            
+            log_message('debug', 'Available balances: feeding=' . $wallet['feeding_available_for_date'] . ' classes=' . $wallet['classes_available_for_date']);
+        } else {
+            // No attendance yet - use current balance (after any advance payments)
+            // Current balance already reflects any prepaid amounts, so use it directly
+            $wallet['feeding_available_for_date'] = floatval($wallet['feeding_balance']);
+            $wallet['breakfast_available_for_date'] = floatval($wallet['breakfast_balance']);
+            $wallet['classes_available_for_date'] = floatval($wallet['classes_balance']);
+            $wallet['water_available_for_date'] = floatval($wallet['water_balance']);
+            $wallet['transport_available_for_date'] = floatval($wallet['transport_balance']);
+            
+            log_message('debug', 'Available balances (no attendance, using current): feeding=' . $wallet['feeding_available_for_date'] . ' classes=' . $wallet['classes_available_for_date']);
+        }
+        
+        // Get student preferences
+        $preferences = $this->db->get_where('student_daily_fee_preferences', [
+            'student_id' => $student_id
+        ])->row_array();
+        
+        // Default preferences if not set
+        if (!$preferences) {
+            $preferences = [
+                'breakfast_subscribed' => 0,
+                'water_subscribed' => 1,
+                'auto_deduct_enabled' => 1
+            ];
+        }
+        
+        // Check for transaction on the specified date (not just today)
+        $date_collection = $this->db->get_where('daily_fee_transactions', [
+            'student_id' => $student_id,
+            'payment_date' => $check_timestamp,
+        ])->row_array();
+        
+        // Check if student attendance was marked for this date
+        $attendance_marked = $this->db->get_where('attendance', [
+            'student_id' => $student_id,
+            'timestamp' => $check_timestamp
+        ])->num_rows() > 0;
+        
+        // Get bus attendance for the date
+        $bus_attendance = $this->db->get_where('bus_attendance', [
+            'student_id' => $student_id,
+            'attendance_date' => $check_timestamp
+        ])->row_array();
+        
+        // Check if water was fully paid this week (once per week charge)
+        $week_start = strtotime('monday this week', $check_timestamp);
+        $week_end = strtotime('sunday this week', $check_timestamp);
+        
+        // Get expected water rate for this class (after discount)
+        $expected_water = $rates['water_rate'];
+        $discount_info = $this->calculate_discount_amounts($student_id, $student['class_id'], $rates, $running_year, $running_term, null);
+        if ($discount_info['water_discount'] > 0) {
+            $expected_water = max(0, $rates['water_rate'] - $discount_info['water_discount']);
+        }
+        
+        // Check if full water amount was paid this week (excluding current transaction if updating)
+        $water_check_query = $this->db->where('student_id', $student_id)
+            ->where('water_amount >=', $expected_water)
+            ->where('payment_date >=', $week_start)
+            ->where('payment_date <=', $week_end);
+        
+        // If updating transaction with water, exclude it from the check
+        if ($date_collection && $date_collection['water_amount'] >= $expected_water) {
+            $water_check_query->where('id !=', $date_collection['id']);
+        }
+        
+        $water_paid_this_week = $water_check_query->count_all_results('daily_fee_transactions') > 0;
+        
+        // Check if student has 100% discount on all daily fees
+        $has_full_discount_all_fees = $this->Discount_model->has_full_discount_on_all_daily_fees(
+            $student_id,
+            $running_year,
+            $running_term,
+            $student['class_id'],
+            $check_timestamp
+        );
+        
+        echo json_encode([
+            'status' => 'success',
+            'student' => $student,
+            'rates' => $rates,
+            'discount' => $discount_info,
+            'wallet' => $wallet,
+            'preferences' => $preferences,
+            'today_collected' => $date_collection ? true : false,
+            'existing_transaction' => $date_collection,
+            'bus_attendance' => $bus_attendance,
+            'water_paid_this_week' => $water_paid_this_week,
+            'check_date' => date('Y-m-d', $check_timestamp),
+            'has_full_discount_all_fees' => $has_full_discount_all_fees,
+            'attendance_marked' => $attendance_marked
+        ]);
+    }
+    
+    // Auto-determine payment type based on wallet status
+    private function determine_payment_type($wallet, $feeding, $breakfast, $classes, $water, $transport) {
+        $has_arrears = ($wallet['feeding_arrears'] + $wallet['breakfast_arrears'] + 
+                       $wallet['classes_arrears'] + $wallet['water_arrears'] + 
+                       $wallet['transport_arrears']) > 0;
+        
+        $has_balance = ($wallet['feeding_balance'] + $wallet['breakfast_balance'] + 
+                       $wallet['classes_balance'] + $wallet['water_balance'] + 
+                       $wallet['transport_balance']) > 0;
+        
+        $total_payment = $feeding + $breakfast + $classes + $water + $transport;
+        $total_arrears = $wallet['feeding_arrears'] + $wallet['breakfast_arrears'] + 
+                        $wallet['classes_arrears'] + $wallet['water_arrears'] + 
+                        $wallet['transport_arrears'];
+        
+        // If has arrears and payment covers or exceeds arrears, it's mixed (arrears + advance)
+        if ($has_arrears && $total_payment >= $total_arrears) {
+            return 'mixed';
+        }
+        
+        // If has arrears and payment is less than arrears, it's arrears only
+        if ($has_arrears && $total_payment < $total_arrears) {
+            return 'arrears';
+        }
+        
+        // If no arrears, it's advance payment
+        return 'advance';
+    }
+    
+    // Calculate NEW discount system discounts
+    private function calculate_discount_amounts($student_id, $class_id, $rates, $running_year, $running_term, $payment_date = null) {
+        $feeding_discount = 0;
+        $breakfast_discount = 0;
+        $classes_discount = 0;
+        $water_discount = 0;
+        $has_discount = false;
+        $profile_name = null;
+        $discount_method = null;
+        $discount_value = null;
+        
+        // Use payment_date if provided (for backdated collections), otherwise use today
+        $check_date = $payment_date ? $payment_date : strtotime(date('Y-m-d'));
+        
+        // Get discount rules for each fee type
+        $feeding_info = $this->Discount_model->get_student_discount_for_date($student_id, $running_year, $running_term, $class_id, 'feeding', $check_date);
+        $breakfast_info = $this->Discount_model->get_student_discount_for_date($student_id, $running_year, $running_term, $class_id, 'breakfast', $check_date);
+        $classes_info = $this->Discount_model->get_student_discount_for_date($student_id, $running_year, $running_term, $class_id, 'classes', $check_date);
+        $water_info = $this->Discount_model->get_student_discount_for_date($student_id, $running_year, $running_term, $class_id, 'water', $check_date);
+        $transport_info = $this->Discount_model->get_student_discount_for_date($student_id, $running_year, $running_term, $class_id, 'transport', $check_date);
+        
+        if ($feeding_info['has_discount']) {
+            $has_discount = true;
+            $profile_name = $feeding_info['profile_name'] ?? null;
+            $discount_method = $feeding_info['discount_method'];
+            $discount_value = $feeding_info['discount_value'];
+            if ($feeding_info['discount_method'] == 'percentage') {
+                $feeding_discount = ($rates['feeding_rate'] * $feeding_info['discount_value']) / 100;
+            } else {
+                $feeding_discount = $feeding_info['discount_value'];
+            }
+        }
+        
+        if ($breakfast_info['has_discount']) {
+            $has_discount = true;
+            if (!$profile_name) {
+                $profile_name = $breakfast_info['profile_name'] ?? null;
+                $discount_method = $breakfast_info['discount_method'];
+                $discount_value = $breakfast_info['discount_value'];
+            }
+            if ($breakfast_info['discount_method'] == 'percentage') {
+                $breakfast_discount = ($rates['breakfast_rate'] * $breakfast_info['discount_value']) / 100;
+            } else {
+                $breakfast_discount = $breakfast_info['discount_value'];
+            }
+        }
+        
+        if ($classes_info['has_discount']) {
+            $has_discount = true;
+            if (!$profile_name) {
+                $profile_name = $classes_info['profile_name'] ?? null;
+                $discount_method = $classes_info['discount_method'];
+                $discount_value = $classes_info['discount_value'];
+            }
+            if ($classes_info['discount_method'] == 'percentage') {
+                $classes_discount = ($rates['classes_rate'] * $classes_info['discount_value']) / 100;
+            } else {
+                $classes_discount = $classes_info['discount_value'];
+            }
+        }
+        
+        if ($water_info['has_discount']) {
+            $has_discount = true;
+            if (!$profile_name) {
+                $profile_name = $water_info['profile_name'] ?? null;
+                $discount_method = $water_info['discount_method'];
+                $discount_value = $water_info['discount_value'];
+            }
+            if ($water_info['discount_method'] == 'percentage') {
+                $water_discount = ($rates['water_rate'] * $water_info['discount_value']) / 100;
+            } else {
+                $water_discount = $water_info['discount_value'];
+            }
+        }
+        
+        $transport_discount = 0;
+        if ($transport_info['has_discount']) {
+            $has_discount = true;
+            if (!$profile_name) {
+                $profile_name = $transport_info['profile_name'] ?? null;
+                $discount_method = $transport_info['discount_method'];
+                $discount_value = $transport_info['discount_value'];
+            }
+            if ($transport_info['discount_method'] == 'percentage') {
+                // Get transport rate from enroll table -> transport table
+                $enroll = $this->db->get_where('enroll', [
+                    'student_id' => $student_id,
+                    'year' => $running_year,
+                    'term' => $running_term
+                ])->row();
+                
+                $transport_rate = 0;
+                if ($enroll && !empty($enroll->transport_id)) {
+                    $transport = $this->db->get_where('transport', ['transport_id' => $enroll->transport_id])->row();
+                    if ($transport) {
+                        $transport_rate = $transport->route_fare;
+                    }
+                }
+                
+                $transport_discount = ($transport_rate * $transport_info['discount_value']) / 100;
+            } else {
+                $transport_discount = $transport_info['discount_value'];
+            }
+        }
+        
+        return [
+            'has_discount' => $has_discount,
+            'profile_name' => $profile_name,
+            'discount_method' => $discount_method,
+            'discount_value' => $discount_value,
+            'feeding_discount' => $feeding_discount,
+            'breakfast_discount' => $breakfast_discount,
+            'classes_discount' => $classes_discount,
+            'water_discount' => $water_discount,
+            'transport_discount' => $transport_discount,
+            'feeding_final' => max(0, $rates['feeding_rate'] - $feeding_discount),
+            'breakfast_final' => max(0, $rates['breakfast_rate'] - $breakfast_discount),
+            'classes_final' => max(0, $rates['classes_rate'] - $classes_discount),
+            'water_final' => max(0, $rates['water_rate'] - $water_discount),
+            'transport_final' => max(0, ($rates['transport_rate'] ?? 0) - $transport_discount)
+        ];
+    }
+    
+    // Collect daily fees (unified endpoint)
+    public function collect_daily_fees() {
+        return $this->collect();
+    }
+    
+    // Collect fees
+    public function collect() {
+
+        // Start transaction
+        $this->db->trans_start();
+        
+        try {
+            $student_id = (int)$this->input->post('student_id');
+            $collected_by = $this->session->userdata('admin_id');
+            $role = $this->session->userdata('login_type');
+            
+            // Get payment date from form or use today
+            $payment_date_input = $this->input->post('payment_date');
+            if ($payment_date_input) {
+                $payment_date = strtotime($payment_date_input . ' 00:00:00');
+                // Validate date is not in future
+                if ($payment_date > strtotime(date('Y-m-d'))) {
+                    throw new Exception(get_phrase('payment_date_cannot_be_in_future'));
+                }
+            } else {
+                $payment_date = strtotime(date('Y-m-d'));
+            }
+            
+            // Validate student
+            if (!$student_id) {
+                throw new Exception(get_phrase('invalid_student'));
+            }
+            
+            // Validate permissions
+            if (!$this->Daily_fee_model->can_collect_daily_fees()) {
+                throw new Exception(get_phrase('access_denied'));
+            }
+            
+            // Sanitize and validate amounts
+            if ($role == 'conductor') {
+                $feeding = $breakfast = $classes = $water = 0;
+                $transport = max(0, (float)$this->input->post('transport_amount'));
+                $transport_direction = $this->input->post('transport_direction') ?: 'both';
+                $transport_boarded = 1; // Conductor always marks as boarded
+                
+                if ($transport <= 0) {
+                    throw new Exception(get_phrase('invalid_amount'));
+                }
+            } else {
+                // CASHIER/ADMIN: All fee types
+                $feeding = max(0, (float)$this->input->post('feeding_amount'));
+                $breakfast = max(0, (float)$this->input->post('breakfast_amount'));
+                $classes = max(0, (float)$this->input->post('classes_amount'));
+                $water = max(0, (float)$this->input->post('water_amount'));
+                
+                // TRANSPORT: Get amount from form (manual or auto-filled)
+                $transport = max(0, (float)$this->input->post('transport_amount'));
+                $transport_direction = $this->input->post('transport_direction') ?: 'none';
+                $transport_boarded = $this->input->post('transport_boarded') == 1;
+            }
+            
+            $total = $feeding + $breakfast + $classes + $water + $transport;
+            
+            // If total is 0, check if we should process fees or just bus attendance
+            if ($total <= 0) {
+                // Check if student attendance was already marked (fees already processed)
+                $attendance_exists = $this->db->get_where('attendance', [
+                    'student_id' => $student_id,
+                    'timestamp' => $payment_date
+                ])->num_rows() > 0;
+                
+                if ($attendance_exists) {
+                    // Attendance already marked, only process bus attendance
+                    if ($transport_direction && $transport_direction !== 'none') {
+                        $this->mark_student_boarded_cashier($student_id, $transport_direction, 0, $payment_date);
+                        
+                        $this->db->trans_complete();
+                        
+                        echo json_encode([
+                            'status' => 'success',
+                            'message' => 'Bus attendance marked successfully',
+                            'student_id' => $student_id,
+                            'timestamp' => $payment_date,
+                            'mode' => 'bus_attendance_only'
+                        ]);
+                        return;
+                    } else {
+                        throw new Exception(get_phrase('no_fees_selected'));
+                    }
+                } else {
+                    // No attendance yet - mark attendance and process daily charges
+                    // Mark present and process daily charges
+                    $mark_present = $this->input->post('mark_present');
+                    if ($mark_present == 1 || ($transport_direction && $transport_direction !== 'none')) {
+                        // Get student info for processing charges
+                        $enroll = $this->db->get_where('enroll', ['student_id' => $student_id])->row();
+                        if (!$enroll) {
+                            throw new Exception(get_phrase('student_not_enrolled'));
+                        }
+                        
+                        $running_year = get_settings('running_year');
+                        $running_term = get_settings('running_term');
+                        
+                        // Check if attendance already exists
+                        $existing_attendance = $this->db->get_where('attendance', [
+                            'student_id' => $student_id,
+                            'timestamp' => $payment_date
+                        ])->row();
+                        
+                        if (!$existing_attendance) {
+                            // Insert attendance record with all required fields
+                            $this->db->insert('attendance', [
+                                'student_id' => $student_id,
+                                'timestamp' => $payment_date,
+                                'status' => 1, // Present
+                                'year' => $running_year,
+                                'term' => $running_term,
+                                'class_id' => $enroll->class_id,
+                                'section_id' => $enroll->section_id,
+                                'marked_by' => $collected_by,
+                                'marked_by_role' => $role,
+                                'sync_status' => 'PENDING',
+                                'device_id' => 'local-server-001',
+                                'version' => 1
+                            ]);
+                        }
+                        
+                        // Process daily charges (will deduct from prepaid) with transport status
+                        $options = [];
+                        if ($transport_direction && $transport_direction !== 'none') {
+                            $options['transport_status'] = $transport_direction;
+                        }
+                        $this->Daily_fee_model->process_daily_charges($student_id, $payment_date, $enroll->class_id, $running_year, $running_term, null, $options);
+                        
+                        // Process bus attendance if direction selected
+                        if ($transport_direction && $transport_direction !== 'none') {
+                            $this->mark_student_boarded_cashier($student_id, $transport_direction, 0, $payment_date);
+                        }
+                        
+                        $this->db->trans_complete();
+                        
+                        echo json_encode([
+                            'status' => 'success',
+                            'message' => 'Attendance marked and fees deducted from prepaid',
+                            'student_id' => $student_id,
+                            'timestamp' => $payment_date,
+                            'mode' => 'prepaid_only'
+                        ]);
+                        return;
+                    } else {
+                        throw new Exception(get_phrase('no_fees_selected'));
+                    }
+                }
+            }
+            
+            // Validate payment method - default to Cash if not provided or invalid
+            $payment_method = (int)$this->input->post('payment_method');
+            if (!$payment_method || !in_array($payment_method, [1, 2, 3, 4])) {
+                $payment_method = 1; // Default to Cash (for attendance-based collections)
+            }
+
+                        
+            // Get running year and term
+            $running_year = get_settings('running_year');
+            $running_term = get_settings('running_term');
+
+            // Get student's class
+            $enroll = $this->db->get_where('enroll', [
+                'student_id' => $student_id,
+                'year' => $running_year,
+                'term' => $running_term
+            ])->row();
+
+            
+
+            if (!$enroll) {
+                throw new Exception(get_phrase('student_not_enrolled'));
+            }
+
+            // Step 3: Check if attendance was taken for this date - if yes, apply charges
+            $attendance = $this->db->get_where('attendance', [
+                'student_id' => $student_id,
+                'timestamp' => $payment_date
+            ])->row();
+            
+            // If transport amount entered, record intention or mark boarded (with selected date)
+            if ($role != 'conductor' && $transport > 0 && $transport_direction != 'none') {
+                if ($transport_boarded) {
+                    $this->mark_student_boarded_cashier($student_id, $transport_direction, $transport, $payment_date);
+                } else {
+                    $this->record_transport_intention($student_id, $transport_direction, $transport, $payment_date);
+                }
+            }
+            
+            // Get wallet to determine payment type automatically
+            $wallet = $this->Daily_fee_model->get_student_wallet($student_id);
+            
+            // Auto-determine payment type based on wallet status
+            $payment_type = $this->determine_payment_type($wallet, $feeding, $breakfast, $classes, $water, $transport);
+            
+            // ENTERPRISE: Check for existing transaction on this date (PREVENT DUPLICATES)
+            $existing = $this->db->get_where('daily_fee_transactions', [
+                'student_id' => $student_id,
+                'payment_date' => $payment_date,
+            ])->row();
+            
+            $is_backdated = ($payment_date < strtotime(date('Y-m-d')));
+            
+            if ($existing) {
+                // UPDATE existing payment (editing mode)
+                // Step 1: Update preferences FIRST before any recalculation
+                $breakfast_opted = $this->input->post('breakfast_opted');
+                $water_opted = $this->input->post('water_opted');
+                
+                if ($breakfast_opted !== null || $water_opted !== null) {
+                    $prefs_update = [];
+                    if ($breakfast_opted !== null) {
+                        $prefs_update['breakfast_subscribed'] = $breakfast_opted == 1 ? 1 : 0;
+                    }
+                    if ($water_opted !== null) {
+                        $prefs_update['water_subscribed'] = $water_opted == 1 ? 1 : 0;
+                    }
+                    
+                    if (!empty($prefs_update)) {
+                        $prefs_update['updated_at'] = time();
+                        $existing_prefs = $this->db->get_where('student_daily_fee_preferences', ['student_id' => $student_id])->row();
+                        if ($existing_prefs) {
+                            $this->db->where('student_id', $student_id)->update('student_daily_fee_preferences', $prefs_update);
+                        } else {
+                            $prefs_update['student_id'] = $student_id;
+                            $prefs_update['auto_deduct_enabled'] = 1;
+                            $this->db->insert('student_daily_fee_preferences', $prefs_update);
+                        }
+                    }
+                }
+                
+                // Step 2: Delete old charge log for this date (will be regenerated with new preferences)
+                // CRITICAL: Normalize charge_date to midnight timestamp to match process_daily_charges()
+                $charge_date_normalized = strtotime(date('Y-m-d', $payment_date));
+                
+                $this->db->where('student_id', $student_id)
+                         ->where('charge_date', $charge_date_normalized)
+                         ->delete('daily_charge_log');
+                
+                // Verify charge log was completely deleted
+                $charge_log_check = $this->db->get_where('daily_charge_log', [
+                    'student_id' => $student_id,
+                    'charge_date' => $charge_date_normalized
+                ])->row();
+                
+                if ($charge_log_check) {
+                    // Force delete if still exists (should not happen, but defensive)
+                    log_message('info', "UPDATE path: Charge log still exists after deletion for student $student_id on date $payment_date, forcing delete");
+                    $this->db->where('student_id', $student_id)
+                             ->where('charge_date', $charge_date_normalized)
+                             ->delete('daily_charge_log');
+                }
+                
+                // Step 3: Check if attendance was taken for this date - if yes, apply charges
+                $running_year = get_settings('running_year');
+                $running_term = get_settings('running_term');
+                $mark_present = $this->input->post('mark_present');
+                
+                $attendance = $this->db->get_where('attendance', [
+                    'student_id' => $student_id,
+                    'timestamp' => $payment_date
+                ])->row();
+                
+                // Handle mark_present checkbox changes
+                if ($mark_present && !$attendance) {
+                    // Cashier wants to mark present but no attendance exists - create it
+                    $enroll = $this->db->get_where('enroll', [
+                        'student_id' => $student_id,
+                        'year' => $running_year,
+                        'term' => $running_term,
+                    ])->row();
+                    
+                    if ($enroll) {
+                        $attendance_data = [
+                            'student_id' => $student_id,
+                            'class_id' => $enroll->class_id,
+                            'section_id' => $enroll->section_id,
+                            'timestamp' => $payment_date,
+                            'year' => $running_year,
+                            'term' => $running_term,
+                            'status' => 1, // 1 = present
+                            'marked_by' => $collected_by,
+                            'marked_by_role' => $role
+                        ];
+                        $this->db->insert('attendance', $attendance_data);
+                        
+                        // Reload attendance record
+                        $attendance = $this->db->get_where('attendance', [
+                            'student_id' => $student_id,
+                            'timestamp' => $payment_date
+                        ])->row();
+                    }
+                } elseif ($mark_present && $attendance && in_array($attendance->status, [2, 4])) {
+                    // Cashier wants to mark present but attendance exists as absent/leave - update to present
+                    $this->db->where('student_id', $student_id)
+                             ->where('timestamp', $payment_date)
+                             ->update('attendance', [
+                                 'status' => 1, // 1 = present
+                                 'marked_by' => $collected_by,
+                                 'marked_by_role' => $role
+                             ]);
+                    
+                    // Reload attendance record
+                    $attendance = $this->db->get_where('attendance', [
+                        'student_id' => $student_id,
+                        'timestamp' => $payment_date
+                    ])->row();
+                } elseif (!$mark_present && $attendance && in_array($attendance->status, [1, 3])) {
+                    // Cashier unchecked mark_present but attendance exists as present/late
+                    // This means cashier is correcting a mistake - change to absent
+                    $this->db->where('student_id', $student_id)
+                             ->where('timestamp', $payment_date)
+                             ->update('attendance', [
+                                 'status' => 2, // 2 = absent
+                                 'marked_by' => $collected_by,
+                                 'marked_by_role' => $role
+                             ]);
+                    
+                    // Reload attendance record
+                    $attendance = $this->db->get_where('attendance', [
+                        'student_id' => $student_id,
+                        'timestamp' => $payment_date
+                    ])->row();
+                }
+                
+                // Apply charges if student is present or late
+                if ($attendance && in_array($attendance->status, [1, 3])) {
+                    // Student was present (1) or late (3) - apply charges based on current preferences
+                    $enroll = $this->db->get_where('enroll', [
+                        'student_id' => $student_id,
+                        'year' => $running_year,
+                        'term' => $running_term,
+                    ])->row();
+                    
+                    if ($enroll) {
+                        log_message('debug', "UPDATE path: Calling process_daily_charges for student $student_id on date $payment_date (normalized: $charge_date_normalized)");
+                        
+                        // Pass transport_status option if transport direction was provided
+                        $options = [];
+                        if ($transport_direction && $transport_direction != 'none') {
+                            $options['transport_status'] = $transport_direction;
+                        }
+                        
+                        $this->Daily_fee_model->process_daily_charges(
+                            $student_id,
+                            $payment_date,
+                            $enroll->class_id,
+                            $running_year,
+                            $running_term,
+                            null,
+                            $options
+                        );
+                        
+                        // Verify charges were applied
+                        $charge_log_after = $this->db->get_where('daily_charge_log', [
+                            'student_id' => $student_id,
+                            'charge_date' => $charge_date_normalized
+                        ])->row();
+                        
+                        if ($charge_log_after && ($charge_log_after->feeding_charged > 0 || $charge_log_after->classes_charged > 0)) {
+                            log_message('debug', "UPDATE path: Charges applied successfully for student $student_id - feeding: {$charge_log_after->feeding_charged}, classes: {$charge_log_after->classes_charged}");
+                        } else {
+                            log_message('error', "UPDATE path: process_daily_charges completed but NO charges were applied for student $student_id on date $payment_date");
+                        }
+                    } else {
+                        log_message('error', "UPDATE path: No enrollment found for student $student_id in year $running_year term $running_term");
+                    }
+                } else {
+                    log_message('debug', "UPDATE path: Skipping charge application - attendance status is not present/late for student $student_id");
+                }
+                
+                // Step 4: Update payment
+                $payment_data = [
+                    'student_id' => $student_id,
+                    'payment_date' => $payment_date,
+                    'feeding_amount' => $feeding,
+                    'breakfast_amount' => $breakfast,
+                    'classes_amount' => $classes,
+                    'water_amount' => $water,
+                    'transport_amount' => $transport,
+                    'payment_type' => $payment_type,
+                    'payment_method' => $payment_method,
+                    'collected_by' => $collected_by,
+                    'collection_point' => $this->Daily_fee_model->get_user_collection_point(),
+                    'notes' => $this->input->post('notes'),
+                    'modified_by' => $collected_by,
+                    'breakfast_opted' => $this->input->post('breakfast_opted'),
+                    'water_opted' => $this->input->post('water_opted')
+                ];
+                
+                $transaction_id = $existing->id;
+                $result = $this->Daily_fee_model->update_payment($transaction_id, $payment_data);
+                $receipt_number = $existing->receipt_number;
+                $mode = 'updated';
+                
+                // Step 5: Recalculate wallet ONCE after all changes
+                $this->Daily_fee_model->recalculate_wallet_from_date($student_id, $payment_date);
+            
+            } else {
+                // CREATE new payment
+                $receipt_number = 'FCT-' . substr(time(), 5). '-'. $student_id;
+                $mode = 'created';
+                
+                // Step 1: Update preferences FIRST if provided
+                $breakfast_opted = $this->input->post('breakfast_opted');
+                $water_opted = $this->input->post('water_opted');
+                
+                if ($breakfast_opted !== null || $water_opted !== null) {
+                    $prefs_update = [];
+                    if ($breakfast_opted !== null) {
+                        $prefs_update['breakfast_subscribed'] = $breakfast_opted == 1 ? 1 : 0;
+                    }
+                    if ($water_opted !== null) {
+                        $prefs_update['water_subscribed'] = $water_opted == 1 ? 1 : 0;
+                    }
+                    
+                    if (!empty($prefs_update)) {
+                        $prefs_update['updated_at'] = time();
+                        $existing_prefs = $this->db->get_where('student_daily_fee_preferences', ['student_id' => $student_id])->row();
+                        if ($existing_prefs) {
+                            $this->db->where('student_id', $student_id)->update('student_daily_fee_preferences', $prefs_update);
+                        } else {
+                            $prefs_update['student_id'] = $student_id;
+                            $prefs_update['auto_deduct_enabled'] = 1;
+                            $this->db->insert('student_daily_fee_preferences', $prefs_update);
+                        }
+                    }
+                }
+                
+                // Step 2: Check if "Mark Present" was requested - if yes, mark attendance FIRST
+                $running_year = get_settings('running_year');
+                $running_term = get_settings('running_term');
+                $mark_present = $this->input->post('mark_present');
+                
+                $attendance = $this->db->get_where('attendance', [
+                    'student_id' => $student_id,
+                    'timestamp' => $payment_date
+                ])->row();
+                
+                if ($mark_present && !$attendance) {
+                    // Mark attendance as present
+                    $attendance_data = [
+                        'student_id' => $student_id,
+                        'class_id' => $enroll->class_id,
+                        'section_id' => $enroll->section_id,
+                        'timestamp' => $payment_date,
+                        'year' => $running_year,
+                        'term' => $running_term,
+                        'status' => 1, // 1 = present
+                        'marked_by' => $collected_by,
+                        'marked_by_role' => $role
+                    ];
+                    $this->db->insert('attendance', $attendance_data);
+                    
+                    // Reload attendance record
+                    $attendance = $this->db->get_where('attendance', [
+                        'student_id' => $student_id,
+                        'timestamp' => $payment_date
+                    ])->row();
+                }
+                
+                // Step 3: If attendance exists (either pre-existing or just created), apply charges
+                if ($attendance && in_array($attendance->status, [1, 3])) {
+                    // Student was present (1) or late (3) - apply charges based on current preferences
+                    if ($enroll) {
+                        // Delete old charge log for this date (if any)
+                        $this->db->where('student_id', $student_id)
+                                 ->where('charge_date', $payment_date)
+                                 ->delete('daily_charge_log');
+                        
+                        // Pass transport_status option if transport direction was provided
+                        $options = [];
+                        if ($transport_direction && $transport_direction != 'none') {
+                            $options['transport_status'] = $transport_direction;
+                        }
+                        
+                        $this->Daily_fee_model->process_daily_charges(
+                            $student_id,
+                            $payment_date,
+                            $enroll->class_id,
+                            $running_year,
+                            $running_term,
+                            null,
+                            $options
+                        );
+                    }
+                }
+                
+                // Step 4: Process new payment
+                $data = [
+                    'student_id' => $student_id,
+                    'payment_date' => $payment_date,
+                    'feeding_amount' => $feeding,
+                    'breakfast_amount' => $breakfast,
+                    'classes_amount' => $classes,
+                    'water_amount' => $water,
+                    'transport_amount' => $transport,
+                    'payment_type' => $payment_type,
+                    'payment_method' => $payment_method,
+                    'collected_by' => $collected_by,
+                    'collection_point' => $this->Daily_fee_model->get_user_collection_point(),
+                    'receipt_number' => $receipt_number,
+                    'notes' => $this->input->post('notes'),
+                    'breakfast_opted' => $this->input->post('breakfast_opted'),
+                    'water_opted' => $this->input->post('water_opted')
+                ];
+                
+                $result = $this->Daily_fee_model->process_payment($data);
+                
+                // Step 5: Recalculate wallet from this date forward
+                $this->Daily_fee_model->recalculate_wallet_from_date($student_id, $payment_date);
+            }
+            
+            // Record transport if applicable
+            if ($transport > 0) {
+                $direction = $this->input->post('transport_direction') ?: 'both';
+                // Transport is already recorded in daily_fee_transactions above
+                // No need for separate bus_attendance table
+            }
+            
+            // Get student info
+            $student = $this->db->query("
+                SELECT s.name, s.student_code, c.name as class_name, sec.name as section_name
+                FROM student s
+                JOIN enroll e ON s.student_id = e.student_id
+                JOIN class c ON e.class_id = c.class_id
+                LEFT JOIN section sec ON e.section_id = sec.section_id
+                WHERE s.student_id = ? AND e.year = ? AND e.term = ?
+            ", [$student_id, get_settings('running_year'), get_settings('running_term')])->row_array();
+            
+            if (!$student) {
+                throw new Exception(get_phrase('student_not_found'));
+            }
+            
+            // Complete transaction
+            $this->db->trans_complete();
+            
+            if ($this->db->trans_status() === FALSE) {
+                throw new Exception(get_phrase('transaction_failed'));
+            }
+            
+            // Build success message with payment type info and mode
+            $payment_type_labels = [
+                'arrears' => 'Arrears Payment',
+                'advance' => 'Advance Payment', 
+                'mixed' => 'Mixed Payment (Arrears + Advance)'
+            ];
+            $type_label = $payment_type_labels[$payment_type] ?? 'Payment';
+            $action_label = $mode == 'updated' ? 'updated' : 'collected';
+            
+            echo json_encode([
+                'status' => 'success',
+                'message' => get_phrase('payment_' . $action_label . '_successfully') . ' - GHS ' . number_format($total, 2) . ' (' . $type_label . ')',
+                'receipt' => $receipt_number,
+                'student_id' => $student_id,
+                'payment_type' => $payment_type,
+                'timestamp' => $payment_date,
+                'mode' => $mode
+            ]);
+            
+        } catch (Exception $e) {
+            $this->db->trans_rollback();
+            echo json_encode([
+                'status' => 'error',
+                'message' => $e->getMessage()
+            ]);
+        }
+    }
+    
+
+    // Search students (AJAX)
+    public function search_students() {
+        $search = $this->input->get('q');
+        $running_year = get_settings('running_year');
+        $running_term = get_settings('running_term');
+        
+        $this->db->select('s.student_id, s.name, s.student_code, c.name as class_name, c.name_numeric, sec.name as section_name');
+        $this->db->from('student s');
+        $this->db->join('enroll e', 's.student_id = e.student_id');
+        $this->db->join('class c', 'e.class_id = c.class_id');
+        $this->db->join('section sec', 'e.section_id = sec.section_id', 'left');
+        $this->db->where('e.year', $running_year);
+        $this->db->where('e.term', $running_term);
+        
+        if (!empty($search)) {
+            $this->db->group_start();
+            $this->db->like('s.name', $search);
+            $this->db->or_like('s.student_code', $search);
+            $this->db->group_end();
+        }
+        
+        $this->db->order_by('s.name');
+        $this->db->limit(50);
+        
+        $students = $this->db->get()->result_array();
+        
+        $results = [];
+        foreach ($students as $student) {
+            $class_display = $student['class_name'] . ($student['name_numeric'] ? ' ' . $student['name_numeric'] : '');
+            $results[] = [
+                'id' => $student['student_id'],
+                'text' => $student['student_code'] . ' - ' . $student['name'] . ' (' . $class_display . ($student['section_name'] ? ' - ' . $student['section_name'] : '') . ')'
+            ];
+        }
+        
+        echo json_encode(['results' => $results]);
+    }
+    
+    // Dashboard data
+    public function dashboard_data() {
+        $today = strtotime(date('Y-m-d'));
+        $collected_by = $this->session->userdata('admin_id');
+        $login_type = $this->session->userdata('login_type');
+        
+        // Check if admin level 1 or 2 (can see all collections)
+        $show_all = false;
+        if ($login_type == 'admin') {
+            $admin = $this->db->get_where('admin', ['admin_id' => $collected_by])->row();
+            if ($admin && $admin->level <= 2) {
+                $show_all = true;
+            }
+        }
+        
+        // Build query based on permissions
+        $query = "
+            SELECT 
+                SUM(feeding_amount) as feeding,
+                SUM(breakfast_amount) as breakfast,
+                SUM(classes_amount) as classes,
+                SUM(water_amount) as water,
+                SUM(transport_amount) as transport,
+                SUM(feeding_amount + breakfast_amount + classes_amount + water_amount + transport_amount) as total,
+                COUNT(*) as count,
+                COUNT(DISTINCT CASE WHEN feeding_amount > 0 THEN student_id END) as feeding_count,
+                COUNT(DISTINCT CASE WHEN breakfast_amount > 0 THEN student_id END) as breakfast_count,
+                COUNT(DISTINCT CASE WHEN classes_amount > 0 THEN student_id END) as classes_count,
+                COUNT(DISTINCT CASE WHEN transport_amount > 0 THEN student_id END) as transport_count
+            FROM daily_fee_transactions
+            WHERE payment_date >= ? AND payment_date < ?
+        ";
+        
+        $params = [$today, $today + 86400];
+        
+        // Add collector filter for non-level-1/2 admins
+        if (!$show_all) {
+            $query .= " AND collected_by = ?";
+            $params[] = $collected_by;
+        }
+        
+        $collections = $this->db->query($query, $params)->row_array();
+        
+        // Get water weekly stats
+        $week_start = strtotime('monday this week');
+        $week_end = strtotime('sunday this week');
+        $running_year = get_settings('running_year');
+        $running_term = get_settings('running_term');
+        
+        $total_students = $this->db->query("
+            SELECT COUNT(DISTINCT s.student_id) as total
+            FROM student s
+            JOIN enroll e ON s.student_id = e.student_id
+            WHERE e.year = ? AND e.term = ?
+        ", [$running_year, $running_term])->row()->total;
+        
+        $water_paid = $this->db->query("
+            SELECT COUNT(DISTINCT t.student_id) as paid
+            FROM daily_fee_transactions t
+            JOIN student s ON t.student_id = s.student_id
+            JOIN enroll e ON s.student_id = e.student_id
+            WHERE t.water_amount > 0 
+            AND t.payment_date >= ? 
+            AND t.payment_date <= ?
+            AND e.year = ? AND e.term = ?
+        ", [$week_start, $week_end, $running_year, $running_term])->row()->paid;
+        
+        // Recent transactions query - Get ALL today's transactions
+        $recent_query = "
+            SELECT t.*, s.name as student_name, s.student_code,
+                   c.name as class_name, c.name_numeric, sec.name as section_name
+            FROM daily_fee_transactions t
+            JOIN student s ON t.student_id = s.student_id
+            LEFT JOIN enroll e ON s.student_id = e.student_id AND e.year = ? AND e.term = ?
+            LEFT JOIN class c ON e.class_id = c.class_id
+            LEFT JOIN section sec ON e.section_id = sec.section_id
+            WHERE t.payment_date >= ? AND t.payment_date < ?
+        ";
+        
+        $recent_params = [$running_year, $running_term, $today, $today + 86400];
+        
+        // Add collector filter for non-level-1/2 admins
+        if (!$show_all) {
+            $recent_query .= " AND t.collected_by = ?";
+            $recent_params[] = $collected_by;
+        }
+        
+        $recent_query .= " ORDER BY t.created_at DESC";
+        
+        $recent = $this->db->query($recent_query, $recent_params)->result_array();
+        
+        echo json_encode([
+            'status' => 'success',
+            'collections' => $collections,
+            'feeding_count' => $collections['feeding_count'],
+            'breakfast_count' => $collections['breakfast_count'],
+            'classes_count' => $collections['classes_count'],
+            'transport_count' => $collections['transport_count'],
+            'water_weekly' => [
+                'paid' => $water_paid,
+                'total' => $total_students
+            ],
+            'recent' => $recent,
+            'show_all' => $show_all
+        ]);
+    }
+    
+    // Record transport decision
+    public function record_transport_decision() {
+        $student_id = (int)$this->input->post('student_id');
+        $direction = $this->input->post('direction');
+        $collected_by = $this->session->userdata('admin_id');
+        $collection_point = $this->input->post('collection_point') ?: 'office';
+        
+        if (!$student_id || !$direction) {
+            echo json_encode(['status' => 'error', 'message' => 'Invalid data']);
+            return;
+        }
+        
+        $result = $this->Daily_fee_model->record_transport_decision($student_id, $direction, $collected_by, $collection_point);
+        echo json_encode($result);
+    }
+    
+    // Mark student boarded
+    public function mark_boarded() {
+        $student_id = (int)$this->input->post('student_id');
+        $direction = $this->input->post('direction');
+        $marked_by = $this->session->userdata('admin_id');
+        
+        if (!$student_id || !$direction) {
+            echo json_encode(['status' => 'error', 'message' => 'Invalid data']);
+            return;
+        }
+        
+        $result = $this->Daily_fee_model->mark_student_boarded($student_id, $direction, $marked_by);
+        echo json_encode($result);
+    }
+    
+    // Get today's transport decisions
+    public function get_transport_decisions() {
+        $today = strtotime(date('Y-m-d'));
+        $collected_by = $this->session->userdata('admin_id');
+        
+        $decisions = $this->db->query("
+            SELECT ba.*, s.name as student_name, s.student_code, t.route_name
+            FROM bus_attendance ba
+            JOIN student s ON ba.student_id = s.student_id
+            LEFT JOIN transport t ON ba.route_id = t.transport_id
+            WHERE ba.attendance_date = ? AND ba.collected_by = ?
+            ORDER BY ba.created_at DESC
+        ", [$today, $collected_by])->result_array();
+        
+        echo json_encode(['status' => 'success', 'decisions' => $decisions]);
+    }
+    
+    // Delete transaction with proper cleanup based on attendance status
+    public function delete_transaction() {
+        $transaction_id = (int)$this->input->post('transaction_id');
+        $student_id = (int)$this->input->post('student_id');
+        $admin_id = $this->session->userdata('admin_id');
+        $login_type = $this->session->userdata('login_type');
+        
+        if (!$transaction_id || !$student_id) {
+            echo json_encode(['status' => 'error', 'message' => 'Invalid data']);
+            return;
+        }
+        
+        // Check permissions - allow level 1-4 admins (includes cashiers at level 4)
+        if ($login_type != 'admin') {
+            echo json_encode(['status' => 'error', 'message' => 'Only administrators can delete transactions']);
+            return;
+        }
+        
+        $admin = $this->db->get_where('admin', ['admin_id' => $admin_id])->row();
+        if (!$admin || $admin->level > 4) {
+            echo json_encode(['status' => 'error', 'message' => 'You do not have permission to delete transactions']);
+            return;
+        }
+        
+        // Get the transaction details before deletion
+        $transaction = $this->db->get_where('daily_fee_transactions', ['id' => $transaction_id, 'student_id' => $student_id])->row();
+        
+        if (!$transaction) {
+            echo json_encode(['status' => 'error', 'message' => 'Transaction not found']);
+            return;
+        }
+        
+        $payment_date = $transaction->payment_date;
+        $date_string = date('Y-m-d', $payment_date);
+        
+        // Check attendance status for this date
+        $attendance = $this->db->get_where('attendance', [
+            'student_id' => $student_id,
+            'timestamp' => $payment_date
+        ])->row();
+        
+        // Determine if student should still be charged
+        // Present (status=1) or Late (status=4) means charges should remain
+        $should_keep_charges = ($attendance && in_array($attendance->status, [1, 4]));
+        
+        // Start transaction
+        $this->db->trans_start();
+        
+        try {
+            // 1. Delete the payment transaction
+            $this->db->where('id', $transaction_id);
+            $this->db->delete('daily_fee_transactions');
+            
+            // 2. Handle charges based on attendance status
+            if ($should_keep_charges) {
+                // Student is present/late - KEEP charges, just reverse the payment
+                // This adds the paid amounts back to arrears
+                log_message('info', 'Delete transaction: Student present/late - keeping charges for student ' . $student_id . ' on ' . $date_string);
+                
+                // Charges remain in daily_charge_log - don't delete them
+                // The recalculate_wallet_from_date will see charges exist but no payment, creating arrears
+                
+            } else {
+                // Student is not present/late - DELETE charges completely
+                log_message('info', 'Delete transaction: Student absent - removing charges for student ' . $student_id . ' on ' . $date_string);
+                
+                // Delete charge log entries for that date
+                $this->db->where('student_id', $student_id);
+                $this->db->where('charge_date', $payment_date);
+                $this->db->delete('daily_charge_log');
+            }
+            
+            // 3. Recalculate wallet from the transaction date
+            // This will:
+            // - If charges exist (present/late): create arrears from unpaid charges
+            // - If no charges (absent): just remove the payment, no arrears created
+            $this->Daily_fee_model->recalculate_wallet_from_date($student_id, $date_string);
+            
+            // Complete transaction
+            $this->db->trans_complete();
+            
+            if ($this->db->trans_status() === FALSE) {
+                echo json_encode(['status' => 'error', 'message' => 'Database error occurred while deleting transaction']);
+                return;
+            }
+            
+            // Log the deletion
+            $charge_action = $should_keep_charges ? 'charges kept' : 'charges removed';
+            log_message('info', 'Transaction deleted: ID=' . $transaction_id . ', Student=' . $student_id . ', Date=' . $date_string . ', Action=' . $charge_action . ', By Admin=' . $admin_id);
+            
+            $message = $should_keep_charges 
+                ? 'Transaction deleted. Student was marked present/late, so charges remain as arrears.'
+                : 'Transaction deleted. Student was not present, so charges were removed completely.';
+            
+            echo json_encode([
+                'status' => 'success',
+                'message' => $message
+            ]);
+            
+        } catch (Exception $e) {
+            $this->db->trans_rollback();
+            log_message('error', 'Error deleting transaction: ' . $e->getMessage());
+            echo json_encode(['status' => 'error', 'message' => 'An error occurred: ' . $e->getMessage()]);
+        }
+    }
+    
+    // Weekly water collection report
+    public function water_weekly_report() {
+        $week_start = strtotime('monday this week');
+        $week_end = strtotime('sunday this week');
+        $running_year = get_settings('running_year');
+        $running_term = get_settings('running_term');
+        
+        // Get all enrolled students with their water rates
+        $students = $this->db->query("
+            SELECT s.student_id, s.name, s.student_code, c.name as class_name, c.name_numeric, sec.name as section_name,
+                   dfr.water_rate
+            FROM student s
+            JOIN enroll e ON s.student_id = e.student_id
+            JOIN class c ON e.class_id = c.class_id
+            LEFT JOIN section sec ON e.section_id = sec.section_id
+            LEFT JOIN daily_fee_rates dfr ON c.class_id = dfr.class_id 
+                AND dfr.year = ? AND dfr.term = ?
+            WHERE e.year = ? AND e.term = ?
+        ", [$running_year, $running_term, $running_year, $running_term])->result_array();
+        
+        $paid_students = [];
+        $unpaid_students = [];
+        $total_expected = 0;
+        
+        foreach ($students as $student) {
+            $water_rate = $student['water_rate'] ?: 0;
+            
+            // Check if student paid water this week
+            $paid = $this->db->where('student_id', $student['student_id'])
+                ->where('water_amount >=', $water_rate)
+                ->where('payment_date >=', $week_start)
+                ->where('payment_date <=', $week_end)
+                ->count_all_results('daily_fee_transactions') > 0;
+            
+            if ($paid) {
+                $paid_students[] = $student;
+            } else {
+                $student['amount'] = $water_rate;
+                $unpaid_students[] = $student;
+                $total_expected += $water_rate;
+            }
+        }
+        
+        echo json_encode([
+            'status' => 'success',
+            'paid' => count($paid_students),
+            'unpaid' => count($unpaid_students),
+            'expected' => $total_expected,
+            'unpaid_students' => $unpaid_students
+        ]);
+    }
+    
+    // Daily fee report
+    public function daily_fee_report($fee_type) {
+        $today = strtotime(date('Y-m-d'));
+        $running_year = get_settings('running_year');
+        $running_term = get_settings('running_term');
+        
+        $column = $fee_type . '_amount';
+        
+        $students = $this->db->query("
+            SELECT s.student_id, s.name, s.student_code, c.name as class_name, c.name_numeric, sec.name as section_name,
+                   t.{$column} as amount
+            FROM daily_fee_transactions t
+            JOIN student s ON t.student_id = s.student_id
+            JOIN enroll e ON s.student_id = e.student_id
+            JOIN class c ON e.class_id = c.class_id
+            LEFT JOIN section sec ON e.section_id = sec.section_id
+            WHERE t.{$column} > 0 
+            AND t.payment_date >= ? 
+            AND t.payment_date < ?
+            AND e.year = ? AND e.term = ?
+            ORDER BY t.created_at DESC
+        ", [$today, $today + 86400, $running_year, $running_term])->result_array();
+        
+        $total = array_sum(array_column($students, 'amount'));
+        $count = count($students);
+        $average = $count > 0 ? $total / $count : 0;
+        
+        echo json_encode([
+            'status' => 'success',
+            'count' => $count,
+            'total' => $total,
+            'average' => $average,
+            'students' => $students
+        ]);
+    }
+
+    // Export statistics to Excel
+    public function export_statistics() {
+        $date_from = $this->input->get('date_from') ? strtotime($this->input->get('date_from')) : strtotime('first day of this month');
+        $date_to = $this->input->get('date_to') ? strtotime($this->input->get('date_to')) : strtotime('today');
+        $class_id = $this->input->get('class_id');
+        $collector_id = $this->input->get('collector_id');
+        $payment_method = $this->input->get('payment_method');
+        $running_year = get_settings('running_year');
+        $running_term = get_settings('running_term');
+        
+        $this->db->select('t.*, s.name as student_name, s.student_code, c.name as class_name, 
+                          a.name as collector_name,
+                          (t.feeding_amount + t.breakfast_amount + t.classes_amount + t.water_amount + t.transport_amount) as total_amount');
+        $this->db->from('daily_fee_transactions t');
+        $this->db->join('student s', 's.student_id = t.student_id');
+        $this->db->join('enroll e', 'e.student_id = s.student_id AND e.year = "'.$running_year.'" AND e.term = "'.$running_term.'"');
+        $this->db->join('class c', 'c.class_id = e.class_id');
+        $this->db->join('admin a', 'a.admin_id = t.collected_by', 'left');
+        $this->db->where('t.payment_date >=', $date_from);
+        $this->db->where('t.payment_date <=', $date_to + 86400);
+        
+        if ($class_id) $this->db->where('e.class_id', $class_id);
+        if ($collector_id) $this->db->where('t.collected_by', $collector_id);
+        if ($payment_method) $this->db->where('t.payment_method', $payment_method);
+        
+        $this->db->order_by('t.payment_date', 'DESC');
+        $transactions = $this->db->get()->result_array();
+        
+        header('Content-Type: text/csv');
+        header('Content-Disposition: attachment; filename="fee_collection_statistics_'.date('Y-m-d').'.csv"');
+        
+        $output = fopen('php://output', 'w');
+        fputcsv($output, ['Date', 'Student Code', 'Student Name', 'Class', 'Feeding', 'Breakfast', 'Classes', 'Water', 'Transport', 'Total', 'Payment Type', 'Payment Method', 'Collector']);
+        
+        $payment_methods = [1 => 'Cash', 2 => 'Mobile Money', 3 => 'Cheque', 4 => 'Bank Transfer'];
+        foreach ($transactions as $t) {
+            fputcsv($output, [
+                date('Y-m-d', $t['payment_date']),
+                $t['student_code'],
+                $t['student_name'],
+                $t['class_name'],
+                number_format($t['feeding_amount'], 2),
+                number_format($t['breakfast_amount'], 2),
+                number_format($t['classes_amount'], 2),
+                number_format($t['water_amount'], 2),
+                number_format($t['transport_amount'], 2),
+                number_format($t['total_amount'], 2),
+                ucfirst($t['payment_type']),
+                $payment_methods[$t['payment_method']] ?? 'N/A',
+                $t['collector_name'] ?: 'N/A'
+            ]);
+        }
+        
+        fclose($output);
+    }
+    
+    // ============================================
+    // FINANCIAL ANALYTICS API METHODS
+    // ============================================
+
+    public function get_efficiency_data($period = 'today', $start_date = null, $end_date = null) {
+        $dates = $this->calculate_period_dates($period, $start_date, $end_date);
+        $prev_dates = $this->calculate_previous_period($dates);
+        $current = $this->get_period_summary($dates['start'], $dates['end']);
+        $previous = $this->get_period_summary($prev_dates['start'], $prev_dates['end']);
+        
+        echo json_encode([
+            'collection_rate' => $current['collection_rate'],
+            'collected' => $current['total_collected'],
+            'target' => $current['target'],
+            'outstanding' => $current['outstanding'],
+            'prev_rate' => $previous['collection_rate'],
+            'prev_collected' => $previous['total_collected'],
+            'prev_outstanding' => $previous['outstanding'],
+            'trend' => $this->get_trend_data($dates['start'], $dates['end']),
+            'collectors' => $this->get_collector_rankings($dates['start'], $dates['end']),
+            'by_fee_type' => $this->get_fee_type_breakdown($dates['start'], $dates['end']),
+            'hourly' => $this->get_hourly_pattern($dates['start'], $dates['end'])
+        ]);
+    }
+
+    public function get_daily_summary($date) {
+        $timestamp_start = strtotime($date . ' 00:00:00');
+        $timestamp_end = strtotime($date . ' 23:59:59');
+        
+        $this->db->select_sum('feeding_amount');
+        $this->db->select_sum('classes_amount');
+        $this->db->select_sum('transport_amount');
+        $this->db->select_sum('breakfast_amount');
+        $this->db->select_sum('water_amount');
+        $this->db->where('payment_date >=', $timestamp_start);
+        $this->db->where('payment_date <=', $timestamp_end);
+        $totals = $this->db->get('daily_fee_transactions')->row_array();
+        
+        $total_cash = array_sum(array_values($totals));
+        
+        $this->db->where('payment_date >=', $timestamp_start);
+        $this->db->where('payment_date <=', $timestamp_end);
+        $total_transactions = $this->db->count_all_results('daily_fee_transactions');
+        
+        $this->db->select('a.name, SUM(t.feeding_amount + t.classes_amount + t.transport_amount + t.breakfast_amount + t.water_amount) as amount, COUNT(*) as count');
+        $this->db->from('daily_fee_transactions t');
+        $this->db->join('admin a', 'a.admin_id = t.collected_by');
+        $this->db->where('t.payment_date >=', $timestamp_start);
+        $this->db->where('t.payment_date <=', $timestamp_end);
+        $this->db->group_by('t.collected_by');
+        $this->db->order_by('amount', 'DESC');
+        $by_collector = $this->db->get()->result_array();
+        
+        $this->db->select('payment_method, SUM(feeding_amount + classes_amount + transport_amount + breakfast_amount + water_amount) as amount');
+        $this->db->where('payment_date >=', $timestamp_start);
+        $this->db->where('payment_date <=', $timestamp_end);
+        $this->db->group_by('payment_method');
+        $payment_methods = $this->db->get('daily_fee_transactions')->result_array();
+        
+        $by_payment_method = ['cash' => 0, 'mobile_money' => 0, 'bank_transfer' => 0];
+        foreach ($payment_methods as $pm) {
+            $by_payment_method[$pm['payment_method']] = (float)$pm['amount'];
+        }
+        
+        echo json_encode([
+            'report' => [
+                'total_cash' => $total_cash,
+                'total_transactions' => $total_transactions,
+                'by_fee_type' => [
+                    'feeding' => (float)$totals['feeding_amount'],
+                    'classes' => (float)$totals['classes_amount'],
+                    'transport' => (float)$totals['transport_amount'],
+                    'breakfast' => (float)$totals['breakfast_amount'],
+                    'water' => (float)$totals['water_amount']
+                ],
+                'by_collector' => $by_collector,
+                'by_payment_method' => $by_payment_method,
+                'variance' => 0
+            ],
+            'anomalies' => []
+        ]);
+    }
+
+    public function get_collector_summary($collector_id, $date, $shift = 'full') {
+        $times = $this->get_shift_times($date, $shift);
+        
+        $this->db->select('SUM(feeding_amount + classes_amount + transport_amount + breakfast_amount + water_amount) as total, COUNT(*) as transactions');
+        $this->db->select('SUM(CASE WHEN payment_method = "cash" THEN feeding_amount + classes_amount + transport_amount + breakfast_amount + water_amount ELSE 0 END) as cash');
+        $this->db->select('SUM(CASE WHEN payment_method = "mobile_money" THEN feeding_amount + classes_amount + transport_amount + breakfast_amount + water_amount ELSE 0 END) as momo');
+        $this->db->where('collected_by', $collector_id);
+        $this->db->where('payment_date >=', $times['start']);
+        $this->db->where('payment_date <=', $times['end']);
+        $summary = $this->db->get('daily_fee_transactions')->row_array();
+        
+        $this->db->select('SUM(feeding_amount) as feeding, SUM(classes_amount) as classes, SUM(transport_amount) as transport, SUM(breakfast_amount) as breakfast, SUM(water_amount) as water');
+        $this->db->where('collected_by', $collector_id);
+        $this->db->where('payment_date >=', $times['start']);
+        $this->db->where('payment_date <=', $times['end']);
+        $by_fee_type = $this->db->get('daily_fee_transactions')->row_array();
+        
+        echo json_encode([
+            'total' => (float)$summary['total'],
+            'transactions' => (int)$summary['transactions'],
+            'cash' => (float)$summary['cash'],
+            'momo' => (float)$summary['momo'],
+            'by_fee_type' => [
+                'feeding' => (float)$by_fee_type['feeding'],
+                'classes' => (float)$by_fee_type['classes'],
+                'transport' => (float)$by_fee_type['transport'],
+                'breakfast' => (float)$by_fee_type['breakfast'],
+                'water' => (float)$by_fee_type['water']
+            ]
+        ]);
+    }
+
+    private function calculate_period_dates($period, $start_date, $end_date) {
+        switch ($period) {
+            case 'today':
+                return ['start' => strtotime(date('Y-m-d') . ' 00:00:00'), 'end' => strtotime(date('Y-m-d') . ' 23:59:59')];
+            case 'week':
+                return ['start' => strtotime('monday this week 00:00:00'), 'end' => strtotime('sunday this week 23:59:59')];
+            case 'month':
+                return ['start' => strtotime(date('Y-m-01') . ' 00:00:00'), 'end' => strtotime(date('Y-m-t') . ' 23:59:59')];
+            case 'quarter':
+                $month = date('n');
+                $quarter_start = floor(($month - 1) / 3) * 3 + 1;
+                return ['start' => strtotime(date('Y') . '-' . $quarter_start . '-01 00:00:00'), 'end' => strtotime(date('Y') . '-' . ($quarter_start + 2) . '-' . date('t', strtotime(date('Y') . '-' . ($quarter_start + 2) . '-01')) . ' 23:59:59')];
+            case 'custom':
+                return ['start' => strtotime($start_date . ' 00:00:00'), 'end' => strtotime($end_date . ' 23:59:59')];
+        }
+    }
+
+    private function calculate_previous_period($dates) {
+        $duration = $dates['end'] - $dates['start'];
+        return ['start' => $dates['start'] - $duration, 'end' => $dates['start'] - 1];
+    }
+
+    private function get_period_summary($start, $end) {
+        $this->db->select_sum('feeding_amount + classes_amount + transport_amount + breakfast_amount + water_amount as total');
+        $this->db->where('payment_date >=', $start);
+        $this->db->where('payment_date <=', $end);
+        $result = $this->db->get('daily_fee_transactions')->row();
+        
+        $total_collected = (float)$result->total;
+        $days = ceil(($end - $start) / 86400);
+        $target = $days * 15000;
+        
+        return [
+            'total_collected' => $total_collected,
+            'target' => $target,
+            'outstanding' => 0,
+            'collection_rate' => $target > 0 ? ($total_collected / $target) * 100 : 0
+        ];
+    }
+
+    private function get_trend_data($start, $end) {
+        $days = min(ceil(($end - $start) / 86400), 7);
+        $trend = [];
+        for ($i = 0; $i < $days; $i++) {
+            $day_start = $start + ($i * 86400);
+            $day_end = $day_start + 86399;
+            $this->db->select_sum('feeding_amount + classes_amount + transport_amount + breakfast_amount + water_amount as amount');
+            $this->db->where('payment_date >=', $day_start);
+            $this->db->where('payment_date <=', $day_end);
+            $result = $this->db->get('daily_fee_transactions')->row();
+            $trend[] = ['date' => date('D', $day_start), 'amount' => (float)$result->amount];
+        }
+        return $trend;
+    }
+
+    private function get_collector_rankings($start, $end) {
+        $this->db->select('a.name, SUM(t.feeding_amount + t.classes_amount + t.transport_amount + t.breakfast_amount + t.water_amount) as amount, COUNT(*) as count');
+        $this->db->from('daily_fee_transactions t');
+        $this->db->join('admin a', 'a.admin_id = t.collected_by');
+        $this->db->where('t.payment_date >=', $start);
+        $this->db->where('t.payment_date <=', $end);
+        $this->db->group_by('t.collected_by');
+        $this->db->order_by('amount', 'DESC');
+        $this->db->limit(5);
+        return $this->db->get()->result_array();
+    }
+
+    private function get_fee_type_breakdown($start, $end) {
+        $this->db->select_sum('feeding_amount');
+        $this->db->select_sum('classes_amount');
+        $this->db->select_sum('transport_amount');
+        $this->db->select_sum('breakfast_amount');
+        $this->db->select_sum('water_amount');
+        $this->db->where('payment_date >=', $start);
+        $this->db->where('payment_date <=', $end);
+        $result = $this->db->get('daily_fee_transactions')->row_array();
+        return [
+            'feeding' => (float)$result['feeding_amount'],
+            'classes' => (float)$result['classes_amount'],
+            'transport' => (float)$result['transport_amount'],
+            'breakfast' => (float)$result['breakfast_amount'],
+            'water' => (float)$result['water_amount']
+        ];
+    }
+
+    private function get_hourly_pattern($start, $end) {
+        $hourly = array_fill(0, 12, 0);
+        $this->db->select('payment_date, feeding_amount + classes_amount + transport_amount + breakfast_amount + water_amount as amount');
+        $this->db->where('payment_date >=', $start);
+        $this->db->where('payment_date <=', $end);
+        $transactions = $this->db->get('daily_fee_transactions')->result_array();
+        foreach ($transactions as $t) {
+            $hour = (int)date('H', $t['payment_date']);
+            if ($hour >= 6 && $hour <= 17) {
+                $hourly[$hour - 6] += (float)$t['amount'];
+            }
+        }
+        return $hourly;
+    }
+
+    private function get_shift_times($date, $shift) {
+        $base = strtotime($date);
+        switch ($shift) {
+            case 'morning':
+                return ['start' => $base + (6 * 3600), 'end' => $base + (12 * 3600) - 1];
+            case 'afternoon':
+                return ['start' => $base + (12 * 3600), 'end' => $base + (18 * 3600) - 1];
+            default:
+                return ['start' => $base, 'end' => $base + 86399];
+        }
+    }
+
+    
+    /**
+     * ENTERPRISE-GRADE: Mark student as boarded from cashier portal
+     * Records boarding and creates bus_attendance record
+     */
+    private function mark_student_boarded_cashier($student_id, $direction, $amount, $attendance_date = null) {
+        // Use the model method which handles everything correctly
+        $cashier_id = $this->session->userdata('admin_id');
+        $result = $this->Daily_fee_model->mark_student_boarded($student_id, $direction, $cashier_id, $attendance_date);
+        return $result;
+    }
+    
+    /**
+     * ENTERPRISE-GRADE: Record transport intention (not boarded yet)
+     * Creates pending bus_attendance record for conductor
+     */
+    private function record_transport_intention($student_id, $direction, $amount, $attendance_date = null) {
+        $cashier_id = $this->session->userdata('admin_id');
+        $collection_point = $this->Daily_fee_model->get_user_collection_point();
+        $result = $this->Daily_fee_model->record_transport_decision($student_id, $direction, $cashier_id, $collection_point, $attendance_date);
+        return $result;
+    }
+
+    /**
+     * Get student's wallet balance (AJAX endpoint)
+     */
+    public function get_wallet_balance() {
+        $student_id = $this->input->post('student_id');
+        
+        if (!$student_id) {
+            echo json_encode(['status' => 'error', 'message' => 'Student ID required']);
+            return;
+        }
+        
+        $year = get_settings('running_year');
+        $term = get_settings('running_term');
+        
+        // Get wallet balance
+        $wallet = $this->db->where('student_id', $student_id)
+                          ->where('year', $year)
+                          ->where('term', $term)
+                          ->get('daily_fee_wallet')
+                          ->row();
+        
+        if ($wallet) {
+            echo json_encode([
+                'status' => 'success',
+                'feeding_balance' => $wallet->feeding_balance,
+                'breakfast_balance' => $wallet->breakfast_balance,
+                'classes_balance' => $wallet->classes_balance,
+                'water_balance' => $wallet->water_balance,
+                'transport_balance' => $wallet->transport_balance,
+                'feeding_arrears' => $wallet->feeding_arrears,
+                'breakfast_arrears' => $wallet->breakfast_arrears,
+                'classes_arrears' => $wallet->classes_arrears,
+                'water_arrears' => $wallet->water_arrears,
+                'transport_arrears' => $wallet->transport_arrears
+            ]);
+        } else {
+            // No wallet exists, return zero balances
+            echo json_encode([
+                'status' => 'success',
+                'feeding_balance' => 0,
+                'breakfast_balance' => 0,
+                'classes_balance' => 0,
+                'water_balance' => 0,
+                'transport_balance' => 0,
+                'feeding_arrears' => 0,
+                'breakfast_arrears' => 0,
+                'classes_arrears' => 0,
+                'water_arrears' => 0,
+                'transport_arrears' => 0
+            ]);
+        }
+    }
+    
+    // Helper method to mark student attendance
+}
+
+    
+    

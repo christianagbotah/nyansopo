@@ -1,0 +1,309 @@
+// ============================================
+// BULK ARREARS IMPORT - ENTERPRISE IMPLEMENTATION
+// Add these methods to the Admin controller
+// ============================================
+
+/**
+ * Show bulk arrears import modal
+ */
+function bulk_arrears_import_modal() {
+    $this->load->view('backend/admin/bulk_arrears_import_modal');
+}
+
+/**
+ * Show student selection for arrears template
+ */
+function bulk_arrears_student_selection() {
+    $running_year = get_settings('running_year');
+    $running_term = get_settings('running_term');
+    
+    // Get all active students for current academic period
+    $query = "SELECT DISTINCT s.student_id, s.name, s.student_code,
+              CONCAT(c.name, ' ', c.name_numeric, ' ', sec.name) as class_name
+              FROM student s
+              JOIN enroll e ON s.student_id = e.student_id
+              JOIN class c ON e.class_id = c.class_id
+              JOIN section sec ON e.section_id = sec.section_id
+              WHERE e.year = ? AND e.term = ?
+              ORDER BY s.name ASC";
+    
+    $page_data['students'] = $this->db->query($query, [$running_year, $running_term])->result_array();
+    $this->load->view('backend/admin/bulk_arrears_student_selection', $page_data);
+}
+
+/**
+ * Generate arrears template Excel file
+ */
+function generate_arrears_template() {
+    $students = $this->input->post('students');
+    
+    if(empty($students)) {
+        echo json_encode(['status' => 'error', 'message' => 'No students selected']);
+        return;
+    }
+    
+    // Load PHPExcel library
+    require_once APPPATH . 'third_party/PHPExcel/PHPExcel.php';
+    
+    $objPHPExcel = new PHPExcel();
+    $objPHPExcel->setActiveSheetIndex(0);
+    $sheet = $objPHPExcel->getActiveSheet();
+    
+    // Set document properties
+    $objPHPExcel->getProperties()
+        ->setCreator(get_settings('system_name'))
+        ->setTitle('Arrears Import Template')
+        ->setSubject('Student Arrears')
+        ->setDescription('Template for importing student arrears');
+    
+    // Set column headers with styling
+    $headers = ['Student ID', 'Student Name', 'Student Code', 'Class', 'Amount Owed'];
+    $col = 'A';
+    foreach($headers as $header) {
+        $sheet->setCellValue($col.'1', $header);
+        $sheet->getStyle($col.'1')->getFont()->setBold(true)->setSize(12);
+        $sheet->getStyle($col.'1')->getFill()
+            ->setFillType(PHPExcel_Style_Fill::FILL_SOLID)
+            ->getStartColor()->setRGB('667eea');
+        $sheet->getStyle($col.'1')->getFont()->getColor()->setRGB('FFFFFF');
+        $sheet->getStyle($col.'1')->getAlignment()->setHorizontal(PHPExcel_Style_Alignment::HORIZONTAL_CENTER);
+        $col++;
+    }
+    
+    // Set column widths
+    $sheet->getColumnDimension('A')->setWidth(12);
+    $sheet->getColumnDimension('B')->setWidth(30);
+    $sheet->getColumnDimension('C')->setWidth(15);
+    $sheet->getColumnDimension('D')->setWidth(25);
+    $sheet->getColumnDimension('E')->setWidth(15);
+    
+    // Add student data
+    $row = 2;
+    foreach($students as $student) {
+        $sheet->setCellValue('A'.$row, $student['student_id']);
+        $sheet->setCellValue('B'.$row, $student['name']);
+        $sheet->setCellValue('C'.$row, $student['code']);
+        $sheet->setCellValue('D'.$row, $student['class']);
+        $sheet->setCellValue('E'.$row, 0.00); // Default amount
+        
+        // Format amount column as number
+        $sheet->getStyle('E'.$row)->getNumberFormat()
+            ->setFormatCode(PHPExcel_Style_NumberFormat::FORMAT_NUMBER_COMMA_SEPARATED1);
+        
+        // Add borders
+        $sheet->getStyle('A'.$row.':E'.$row)->getBorders()->getAllBorders()
+            ->setBorderStyle(PHPExcel_Style_Border::BORDER_THIN);
+        
+        $row++;
+    }
+    
+    // Add instructions sheet
+    $objPHPExcel->createSheet(1);
+    $objPHPExcel->setActiveSheetIndex(1);
+    $instructionSheet = $objPHPExcel->getActiveSheet();
+    $instructionSheet->setTitle('Instructions');
+    
+    $instructions = [
+        ['BULK ARREARS IMPORT - INSTRUCTIONS'],
+        [''],
+        ['1. Fill in the "Amount Owed" column for each student'],
+        ['2. Enter 0 or leave blank for students with no arrears'],
+        ['3. Do NOT modify Student ID, Name, Code, or Class columns'],
+        ['4. Save the file when done'],
+        ['5. Upload the file in the Bulk Arrears Import section'],
+        [''],
+        ['IMPORTANT NOTES:'],
+        ['- Only students with amounts greater than 0 will have invoices created'],
+        ['- Each invoice will be created with "Arrears" as the bill item'],
+        ['- Invoices will be created for the current academic term and year'],
+        ['- A unique invoice code will be generated for each student'],
+        [''],
+        ['For support, contact your system administrator']
+    ];
+    
+    $iRow = 1;
+    foreach($instructions as $instruction) {
+        $instructionSheet->setCellValue('A'.$iRow, $instruction[0]);
+        if($iRow == 1 || $iRow == 9) {
+            $instructionSheet->getStyle('A'.$iRow)->getFont()->setBold(true)->setSize(14);
+        }
+        $iRow++;
+    }
+    $instructionSheet->getColumnDimension('A')->setWidth(70);
+    
+    // Set active sheet back to data sheet
+    $objPHPExcel->setActiveSheetIndex(0);
+    
+    // Save file
+    $filename = 'Arrears_Template_' . date('Y-m-d_His') . '.xlsx';
+    $filepath = 'uploads/arrears_templates/';
+    
+    // Create directory if it doesn't exist
+    if(!is_dir($filepath)) {
+        mkdir($filepath, 0777, true);
+    }
+    
+    $fullpath = $filepath . $filename;
+    
+    $objWriter = PHPExcel_IOFactory::createWriter($objPHPExcel, 'Excel2007');
+    $objWriter->save($fullpath);
+    
+    echo json_encode([
+        'status' => 'success',
+        'message' => 'Template generated successfully with ' . count($students) . ' student(s)',
+        'file_url' => base_url($fullpath)
+    ]);
+}
+
+/**
+ * Process bulk arrears import
+ */
+function bulk_arrears_import($param1 = '') {
+    if($param1 == 'process') {
+        // Check if file was uploaded
+        if(!isset($_FILES['arrears_file']) || $_FILES['arrears_file']['error'] != 0) {
+            echo json_encode(['status' => 'error', 'message' => 'No file uploaded or upload error']);
+            return;
+        }
+        
+        $file = $_FILES['arrears_file']['tmp_name'];
+        $ext = pathinfo($_FILES['arrears_file']['name'], PATHINFO_EXTENSION);
+        
+        if(!in_array(strtolower($ext), ['xlsx', 'xls'])) {
+            echo json_encode(['status' => 'error', 'message' => 'Invalid file format. Only Excel files are allowed']);
+            return;
+        }
+        
+        // Load PHPExcel library
+        require_once APPPATH . 'third_party/PHPExcel/PHPExcel.php';
+        
+        try {
+            $objPHPExcel = PHPExcel_IOFactory::load($file);
+            $sheet = $objPHPExcel->getActiveSheet();
+            $highestRow = $sheet->getHighestRow();
+            
+            $running_year = get_settings('running_year');
+            $running_term = get_settings('running_term');
+            $created_by = $this->session->userdata('admin_id');
+            $creation_timestamp = strtotime('now');
+            
+            // Get Arrears bill item
+            $arrears_item = $this->db->where('title', 'Arrears')->get('bill_item')->row();
+            if(!$arrears_item) {
+                echo json_encode(['status' => 'error', 'message' => 'Arrears bill item not found in system']);
+                return;
+            }
+            
+            $success_count = 0;
+            $skip_count = 0;
+            $error_count = 0;
+            $errors = [];
+            
+            // Process each row (skip header)
+            for($row = 2; $row <= $highestRow; $row++) {
+                $student_id = $sheet->getCell('A'.$row)->getValue();
+                $amount = floatval($sheet->getCell('E'.$row)->getValue());
+                
+                // Skip if amount is 0 or negative
+                if($amount <= 0) {
+                    $skip_count++;
+                    continue;
+                }
+                
+                // Verify student exists
+                $student = $this->db->where('student_id', $student_id)->get('student')->row();
+                if(!$student) {
+                    $error_count++;
+                    $errors[] = "Row $row: Student ID $student_id not found";
+                    continue;
+                }
+                
+                // Get student's class
+                $enroll = $this->db->where('student_id', $student_id)
+                    ->where('year', $running_year)
+                    ->where('term', $running_term)
+                    ->get('enroll')->row();
+                
+                if(!$enroll) {
+                    $error_count++;
+                    $errors[] = "Row $row: Student not enrolled in current term/year";
+                    continue;
+                }
+                
+                // Generate unique invoice code
+                $invoice_code = substr(md5(uniqid(rand(), true)), 0, 10);
+                
+                // Check for existing arrears invoice
+                $existing = $this->db->where('student_id', $student_id)
+                    ->where('title', 'ARREARS')
+                    ->where('year', $running_year)
+                    ->where('term', $running_term)
+                    ->where('can_delete !=', 'trash')
+                    ->get('invoice')->row();
+                
+                if($existing) {
+                    // Update existing invoice
+                    $old_amount = $existing->amount;
+                    $old_due = $existing->due;
+                    $amount_diff = $amount - $old_amount;
+                    
+                    $this->db->where('invoice_id', $existing->invoice_id)
+                        ->update('invoice', [
+                            'amount' => $amount,
+                            'due' => $old_due + $amount_diff
+                        ]);
+                    
+                    $success_count++;
+                } else {
+                    // Create new invoice
+                    $invoice_data = [
+                        'invoice_code' => $invoice_code,
+                        'student_id' => $student_id,
+                        'class_id' => $enroll->class_id,
+                        'title' => 'ARREARS',
+                        'description' => 'Previous term arrears',
+                        'amount' => $amount,
+                        'amount_paid' => 0,
+                        'due' => $amount,
+                        'status' => 'unpaid',
+                        'year' => $running_year,
+                        'term' => $running_term,
+                        'creation_timestamp' => $creation_timestamp,
+                        'can_delete' => 'default',
+                        'can_edit' => 'default'
+                    ];
+                    
+                    $this->db->insert('invoice', $invoice_data);
+                    $success_count++;
+                }
+            }
+            
+            $message = "Import completed: $success_count invoice(s) created/updated";
+            if($skip_count > 0) {
+                $message .= ", $skip_count skipped (zero amount)";
+            }
+            if($error_count > 0) {
+                $message .= ", $error_count error(s)";
+            }
+            
+            echo json_encode([
+                'status' => 'success',
+                'message' => $message,
+                'details' => [
+                    'success' => $success_count,
+                    'skipped' => $skip_count,
+                    'errors' => $error_count,
+                    'error_messages' => $errors
+                ]
+            ]);
+            
+        } catch(Exception $e) {
+            echo json_encode(['status' => 'error', 'message' => 'Error processing file: ' . $e->getMessage()]);
+        }
+        
+        return;
+    }
+    
+    // Show modal
+    $this->load->view('backend/admin/bulk_arrears_import_modal');
+}

@@ -72,8 +72,11 @@ export function ConductorPortal() {
 
   async function saveBoarding(assignmentId: string, direction: string) {
     try {
-      await apiPost(`/api/school/${currentSchoolId}/ops/transport`, { action: "boarding-save", assignmentId, date, direction });
-      toast({ title: `${DIR_LABEL[direction]} marked`, description: `Recorded for ${fmtDate(date)}` });
+      const res = await apiPost<any>(`/api/school/${currentSchoolId}/ops/transport`, { action: "boarding-save", assignmentId, date, direction });
+      toast({
+        title: `${DIR_LABEL[res.boarding?.direction ?? direction] ?? DIR_LABEL[direction]} marked`,
+        description: res.message ?? `Recorded for ${fmtDate(date)}`,
+      });
       load();
     } catch (e: any) {
       toast({ title: "Could not save boarding", description: e.message, variant: "destructive" });
@@ -101,8 +104,10 @@ export function ConductorPortal() {
 
   const boardedIn = Object.values(todayBoardings).filter((b) => b.direction === "IN" || b.direction === "BOTH").length;
   const boardedOut = Object.values(todayBoardings).filter((b) => b.direction === "OUT" || b.direction === "BOTH").length;
-  const faresDueToday = (route?.riders ?? []).reduce((s, r) => s + (route?.farePerTrip ?? 0) * 2, 0);
+  // iEduPro one-way model: what the day's marked boardings add up to (in 1× · out 1× · both 2×)
+  const faresDueToday = Object.values(todayBoardings).reduce((s, b) => s + b.fareCents, 0);
   const faresPaidToday = Object.values(todayBoardings).reduce((s, b) => s + b.paidCents, 0);
+  const faresOwingToday = faresDueToday - faresPaidToday;
 
   return (
     <div>
@@ -138,7 +143,7 @@ export function ConductorPortal() {
             <Tile icon={<Users className="size-4" />} label="Riders on manifest" value={route.riders.length} sub={`${Math.round((route.riders.length / Math.max(1, route.capacity)) * 100)}% of ${route.capacity} seats`} />
             <Tile icon={<MapPin className="size-4" />} label="Picked up (AM)" value={`${boardedIn}/${route.riders.length}`} sub="boarded this morning" tone="good" />
             <Tile icon={<ArrowRightLeft className="size-4" />} label="Dropped (PM)" value={`${boardedOut}/${route.riders.length}`} sub="dropped this afternoon" />
-            <Tile icon={<Wallet className="size-4" />} label="Fares collected today" value={fmtCedi(faresPaidToday, { compact: true })} sub={`of ${fmtCedi(faresDueToday, { compact: true })} daily due`} />
+            <Tile icon={<Wallet className="size-4" />} label="Fares settled today" value={fmtCedi(faresPaidToday, { compact: true })} sub={`of ${fmtCedi(faresDueToday, { compact: true })} marked${faresOwingToday > 0 ? ` · ${fmtCedi(faresOwingToday, { compact: true })} owing` : " — all settled"}`} />
           </div>
 
           <div className="grid lg:grid-cols-3 gap-4">
@@ -232,7 +237,8 @@ export function ConductorPortal() {
                   <div className="flex justify-between"><span className="text-muted-foreground">Model</span><span>{route.vehicleModel ?? "—"}</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground">Driver</span><span>{route.driverName}</span></div>
                   <div className="flex items-center justify-between"><span className="text-muted-foreground">Driver phone</span><a className="flex items-center gap-1 text-primary" href={`tel:${route.driverPhone}`}><Phone className="size-3" /> {route.driverPhone}</a></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">Per-trip fare</span><b className="tabular-nums">{fmtCedi(route.farePerTrip)}</b></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">One-way fare</span><b className="tabular-nums">{fmtCedi(route.farePerTrip)}</b></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Both ways (×2)</span><span className="tabular-nums">{fmtCedi(route.farePerTrip * 2)}</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground">Term fare</span><span className="tabular-nums">{fmtCedi(route.fare)}</span></div>
                   {!!route.stops.length && (
                     <div className="pt-2">

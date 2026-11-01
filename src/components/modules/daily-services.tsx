@@ -17,9 +17,11 @@ import { toast } from "@/hooks/use-toast";
 import { UtensilsCrossed, Wallet, CalendarPlus, Plus, TrendingUp, Search, Droplets, BookOpenCheck, Coffee, HandCoins, CheckCircle2, Printer, Percent, Bus, Settings2, CircleDollarSign, ArrowDownToLine, History, BadgeCheck, UserCheck, Landmark } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ReceiptDocument } from "@/components/receipts";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 type Service = {
   id: string; name: string; category: string; price: number; chargeMode: string; weekdays: string; active: boolean; enrolled: number;
+  classRates: { classroomId: string; classroom: string; price: number }[];
   month: { billed: number; collected: number; owed: number; waived: number; count: number };
   today: { billed: number; collected: number; count: number; owedCount: number };
 };
@@ -31,9 +33,14 @@ type PosStudent = {
   wallet: { prepaidCents: number; transportCents: number };
   todayTransport: { id: string; amount: number; status: string; usage: string | null } | null;
   today: { charged: number; owed: number } | null;
+  transportFare: { oneway: number; routeName: string; stopName: string | null; routeId: string } | null;
 };
 type WalletTxnRow = { id: string; student: string; wallet: string; kind: string; amount: number; balanceAfter: number; note: string | null; byName: string | null; at: string };
 type DailySettings = { collectionMode: "CLASSROOM" | "CASHIER" | "HYBRID"; teacherPerms: { mode: "ALL" | "NONE" | "SELECTIVE"; classroomIds: string[]; serviceIds: string[] }; classrooms: { id: string; name: string }[] };
+type Reconciliation = {
+  billed: number; collected: number; waived: number; outstanding: number; counter: number; walletPays: number; variance: number; txns: number;
+  byCollector: { name: string; counter: number; receipts: number; wallet: number; total: number }[];
+};
 type DailyData = {
   date: string;
   services: Service[];
@@ -46,6 +53,7 @@ type DailyData = {
   wallets: { studentId: string; student: string; classroom: string; prepaid: number; transport: number; arrears: number }[];
   walletTxns: WalletTxnRow[];
   settings: DailySettings;
+  reconciliation: Reconciliation;
 };
 
 const MODE_LABELS: Record<string, string> = { CLASSROOM: "Classroom only", CASHIER: "Cashier only", HYBRID: "Hybrid (classroom + counter)" };
@@ -150,6 +158,8 @@ export function DailyServices() {
           <TabsTrigger value="wallets">Wallets</TabsTrigger>
           <TabsTrigger value="ledger">Ledger & arrears ({data.ledger.length})</TabsTrigger>
           {!isTeacher && <TabsTrigger value="services">Services & enrolment</TabsTrigger>}
+          {!isTeacher && <TabsTrigger value="rates">Fee rates</TabsTrigger>}
+          {!isTeacher && <TabsTrigger value="recon">Reconciliation</TabsTrigger>}
           <TabsTrigger value="trend">14-day trend</TabsTrigger>
         </TabsList>
 
@@ -443,6 +453,16 @@ export function DailyServices() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        {/* ── FEE RATES (iedupro daily_fee_rates: per class-section per fee type) ── */}
+        <TabsContent value="rates">
+          <RatesTab data={data} onSaved={() => load(date)} />
+        </TabsContent>
+
+        {/* ── RECONCILIATION (iedupro daily_fee_reconciliation + handover) ── */}
+        <TabsContent value="recon">
+          <ReconciliationTab data={data} date={date} />
+        </TabsContent>
       </Tabs>
 
       {/* collect dialog */}
@@ -620,19 +640,22 @@ function CollectDialog({ student, date, online, onOpenChange, onDone }: { studen
             <div className="space-y-1.5 col-span-2">
               <Label>Transport usage today</Label>
               <Select value={usage} onValueChange={setUsage}>
-                <SelectTrigger><SelectValue placeholder="Both ways — full fare" /></SelectTrigger>
+                <SelectTrigger><SelectValue placeholder={student?.transportFare ? "Both ways — 2× one-way fare" : "No route assigned"} /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="BOTH">Both ways — full fare</SelectItem>
-                  <SelectItem value="MORNING">Morning only — half fare</SelectItem>
-                  <SelectItem value="AFTERNOON">Afternoon only — half fare</SelectItem>
-                  <SelectItem value="NOT_USING">Not using bus — waive fare</SelectItem>
-                  <SelectItem value="BOARDED">Already boarded — keep fare</SelectItem>
+                  <SelectItem value="BOTH" disabled={!student?.transportFare}>Both ways — {student?.transportFare ? fmtCedi(student.transportFare.oneway * 2) : "—"}</SelectItem>
+                  <SelectItem value="MORNING" disabled={!student?.transportFare}>Morning only (one-way) — {student?.transportFare ? fmtCedi(student.transportFare.oneway) : "—"}</SelectItem>
+                  <SelectItem value="AFTERNOON" disabled={!student?.transportFare}>Afternoon only (one-way) — {student?.transportFare ? fmtCedi(student.transportFare.oneway) : "—"}</SelectItem>
+                  <SelectItem value="NOT_USING">Not using bus — waive fare (GH₵0)</SelectItem>
+                  <SelectItem value="BOARDED" disabled={!student?.transportFare}>Already boarded — as recorded</SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-[11px] text-muted-foreground">
+                {student?.transportFare
+                  ? <>Route <b>{student.transportFare.routeName}</b> — one-way fare <b>{fmtCedi(student.transportFare.oneway)}</b>{student.transportFare.stopName ? <> (stop fare from {student.transportFare.stopName})</> : null}. Both ways = <b>{fmtCedi(student.transportFare.oneway * 2)}</b>.</>
+                  : "This learner has no active route assignment — the transport fare follows the bus route."}
                 {student?.todayTransport
-                  ? `Today's ${transportSvc.name}: ${fmtCedi(student.todayTransport.amount)} (${student.todayTransport.status.toLowerCase()})`
-                  : "No transport charge generated for today — usage will apply when it exists."}
+                  ? ` Today's charge: ${fmtCedi(student.todayTransport.amount)} (${student.todayTransport.status.toLowerCase()}${student.todayTransport.usage ? ` · ${student.todayTransport.usage.toLowerCase()}` : ""}).`
+                  : " No transport charge exists for today — picking a usage creates it."}
               </p>
             </div>
           )}
@@ -1060,5 +1083,142 @@ function DailySettingsDialog({ open, data, onOpenChange, onDone }: {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ── FEE RATES tab (iedupro daily_fee_rates: per class-section per fee type) ──
+// Resolution order shown in the legend: student override → class rate → standard.
+function RatesTab({ data, onSaved }: { data: DailyData; onSaved: () => void }) {
+  const { currentSchoolId } = useStore();
+  const [svcId, setSvcId] = useState<string>(data.services[0]?.id ?? "");
+  const [edits, setEdits] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const svc = data.services.find((s) => s.id === svcId) ?? data.services[0];
+  const rateByClass = new Map((svc?.classRates ?? []).map((r) => [r.classroomId, r.price]));
+
+  async function save(classroomId: string) {
+    if (!svc || !currentSchoolId) return;
+    const raw = edits[classroomId];
+    if (raw == null) return;
+    const price = Math.round(parseFloat(raw || "0") * 100);
+    setBusy(true);
+    try {
+      if (!raw || price <= 0) {
+        await apiPost(`/api/school/${currentSchoolId}/ops/daily`, { action: "rate-clear", serviceId: svc.id, classroomId });
+        toast({ title: "Override removed", description: "This class now bills at the standard rate." });
+      } else {
+        await apiPost(`/api/school/${currentSchoolId}/ops/daily`, { action: "rate-save", serviceId: svc.id, classroomId, priceCents: price });
+        toast({ title: "Class rate saved", description: `${svc.name} — ${fmtCedi(price)} for this class.` });
+      }
+      setEdits((e) => { const n = { ...e }; delete n[classroomId]; return n; });
+      onSaved();
+    } catch (e: any) { toast({ title: "Save failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
+  }
+
+  if (!svc) return <EmptyState title="No services yet" hint="Create a service first." />;
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="pb-3 flex-row items-center justify-between space-y-0 flex-wrap gap-2">
+          <CardTitle className="text-base">Rate matrix — {svc.name}</CardTitle>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Badge variant="outline" className="text-[10px]">standard {fmtCedi(svc.price)}</Badge>
+            <span>{svc.chargeMode === "WEEKLY" ? "weekly service" : "daily service"} · {svc.enrolled} enrolled</span>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {data.services.map((s) => (
+              <button key={s.id} onClick={() => setSvcId(s.id)}
+                className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors ${s.id === svcId ? "border-primary bg-primary/10 text-primary" : "hover:bg-secondary/50"}`}>
+                {s.name}
+              </button>
+            ))}
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {data.settings.classrooms.map((c) => {
+              const override = rateByClass.get(c.id);
+              const value = edits[c.id] ?? (override != null ? (override / 100).toFixed(2) : "");
+              const dirty = c.id in edits;
+              return (
+                <div key={c.id} className={`rounded-xl border p-3 ${override != null ? "bg-amber-50/60 dark:bg-amber-950/20 border-amber-200 dark:border-amber-900" : ""}`}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-sm font-medium truncate">{c.name}</div>
+                    {override != null && <Badge className="bg-amber-500 text-[9px]">class rate</Badge>}
+                  </div>
+                  <div className="text-[11px] text-muted-foreground mb-2">
+                    {override != null ? "overridden" : `standard ${fmtCedi(svc.price)}`}
+                  </div>
+                  <div className="flex gap-1.5">
+                    <Input
+                      type="number" step="0.25" min="0" placeholder={`std ${(svc.price / 100).toFixed(2)}`}
+                      value={value}
+                      onChange={(e) => setEdits((ed) => ({ ...ed, [c.id]: e.target.value }))}
+                      className="h-8"
+                    />
+                    <Button size="sm" className="h-8" disabled={!dirty || busy} onClick={() => save(c.id)}>Save</Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <p className="text-xs text-muted-foreground mt-3">
+            A learner's effective rate resolves <b>student override → class rate → standard</b> — the same order iEduPro uses for its per-class fee rates. Transport follows the bus route's one-way fare instead (set it in the Transportation module).
+          </p>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ── RECONCILIATION tab (iedupro daily_fee_reconciliation + collector handover) ──
+function ReconciliationTab({ data, date }: { data: DailyData; date: string }) {
+  const r = data.reconciliation;
+  const ok = Math.abs(r.variance) < 1; // pesewa-level match
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatCard icon={<Percent className="size-4" />} label="Charged today" value={fmtCedi(r.billed, { compact: true })} sub={`${r.txns} charges`} />
+        <StatCard icon={<Wallet className="size-4" />} label="Collected" value={fmtCedi(r.collected, { compact: true })} tone="primary" sub={`counter ${fmtCedi(r.counter, { compact: true })} · wallets ${fmtCedi(r.walletPays, { compact: true })}`} />
+        <StatCard icon={<History className="size-4" />} label="Still owing" value={fmtCedi(r.outstanding, { compact: true })} tone={r.outstanding > 0 ? "danger" : "default"} sub={`waived ${fmtCedi(r.waived, { compact: true })}`} />
+        <StatCard icon={<BadgeCheck className="size-4" />} label="Variance" value={ok ? "Balanced" : fmtCedi(Math.abs(r.variance), { compact: true })} tone={ok ? "primary" : "danger"} sub={ok ? "charges trace to receipts" : "untraced settlements"} />
+      </div>
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Collector handover — {fmtDate(date)}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {r.byCollector.length ? (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Collector</TableHead>
+                  <TableHead className="text-right">Counter takings</TableHead>
+                  <TableHead className="text-right">Receipts</TableHead>
+                  <TableHead className="text-right">Wallet deductions</TableHead>
+                  <TableHead className="text-right">Handover total</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {r.byCollector.map((c) => (
+                  <TableRow key={c.name}>
+                    <TableCell className="font-medium">{c.name}</TableCell>
+                    <TableCell className="text-right tabular-nums">{fmtCedi(c.counter)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{c.receipts}</TableCell>
+                    <TableCell className="text-right tabular-nums">{fmtCedi(c.wallet)}</TableCell>
+                    <TableCell className="text-right tabular-nums font-semibold">{fmtCedi(c.total)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : (
+            <EmptyState title="No collections on this day" hint="Takings appear here as soon as the counter or a wallet settles a charge." />
+          )}
+          <p className="text-xs text-muted-foreground mt-3">
+            Counter takings are cash/MoMo receipts; wallet deductions are prepaid and transport-wallet settlements (including boarding marks made by the conductor). Balanced means every settled charge traces back to a receipt or wallet entry.
+          </p>
+        </CardContent>
+      </Card>
+    </div>
   );
 }

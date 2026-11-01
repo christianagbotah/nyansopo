@@ -139,20 +139,110 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ trip });
   }
 
-  // conductor marks a learner's boarding for the day (IN / OUT / BOTH / NONE) with optional cash fare
+  // conductor marks a learner's boarding for the day (IN / OUT / BOTH / NONE).
+  // iEduPro parity (Daily_transport::mark_boarding + Daily_fee_model::mark_student_boarded):
+  //   • fare = one-way route fare × direction (in 1× · out 1× · both 2× · none 0)
+  //   • on confirmation, the fare is auto-deducted from the transport wallet when
+  //     it holds enough; otherwise the unpaid leg is billed as owing (arrears)
+  //   • the day's transport daily-charge is kept in sync (usage + amount)
   if (action === "boarding-save") {
-    const { assignmentId, date, direction, paidCents } = body;
+    const { assignmentId, date, direction, paidCents, cashCents } = body;
     if (!assignmentId || !date || !direction) return NextResponse.json({ error: "assignmentId, date and direction are required" }, { status: 400 });
-    const a = await db.transportAssignment.findUnique({ where: { id: assignmentId }, include: { route: true } });
+    if (!["IN", "OUT", "BOTH", "NONE"].includes(direction)) return NextResponse.json({ error: "direction must be IN, OUT, BOTH or NONE" }, { status: 400 });
+    const a = await db.transportAssignment.findUnique({ where: { id: assignmentId }, include: { route: { include: { stopRecords: true } }, student: true } });
     if (!a || a.route.schoolId !== schoolId) return NextResponse.json({ error: "Assignment not found" }, { status: 404 });
-    const routeFare = a.route.farePerTripCents || 0;
-    const fare = direction === "BOTH" ? routeFare * 2 : direction === "NONE" ? 0 : routeFare;
+    // one-way fare: per-stop override (pickup/drop) → route per-trip fare
+    const stopName = a.pickupStop ?? a.dropStop;
+    const stop = stopName ? a.route.stopRecords.find((s) => s.name.trim().toLowerCase() === stopName.trim().toLowerCase() && s.fareCents != null) : undefined;
+    const oneway = stop?.fareCents ?? a.route.farePerTripCents ?? 0;
+    const fare = direction === "BOTH" ? oneway * 2 : direction === "NONE" ? 0 : oneway;
+
+    // existing boarding for the day (leg-aware update: an unpaid OUT after a paid IN
+    // must only bill the afternoon leg — iEduPro "boarded OUT without morning payment")
+    const day = new Date(date); day.setHours(0, 0, 0, 0);
+    const prev = await db.transportBoarding.findFirst({ where: { assignmentId, date: day } });
+    let inFare = 0, outFare = 0, dir = direction as string;
+    if (direction === "NONE") {
+      // not riding today — clears the day's fare (iEduPro 'none' → GH₵0)
+      dir = "NONE";
+    } else if (prev) {
+      inFare = direction === "IN" || direction === "BOTH" ? oneway : prev.direction === "IN" || prev.direction === "BOTH" ? oneway : 0;
+      outFare = direction === "OUT" || direction === "BOTH" ? oneway : prev.direction === "OUT" || prev.direction === "BOTH" ? oneway : 0;
+      if (direction === "IN") { inFare = oneway; outFare = prev.direction === "OUT" || prev.direction === "BOTH" ? oneway : 0; }
+      if (direction === "OUT") { outFare = oneway; inFare = prev.direction === "IN" || prev.direction === "BOTH" ? oneway : 0; }
+      if (direction === "BOTH") { inFare = oneway; outFare = oneway; }
+      dir = inFare > 0 && outFare > 0 ? "BOTH" : inFare > 0 ? "IN" : outFare > 0 ? "OUT" : "NONE";
+    } else {
+      inFare = direction === "IN" || direction === "BOTH" ? oneway : 0;
+      outFare = direction === "OUT" || direction === "BOTH" ? oneway : 0;
+    }
+    const totalFare = inFare + outFare;
+
+    // settle: explicit cash at the counter, else auto-deduct from the transport wallet
+    let paid = Number(cashCents ?? paidCents) || 0;
+    let walletDeduct = 0;
+    let arrearsAdded = 0;
+    if (totalFare > 0 && paid < totalFare) {
+      const w = await db.studentWallet.findUnique({ where: { studentId: a.studentId } });
+      const avail = w?.transportCents ?? 0;
+      const need = totalFare - paid;
+      if (avail >= need) {
+        walletDeduct = need;
+        await db.studentWallet.update({ where: { studentId: a.studentId }, data: { transportCents: { decrement: need } } });
+        await db.walletTxn.create({
+          data: { schoolId, studentId: a.studentId, wallet: "TRANSPORT", kind: "PAY", amountCents: -need, balanceAfter: avail - need, note: `Boarding ${dir.toLowerCase()} — ${a.route.name}`, byName: auth.user.fullName },
+        });
+        paid = totalFare;
+      } else if (avail > 0) {
+        walletDeduct = avail;
+        await db.studentWallet.update({ where: { studentId: a.studentId }, data: { transportCents: { decrement: avail } } });
+        await db.walletTxn.create({
+          data: { schoolId, studentId: a.studentId, wallet: "TRANSPORT", kind: "PAY", amountCents: -avail, balanceAfter: 0, note: `Boarding ${dir.toLowerCase()} (part) — ${a.route.name}`, byName: auth.user.fullName },
+        });
+        paid += avail;
+        arrearsAdded = totalFare - paid; // remainder bills as owing
+      } else {
+        arrearsAdded = need; // nothing on the wallet — full leg(s) owed
+      }
+    }
+
     const boarding = await db.transportBoarding.upsert({
-      where: { assignmentId_date: { assignmentId, date: new Date(date) } },
-      update: { direction, fareCents: fare, paidCents: Number(paidCents) || 0, recordedByName: auth.user.fullName },
-      create: { assignmentId, routeId: a.routeId, date: new Date(date), direction, fareCents: fare, paidCents: Number(paidCents) || 0, recordedByName: auth.user.fullName },
+      where: { assignmentId_date: { assignmentId, date: day } },
+      update: { direction: dir, fareCents: totalFare, paidCents: paid, recordedByName: auth.user.fullName },
+      create: { assignmentId, routeId: a.routeId, date: day, direction: dir, fareCents: totalFare, paidCents: paid, recordedByName: auth.user.fullName },
     });
-    return NextResponse.json({ boarding });
+
+    // keep the transport daily-charge in sync with the boarding mark
+    let charge = null as any;
+    try {
+      const usage = dir === "BOTH" ? "BOTH" : dir === "IN" ? "MORNING" : dir === "OUT" ? "AFTERNOON" : "NOT_USING";
+      const svc = await db.dailyService.findFirst({ where: { schoolId, category: "TRANSPORT" }, orderBy: { name: "asc" } });
+      if (svc) {
+        const dStart = new Date(day); const dEnd = new Date(day); dEnd.setHours(23, 59, 59, 999);
+        const existing = await db.dailyCharge.findFirst({ where: { schoolId, studentId: a.studentId, date: { gte: dStart, lte: dEnd }, service: { category: "TRANSPORT" } } });
+        if (existing) {
+          charge = await db.dailyCharge.update({
+            where: { id: existing.id },
+            data: { usage, amountCents: totalFare, status: dir === "NONE" ? "WAIVED" : paid >= totalFare ? "PAID" : "OWED" },
+          });
+        } else if (dir !== "NONE") {
+          charge = await db.dailyCharge.create({
+            data: { serviceId: svc.id, studentId: a.studentId, schoolId, date: day, amountCents: totalFare, usage, status: paid >= totalFare ? "PAID" : "OWED" },
+          });
+        }
+      }
+    } catch { /* daily-service layer absent — boarding alone is fine */ }
+
+    return NextResponse.json({
+      boarding,
+      charge,
+      fare: { oneway, inFare, outFare, total: totalFare },
+      settlement: { paid, walletDeduct, arrearsAdded },
+      message: arrearsAdded > 0
+        ? `Boarded marked — GH₵${(arrearsAdded / 100).toFixed(2)} billed as owing (transport wallet short)`
+        : walletDeduct > 0 ? `Boarded marked — GH₵${(walletDeduct / 100).toFixed(2)} deducted from the transport wallet`
+        : "Boarding marked",
+    });
   }
 
   // bill transport fares onto current-term invoices for assigned learners

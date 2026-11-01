@@ -1,0 +1,74 @@
+// Add these methods to Admin.php controller for AJAX subject operations
+
+// Replace the existing subject() method with this updated version:
+
+function subject($param1 = '', $param2 = '', $param3 = '') {
+    if ($param1 == 'create') {
+        $running_year = $this->db->get_where('settings', array('type' => 'running_year'))->row()->description;
+        $running_term = $this->db->get_where('settings', array('type' => 'running_term'))->row()->description;
+        
+        $num_terms = 0;
+        $term_create = 0;
+        
+        if ($running_term == 1) {
+            $num_terms = 3;
+            $term_create = 1;
+        } else if ($running_term == 2) {
+            $num_terms = 2;
+            $term_create = 2;
+        } else if ($running_term == 3) {
+            $num_terms = 1;
+            $term_create = 3;
+        }
+        
+        for ($i = 1; $i <= $num_terms; $i++) {
+            $data['status'] = ($this->input->post('status') == 1) ? 1 : 0;
+            $data['class_id'] = $this->input->post('class_id');
+            $data['name'] = ucwords(strtolower($this->input->post('name')));
+            $data['year'] = $running_year;
+            $data['term'] = $term_create;
+            
+            if ($this->input->post('teacher_id') != null) {
+                $data['teacher_id'] = $this->input->post('teacher_id');
+            }
+            
+            $this->db->insert('subject', $data);
+            $term_create++;
+        }
+        
+        echo json_encode(['status' => 'success', 'message' => get_phrase('subject_added_successfully')]);
+        return;
+    }
+    
+    if ($param1 == 'do_update') {
+        $data['status'] = ($this->input->post('status') == 1) ? 1 : 0;
+        $data['class_id'] = $this->input->post('class_id');
+        $data['name'] = ucwords(strtolower($this->input->post('name')));
+        $data['teacher_id'] = $this->input->post('teacher_id');
+        $data['year'] = $this->db->get_where('settings', array('type' => 'running_year'))->row()->description;
+        $data['term'] = $this->db->get_where('settings', array('type' => 'running_term'))->row()->description;
+        
+        $this->db->where('subject_id', $param2);
+        $result = $this->db->update('subject', $data);
+        
+        echo json_encode(['status' => $result ? 'success' : 'error', 'message' => $result ? get_phrase('subject_updated_successfully') : get_phrase('operation_failed')]);
+        return;
+    }
+    
+    if ($param1 == 'delete') {
+        $this->db->where('subject_id', $param2);
+        $result = $this->db->delete('subject');
+        
+        echo json_encode(['status' => $result ? 'success' : 'error', 'message' => $result ? get_phrase('subject_deleted_successfully') : get_phrase('operation_failed')]);
+        return;
+    }
+    
+    // Load subject page
+    $running_year = $this->db->get_where('settings', array('type' => 'running_year'))->row()->description;
+    $running_term = $this->db->get_where('settings', array('type' => 'running_term'))->row()->description;
+    $page_data['class_id'] = $param1;
+    $page_data['subjects'] = $this->db->get_where('subject', array('class_id' => $param1, 'year' => $running_year, 'term' => $running_term))->result_array();
+    $page_data['page_name'] = 'subject';
+    $page_data['page_title'] = get_phrase('manage_subject');
+    $this->load->view('backend/main', $page_data);
+}

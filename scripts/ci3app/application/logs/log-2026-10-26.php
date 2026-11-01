@@ -1,0 +1,1 @@
+ERROR - 2026-10-26 23:53:17 --> Severity: error --> Exception: syntax error, unexpected token "public", expecting end of file C:\laragon\www\schoolmanager\application\libraries\Financial_integration_hooks.php 714

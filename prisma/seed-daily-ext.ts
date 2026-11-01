@@ -69,10 +69,12 @@ async function main() {
       for (const [di, day] of days.entries()) {
         for (const [ri, r] of riders.entries()) {
           const usage = usages[(di * 3 + ri) % usages.length];
-          const base = r.fareOverrideCents ?? C(4);
-          let amount = base; let status = "OWED";
-          if (usage === "NOT_USING") status = "WAIVED";
-          else if (usage === "MORNING" || usage === "AFTERNOON") amount = Math.round(base / 2);
+          // iEduPro one-way model: the route fare captures a single directional
+          // charge — MORNING/AFTERNOON 1×, BOTH/BOARDED 2×, NOT_USING GH₵0
+          const oneway = r.route.farePerTripCents || C(4);
+          let amount = oneway * 2; let status = "OWED";
+          if (usage === "NOT_USING") { status = "WAIVED"; amount = 0; }
+          else if (usage === "MORNING" || usage === "AFTERNOON") amount = oneway;
           if (di < 4 && ri % 3 === 0) status = "PAID"; // some settled history
           await db.dailyCharge.create({ data: { serviceId: svc.id, studentId: r.studentId, schoolId: s.id, date: day, amountCents: amount, status, usage } });
           made++;

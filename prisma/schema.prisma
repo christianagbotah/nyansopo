@@ -195,6 +195,7 @@ model Classroom {
   assessments        Assessment[]
   attendanceSessions AttendanceSession[]
   timetableSlots     TimetableSlot[]
+  dailyServiceRates  DailyServiceRate[]
 }
 
 model Subject {
@@ -670,13 +671,28 @@ model DailyService {
   schoolId    String
   school      School                   @relation(fields: [schoolId], references: [id])
   name        String // Lunch, Breakfast, Sachet Water, Extra Classes
-  category    String // MEAL | DRINK | CLASS | CARE | OTHER
-  priceCents  Int
-  chargeMode  String                   @default("DAILY") // DAILY (every school day) | WEEKLY (once a week)
+  category    String // MEAL | DRINK | CLASS | CARE | TRANSPORT | OTHER
+  priceCents  Int // standard school-wide rate (one-way fare for TRANSPORT — the per-trip charge)
+  chargeMode  String                   @default("DAILY") // DAILY (every school day) | WEEKLY (once a week, first school day)
   weekdays    String                   @default("1,2,3,4,5") // ISO weekdays the service runs (e.g. "3" = Wednesdays only)
   active      Boolean                  @default(true)
   enrollments DailyServiceEnrollment[]
   charges     DailyCharge[]
+  classRates  DailyServiceRate[]
+}
+
+// ── Per-classroom rate overrides (iedupro daily_fee_rates: rates are set per
+//    class-section per fee type). Resolution: student override → class rate →
+//    service standard price. ──
+model DailyServiceRate {
+  id          String        @id @default(cuid())
+  serviceId   String
+  service     DailyService  @relation(fields: [serviceId], references: [id])
+  classroomId String
+  classroom   Classroom    @relation(fields: [classroomId], references: [id])
+  priceCents  Int
+
+  @@unique([serviceId, classroomId])
 }
 
 model DailyServiceEnrollment {

@@ -1,0 +1,52 @@
+<?php if(isset($error)) { ?>
+  <div class="row"
+    style="margin-top: 20px;">
+    <div class="col-md-8 col-md-offset-2">
+      <div class="alert alert-danger">
+        <strong><?php echo $error; ?></strong>
+      </div>
+    </div>
+  </div>
+<?php } ?>
+<div class="row"
+  style="margin-top: 30px;">
+  <div class="col-md-8 col-md-offset-2">
+    <div class="panel panel-default" data-collapsed="0"
+      style="border-color: #dedede;">
+      <!-- panel body -->
+      <div class="panel-body" style="font-size: 14px;">
+        <p style="font-size: 14px;">
+          Provide your<strong>purchase code</strong>
+        </p>
+        <br>
+        <div class="row">
+          <div class="col-md-12">
+
+              <?php echo form_open(site_url('install/validate_purchase_code'), array('class' => 'form-horizontal form-groups'));?>
+              <div class="form-group">
+        				<label class="col-sm-3 control-label">Purchase Code</label>
+        				<div class="col-sm-7">
+        					<input type="text" class="form-control" name="purchase_code" placeholder="Enter Your Purchase Code"
+                    required autofocus autocomplete="off">
+        				</div>
+        			</div>
+              <div class="form-group">
+        				<label class="col-sm-3 control-label"></label>
+        				<div class="col-sm-7">
+        					<button type="submit" class="btn btn-info">Continue</button>
+        				</div>
+        			</div>
+            </form>
+            <br>
+            <p>
+              <!--<a target="_blank" href="https://prowebber.ru/">PROWEBBER.RU</a>
+                <strong>More scripts</strong>
+              -->
+              </a>
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

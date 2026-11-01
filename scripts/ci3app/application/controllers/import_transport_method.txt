@@ -1,0 +1,91 @@
+// Add this method to Admin.php controller around line 14967
+
+public function import_transport_data() {
+    if($this->session->userdata('admin_login') != 1)
+        redirect(site_url('login'), 'refresh');
+    
+    if(!isset($_FILES['excel_file']) || $_FILES['excel_file']['error'] != 0) {
+        echo json_encode(['status' => 'error', 'message' => 'No file uploaded']);
+        return;
+    }
+    
+    require_once APPPATH . 'third_party/PhpSpreadsheet/autoload.php';
+    
+    $file = $_FILES['excel_file']['tmp_name'];
+    $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($file);
+    
+    $routes_created = 0;
+    $routes_updated = 0;
+    $students_assigned = 0;
+    
+    // Process Routes sheet (index 1) if create_routes is checked
+    if($this->input->post('create_routes')) {
+        $routesSheet = $spreadsheet->getSheet(1); // Routes is sheet 2 (index 1)
+        $highestRow = $routesSheet->getHighestRow();
+        
+        for($row = 2; $row <= $highestRow; $row++) {
+            $route_name = $routesSheet->getCell('A' . $row)->getValue();
+            $route_fare = $routesSheet->getCell('B' . $row)->getValue();
+            $vehicles = $routesSheet->getCell('C' . $row)->getValue();
+            $description = $routesSheet->getCell('D' . $row)->getValue();
+            
+            if(empty($route_name)) continue;
+            
+            $existing = $this->db->get_where('transport', ['route_name' => $route_name])->row();
+            
+            $data = [
+                'route_name' => $route_name,
+                'route_fare' => $route_fare ?: 0,
+                'number_of_vehicle' => $vehicles ?: 1,
+                'description' => $description
+            ];
+            
+            if($existing) {
+                $this->db->where('transport_id', $existing->transport_id);
+                $this->db->update('transport', $data);
+                $routes_updated++;
+            } else {
+                $this->db->insert('transport', $data);
+                $routes_created++;
+            }
+        }
+    }
+    
+    // Process Students sheet (index 2)
+    $studentsSheet = $spreadsheet->getSheet(2); // Students is sheet 3 (index 2)
+    
+    if(!$studentsSheet) {
+        echo json_encode(['status' => 'error', 'message' => 'Students sheet not found']);
+        return;
+    }
+    
+    $highestRow = $studentsSheet->getHighestRow();
+    
+    for($row = 2; $row <= $highestRow; $row++) {
+        $student_code = $studentsSheet->getCell('A' . $row)->getValue();
+        $route_name = $studentsSheet->getCell('D' . $row)->getValue();
+        
+        if(empty($student_code) || empty($route_name)) continue;
+        
+        $student = $this->db->get_where('student', ['student_code' => $student_code])->row();
+        if(!$student) continue;
+        
+        $route = $this->db->get_where('transport', ['route_name' => $route_name])->row();
+        if(!$route) continue;
+        
+        $this->db->where('student_id', $student->student_id);
+        $this->db->where('year', get_settings('running_year'));
+        $this->db->where('term', get_settings('running_term'));
+        $this->db->update('enroll', ['transport_id' => $route->transport_id]);
+        
+        $students_assigned++;
+    }
+    
+    echo json_encode([
+        'status' => 'success',
+        'message' => 'Import completed successfully',
+        'routes_created' => $routes_created,
+        'routes_updated' => $routes_updated,
+        'students_assigned' => $students_assigned
+    ]);
+}

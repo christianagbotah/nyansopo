@@ -23,7 +23,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   const services = await db.dailyService.findMany({
     where: { schoolId },
-    include: { _count: { select: { enrollments: { where: { active: true } } } } },
+    include: { _count: { select: { enrollments: { where: { active: true } } } }, classRates: { include: { classroom: { select: { id: true, name: true } } } } },
     orderBy: { name: "asc" },
   });
 
@@ -121,17 +121,40 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const transportByStudent: Record<string, { id: string; amount: number; status: string; usage: string | null }> = {};
   todayTransport.forEach((c) => (transportByStudent[c.studentId] = { id: c.id, amount: c.amountCents, status: c.status, usage: c.usage }));
 
+  // per-classroom rate lookup (iedupro daily_fee_rates parity: student override → class rate → standard)
+  const classRateFor = (serviceId: string, classroomId: string): number | null => {
+    const svc = services.find((s) => s.id === serviceId);
+    return svc?.classRates.find((r) => r.classroomId === classroomId)?.priceCents ?? null;
+  };
+
+  // one-way route fare preview per learner (iEduPro: the route fare captures a single
+  // directional charge — morning OR afternoon 1×, both ways 2×; the collect dialog
+  // previews the live total as the direction is picked)
+  const riderRows = await db.transportAssignment.findMany({ where: { active: true, route: { schoolId } }, include: { route: { include: { stopRecords: true } } } });
+  const transportFareByStudent: Record<string, { oneway: number; routeName: string; stopName: string | null; routeId: string }> = {};
+  riderRows.forEach((a) => {
+    const stopName = a.pickupStop ?? a.dropStop;
+    const stop = stopName ? a.route.stopRecords.find((s) => s.name.trim().toLowerCase() === stopName.trim().toLowerCase() && s.fareCents != null) : undefined;
+    transportFareByStudent[a.studentId] = {
+      oneway: stop?.fareCents ?? a.route.farePerTripCents ?? 0,
+      routeName: a.route.name,
+      stopName: stop?.fareCents != null ? stopName! : null,
+      routeId: a.routeId,
+    };
+  });
+
   const posStudents = studentRows.map((r) => ({
     id: r.student.id,
     name: `${r.student.firstName} ${r.student.lastName}`,
     classroom: r.classroom.name,
     classroomId: r.classroomId,
     guardianPhone: r.student.guardianPhone,
-    services: r.student.serviceEnrollments.map((se) => ({ id: se.serviceId, name: se.service.name, category: se.service.category, price: effectivePrice(se.service, se) })),
+    services: r.student.serviceEnrollments.map((se) => ({ id: se.serviceId, name: se.service.name, category: se.service.category, price: effectivePrice(se.service, se, classRateFor(se.serviceId, r.classroomId)) })),
     balance: (ledger[r.student.id]?.owed ?? 0),
     wallet: walletByStudent[r.student.id] ?? { prepaidCents: 0, transportCents: 0 },
     todayTransport: transportByStudent[r.student.id] ?? null,
     today: todayByStudent[r.student.id] ?? null,
+    transportFare: transportFareByStudent[r.student.id] ?? null,
   }));
 
   // ── collection policy settings (iedupro §1) ──
@@ -140,11 +163,50 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const teacherPerms = parseTeacherPerms(settingRows.find((r) => r.key === "DAILY_TEACHER_PERMS")?.value);
   const allClassrooms = await db.classroom.findMany({ where: { schoolId }, orderBy: { name: "asc" }, select: { id: true, name: true } });
 
+  // ── daily reconciliation (iedupro daily_fee_reconciliation) ──
+  // charges raised vs settled at the counter vs wallet deductions, with a
+  // per-collector breakdown for the handover report.
+  async function buildReconciliation() {
+    const dayCharges = todayCharges;
+    const billed = dayCharges.reduce((a, c) => a + c.amountCents, 0);
+    const collected = dayCharges.filter((c) => c.status === "PAID").reduce((a, c) => a + c.amountCents, 0);
+    const waived = dayCharges.filter((c) => c.status === "WAIVED").reduce((a, c) => a + c.amountCents, 0);
+    const outstanding = dayCharges.filter((c) => c.status === "OWED").reduce((a, c) => a + c.amountCents, 0);
+    // receipts issued on the day; wallet-method receipts settle via a wallet txn,
+    // so they count under wallet — only true counter takings (cash/momo/cheque) count here
+    const dayPayments = await db.payment.findMany({ where: { schoolId, category: "DAILY", paidAt: { gte: dayStart, lte: dayEnd } } });
+    const walletMethods = ["WALLET", "TRANSPORT_WALLET"];
+    const counterPayments = dayPayments.filter((p) => !walletMethods.includes(p.method));
+    const counter = counterPayments.reduce((a, p) => a + p.amountCents, 0);
+    // wallet deductions applied on the day (prepaid + transport PAY txns)
+    const dayWalletPays = await db.walletTxn.findMany({ where: { schoolId, kind: "PAY", at: { gte: dayStart, lte: dayEnd } } });
+    const walletPays = dayWalletPays.reduce((a, t) => a + Math.abs(t.amountCents), 0);
+    // per-collector breakdown (counter takings + wallet deductions), for the handover report
+    const byCollector: Record<string, { counter: number; receipts: number; wallet: number; total: number }> = {};
+    counterPayments.forEach((p) => {
+      const e = (byCollector[p.receivedByName ?? "—"] ??= { counter: 0, receipts: 0, wallet: 0, total: 0 });
+      e.counter += p.amountCents; e.receipts++; e.total += p.amountCents;
+    });
+    dayWalletPays.forEach((t) => {
+      const e = (byCollector[t.byName ?? "—"] ??= { counter: 0, receipts: 0, wallet: 0, total: 0 });
+      e.wallet += Math.abs(t.amountCents); e.total += Math.abs(t.amountCents);
+    });
+    return {
+      billed, collected, waived, outstanding, counter, walletPays,
+      variance: collected - counter - walletPays, // should be 0 when every settled charge traces to a receipt or wallet txn
+      byCollector: Object.entries(byCollector)
+        .map(([name, v]) => ({ name, ...v }))
+        .sort((a, b) => b.total - a.total),
+      txns: dayCharges.length,
+    };
+  }
+
   return NextResponse.json({
     date: dateStr,
     services: services.map((s) => ({
       id: s.id, name: s.name, category: s.category, price: s.priceCents, chargeMode: s.chargeMode,
       weekdays: s.weekdays, active: s.active, enrolled: s._count.enrollments,
+      classRates: s.classRates.map((r) => ({ classroomId: r.classroomId, classroom: r.classroom.name, price: r.priceCents })),
       month: byService[s.id] ?? { billed: 0, collected: 0, owed: 0, waived: 0, count: 0 },
       today: todayByService[s.id] ?? { billed: 0, collected: 0, count: 0, owedCount: 0 },
     })),
@@ -169,6 +231,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       .filter((s) => s.wallet.prepaidCents > 0 || s.wallet.transportCents > 0 || s.balance > 0)
       .map((s) => ({ studentId: s.id, student: s.name, classroom: s.classroom, prepaid: s.wallet.prepaidCents, transport: s.wallet.transportCents, arrears: s.balance })),
     walletTxns: walletTxns.map((t) => ({ id: t.id, student: `${t.student.firstName} ${t.student.lastName}`, wallet: t.wallet, kind: t.kind, amount: Math.abs(t.amountCents), balanceAfter: t.balanceAfter, note: t.note, byName: t.byName, at: t.at })),
+    // ── daily reconciliation (iedupro daily_fee_reconciliation): charges raised vs
+    //    settled at the counter vs wallet deductions, with the collector breakdown
+    //    for the handover report ──
+    reconciliation: await buildReconciliation(),
     settings: {
       collectionMode,
       teacherPerms,
@@ -184,7 +250,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const action: string = body.action;
   // RBAC (iEduPro collection-policy parity): collecting is for teachers & cashiers
   // (daily.collect); configuration, enrolment, wallets & waivers need daily.manage.
-  const MANAGE_ACTIONS = ["save-service", "toggle-service", "enroll", "unenroll", "settings-save", "wallet-adjust", "waive-charge", "waive-student-day"];
+  const MANAGE_ACTIONS = ["save-service", "toggle-service", "enroll", "unenroll", "settings-save", "wallet-adjust", "waive-charge", "waive-student-day", "rate-save", "rate-clear"];
   const auth = await opsAuth(req, schoolId, "POST", {
     perms: MANAGE_ACTIONS.includes(action) ? ["daily.manage"] : ["daily.collect", "daily.manage"],
   });
@@ -204,6 +270,32 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (!svc || svc.schoolId !== schoolId) return NextResponse.json({ error: "Service not found" }, { status: 404 });
     const updated = await db.dailyService.update({ where: { id: body.id }, data: { active: !svc.active } });
     return NextResponse.json({ service: updated });
+  }
+
+  // ── per-classroom rate matrix (iedupro daily_fee_rates: rates are set per
+  //    class-section per fee type). upsert one rate; clear removes the override. ──
+  if (action === "rate-save") {
+    const { serviceId, classroomId, priceCents } = body;
+    if (!serviceId || !classroomId) return NextResponse.json({ error: "serviceId and classroomId required" }, { status: 400 });
+    const svc = await db.dailyService.findUnique({ where: { id: serviceId } });
+    if (!svc || svc.schoolId !== schoolId) return NextResponse.json({ error: "Service not found" }, { status: 404 });
+    const cls = await db.classroom.findUnique({ where: { id: classroomId } });
+    if (!cls || cls.schoolId !== schoolId) return NextResponse.json({ error: "Classroom not found" }, { status: 404 });
+    const price = Math.max(0, Math.round(Number(priceCents) || 0));
+    if (price <= 0) return NextResponse.json({ error: "Enter a rate above zero" }, { status: 400 });
+    const rate = await db.dailyServiceRate.upsert({
+      where: { serviceId_classroomId: { serviceId, classroomId } },
+      update: { priceCents: price },
+      create: { serviceId, classroomId, priceCents: price },
+    });
+    return NextResponse.json({ rate });
+  }
+
+  if (action === "rate-clear") {
+    const { serviceId, classroomId } = body;
+    if (!serviceId || !classroomId) return NextResponse.json({ error: "serviceId and classroomId required" }, { status: 400 });
+    await db.dailyServiceRate.deleteMany({ where: { serviceId, classroomId } });
+    return NextResponse.json({ ok: true });
   }
 
   if (action === "enroll") {
@@ -297,10 +389,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const student = await db.student.findUnique({ where: { id: studentId } });
     if (!student) return NextResponse.json({ error: "Learner not found" }, { status: 404 });
 
-    // transport usage first (iedupro §1): may waive or halve today's fare before settling
+    // transport usage first (iEduPro §1): fixes the day's fare before settling —
+    // the route fare is ONE-WAY: morning or afternoon 1×, both ways 2×, not riding 0
     if (transportUsage) {
       if (!TRANSPORT_USAGES.includes(transportUsage)) return NextResponse.json({ error: "Invalid transport usage" }, { status: 400 });
-      await applyTransportUsage(db, schoolId, studentId, new Date(body.date ?? new Date().toISOString().slice(0, 10)), transportUsage as TransportUsage);
+      const applied = await applyTransportUsage(db, schoolId, studentId, new Date(body.date ?? new Date().toISOString().slice(0, 10)), transportUsage as TransportUsage);
+      if (transportUsage !== "NOT_USING" && !applied)
+        return NextResponse.json({ error: "This learner has no active route assignment — transport fare follows the bus route." }, { status: 400 });
     }
 
     const owed = await db.dailyCharge.aggregate({ where: { studentId, status: "OWED" }, _sum: { amountCents: true } });

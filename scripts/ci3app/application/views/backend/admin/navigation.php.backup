@@ -1,0 +1,1340 @@
+<?php
+$_level = $this->db->get_where('admin', array('admin_id' => $this->session->userdata('admin_id')))->row()->level;
+$boarding_system = $this->db->get_where('settings' , array('type'=>'boarding_system'))->row()->description;
+$name = $this->db->get_where($this->session->userdata('login_type'), array($this->session->userdata('login_type').'_id' => $this->session->userdata('login_user_id')))->row()->name;
+$admin_level = $_level;
+
+// ENTERPRISE: Load cashier navigation for cashier role (level 4)
+if ($_level == 4 || $admin_level == 4) {
+    include(APPPATH . 'views/backend/admin/navigation_cashier.php');
+    return;
+}
+?>
+<style>
+
+
+.sidebar-menu .logo-env { padding-bottom: 2rem !important; }
+.sidebar-menu .logo-env .logo img { max-height: 50px !important; }
+#main-menu li#search { margin-top: 0; }
+
+@media (max-width: 768px) {
+
+    .sidebar-mobile-menu { display: block !important; visibility: visible !important; }
+    .sidebar-menu { position: fixed !important; left: -100% !important; top: 0 !important; width: 280px !important; height: 100vh !important; z-index: 100 !important; transition: left 0.3s ease !important; overflow-y: auto !important; display: flex !important; flex-direction: column !important; }
+    .sidebar-menu.mobile-open { left: 0 !important; }
+    .sidebar-menu.mobile-open #main-menu > li > a span { display: inline !important; }
+    .sidebar-menu .logo-env { display: flex !important; justify-content: flex-start !important; }
+    .sidebar-menu.mobile-open .logo-env { justify-content: flex-end !important; }
+    .sidebar-menu .logo-env .logo a { background: #ffffff !important; padding: 12px !important; border-radius: 9999px !important; display: inline-block !important; }
+    .sidebar-menu #main-menu { flex: 1 !important; overflow-y: auto !important; }
+    .sidebar-menu #main-menu #search { position: sticky !important; top: 0 !important; z-index: 101 !important; background: #c62828 !important; }
+    .sidebar-menu .logo-env { position: sticky !important; top: 0 !important; z-index: 101 !important; background: rgba(255,255,255,0.05); backdrop-filter: blur(10px); }
+    .page-container { margin-left: 0 !important; }
+    .main-content { margin-left: 0 !important; width: 100% !important; }
+}
+
+@media (min-width: 769px) {
+    .sidebar-mobile-menu { display: none !important; visibility: hidden !important; }
+}
+
+.nav-section-header { margin-top: 2rem !important; margin-bottom: 0.75rem !important; padding-bottom: 0.5rem !important; border-bottom: 1px solid rgba(148,163,184,0.3); font-size: 0.8125rem !important; }
+.page-container.sidebar-collapsed .nav-section-header { display: none; }
+#main-menu li { border: none !important; }
+#main-menu li a { display: flex; align-items: center; padding: 0.75rem 1.5rem; margin: 0.125rem 0.625rem; border-radius: 0.5rem; transition: all 0.2s; color: #cbd5e1; border: none !important; box-shadow: 0 1px 0 rgba(0,0,0,0.05); }
+#main-menu li a:hover { background: rgba(59,130,246,0.1); color: #fff; box-shadow: 0 2px 4px rgba(59,130,246,0.1); }
+#main-menu li.active > a { background: linear-gradient(135deg, rgba(59,130,246,0.2), rgba(37,99,235,0.1)); color: #fff; font-weight: 600; box-shadow: 0 2px 8px rgba(59,130,246,0.2); }
+#main-menu li.opened { background: transparent; }
+#main-menu li.opened > a { background: rgba(255,255,255,0.03); }
+#main-menu ul ul { background: rgba(0,0,0,0.2); border-radius: 0.5rem; margin: 0.25rem 0.625rem; padding: 0.25rem 0; }
+#main-menu ul ul li a { padding-left: 3rem; margin: 0.125rem 0.5rem; box-shadow: none; }
+#main-menu ul ul ul li a { padding-left: 4rem; }
+#main-menu i { margin-right: 0.625rem; width: 1.25rem; text-align: center; }
+.page-container.sidebar-collapsed .sidebar-menu li > ul { display: none !important; position: fixed; left: 70px; background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%); min-width: 250px; max-height: 80vh; overflow-y: auto; border-radius: 8px; box-shadow: 0 8px 32px rgba(0,0,0,0.4); z-index: 100; padding: 10px 0; border: 1px solid rgba(255,255,255,0.1); }
+.page-container.sidebar-collapsed .sidebar-menu li:hover > ul { display: block !important; }
+.page-container.sidebar-collapsed .sidebar-menu li > ul li a { padding: 10px 20px; margin: 2px 8px; white-space: nowrap; box-shadow: none; }
+.page-container.sidebar-collapsed #main-menu > li > a span { display: none; }
+.page-container.sidebar-collapsed #main-menu > li:hover > a::after { content: attr(data-title); position: fixed; left: 70px; background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%); color: #fff; padding: 10px 20px; border-radius: 8px; box-shadow: 0 8px 32px rgba(0,0,0,0.4); z-index: 100; white-space: nowrap; border: 1px solid rgba(255,255,255,0.1); }
+</style>
+
+<div class="sidebar-menu md:sticky md:fixed my-0 overflow-y-scroll md:h-screen md:min-h-screen md:max-h-screen bg-gradient-to-b from-slate-800 to-slate-900 shadow-lg">
+    <header class="logo-env border-b border-white/10 block md:block pb-5">
+        <div class="logo">
+            <a href="<?php echo site_url(); ?>">
+                <img src="<?php echo base_url('uploads/school_logo.png');?>"/>
+            </a>
+        </div>
+        <div class="sidebar-collapse">
+            <a href="#" class="sidebar-collapse-icon with-animation">
+                <i class="entypo-menu text-4xl text-white"></i>
+            </a>
+        </div>
+        <div class="sidebar-mobile-menu visible:xs visible:sm md:hidden">
+            <a href="#" class="with-animation">
+                <i class="fa fa-times text-4xl text-white"></i>
+            </a>
+        </div>
+    </header>
+
+    <ul id="main-menu" class="list-group">
+        <li id="search">
+            <?php echo form_open(site_url($account_type . '/student_details'));?>
+                <input type="text" class="search-input" name="student_identifier" placeholder="<?php echo get_phrase('student_name').' / '.get_phrase('iD_no').'...'; ?>" required>
+                <button type="submit"><i class="entypo-search"></i></button>
+            </form>
+        </li>
+
+        <div class="nav-section-header text-slate-400 text-xs font-bold uppercase tracking-wider px-6">Main</div>
+        
+        <li class="<?php if ($page_name == 'dashboard') echo 'active'; ?>">
+            <a href="#" onclick="navigation('<?php echo site_url('admin/dashboard/ajax'); ?>')">
+                <i class="entypo-gauge"></i>
+                <span><?php echo get_phrase('dashboard'); ?></span>
+            </a>
+        </li>
+
+        <?php if ($account_type == 'admin' && $admin_level <= 2):?>
+        <li class="<?php if ($page_name == 'barcode_scanner_attendance') echo 'active'; ?>">
+            <a href="#" onclick="navigation('<?php echo site_url('admin/barcode_scanner/init'); ?>')">
+                <i class="fa fa-barcode"></i>
+                <span><?php echo get_phrase('barcode_scanner'); ?></span>
+            </a>
+        </li>
+        <?php endif;?>
+
+        <div class="nav-section-header text-slate-400 text-xs font-bold uppercase tracking-wider px-6">User Management</div>
+
+        <?php if(getAdminPermissions($_level, 'Can view admins list') == 1):?>
+        <li class="<?php if ($page_name == 'admin_list') echo 'active'; ?>">
+            <a href="#" onclick="navigation('<?php echo site_url('admin/admins'); ?>')">
+                <i class="fa fa-user-shield"></i>
+                <span><?php echo get_phrase('administrators'); ?></span>
+            </a>
+        </li>
+        <?php endif;?>
+
+        <li class="<?php if ($page_name == 'student_add' || $page_name == 'student_bulk_add' || $page_name == 'student_information' || $page_name == 'student_marksheet' || $page_name == 'student_promotion' || $page_name == 'student_profile' || $page_name == 'bulk_student_id' || $page_name == 'benefit_categories' || $page_name == 'muted_students' || $page_name == 'alumni' || $page_name == 'student_on_special_diet' || $page_name == 'manage_attendance' || $page_name == 'manage_attendance_view' || $page_name == 'attendance_report' || $page_name == 'attendance_report_view' || $page_name == 'attendance_enterprise' || $page_name == 'attendance_dashboard' || $page_name == 'attendance/dashboard' || $page_name == 'mark_attendance' || $page_name == 'barcode_scanner_attendance') echo 'opened active'; ?>">
+            <a href="#">
+                <i class="fa fa-user-graduate"></i>
+                <span><?php echo get_phrase('students'); ?></span>
+            </a>
+            <ul>
+                <?php if(getAdminPermissions($_level, 'Can admit students') == 1):?>
+                <li class="<?php if ($page_name == 'student_add') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/student_add'); ?>')">
+                        <span><i class="fa fa-user-plus"></i> <?php echo get_phrase('admit_student'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'student_bulk_add') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/student_bulk_add/nav'); ?>')">
+                        <span><i class="fa fa-users"></i> <?php echo get_phrase('admit_bulk_student'); ?></span>
+                    </a>
+                </li>
+                <?php endif;?>
+
+                <?php if ($account_type == 'admin' && $admin_level <= 2):?>
+                <li class="<?php if ($page_name == 'manage_attendance' || $page_name == 'manage_attendance_view' || $page_name == 'attendance_report' || $page_name == 'attendance_report_view' || $page_name == 'attendance_enterprise' || $page_name == 'attendance_dashboard' || $page_name == 'attendance/dashboard' || $page_name == 'mark_attendance' || $page_name == 'barcode_scanner_attendance') echo 'opened active'; ?>">
+                    <a href="#">
+                        <i class="entypo-chart-area"></i>
+                        <span><?php echo get_phrase('mark_attendance'); ?></span>
+                    </a>
+                    <ul>
+                        <li class="<?php if ($page_name == 'attendance_enterprise' || $page_name == 'attendance_dashboard' || $page_name == 'attendance/dashboard' || $page_name == 'mark_attendance' || $page_name == 'barcode_scanner_attendance') echo 'active'; ?>">
+                            <a href="#" onclick="navigation('<?php echo site_url('attendance/dashboard'); ?>')">
+                                <span><i class="fa fa-tachometer-alt"></i><?php echo get_phrase('attendance_dashboard'); ?></span>
+                            </a>
+                        </li>
+                        <li class="<?php if ($page_name == 'attendance_report' || $page_name == 'attendance_report_view') echo 'active'; ?>">
+                            <a href="#" onclick="navigation('<?php echo site_url('admin/attendance_report'); ?>')">
+                                <span><i class="fa fa-chart-bar"></i><?php echo get_phrase('attendance_report'); ?></span>
+                            </a>
+                        </li>
+                    </ul>
+                </li>
+                <?php endif;?>
+
+                <li class="<?php if ($page_name == 'student_information' || $page_name == 'student_marksheet') echo 'opened'; ?>">
+                    <a href="#">
+                        <span><i class="fa fa-list"></i> <?php echo get_phrase('students_lists'); ?></span>
+                    </a>
+                    <ul>
+                        <?php
+                        $class_groups = array('CRECHE', 'NURSERY', 'KG', 'BASIC', 'JHS');
+                        foreach($class_groups as $group):
+                        ?>
+                        <li class="<?php if (isset($class_name) && $class_name == $group) echo 'opened'; ?>">
+                            <a href="#">
+                                <span><i class="fa fa-layer-group"></i> <b><?php echo get_phrase($group); ?></b></span>
+                            </a>
+                            <ul>
+                                <?php
+                                $this->db->order_by('name_numeric', 'asc');
+                                $classes = $this->db->get_where('class', array('name' => $group))->result_array();
+                                foreach ($classes as $row):
+                                ?>
+                                <li class="<?php if (isset($class_name) && $class_name == $group && isset($class_id) && $class_id == $row['class_id']) echo 'active'; ?>">
+                                    <a href="#" onclick="navigation('<?php echo site_url('admin/student_information/' . $row['class_id']); ?>')">
+                                        <span><?php echo $row['name'].' '.$row['name_numeric'].' '.$this->db->get_where('section', array('class_id' => $row['class_id']))->row()->name; ?></span>
+                                    </a>
+                                </li>
+                                <?php endforeach; ?>
+                            </ul>
+                        </li>
+                        <?php endforeach; ?>
+                    </ul>
+                </li>
+
+                <!-- <li class="<?php //if ($page_name == 'benefit_categories') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php //echo site_url('admin/beneficiary'); ?>')">
+                        <span><i class="fa fa-gift"></i> <?php //echo get_phrase('beneficiaries'); ?></span>
+                    </a>
+                </li> -->
+
+                <li class="<?php if ($page_name == 'student_on_special_diet') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/student_on_special_diet'); ?>')">
+                        <span><i class="fa fa-utensils"></i> <?php echo get_phrase('special_diet_students'); ?></span>
+                    </a>
+                </li>
+
+                <li class="<?php if ($page_name == 'muted_students') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/muted_students'); ?>')">
+                        <span><i class="fa fa-user-slash"></i> <?php echo get_phrase('muted_students'); ?></span>
+                    </a>
+                </li>
+
+                <li class="<?php if ($page_name == 'alumni') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/alumni'); ?>')">
+                        <span><i class="fa fa-user-graduate"></i> <?php echo get_phrase('alumni/old_students'); ?></span>
+                    </a>
+                </li>
+
+                <?php if ($account_type == 'admin' && $admin_level <= 2):?>
+                <li class="<?php if ($page_name == 'student_promotion') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/student_promotion'); ?>')">
+                        <span><i class="fa fa-level-up-alt"></i> <?php echo get_phrase('student_promotion'); ?></span>
+                    </a>
+                </li>
+
+                <li class="<?php if ($page_name == 'student_marksheet_list') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/student_marksheet_list'); ?>')">
+                        <span><i class="fa fa-chart-bar"></i> <?php echo get_phrase('student_marksheet'); ?></span>
+                    </a>
+                </li>
+                <?php endif;?>
+
+                <li class="<?php if ($page_name == 'bulk_student_id') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/bulk_student_id'); ?>')">
+                        <span><i class="fa fa-id-card"></i> <?php echo get_phrase('students_iD_cards'); ?></span>
+                    </a>
+                </li>
+            </ul>
+        </li>
+
+        <?php if(getAdminPermissions($_level, 'Can view teachers list') == 1):?>
+        <li class="<?php if ($page_name == 'teacher') echo 'active'; ?>">
+            <a href="#" onclick="navigation('<?php echo site_url('admin/teacher'); ?>')">
+                <i class="fa fa-chalkboard-teacher"></i>
+                <span><?php echo get_phrase('teachers'); ?></span>
+            </a>
+        </li>
+        <?php endif;?>
+
+        <?php if(getAdminPermissions($_level, 'Can view parents list') == 1):?>
+        <li class="<?php if ($page_name == 'parent') echo 'active'; ?>">
+            <a href="#" onclick="navigation('<?php echo site_url('admin/parent'); ?>')">
+                <i class="fa fa-users"></i>
+                <span><?php echo get_phrase('parents'); ?></span>
+            </a>
+        </li>
+        <?php endif;?>
+
+        <li class="<?php if ($page_name == 'librarian') echo 'active'; ?>">
+            <a href="#" onclick="navigation('<?php echo site_url('admin/librarian'); ?>')">
+                <i class="fa fa-book-reader"></i>
+                <span><?php echo get_phrase('librarians'); ?></span>
+            </a>
+        </li>
+
+        <?php if ($account_type == 'admin' && $admin_level == 1):?>
+        <li class="<?php if ($page_name == 'teacher_attendance_privileges') echo 'active'; ?>">
+            <a href="#" onclick="navigation('<?php echo site_url('admin/teacher_attendance_privileges'); ?>')">
+                <i class="fa fa-user-shield"></i>
+                <span><?php echo get_phrase('teacher_attendance_privileges'); ?></span>
+            </a>
+        </li>
+        <?php endif;?>
+
+        <?php if ($account_type == 'admin' && $admin_level <= 2):?>
+        <div class="nav-section-header text-slate-400 text-xs font-bold uppercase tracking-wider px-6">Academics</div>
+
+        <li class="<?php if ($page_name == 'class' || $page_name == 'section' || $page_name == 'academic_syllabus') echo 'opened active'; ?>">
+            <a href="#">
+                <i class="fa fa-school"></i>
+                <span><?php echo get_phrase('Classes'); ?></span>
+            </a>
+            <ul>
+                <li class="<?php if ($page_name == 'class') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/classes'); ?>')">
+                        <span><i class="fa fa-door-open"></i> <?php echo get_phrase('manage_classes'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'section') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/section'); ?>')">
+                        <span><i class="fa fa-th-large"></i> <?php echo get_phrase('manage_sections'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'academic_syllabus') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/academic_syllabus'); ?>')">
+                        <span><i class="fa fa-book-open"></i> <?php echo get_phrase('academic_syllabus'); ?></span>
+                    </a>
+                </li>
+            </ul>
+        </li>
+
+        <li class="<?php if ($page_name == 'subject' || $page_name == 'subject_creche') echo 'opened active'; ?>">
+            <a href="#">
+                <i class="fa fa-book"></i>
+                <span><?php echo get_phrase('subject'); ?></span>
+            </a>
+            <ul>
+                <?php
+                $class_groups = array('CRECHE', 'NURSERY', 'KG', 'BASIC', 'JHS');
+                foreach($class_groups as $group):
+                ?>
+                <li>
+                    <a href="#">
+                        <span><i class="fa fa-angle-right"></i> <b><?php echo get_phrase($group); ?></b></span>
+                    </a>
+                    <ul>
+                        <?php
+                        $this->db->order_by('name_numeric', 'asc');
+                        $classes = $this->db->get_where('class', array('name' => $group))->result_array();
+                        foreach ($classes as $row):
+                            $subject_url = ($group == 'CRECHE') ? 'admin/subject/'.$row['class_id'].'/creche/'.$row['name_numeric'] : 'admin/subject/'.$row['class_id'];
+                        ?>
+                        <li>
+                            <a href="#" onclick="navigation('<?php echo site_url($subject_url); ?>')">
+                                <span><?php echo $row['name'].' '.$row['name_numeric'].$this->db->get_where('section', array('class_id' => $row['class_id']))->row()->name; ?></span>
+                            </a>
+                        </li>
+                        <?php endforeach; ?>
+                    </ul>
+                </li>
+                <?php endforeach; ?>
+            </ul>
+        </li>
+
+        <li class="<?php if ($page_name == 'class_routine_view' || $page_name == 'class_routine_add') echo 'opened active'; ?>">
+            <a href="#">
+                <i class="fa fa-calendar-alt"></i>
+                <span><?php echo get_phrase('class_time_table'); ?></span>
+            </a>
+            <ul>
+                <?php
+                foreach($class_groups as $group):
+                ?>
+                <li>
+                    <a href="#">
+                        <span><i class="fa fa-angle-right"></i> <b><?php echo get_phrase($group); ?></b></span>
+                    </a>
+                    <ul>
+                        <?php
+                        $this->db->order_by('name_numeric', 'asc');
+                        $classes = $this->db->get_where('class', array('name' => $group))->result_array();
+                        foreach ($classes as $row):
+                        ?>
+                        <li class="<?php if ($page_name == 'class_routine_view' && $class_id == $row['class_id']) echo 'active'; ?>">
+                            <a href="#" onclick="navigation('<?php echo site_url('admin/class_routine_view/' . $row['class_id']); ?>')">
+                                <span><?php echo $row['name'].' '.$row['name_numeric'].$this->db->get_where('section', array('class_id' => $row['class_id']))->row()->name; ?></span>
+                            </a>
+                        </li>
+                        <?php endforeach; ?>
+                    </ul>
+                </li>
+                <?php endforeach; ?>
+            </ul>
+        </li>
+
+        <li class="<?php if ($page_name == 'study_material') echo 'active'; ?>">
+            <a href="#" onclick="navigation('<?php echo site_url('admin/study_material'); ?>')">
+                <i class="fa fa-file-alt"></i>
+                <span><?php echo get_phrase('study_material'); ?></span>
+            </a>
+        </li>
+
+        <li class="<?php if ($page_name == 'lesson_notes_pending' || $page_name == 'lesson_notes_compliance' || $page_name == 'curriculum_strands' || $page_name == 'curriculum_strands_modern' || $page_name == 'curriculum_sub_strands' || $page_name == 'curriculum_content_standards') echo 'opened active'; ?>">
+            <a href="#">
+                <i class="fa fa-file-signature"></i>
+                <span><?php echo get_phrase('lesson_notes'); ?></span>
+            </a>
+            <ul>
+                <li class="<?php if ($page_name == 'lesson_notes_pending') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/lesson_notes_pending'); ?>')">
+                        <span><i class="fa fa-clock"></i> <?php echo get_phrase('pending_approval'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'lesson_notes_compliance') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/lesson_notes_compliance'); ?>')">
+                        <span><i class="fa fa-chart-bar"></i> <?php echo get_phrase('compliance_report'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'curriculum_strands' || $page_name == 'curriculum_strands_modern') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/curriculum_strands'); ?>')">
+                        <span><i class="fa fa-sitemap"></i> <?php echo get_phrase('curriculum_strands'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'curriculum_sub_strands') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/curriculum_sub_strands'); ?>')">
+                        <span><i class="fa fa-stream"></i> <?php echo get_phrase('curriculum_sub_strands'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'curriculum_content_standards') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/curriculum_content_standards'); ?>')">
+                        <span><i class="fa fa-list-alt"></i> <?php echo get_phrase('content_standards'); ?></span>
+                    </a>
+                </li>
+            </ul>
+        </li>
+
+        <li class="<?php if ($page_name == 'exam' || $page_name == 'examination/dashboard' || $page_name == 'grade' || $page_name == 'grade_creche' || $page_name == 'marks_manage' || $page_name == 'manage_mark' || $page_name == 'exam_marks_sms' || $page_name == 'tabulation_sheet' || $page_name == 'marks_manage_view' || $page_name == 'question_paper' || $page_name =='raw_score_grade' || $page_name == 'portfolio_assessment_manage_view' || $page_name == 'portfolio_assessment_manage' || $page_name == 'examination/dashboard' || $page_name == 'examination/setup_exam' || $page_name == 'examination/record_marks' || $page_name == 'examination/broadsheet' || $page_name == 'examination/analytics') echo 'opened active'; ?>">
+            <a href="#">
+                <i class="fa fa-clipboard-list"></i>
+                <span><?php echo get_phrase('examination'); ?></span>
+            </a>
+            <ul>
+                <li class="<?php if ($page_name == 'examination/dashboard') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('examination'); ?>')">
+                        <span><i class="fa fa-tachometer-alt"></i> <?php echo get_phrase('dashboard'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'exam') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/exam'); ?>')">
+                        <span><i class="fa fa-list-alt"></i> <?php echo get_phrase('exam_list'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'grade_creche') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/grade_creche'); ?>')">
+                        <span><i class="fa fa-star"></i> <?php echo get_phrase('grades-_creche&Nursery'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'grade') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/grade'); ?>')">
+                        <span><i class="fa fa-award"></i> <?php echo get_phrase('exam_grades'); ?></span>
+                    </a>
+                </li>
+                <li id="raw_nav" class="<?php if ($page_name == 'raw_score_grade') echo 'active'; ?>" <?php 
+                    $waec_enabled = $this->db->get_where('settings', array('type' => 'raw_score'))->row();
+                    if (!$waec_enabled || $waec_enabled->description != 'Yes') echo 'style="display: none;"';
+                ?>>
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/grade/raw_score_grade'); ?>')">
+                        <span><i class="fa fa-certificate"></i> WAEC Standard Grading</span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'marks_manage' || $page_name == 'marks_manage_view' || $page_name == 'manage_mark') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/marks_manage'); ?>')">
+                        <span><i class="fa fa-edit"></i> <?php echo get_phrase('manage_exam_marks'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'exam_marks_sms') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/exam_marks_sms'); ?>')">
+                        <span><i class="fa fa-sms"></i> SMS/Email Marks</span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'tabulation_sheet') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/tabulation_sheet'); ?>')">
+                        <span><i class="fa fa-table"></i> <?php echo get_phrase('tabulation_sheet'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'question_paper') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/question_paper'); ?>')">
+                        <span><i class="fa fa-file-alt"></i> <?php echo get_phrase('question_paper'); ?></span>
+                    </a>
+                </li>
+            </ul>
+        </li>
+
+        <li class="<?php if ($page_name == 'manage_online_exam' || $page_name == 'add_online_exam' || $page_name == 'edit_online_exam' || $page_name == 'manage_online_exam_question' || $page_name == 'update_online_exam_question' || $page_name == 'view_online_exam_results') echo 'opened active'; ?>">
+            <a href="#">
+                <i class="fa fa-laptop"></i>
+                <span><?php echo get_phrase('online_exam'); ?></span>
+            </a>
+            <ul>
+                <li class="<?php if ($page_name == 'add_online_exam') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url($account_type.'/create_online_exam'); ?>')">
+                        <span><i class="fa fa-plus-circle"></i> <?php echo get_phrase('create_online_exam'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'manage_online_exam' || $page_name == 'edit_online_exam' || $page_name == 'manage_online_exam_question' || $page_name == 'view_online_exam_results') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url($account_type.'/manage_online_exam'); ?>')">
+                        <span><i class="fa fa-tasks"></i> <?php echo get_phrase('manage_online_exam'); ?></span>
+                    </a>
+                </li>
+            </ul>
+        </li>
+        <?php endif; ?>
+        
+
+        
+
+        <div class="nav-section-header text-slate-400 text-xs font-bold uppercase tracking-wider px-6">Financial</div>
+
+        <li class="<?php if ($page_name == 'income' || $page_name == 'invoices_loaded' || $page_name == 'invoices' || $page_name == 'all_invoices' || $page_name == 'student_payment' || $page_name == 'classes_feeding_trs_fees' || $page_name == 'print_receipts' || $page_name == 'fee_collection' || $page_name == 'fee_collection_permissions' || $page_name == 'fee_collection_portal' || $page_name == 'fee_collection_statistics' || $page_name == 'fee_collection_receipt' || $page_name == 'financial_reports' || $page_name == 'payroll_system' || $page_name == 'payslip_list' || $page_name == 'conductor_collection_portal' || $page_name == 'discount_management' || $page_name == 'sms_log_report' || $page_name == 'daily_fee_rates' || $page_name == 'cashier_dashboard_admin' || $page_name == 'my_collections' || $page_name == 'cashier_daily_summary' || $page_name == 'cashier_handover_report') echo 'opened active'; ?>">
+            <a href="#">
+                <i class="fa fa-calculator"></i>
+                <span><?php echo get_phrase('accounting_|_Billing'); ?></span>
+            </a>
+            <ul>
+                <?php 
+                // Daily Fee Collection Menu - Top of Accounting
+                $collection_mode = get_settings('daily_fee_collection_mode') ?: 'classroom';
+                $has_any_fee_module = is_fee_module_enabled('feeding') || is_fee_module_enabled('classes') || is_fee_module_enabled('transport') || is_fee_module_enabled('breakfast') || is_fee_module_enabled('water');
+                if ($has_any_fee_module && getAdminPermissions($_level, 'Can receive feeding & classes fees') == 1):
+                ?>
+                <li class="<?php if ($page_name == 'classes_feeding_trs_fees' || $page_name == 'print_receipts' || $page_name == 'fee_collection' || $page_name == 'fee_collection_permissions' || $page_name == 'fee_collection_statistics' || $page_name == 'daily_fee_rates' || $page_name == 'cashier_dashboard_admin' || $page_name == 'my_collections' || $page_name == 'cashier_daily_summary' || $page_name == 'cashier_handover_report') echo 'opened active'; ?>">
+                    <a href="#">
+                        <i class="fa fa-utensils"></i>
+                        <span><?php echo get_phrase('daily_fees'); ?></span>
+                    </a>
+                    <ul>
+                        <li class="<?php if ($page_name == 'cashier_dashboard_admin') echo 'active'; ?>">
+                            <a href="#" onclick="navigation('<?php echo site_url('admin/cashier_dashboard_admin'); ?>')">
+                                <span><i class="fa fa-cash-register"></i> <?php echo get_phrase('cashier_dashboard'); ?></span>
+                            </a>
+                        </li>
+                        <li class="<?php if ($page_name == 'my_collections') echo 'active'; ?>">
+                            <a href="#" onclick="navigation('<?php echo site_url('admin/my_collections'); ?>')">
+                                <span><i class="fa fa-chart-line"></i> <?php echo get_phrase('cashier_collections'); ?></span>
+                            </a>
+                        </li>
+                        <li class="<?php if ($page_name == 'cashier_daily_summary') echo 'active'; ?>">
+                            <a href="#" onclick="navigation('<?php echo site_url('admin/cashier_daily_summary'); ?>')">
+                                <span><i class="fa fa-chart-bar"></i> <?php echo get_phrase('cashier_daily_summary'); ?></span>
+                            </a>
+                        </li>
+                        <li class="<?php if ($page_name == 'cashier_handover_report') echo 'active'; ?>">
+                            <a href="#" onclick="navigation('<?php echo site_url('admin/cashier_handover_report'); ?>')">
+                                <span><i class="fa fa-hand-holding-usd"></i> <?php echo get_phrase('cashier_handover_report'); ?></span>
+                            </a>
+                        </li>
+                        <li class="<?php if ($page_name == 'classes_feeding_trs_fees') echo 'active'; ?>">
+                            <a href="#" onclick="navigation('<?php echo site_url('admin/cft_student_receipt'); ?>')">
+                                <span><i class="fa fa-tachometer-alt"></i> <?php echo get_phrase('dashboard'); ?></span>
+                            </a>
+                        </li>
+                        <li class="<?php if ($page_name == 'fee_collection') echo 'active'; ?>">
+                            <a href="#" onclick="navigation('<?php echo site_url('fee_collection'); ?>')">
+                                <span><i class="fa fa-hand-holding-usd"></i> <?php echo get_phrase('collection_portal'); ?></span>
+                            </a>
+                        </li>
+                        <?php if ($admin_level <= 3): ?>
+                        <li class="<?php if ($page_name == 'fee_collection_statistics') echo 'active'; ?>">
+                            <a href="#" onclick="navigation('<?php echo site_url('fee_collection/statistics'); ?>')">
+                                <span><i class="fa fa-chart-bar"></i> <?php echo get_phrase('statistics_reports'); ?></span>
+                            </a>
+                        </li>
+                        <?php endif; ?>
+                        <li class="<?php if ($page_name == 'print_receipts') echo 'active'; ?>">
+                            <a href="#" onclick="navigation('<?php echo site_url('admin/print_receipts'); ?>')">
+                                <span><i class="fa fa-print"></i> <?php echo get_phrase('print_receipts'); ?></span>
+                            </a>
+                        </li>
+                        <li class="<?php if ($page_name == 'fee_collection_settings') echo 'active'; ?>">
+                            <a href="#" onclick="navigation('<?php echo site_url('admin/fee_collection_settings'); ?>')">
+                                <span><i class="fa fa-cogs"></i> <?php echo get_phrase('fee_settings'); ?></span>
+                            </a>
+                        </li>
+                        <?php if ($admin_level <= 2): ?>
+                        <li class="<?php if ($page_name == 'daily_fee_rates') echo 'active'; ?>">
+                            <a href="#" onclick="navigation('<?php echo site_url('admin/daily_fee_rates'); ?>')">
+                                <span><i class="fa fa-money-bill"></i> <?php echo get_phrase('fee_rates'); ?></span>
+                            </a>
+                        </li>
+                        <?php endif; ?>
+                    </ul>
+                </li>
+                <?php endif; ?>
+                
+                <?php if(getAdminPermissions($_level, 'Can bill students') == 1):?>
+                <li class="<?php if ($page_name == 'student_payment') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/student_invoice'); ?>')">
+                        <span><i class="fa fa-file-invoice"></i> <?php echo get_phrase('manage_student_invoice'); ?></span>
+                    </a>
+                </li>
+                <?php //endif; if(getAdminPermissions($_level, 'Can view invoices') == 1):?>
+                <!-- <li class="<?php // if ($page_name == 'all_invoices') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php //echo site_url('admin/all_invoices'); ?>')">
+                        <span><i class="fa fa-file-invoice-dollar"></i> <?php echo get_phrase('View all Invoices'); ?></span>
+                    </a>
+                </li>
+                <?php //endif; if(getAdminPermissions($_level, 'Can receive payment') == 1):?>
+                <li class="<?php //if ($page_name == 'income' || $page_name == 'invoices_loaded' || $page_name == 'invoices') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php //echo site_url('admin/invoices_show'); ?>')">
+                        <span><i class="fa fa-receipt"></i> <?php //echo get_phrase('invoices_|_receipts'); ?></span>
+                    </a>
+                </li> -->
+                <?php endif; if(getAdminPermissions($_level, 'Can view invoices') == 1):?>
+                <!-- ✅ NEW: Student Credits Management -->
+                <li class="<?php if ($page_name == 'student_credits' || $page_name == 'credit_statistics' || $page_name == 'credit_management') echo 'opened active'; ?>">
+                    <a href="#">
+                        <i class="fa fa-credit-card"></i>
+                        <span><?php echo get_phrase('student_credits'); ?></span>
+                    </a>
+                    <ul>
+                        <li class="<?php if ($page_name == 'student_credits') echo 'active'; ?>">
+                            <a href="#" onclick="navigation('<?php echo site_url('admin/student_credits'); ?>')">
+                                <span><i class="fa fa-list"></i> <?php echo get_phrase('manage_credits'); ?></span>
+                            </a>
+                        </li>
+                        <li class="<?php if ($page_name == 'credit_statistics') echo 'active'; ?>">
+                            <a href="#" onclick="navigation('<?php echo site_url('admin/credit_statistics'); ?>')">
+                                <span><i class="fa fa-chart-bar"></i> <?php echo get_phrase('credit_statistics'); ?></span>
+                            </a>
+                        </li>
+                    </ul>
+                </li>
+                <li class="<?php if ($page_name == 'discount_profiles' || $page_name == 'discount_profile_rules' || $page_name == 'discount_management' || $page_name == 'manage_discount_assignments' || $page_name == 'discount_reports' || $page_name == 'discount_amount_reports' || $page_name == 'apply_discount') echo 'opened active'; ?>">
+                    <a href="#">
+                        <i class="fa fa-percent"></i>
+                        <span><?php echo get_phrase('discounts'); ?></span>
+                    </a>
+                    <ul>
+                        <li class="<?php if ($page_name == 'discount_profiles') echo 'active'; ?>">
+                            <a href="#" onclick="navigation('<?php echo site_url('admin/discount_profiles'); ?>')">
+                                <span><i class="fa fa-tags"></i> <?php echo get_phrase('discount_profiles'); ?></span>
+                            </a>
+                        </li>
+                        <li class="<?php if ($page_name == 'apply_discount') echo 'active'; ?>">
+                            <a href="#" onclick="navigation('<?php echo site_url('admin/apply_discount'); ?>')">
+                                <span><i class="fa fa-hand-holding-usd"></i> <?php echo get_phrase('apply_discount'); ?></span>
+                            </a>
+                        </li>
+                        <li class="<?php if ($page_name == 'manage_discount_assignments') echo 'active'; ?>">
+                            <a href="#" onclick="navigation('<?php echo site_url('admin/manage_discount_assignments'); ?>')">
+                                <span><i class="fa fa-users-cog"></i> <?php echo get_phrase('manage_assignments'); ?></span>
+                            </a>
+                        </li>
+                        <li class="<?php if ($page_name == 'discount_reports') echo 'active'; ?>">
+                            <a href="#" onclick="navigation('<?php echo site_url('admin/discount_reports'); ?>')">
+                                <span><i class="fa fa-chart-bar"></i> <?php echo get_phrase('reports_analytics'); ?></span>
+                            </a>
+                        </li>
+                        <li class="<?php if ($page_name == 'discount_amount_reports') echo 'active'; ?>">
+                            <a href="#" onclick="navigation('<?php echo site_url('admin/discount_amount_reports'); ?>')">
+                                <span><i class="fa fa-money-bill-wave"></i> <?php echo get_phrase('discount_amount_reports'); ?></span>
+                            </a>
+                        </li>
+                    </ul>
+                </li>
+                <li class="<?php if ($page_name == 'student_ledger' || $page_name == 'aging_report') echo 'opened active'; ?>">
+                    <a href="#">
+                        <i class="fa fa-chart-line"></i>
+                        <span><?php echo get_phrase('billing_reports'); ?></span>
+                    </a>
+                    <ul>
+                        <li class="<?php if ($page_name == 'student_ledger') echo 'active'; ?>">
+                            <a href="#" onclick="navigation('<?php echo site_url('admin/student_ledger'); ?>')">
+                                <span><i class="fa fa-book"></i> <?php echo get_phrase('student_ledger'); ?></span>
+                            </a>
+                        </li>
+                        <li class="<?php if ($page_name == 'aging_report') echo 'active'; ?>">
+                            <a href="#" onclick="navigation('<?php echo site_url('admin/aging_report'); ?>')">
+                                <span><i class="fa fa-clock"></i> <?php echo get_phrase('aging_report'); ?></span>
+                            </a>
+                        </li>
+                    </ul>
+                </li>
+                <li class="<?php if ($page_name == 'sms_log_report') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/sms_log_report'); ?>')">
+                        <span><i class="fa fa-sms"></i> <?php echo get_phrase('sms_log_report'); ?></span>
+                    </a>
+                </li>
+                <?php endif; if(getAdminPermissions($_level, 'Can view & print financial reports') == 1):?>
+                <li class="<?php if ($page_name == 'income_expenditure' || $page_name == 'payables' || $page_name == 'receivables' || $page_name == 'statement' || $page_name == 'payments' || $page_name == 'monthly_payment_by_item') echo 'opened active'; ?>">
+                    <a href="#">
+                        <i class="fa fa-chart-line"></i>
+                        <span><?php echo get_phrase('financial_reports'); ?></span>
+                    </a>
+                    <ul>
+                        <li class="<?php if ($page_name == 'receivables') echo 'active'; ?>">
+                            <a href="#" onclick="navigation('<?php echo site_url('admin/financial_reports/receivables'); ?>')">
+                                <span><i class="fa fa-arrow-down"></i> <?php echo get_phrase('accounts_receivables'); ?></span>
+                            </a>
+                        </li>
+                        <li class="<?php if ($page_name == 'payables') echo 'active'; ?>">
+                            <a href="#" onclick="navigation('<?php echo site_url('admin/financial_reports/payables'); ?>')">
+                                <span><i class="fa fa-arrow-up"></i> <?php echo get_phrase('accounts_payables'); ?></span>
+                            </a>
+                        </li>
+                        <li class="<?php if ($page_name == 'income_expenditure') echo 'active'; ?>">
+                            <a href="#" onclick="navigation('<?php echo site_url('admin/financial_reports/income-expenditure'); ?>')">
+                                <span><i class="fa fa-balance-scale"></i> <?php echo get_phrase('income_&_expen...'); ?></span>
+                            </a>
+                        </li>
+                        <li class="<?php if ($page_name == 'payments') echo 'active'; ?>">
+                            <a href="#" onclick="navigation('<?php echo site_url('admin/financial_reports/payments'); ?>')">
+                                <span><i class="fa fa-credit-card"></i> <?php echo get_phrase('payments_reports'); ?></span>
+                            </a>
+                        </li>
+                        <?php if ($admin_level == 1): ?>
+                        <li class="<?php if ($page_name == 'monthly_payment_by_item') echo 'active'; ?>">
+                            <a href="#" onclick="navigation('<?php echo site_url('admin/financial_reports/monthly-payment-by-item'); ?>')">
+                                <span><i class="fa fa-table"></i> <?php echo get_phrase('monthly_payment_by_invoice_item'); ?></span>
+                            </a>
+                        </li>
+                        <?php endif; ?>
+                    </ul>
+                </li>
+                <li class="<?php if ($page_name == 'payroll_system' || $page_name == 'payslip_list') echo 'opened active'; ?>">
+                    <a href="#">
+                        <i class="fa fa-hand-holding-usd"></i>
+                        <span><?php echo get_phrase('Payroll'); ?></span>
+                    </a>
+                    <ul>
+                        <li class="<?php if ($page_name == 'payroll_system') echo 'active'; ?>">
+                            <a href="<?php echo site_url('admin/payroll'); ?>" target="_blank">
+                                <span><i class="fa fa-dollar-sign"></i> <?php echo get_phrase('Pay_salaries'); ?></span>
+                            </a>
+                        </li>
+                        <li class="<?php if ($page_name == 'payslip_list') echo 'active'; ?>">
+                            <a href="<?php echo site_url('admin/payslipList'); ?>">
+                                <span><i class="fa fa-file-invoice"></i> <?php echo get_phrase('Payslip_list'); ?></span>
+                            </a>
+                        </li>
+                        <li>
+                            <a href="#">
+                                <i class="fa fa-file-alt"></i>
+                                <span><?php echo get_phrase('Payroll_Reports'); ?></span>
+                            </a>
+                            <ul>
+                                <li>
+                                    <a href="<?php echo site_url('admin/ssnit_tier1_report'); ?>" target="_blank">
+                                        <span><i class="fa fa-file-pdf"></i> SNNIT (TIER 1)</span>
+                                    </a>
+                                </li>
+                                <li>
+                                    <a href="<?php echo site_url('admin/ssnit_tier2_report'); ?>" target="_blank">
+                                        <span><i class="fa fa-file-pdf"></i> SNNIT (TIER 2)</span>
+                                    </a>
+                                </li>
+                            </ul>
+                        </li>
+                    </ul>
+                </li>
+                <?php endif;?>
+            </ul>
+        </li>
+
+        <li class="<?php if ($page_name == 'income_dashboard' || $page_name == 'income_reports') echo 'opened active'; ?>">
+            <a href="#">
+                <i class="fa fa-coins"></i>
+                <span><?php echo get_phrase('income_revenue'); ?></span>
+            </a>
+            <ul>
+                <li class="<?php if ($page_name == 'income_dashboard') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/income_dashboard'); ?>')">
+                        <span><i class="fa fa-chart-line"></i> <?php echo get_phrase('dashboard'); ?></span>
+                    </a>
+                </li>
+                <li>
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/student_invoice'); ?>')">
+                        <span><i class="fa fa-file-invoice"></i> <?php echo get_phrase('invoices'); ?></span>
+                    </a>
+                </li>
+                <li>
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/financial_reports/receivables'); ?>')">
+                        <span><i class="fa fa-arrow-down"></i> <?php echo get_phrase('receivables'); ?></span>
+                    </a>
+                </li>
+            </ul>
+        </li>
+
+        <li class="<?php if ($page_name == 'expenditure_dashboard' || $page_name == 'expenditure_reports' || $page_name == 'expense' || $page_name == 'expense_category') echo 'opened active'; ?>">
+            <a href="#">
+                <i class="fa fa-money-bill-wave"></i>
+                <span><?php echo get_phrase('expenditure'); ?></span>
+            </a>
+            <ul>
+                <li class="<?php if ($page_name == 'expenditure_dashboard') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/expenditure_dashboard'); ?>')">
+                        <span><i class="fa fa-chart-line"></i> <?php echo get_phrase('dashboard'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'expense') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/expense'); ?>')">
+                        <span><i class="fa fa-list"></i> <?php echo get_phrase('all_expenses'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'expenditure_reports') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/expenditure_reports'); ?>')">
+                        <span><i class="fa fa-file-alt"></i> <?php echo get_phrase('reports'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'expense_category') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/expense_category'); ?>')">
+                        <span><i class="fa fa-folder"></i> <?php echo get_phrase('categories'); ?></span>
+                    </a>
+                </li>
+            </ul>
+        </li>
+
+        <?php if ($account_type == 'admin' && in_array($admin_level, [1, 2, 3, 6])): ?>
+        <li class="<?php if ($page_name == 'inventory/dashboard' || $page_name == 'inventory/products' || $page_name == 'inventory/pos' || $page_name == 'inventory/sales' || $page_name == 'inventory/categories') echo 'opened active'; ?>">
+            <a href="#">
+                <i class="fa fa-boxes"></i>
+                <span><?php echo get_phrase('inventory'); ?></span>
+            </a>
+            <ul>
+                <li class="<?php if ($page_name == 'inventory/dashboard') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('inventory'); ?>')">
+                        <span><i class="fa fa-chart-line"></i> <?php echo get_phrase('dashboard'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'inventory/pos') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('inventory/pos'); ?>')">
+                        <span><i class="fa fa-shopping-cart"></i> <?php echo get_phrase('point_of_sale'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'inventory/products') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('inventory/products'); ?>')">
+                        <span><i class="fa fa-box"></i> <?php echo get_phrase('products'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'inventory/sales') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('inventory/sales'); ?>')">
+                        <span><i class="fa fa-receipt"></i> <?php echo get_phrase('sales_history'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'inventory/categories') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('inventory/categories'); ?>')">
+                        <span><i class="fa fa-folder"></i> <?php echo get_phrase('categories'); ?></span>
+                    </a>
+                </li>
+            </ul>
+        </li>
+        <?php endif; ?>
+
+        <div class="nav-section-header text-slate-400 text-xs font-bold uppercase tracking-wider px-6">Financial Management</div>
+
+        <!-- FINANCES AND ACCOUNTS -->
+        <!--<?php if ($account_type == 'admin' && $admin_level <= 3):?>
+        <li class="<?php if (strpos($page_name, 'finance/') === 0) echo 'opened has-sub'; ?>">
+            <a href="#">
+                <i class="fa fa-chart-line"></i>
+                <span><?php echo get_phrase('advanced_finance'); ?></span>
+            </a>
+            <ul>
+                <li class="<?php if ($page_name == 'finance/dashboard') echo 'active'; ?>">
+                    <a href="<?php echo site_url('finance/dashboard'); ?>">
+                        <span><i class="fa fa-tachometer-alt"></i> <?php echo get_phrase('finance_dashboard'); ?></span>
+                    </a>
+                </li>
+                
+                <?php if(getAdminPermissions($_level, 'Can receive payment') == 1):?>
+                <li class="<?php if ($page_name == 'finance/receipts') echo 'active'; ?>">
+                    <a href="<?php echo site_url('finance/receipts'); ?>">
+                        <span><i class="fa fa-receipt"></i> <?php echo get_phrase('receipt_management'); ?></span>
+                    </a>
+                </li>
+                <?php endif;?>
+                
+                <?php if(getAdminPermissions($_level, 'Can bill students') == 1):?>
+                <li class="<?php if ($page_name == 'finance/payment_plans') echo 'active'; ?>">
+                    <a href="<?php echo site_url('finance/payment_plans'); ?>">
+                        <span><i class="fa fa-calendar-check"></i> <?php echo get_phrase('payment_plans'); ?></span>
+                    </a>
+                </li>
+                
+                <li class="<?php if ($page_name == 'finance/credit_notes') echo 'active'; ?>">
+                    <a href="<?php echo site_url('finance/credit_notes'); ?>">
+                        <span><i class="fa fa-file-invoice"></i> <?php echo get_phrase('credit_notes'); ?></span>
+                    </a>
+                </li>
+                
+                <li class="<?php if ($page_name == 'finance/fee_structures') echo 'active'; ?>">
+                    <a href="<?php echo site_url('finance/fee_structures'); ?>">
+                        <span><i class="fa fa-layer-group"></i> <?php echo get_phrase('fee_structures'); ?></span>
+                    </a>
+                </li>
+                <?php endif;?>
+                
+                <?php if(getAdminPermissions($_level, 'Can view & print financial reports') == 1):?>
+                <li class="<?php if ($page_name == 'finance/reports') echo 'active'; ?>">
+                    <a href="<?php echo site_url('finance/reports'); ?>">
+                        <span><i class="fa fa-chart-bar"></i> <?php echo get_phrase('advanced_reports'); ?></span>
+                    </a>
+                </li>
+                <?php endif;?>
+                
+                <?php if ($admin_level <= 2):?>
+                <li class="<?php if ($page_name == 'finance/settings') echo 'active'; ?>">
+                    <a href="<?php echo site_url('finance/settings'); ?>">
+                        <span><i class="fa fa-cog"></i> <?php echo get_phrase('finance_settings'); ?></span>
+                    </a>
+                </li>
+                <?php endif;?>
+            </ul>
+        </li>
+        <?php endif;?>-->
+
+        <!-- ===========================================
+        SECTION 2: PROFESSIONAL ACCOUNTS MODULE
+        =========================================== -->
+
+        <!--<?php if ($account_type == 'admin' && $admin_level <= 2):?>
+        <li class="<?php if (strpos($page_name, 'accounts/') === 0) echo 'opened has-sub'; ?>">
+            <a href="#">
+                <i class="fa fa-balance-scale"></i>
+                <span><?php echo get_phrase('accounts_&_bookkeeping'); ?></span>
+            </a>
+            <ul>
+                <li class="<?php if ($page_name == 'accounts/dashboard') echo 'active'; ?>">
+                    <a href="<?php echo site_url('accounts/dashboard'); ?>">
+                        <span><i class="fa fa-chart-pie"></i> <?php echo get_phrase('accounts_dashboard'); ?></span>
+                    </a>
+                </li>
+                
+                <li class="<?php if ($page_name == 'accounts/chart_of_accounts') echo 'active'; ?>">
+                    <a href="<?php echo site_url('accounts/chart_of_accounts'); ?>">
+                        <span><i class="fa fa-list-alt"></i> <?php echo get_phrase('chart_of_accounts'); ?></span>
+                    </a>
+                </li>
+                
+                <li class="<?php if ($page_name == 'accounts/journal_entries') echo 'active'; ?>">
+                    <a href="<?php echo site_url('accounts/journal_entries'); ?>">
+                        <span><i class="fa fa-book"></i> <?php echo get_phrase('journal_entries'); ?></span>
+                    </a>
+                </li>
+                
+                <li class="<?php if ($page_name == 'accounts/bank_accounts') echo 'active'; ?>">
+                    <a href="<?php echo site_url('accounts/bank_accounts'); ?>">
+                        <span><i class="fa fa-university"></i> <?php echo get_phrase('bank_accounts'); ?></span>
+                    </a>
+                </li>
+                
+                <li class="<?php if ($page_name == 'accounts/budgets') echo 'active'; ?>">
+                    <a href="<?php echo site_url('accounts/budgets'); ?>">
+                        <span><i class="fa fa-calculator"></i> <?php echo get_phrase('budget_management'); ?></span>
+                    </a>
+                </li>
+                
+                <li class="<?php if ($page_name == 'financial_reports') echo 'opened has-sub'; ?>">
+                    <a href="#">
+                        <i class="fa fa-file-chart"></i>
+                        <span><?php echo get_phrase('financial_reports'); ?></span>
+                    </a>
+                    <ul>
+                        <li>
+                            <a href="<?php echo site_url('accounts/reports/balance_sheet'); ?>">
+                                <span><i class="fa fa-balance-scale-right"></i> <?php echo get_phrase('balance_sheet'); ?></span>
+                            </a>
+                        </li>
+                        <li>
+                            <a href="<?php echo site_url('accounts/reports/income_statement'); ?>">
+                                <span><i class="fa fa-chart-line"></i> <?php echo get_phrase('income_statement'); ?></span>
+                            </a>
+                        </li>
+                        <li>
+                            <a href="<?php echo site_url('accounts/reports/cash_flow'); ?>">
+                                <span><i class="fa fa-money-bill-wave"></i> <?php echo get_phrase('cash_flow'); ?></span>
+                            </a>
+                        </li>
+                        <li>
+                            <a href="<?php echo site_url('accounts/reports/trial_balance'); ?>">
+                                <span><i class="fa fa-equals"></i> <?php echo get_phrase('trial_balance'); ?></span>
+                            </a>
+                        </li>
+                        <li>
+                            <a href="<?php echo site_url('accounts/reports/general_ledger'); ?>">
+                                <span><i class="fa fa-book-open"></i> <?php echo get_phrase('general_ledger'); ?></span>
+                            </a>
+                        </li>
+                    </ul>
+                </li>
+                
+                <li class="<?php if ($page_name == 'accounts/fiscal_year') echo 'active'; ?>">
+                    <a href="<?php echo site_url('accounts/fiscal_year'); ?>">
+                        <span><i class="fa fa-calendar-alt"></i> <?php echo get_phrase('fiscal_year'); ?></span>
+                    </a>
+                </li>
+                
+                <li class="<?php if ($page_name == 'accounts/bank_reconciliation') echo 'active'; ?>">
+                    <a href="<?php echo site_url('accounts/bank_reconciliation'); ?>">
+                        <span><i class="fa fa-check-double"></i> <?php echo get_phrase('bank_reconciliation'); ?></span>
+                    </a>
+                </li>
+                
+                <?php if ($admin_level == 1):?>
+                <li class="<?php if ($page_name == 'accounts/audit_trail') echo 'active'; ?>">
+                    <a href="<?php echo site_url('accounts/audit_trail'); ?>">
+                        <span><i class="fa fa-history"></i> <?php echo get_phrase('audit_trail'); ?></span>
+                    </a>
+                </li>
+                <?php endif;?>
+            </ul>
+        </li>
+        <?php endif;?>
+
+        <?php if ($has_any_fee_module && $account_type == 'admin' && $admin_level <= 3):?>
+        <li class="<?php if ($page_name == 'cashier_dashboard_admin' || $page_name == 'financial_dashboard_unified' || $page_name == 'daily_reconciliation' || $page_name == 'collection_efficiency' || $page_name == 'financial_alerts' || $page_name == 'collector_handover') echo 'opened has-sub'; ?>">
+            <a href="#">
+                <i class="fa fa-chart-pie"></i>
+                <span><?php echo get_phrase('financial_analytics'); ?></span>
+            </a>
+            <ul>
+                <li class="<?php if ($page_name == 'cashier_dashboard_admin') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/cashier_dashboard_admin'); ?>')">
+                        <span><i class="fa fa-cash-register"></i> <?php echo get_phrase('cashier_dashboard'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'financial_dashboard_unified') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('financial_integration/dashboard'); ?>')">
+                        <span><i class="fa fa-chart-line"></i> <?php echo get_phrase('unified_financial_dashboard'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'daily_reconciliation') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/daily_reconciliation'); ?>')">
+                        <span><i class="fa fa-balance-scale-right"></i> <?php echo get_phrase('daily_reconciliation'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'collection_efficiency') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/collection_efficiency'); ?>')">
+                        <span><i class="fa fa-tachometer-alt"></i> <?php echo get_phrase('collection_efficiency'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'financial_alerts') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/financial_alerts'); ?>')">
+                        <span><i class="fa fa-exclamation-triangle"></i> <?php echo get_phrase('financial_alerts'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'collector_handover') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/collector_handover'); ?>')">
+                        <span><i class="fa fa-exchange-alt"></i> <?php echo get_phrase('collector_handover'); ?></span>
+                    </a>
+                </li>
+            </ul>
+        </li>
+        <?php endif;?>-->
+
+        <?php if ($account_type == 'admin' && $admin_level <= 2):?>
+        <div class="nav-section-header text-slate-400 text-xs font-bold uppercase tracking-wider px-6">Facilities</div>
+
+        <li class="<?php if ($page_name == 'book') echo 'active'; ?>">
+            <a href="#" onclick="navigation('<?php echo site_url('admin/book'); ?>')">
+                <i class="fa fa-book"></i>
+                <span><?php echo get_phrase('library'); ?></span>
+            </a>
+        </li>
+
+        <?php if (is_fee_module_enabled('transport')): ?>
+        <li class="<?php if ($page_name == 'transport' || $page_name == 'transport_enhanced') echo 'active'; ?>">
+            <a href="#" onclick="navigation('<?php echo site_url('admin/transportation'); ?>')">
+                <i class="fa fa-bus"></i>
+                <span><?php echo get_phrase('transportation'); ?></span>
+            </a>
+        </li>
+        <?php endif; ?>
+
+        <?php if($boarding_system == 'yes'):?>
+        <li class="<?php if ($page_name == '/boarding/boarding_house' || $page_name == '/boarding/boarding_dormitory' || $page_name == '/boarding/dormitory_bed' || $page_name == '/boarding/boarding_reports') echo 'opened active'; ?>">
+            <a href="#">
+                <i class="fa fa-building"></i>
+                <span><?php echo get_phrase('boarding_management'); ?></span>
+            </a>
+            <ul>
+                <li class="<?php if ($page_name == '/boarding/boarding_house') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/manageBoardingHouse'); ?>')">
+                        <span><i class="fa fa-home"></i> <?php echo get_phrase('boarding_houses'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == '/boarding/boarding_dormitory') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/manageBoardingDormitory'); ?>')">
+                        <span><i class="fa fa-door-open"></i> <?php echo get_phrase('dormitories'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == '/boarding/dormitory_bed') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/manageDormitoryBed'); ?>')">
+                        <span><i class="fa fa-bed"></i> <?php echo get_phrase('beds'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == '/boarding/boarding_reports') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/boardingHouseReports'); ?>')">
+                        <span><i class="fa fa-chart-bar"></i> <?php echo get_phrase('boarding_reports'); ?></span>
+                    </a>
+                </li>
+            </ul>
+        </li>
+        <?php endif; endif;?>
+
+        <div class="nav-section-header text-slate-400 text-xs font-bold uppercase tracking-wider px-6">Communication</div>
+
+        <li class="<?php if ($page_name == 'noticeboard' || $page_name == 'noticeboard_edit') echo 'active'; ?>">
+            <a href="#" onclick="navigation('<?php echo site_url('admin/noticeboard'); ?>')">
+                <i class="fa fa-bullhorn"></i>
+                <span><?php echo get_phrase('noticeboard'); ?></span>
+            </a>
+        </li>
+
+        <?php if ($account_type == 'admin' && $admin_level <= 2 && getAdminPermissions($_level, 'Can send SMS') == 1):?>
+        <li class="<?php if ($page_name == 'message' || $page_name == 'group_message') echo 'active'; ?>">
+            <a href="#" onclick="navigation('<?php echo site_url('admin/message'); ?>')">
+                <i class="fa fa-envelope"></i>
+                <span><?php echo get_phrase('message_|_sMS'); ?></span>
+                <sup><div class="badge badge-danger" id="badge_message" style="background-color: red;"></div></sup>
+            </a>
+        </li>
+        <li class="<?php if ($page_name == 'sms_automation') echo 'active'; ?>">
+            <a href="#" onclick="navigation('<?php echo site_url('admin/sms_automation'); ?>')">
+                <i class="fa fa-robot"></i>
+                <span><?php echo get_phrase('sms_automation'); ?></span>
+            </a>
+        </li>
+        <?php endif;?>
+
+        <?php if ($account_type == 'admin' && $admin_level == 1):?>
+        <div class="nav-section-header text-slate-400 text-xs font-bold uppercase tracking-wider px-6">Settings</div>
+
+        <li class="<?php if ($page_name == 'request_approval' || $page_name == 'discount_approvals' || $page_name == 'modification_requests' || $page_name == 'receipt_invoice_modification_requests') echo 'opened active'; ?>">
+            <a href="#">
+                <i class="fa fa-clipboard-check"></i>
+                <span><?php echo get_phrase('approvals'); ?></span>
+            </a>
+            <ul>
+                <li class="<?php if ($page_name == 'modification_requests' || $page_name == 'receipt_invoice_modification_requests') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/modification_requests'); ?>')">
+                        <span><i class="fa fa-file-invoice"></i> <?php echo get_phrase('invoice_&_receipt_approvals'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'discount_approvals') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/discount_approvals'); ?>')">
+                        <span><i class="fa fa-percent"></i> <?php echo get_phrase('discount_approvals'); ?></span>
+                    </a>
+                </li>
+            </ul>
+        </li>
+
+        <li class="<?php if ($page_name == 'system_settings' || $page_name == 'manage_language' || $page_name == 'sms_settings' || $page_name == 'payment_settings' || $page_name == 'permission_settings' || $page_name == 'theme_settings' || $page_name == 'daily_fee_module_settings') echo 'opened active'; ?>">
+            <a href="#">
+                <i class="fa fa-cog"></i>
+                <span><?php echo get_phrase('system_settings'); ?></span>
+            </a>
+            <ul>
+                <li class="<?php if ($page_name == 'system_settings') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/system_settings'); ?>')">
+                        <span><i class="fa fa-sliders-h"></i> <?php echo get_phrase('general_settings'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'theme_settings') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/theme_settings'); ?>')">
+                        <span><i class="fa fa-palette"></i> <?php echo get_phrase('theme_settings'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'sms_settings') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/sms_settings'); ?>')">
+                        <span><i class="fa fa-sms"></i> <?php echo get_phrase('sMS_settings'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'permission_settings') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/permission_settings'); ?>')">
+                        <span><i class="fa fa-lock"></i> <?php echo get_phrase('permission_settings'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'payment_settings') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/payment_settings'); ?>')">
+                        <span><i class="fa fa-credit-card"></i> <?php echo get_phrase('payment_settings'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'fee_collection_settings') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('admin/fee_collection_settings'); ?>')">
+                        <span><i class="fa fa-cogs"></i> <?php echo get_phrase('fee_collection_settings'); ?></span>
+                    </a>
+                </li>
+            </ul>
+        </li>
+
+        <!-- Cloud Sync Menu -->
+        <li class="<?php if (in_array($page_name, ['sync_dashboard', 'sync_table_management', 'sync_settings'])) echo 'opened active'; ?>">
+            <a href="#">
+                <i class="fa fa-cloud-upload-alt"></i>
+                <span><?php echo get_phrase('cloud_sync'); ?></span>
+            </a>
+            <ul class="nav nav-second-level">
+                <li class="<?php if ($page_name == 'sync_dashboard') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('sync_server/dashboard'); ?>')">
+                        <i class="fa fa-tachometer-alt"></i>
+                        <span><?php echo get_phrase('dashboard'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'sync_table_management') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('sync_server/table_management'); ?>')">
+                        <i class="fa fa-table"></i>
+                        <span><?php echo get_phrase('table_management'); ?></span>
+                    </a>
+                </li>
+                <li class="<?php if ($page_name == 'sync_settings') echo 'active'; ?>">
+                    <a href="#" onclick="navigation('<?php echo site_url('sync_server/settings'); ?>')">
+                        <i class="fa fa-cog"></i>
+                        <span><?php echo get_phrase('settings'); ?></span>
+                    </a>
+                </li>
+            </ul>
+        </li>
+        <?php endif;?>
+
+        <li class="<?php if ($page_name == 'manage_profile') echo 'active'; ?>">
+            <a href="#" onclick="navigation('<?php echo site_url('admin/manage_profile'); ?>')">
+                <i class="fa fa-user-circle"></i>
+                <span><?php echo get_phrase('profile'); ?></span>
+            </a>
+        </li>
+    </ul>
+</div>
+
+<script>
+$(function() {
+    $('#main-menu li a').addClass('list-group-item');
+    $('.list-group-item').css('background-color', 'inherit');
+    
+    // Collapse all menus except the one containing active item
+    $('#main-menu li').not('.active').not(':has(li.active)').removeClass('opened');
+    
+    // Scroll to active menu item - position at 30% of screen height
+    var $activeItem = $('#main-menu li.active').first();
+    if ($activeItem.length) {
+        setTimeout(function() {
+            var sidebarTop = $('.sidebar-menu').scrollTop();
+            var itemTop = $activeItem.position().top;
+            var sidebarHeight = $('.sidebar-menu').height();
+            
+            $('.sidebar-menu').animate({
+                scrollTop: sidebarTop + itemTop - (sidebarHeight * 0.3)
+            }, 300);
+        }, 100);
+    }
+    
+
+    
+    // Position popup menus when sidebar is collapsed
+    var hoverTimeout;
+    $(document).on('mouseenter', '#main-menu > li', function() {
+        if ($('.page-container').hasClass('sidebar-collapsed')) {
+            var $li = $(this);
+            var $submenu = $li.children('ul');
+            var $link = $li.children('a');
+            var offset = $li.offset();
+            var topPos = offset.top;
+            
+            clearTimeout(hoverTimeout);
+            $('#main-menu > li').children('ul').css('display', 'none');
+            $('.hover-tooltip').remove();
+            
+            if ($submenu.length) {
+                var windowHeight = $(window).height();
+                var submenuHeight = $submenu.outerHeight();
+                
+                if (topPos + submenuHeight > windowHeight) {
+                    topPos = windowHeight - submenuHeight - 20;
+                }
+                
+                $submenu.css({
+                    'top': topPos + 'px',
+                    'display': 'block'
+                });
+            } else {
+                var title = $link.find('span').text();
+                if (title) {
+                    $('body').append('<span class="hover-tooltip" style="position: fixed; left: 70px; top: ' + topPos + 'px; background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%); color: #fff; padding: 10px 20px; border-radius: 8px; box-shadow: 0 8px 32px rgba(0,0,0,0.4); z-index: 101; white-space: nowrap; border: 1px solid rgba(255,255,255,0.1); pointer-events: none;">' + title + '</span>');
+                }
+            }
+        }
+    }).on('mouseleave', '#main-menu > li', function() {
+        if ($('.page-container').hasClass('sidebar-collapsed')) {
+            var $li = $(this);
+            hoverTimeout = setTimeout(function() {
+                $li.children('ul').css('display', 'none');
+                $('.hover-tooltip').remove();
+            }, 100);
+        }
+    });
+    
+    $(document).on('mouseenter', '.page-container.sidebar-collapsed #main-menu > li > ul', function() {
+        clearTimeout(hoverTimeout);
+    });
+    
+    // Mobile drawer toggle
+    $('.sidebar-mobile-menu a').on('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        // Close metro menu if open
+        var metroOverlay = document.getElementById('mega_overlay');
+        var metroPanel = document.getElementById('mega_panel');
+        if (metroOverlay && metroPanel) {
+            metroOverlay.classList.remove('active');
+            metroPanel.classList.remove('active');
+            metroPanel.classList.remove('sidebar-open');
+            document.body.style.overflow = '';
+        }
+        
+        if ($('.sidebar-menu').hasClass('mobile-open')) {
+            // Close the sidebar
+            $('.sidebar-menu').removeClass('mobile-open');
+            $('.mobile-backdrop').remove();
+            $('body').removeClass('sidebar-open');
+        } else {
+            // Open the sidebar
+            // Clean up any existing backdrop first
+            $('.mobile-backdrop').remove();
+            
+            // Remove sidebar-collapsed from page-container
+            $('.page-container').removeClass('sidebar-collapsed');
+            
+            // Add body class for z-index control
+            $('body').addClass('sidebar-open');
+            
+            // Create backdrop with proper z-index (lower than sidebar)
+            $('body').append('<div class="mobile-backdrop" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 99;"></div>');
+            
+            // Open sidebar after small delay
+            setTimeout(function() {
+                $('.sidebar-menu').addClass('mobile-open');
+                // Ensure menu is visible
+                $('#main-menu').show();
+            }, 10);
+        }
+    });
+    
+    // Close drawer on backdrop click
+    $(document).on('click', '.mobile-backdrop', function() {
+        $('.sidebar-menu').removeClass('mobile-open');
+        $('body').removeClass('sidebar-open');
+        $(this).remove();
+    });
+});
+
+function navigation(url, type) {
+    if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
+        $('#main-menu').css('display', 'none');
+    }
+    const isMobile = window.matchMedia("only screen and (max-width: 766px)").matches;
+    if (isMobile) {
+        $('#main-menu').css('display', 'none');
+    }
+    ajaxFunction(url, type);
+}
+
+function ajaxFunction(url, type) {
+    $('#main_page').empty();
+    $('html, body').animate({scrollTop: ($('#top').offset().top)}, 1000);
+    if(type != undefined) {
+        //$('#' + type).html('<center><div style="font-size: 20px; font-weight: bolder; margin-top: 200px;">Loading...<br><i class="fa fa-3x fa-spinner fa-pulse"></i></div></center>');
+
+        $('#' + type).html('<center><div id="skeleton-loader" class="skeleton-loader"><div class="skeleton-box skeleton-header"></div><div class="skeleton-box skeleton-line"></div><div class="skeleton-box skeleton-line"></div><div class="skeleton-box skeleton-line-short"></div></div></center>');
+    } else {
+        //$('#main_page').html('<center><div style="font-size: 20px; font-weight: bolder; margin-top: 200px;">Loading...<br><i class="fa fa-3x fa-spinner fa-pulse"></i></div></center>');
+
+        $('#main_page').html('<center><div id="skeleton-loader" class="skeleton-loader"><div class="skeleton-box skeleton-header"></div><div class="skeleton-box skeleton-line"></div><div class="skeleton-box skeleton-line"></div><div class="skeleton-box skeleton-line-short"></div></div></center>');
+    }
+    window.location.assign(url);
+}
+
+
+</script>
