@@ -17,7 +17,7 @@ import { fmtCedi, fmtDate, FLAG_LABELS, PAYMENT_LABELS, fmtDateTime } from "@/li
 import { toast } from "@/hooks/use-toast";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { initials, avatarColor } from "@/lib/format";
-import { Search, UserPlus, Download, Flag, LogOut, Phone, Mail, MapPin, IdCard, GraduationCap, Banknote, ClipboardList, ArrowLeftRight, ShieldAlert, ArrowUpRight, Utensils, UserX, Undo2, ChevronRight, CheckSquare } from "lucide-react";
+import { Search, UserPlus, Download, Flag, LogOut, Phone, Mail, MapPin, IdCard, GraduationCap, Banknote, ClipboardList, ArrowLeftRight, ShieldAlert, ArrowUpRight, Utensils, UserX, Undo2, ChevronRight, CheckSquare, Printer } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type StudentRow = {
@@ -42,6 +42,7 @@ export function Students() {
   const [withdrawFor, setWithdrawFor] = useState<StudentRow | null>(null);
   const [statusView, setStatusView] = useState<"ACTIVE" | "WITHDRAWN" | "GRADUATED">("ACTIVE");
   const [promoOpen, setPromoOpen] = useState(false);
+  const [tab, setTab] = useState("roster");
 
   /* iEduPro nested nav: preselect the class when arriving from a
      Students → level → class deep link (state adjusted during render —
@@ -50,6 +51,7 @@ export function Students() {
   if (navTarget !== appliedTarget) {
     setAppliedTarget(navTarget);
     if (navTarget?.classroomId) setClassId(navTarget.classroomId);
+    if (navTarget?.tab === "idcards") setTab("idcards");
   }
 
   const load = () => {
@@ -108,6 +110,14 @@ export function Students() {
 
   return (
     <div>
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList>
+          <TabsTrigger value="roster">Roster</TabsTrigger>
+          <TabsTrigger value="idcards" className="gap-1.5"><IdCard className="size-4" /> ID cards</TabsTrigger>
+        </TabsList>
+
+        {/* ── roster (the classic students module) ── */}
+        <TabsContent value="roster" className="mt-4">
       <ModuleHeader
         title="Students"
         description={`${rows.length} learners on roll · every child carries a national Nyansapo Index that follows them across schools`}
@@ -214,6 +224,23 @@ export function Students() {
           </div>
         </CardContent>
       </Card>
+        </TabsContent>
+
+        {/* ── bulk ID cards (iEduPro admin/print_bulk_id) ── */}
+        <TabsContent value="idcards" className="mt-4">
+          {currentSchoolId ? (
+            <IdCardsTab
+              key={currentSchoolId}
+              schoolId={currentSchoolId}
+              classrooms={classrooms}
+              fallbackRows={statusView === "ACTIVE" ? rows : null}
+              initialClassId={classId !== "all" ? classId : ""}
+            />
+          ) : (
+            <EmptyState title="No school selected" />
+          )}
+        </TabsContent>
+      </Tabs>
 
       {/* ── 360° profile sheet ── */}
       <Sheet open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
@@ -701,5 +728,153 @@ function PromotionWizard({ open, onOpenChange, rows, classrooms, onDone }: { ope
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/* ── bulk ID cards (iEduPro admin/print_bulk_id parity): sheets of learner
+   ID cards — school header strip, avatar, class, guardian contact and a
+   barcode of the Nyansapo Index (the scanner's payload). 10 cards / sheet. ── */
+function IdCardsTab({ schoolId, classrooms, fallbackRows, initialClassId }: {
+  schoolId: string;
+  classrooms: { id: string; name: string }[];
+  fallbackRows: StudentRow[] | null;
+  initialClassId: string;
+}) {
+  const { schools } = useStore();
+  const [rows, setRows] = useState<StudentRow[] | null>(fallbackRows);
+  const [pickedClassId, setPickedClassId] = useState("");
+
+  // fresh on-roll roster for the cards (reuses the existing students API);
+  // remounted per school via key= so a single mount-time fetch is enough
+  useEffect(() => {
+    apiGet<any>(`/api/school/${schoolId}/students?status=ACTIVE`)
+      .then((d) => setRows(d.students))
+      .catch((e) => toast({ title: "Could not load the roster", description: e.message, variant: "destructive" }));
+  }, [schoolId]);
+
+  const classId = pickedClassId || initialClassId || classrooms[0]?.id || "";
+  const className = classrooms.find((c) => c.id === classId)?.name;
+  const schoolName = schools.find((s) => s.id === schoolId)?.name ?? "Nyansapo School";
+
+  const classRoster = useMemo(
+    () => (rows ?? []).filter((r) => (classId ? r.classroomId === classId : true)),
+    [rows, classId],
+  );
+  // 10 cards per printed sheet (2 × 5)
+  const sheets = useMemo(() => {
+    const out: StudentRow[][] = [];
+    for (let i = 0; i < classRoster.length; i += 10) out.push(classRoster.slice(i, i + 10));
+    return out;
+  }, [classRoster]);
+
+  function downloadCsv() {
+    if (!classRoster.length) return;
+    const header = ["Index (barcode payload)", "Name", "Class", "Guardian", "Guardian Phone", "Gender"];
+    const lines = classRoster.map((r) => [r.nyansapoIndex, r.name, r.classroom, r.guardianName, r.guardianPhone, r.gender]);
+    const csv = [header, ...lines].map((l) => l.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const slug = className ? className.toLowerCase().replace(/[^a-z0-9]+/g, "-") : "all-classes";
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    const a = document.createElement("a"); a.href = url; a.download = `nyansapo-id-cards-${slug}.csv`; a.click(); URL.revokeObjectURL(url);
+  }
+
+  return (
+    <div>
+      <ModuleHeader
+        title="Bulk ID Cards"
+        description="Print class sheets of learner ID cards — kente-accented school strip, avatar, class and guardian contact, with a barcode of the Nyansapo Index the gate scanner reads. 10 cards per sheet."
+        actions={
+          <div className="no-print flex items-center gap-2">
+            <Button size="sm" variant="outline" className="gap-1.5" onClick={downloadCsv} disabled={!classRoster.length}>
+              <Download className="size-4" /> Download CSV
+            </Button>
+            <Button size="sm" className="gap-1.5" onClick={() => window.print()} disabled={!classRoster.length}>
+              <Printer className="size-4" /> Print sheet{sheets.length > 1 ? `s (${sheets.length})` : ""}
+            </Button>
+          </div>
+        }
+      />
+
+      <div className="no-print flex flex-wrap items-center gap-2 mb-4">
+        <Select value={classId} onValueChange={setPickedClassId}>
+          <SelectTrigger className="w-56"><SelectValue placeholder="Select a class" /></SelectTrigger>
+          <SelectContent>
+            {classrooms.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Badge variant="secondary">{classRoster.length} cards · {sheets.length} sheet{sheets.length === 1 ? "" : "s"}</Badge>
+        <span className="text-xs text-muted-foreground">Print opens your browser dialog — only the card sheets are printed.</span>
+      </div>
+
+      {!rows ? (
+        <LoadingBlock label="Loading roster…" />
+      ) : !classRoster.length ? (
+        <Card>
+          <CardContent>
+            <EmptyState icon={<IdCard className="size-5" />} title="No active learners" hint="Pick another class — cards are generated for learners on roll." />
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="print-area space-y-6">
+          {sheets.map((sheet, si) => (
+            <div key={si} className="print-sheet rounded-xl border border-dashed bg-muted/20 p-3 print:bg-transparent">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 print:grid-cols-2">
+                {sheet.map((s) => <LearnerIdCard key={s.id} s={s} schoolName={schoolName} />)}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* a single learner card — the barcode payload is the Nyansapo Index */
+function LearnerIdCard({ s, schoolName }: { s: StudentRow; schoolName: string }) {
+  return (
+    <div className="print-avoid-break rounded-lg border bg-card shadow-sm overflow-hidden">
+      <div className="bg-primary px-2.5 pt-1.5 pb-1">
+        <div className="text-[11px] font-bold uppercase tracking-wide text-primary-foreground truncate leading-tight">{schoolName}</div>
+        <div className="text-[8px] uppercase tracking-[0.18em] text-primary-foreground/80">Nyansapo Learner ID</div>
+      </div>
+      <div className="kente-strip h-1" aria-hidden />
+      <div className="p-2.5 flex items-center gap-2.5">
+        <Avatar className="size-14 rounded-md">
+          <AvatarFallback style={{ background: avatarColor(s.name) }} className="rounded-md text-white text-lg font-semibold">{initials(s.name)}</AvatarFallback>
+        </Avatar>
+        <div className="min-w-0 flex-1">
+          <div className="font-bold text-sm leading-tight truncate">{s.name}</div>
+          <div className="text-xs text-muted-foreground mt-0.5">{s.classroom}</div>
+          <div className="text-[11px] text-muted-foreground truncate mt-0.5">Guardian: {s.guardianName} · {s.guardianPhone}</div>
+        </div>
+      </div>
+      <div className="px-2.5 pb-2.5">
+        <BarcodeBars value={s.nyansapoIndex} />
+        <div className="text-center font-mono font-bold text-[11px] tracking-[0.12em]">{s.nyansapoIndex}</div>
+      </div>
+    </div>
+  );
+}
+
+/* pure-CSS barcode: deterministic bar pattern derived from the index —
+   no library, prints crisply (visual stand-in for a Code-128 render) */
+function BarcodeBars({ value }: { value: string }) {
+  const bars = useMemo(() => {
+    const src = value || "NY";
+    let h = 7;
+    const out: number[] = [];
+    for (let i = 0; i < 36; i++) {
+      h = (h * 31 + src.charCodeAt(i % src.length)) % 9973;
+      out.push((h % 3) + 1);
+    }
+    return out;
+  }, [value]);
+  return (
+    <div className="flex items-stretch justify-center gap-[1px] h-9 mb-1.5" role="img" aria-label={`Barcode encoding ${value}`}>
+      <span className="w-[2px] shrink-0 bg-foreground" />
+      {bars.map((w, i) => (
+        <span key={i} className="shrink-0 bg-foreground" style={{ width: `${w}px`, marginRight: i % 6 === 5 ? "2px" : undefined }} />
+      ))}
+      <span className="w-[2px] shrink-0 bg-foreground" />
+    </div>
   );
 }

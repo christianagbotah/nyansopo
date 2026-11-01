@@ -12,8 +12,9 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatCard, ModuleHeader, LoadingBlock, StatusBadge, EmptyState } from "@/components/ui-helpers";
 import { fmtCedi, fmtDate, PAYMENT_LABELS } from "@/lib/format";
+import { canAny } from "@/lib/rbac";
 import { toast } from "@/hooks/use-toast";
-import { Banknote, Receipt, AlertTriangle, CheckCircle2, Plus, Flag, Printer, Wallet, Ticket, Percent, UserPlus, XCircle, ListChecks, Copy as CopyIcon, Eye, Link2 } from "lucide-react";
+import { Banknote, Receipt, AlertTriangle, CheckCircle2, Plus, Flag, Printer, Wallet, Ticket, Percent, UserPlus, XCircle, ListChecks, Copy as CopyIcon, Eye, Link2, ClipboardList, ShieldCheck, Undo2, PencilLine, Trash2, FileWarning, Ban } from "lucide-react";
 import { ReceiptDocument, BulkReceiptsDocument, RECEIPT_STYLES, type ReceiptStyle } from "@/components/receipts";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DiscountProfilesTab, DiscountApprovalsTab, type DiscountData } from "@/components/modules/discounts-workspace";
@@ -33,10 +34,21 @@ type FeeData = {
 type DiscountRow = { id: string; name: string; type: string; value: number; scope: string; autoApply: boolean; active: boolean; notes: string | null; applied: number };
 export type { DiscountData };
 
+/* receipt/invoice modification-approval queue (iEduPro parity) */
+type ModRequest = {
+  id: string; targetType: "PAYMENT" | "INVOICE"; recordId: string; recordCode: string;
+  requestType: "EDIT" | "DELETE"; reason: string; status: string;
+  requestedById: string; requestedByName: string;
+  originalData: Record<string, any> | null; newData: Record<string, any> | null;
+  handledByName: string | null; handledAt: string | null; decisionNote: string | null; createdAt: string;
+};
+type ApprovalsData = { pending: ModRequest[]; recent: ModRequest[] };
+
 export function Fees() {
-  const { currentSchoolId, online, navTarget } = useStore();
+  const { currentSchoolId, online, navTarget, session } = useStore();
   const [data, setData] = useState<FeeData | null>(null);
   const [discounts, setDiscounts] = useState<DiscountData | null>(null);
+  const [approvals, setApprovals] = useState<ApprovalsData | null>(null);
   const [termId, setTermId] = useState<string | null>(null);
   const [tab, setTab] = useState("invoices");
   const [payFor, setPayFor] = useState<FeeData["invoices"][0] | null>(null);
@@ -47,8 +59,10 @@ export function Fees() {
   const [appliedTarget, setAppliedTarget] = useState<any>(null);
   if (navTarget !== appliedTarget) {
     setAppliedTarget(navTarget);
-    if (navTarget?.tab && ["invoices", "receipts", "structures", "discounts", "arrears"].includes(navTarget.tab)) setTab(navTarget.tab);
+    if (navTarget?.tab && ["invoices", "receipts", "structures", "discounts", "arrears", "approvals"].includes(navTarget.tab)) setTab(navTarget.tab);
   }
+  const canManageApprovals = canAny(session?.permissions, ["approvals.manage"]);
+  const canRequestMods = canAny(session?.permissions, ["approvals.request", "approvals.manage"]);
   const [discDialog, setDiscDialog] = useState<DiscountRow | "new" | null>(null);
   const [applyDialog, setApplyDialog] = useState<DiscountRow | null>(null);
   const [receipt, setReceipt] = useState<any | null>(null);
@@ -95,6 +109,11 @@ export function Fees() {
       .then((d) => { setData(d); setTermId(d.termId); })
       .catch((e) => toast({ title: "Load failed", description: e.message, variant: "destructive" }));
     apiGet<DiscountData>(`/api/school/${currentSchoolId}/ops/discounts`).then(setDiscounts).catch(() => null);
+    apiGet<ApprovalsData>(`/api/school/${currentSchoolId}/ops/reports?tab=approvals`).then(setApprovals).catch(() => null);
+  };
+  const loadApprovals = () => {
+    if (!currentSchoolId) return;
+    apiGet<ApprovalsData>(`/api/school/${currentSchoolId}/ops/reports?tab=approvals`).then(setApprovals).catch(() => null);
   };
   useEffect(() => { load(); }, [currentSchoolId]);
 
@@ -132,6 +151,10 @@ export function Fees() {
           <TabsTrigger value="structures">Fee structures</TabsTrigger>
           <TabsTrigger value="discounts">Discounts ({discounts?.discounts.length ?? 0})</TabsTrigger>
           <TabsTrigger value="arrears">Arrears chase-list ({overdue.length})</TabsTrigger>
+          <TabsTrigger value="approvals" className="gap-1.5">
+            Approvals
+            {(approvals?.pending.length ?? 0) > 0 && <span className="inline-flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold">{approvals!.pending.length}</span>}
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="invoices">
@@ -300,6 +323,17 @@ export function Fees() {
               ))}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="approvals">
+          <ApprovalsTab
+            approvals={approvals}
+            canManage={canManageApprovals}
+            canRequest={canRequestMods}
+            receipts={allPayments}
+            invoices={data.invoices}
+            onRefresh={() => { loadApprovals(); load(termId ?? undefined); }}
+          />
         </TabsContent>
       </Tabs>
 
@@ -841,6 +875,360 @@ function InvoiceDiscountDialog({ invoice, catalog, onOpenChange, onDone }: {
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button onClick={submit} disabled={busy}>{busy ? "Applying…" : "Apply to invoice"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ── APPROVALS TAB (receipt/invoice modification queue — iEduPro parity) ─── */
+function ApprovalsTab({ approvals, canManage, canRequest, receipts, invoices, onRefresh }: {
+  approvals: ApprovalsData | null;
+  canManage: boolean;
+  canRequest: boolean;
+  receipts: { id: string; receiptNo: string; amount: number; method: string; paidAt: string; student: string; invoiceNo: string }[];
+  invoices: FeeData["invoices"];
+  onRefresh: () => void;
+}) {
+  const { currentSchoolId } = useStore();
+  const [requestOpen, setRequestOpen] = useState(false);
+  const [decideFor, setDecideFor] = useState<{ req: ModRequest; decision: "APPROVED" | "REJECTED" } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function decide(req: ModRequest, decision: "APPROVED" | "REJECTED", note: string) {
+    if (!currentSchoolId) return;
+    setBusy(true);
+    try {
+      const res = await apiPost<{ request: ModRequest }>(`/api/school/${currentSchoolId}/ops/reports`, { action: "modreq.decide", id: req.id, decision, note: note || undefined });
+      toast({
+        title: decision === "APPROVED" ? "Modification approved" : "Request rejected",
+        description: res.request?.decisionNote ?? undefined,
+      });
+      setDecideFor(null);
+      onRefresh();
+    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
+  }
+
+  async function revoke(req: ModRequest) {
+    if (!currentSchoolId) return;
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/reports`, { action: "modreq.revoke", id: req.id });
+      toast({ title: "Approval revoked", description: "The data change is NOT auto-reversed — manual reversal required.", variant: "destructive" });
+      onRefresh();
+    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
+  }
+
+  if (!approvals) return <Card><CardContent><LoadingBlock label="Loading the approval queue…" /></CardContent></Card>;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-muted-foreground max-w-2xl">
+          Cashiers request receipt &amp; invoice corrections; only a Level-1 administrator (or proprietor) can approve, reject or revoke them.
+          Approving a deletion reverses the linked invoice automatically; revocation never auto-reverses — that stays a manual, audited step.
+        </p>
+        {canRequest && (
+          <Button size="sm" className="gap-1.5" onClick={() => setRequestOpen(true)}><PencilLine className="size-4" /> Request modification</Button>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <StatCard icon={<ClipboardList className="size-4" />} label="Pending" value={approvals.pending.length} tone={approvals.pending.length ? "danger" : "default"} sub="awaiting decision" />
+        <StatCard icon={<ShieldCheck className="size-4" />} label="Approved" value={approvals.recent.filter((r) => r.status === "APPROVED").length} tone="primary" sub="all time (recent)" />
+        <StatCard icon={<Ban className="size-4" />} label="Rejected" value={approvals.recent.filter((r) => r.status === "REJECTED").length} sub="no data change" />
+        <StatCard icon={<Undo2 className="size-4" />} label="Revoked" value={approvals.recent.filter((r) => r.status === "REVOKED").length} tone="gold" sub="manual reversal" />
+      </div>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2"><ClipboardList className="size-4 text-destructive" /> Pending queue — {approvals.pending.length}</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 max-h-[520px] overflow-y-auto nice-scroll">
+          {approvals.pending.length === 0 && <EmptyState icon={<CheckCircle2 className="size-5" />} title="Nothing awaiting approval" hint="Correction requests raised at the counter appear here for the administrator's decision." />}
+          {approvals.pending.map((r) => (
+            <div key={r.id} className="rounded-lg border p-3 flex flex-wrap items-start gap-3 justify-between">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <Badge variant={r.targetType === "PAYMENT" ? "secondary" : "outline"} className="text-[10px] uppercase tracking-wide">{r.targetType === "PAYMENT" ? "Receipt" : "Invoice"}</Badge>
+                  <span className="font-mono text-xs font-semibold">{r.recordCode}</span>
+                  <Badge variant={r.requestType === "DELETE" ? "destructive" : "default"} className="text-[10px] gap-1">
+                    {r.requestType === "DELETE" ? <Trash2 className="size-3" /> : <PencilLine className="size-3" />} {r.requestType}
+                  </Badge>
+                </div>
+                <div className="text-sm mt-1.5">{r.reason}</div>
+                <div className="text-xs text-muted-foreground mt-1">
+                  requested by {r.requestedByName} · {fmtDate(r.createdAt)}
+                  {r.originalData?.amountCents != null && <> · original <b className="text-foreground">{fmtCedi(r.originalData.amountCents)}</b> {r.originalData.method ? `(${PAYMENT_LABELS[r.originalData.method] ?? r.originalData.method})` : ""}</>}
+                  {r.originalData?.totalCents != null && <> · billed <b className="text-foreground">{fmtCedi(r.originalData.totalCents)}</b></>}
+                  {r.newData?.amountCents != null && <> → proposed <b className="text-primary">{fmtCedi(r.newData.amountCents)}</b>{r.newData.method ? ` (${PAYMENT_LABELS[r.newData.method] ?? r.newData.method})` : ""}</>}
+                  {r.newData?.totalCents != null && <> → proposed total <b className="text-primary">{fmtCedi(r.newData.totalCents)}</b></>}
+                </div>
+              </div>
+              {canManage && (
+                <div className="flex gap-2">
+                  <Button size="sm" className="h-8 gap-1" disabled={busy} onClick={() => setDecideFor({ req: r, decision: "APPROVED" })}><ShieldCheck className="size-3.5" /> Approve</Button>
+                  <Button size="sm" variant="destructive" className="h-8 gap-1" disabled={busy} onClick={() => setDecideFor({ req: r, decision: "REJECTED" })}><XCircle className="size-3.5" /> Reject</Button>
+                </div>
+              )}
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2"><FileWarning className="size-4 text-muted-foreground" /> Recent decisions</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="overflow-x-auto nice-scroll max-h-80">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-secondary/70 backdrop-blur">
+                <tr className="text-left border-b">
+                  <th className="px-3 py-2.5 font-medium">Record</th>
+                  <th className="px-3 py-2.5 font-medium">Type</th>
+                  <th className="px-3 py-2.5 font-medium hidden sm:table-cell">Reason</th>
+                  <th className="px-3 py-2.5 font-medium hidden lg:table-cell">Requested by</th>
+                  <th className="px-3 py-2.5 font-medium">Status</th>
+                  <th className="px-3 py-2.5 font-medium hidden md:table-cell">Decision &amp; audit trail</th>
+                  <th className="px-3 py-2.5 text-right"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {approvals.recent.length === 0 && <tr><td colSpan={7}><EmptyState title="No decisions yet" /></td></tr>}
+                {approvals.recent.map((r) => (
+                  <tr key={r.id} className="border-b last:border-0 hover:bg-secondary/30">
+                    <td className="px-3 py-2.5 font-mono text-xs">{r.recordCode}</td>
+                    <td className="px-3 py-2.5 text-xs">{r.targetType === "PAYMENT" ? "Receipt" : "Invoice"} · {r.requestType}</td>
+                    <td className="px-3 py-2.5 hidden sm:table-cell text-muted-foreground text-xs max-w-56 truncate" title={r.reason}>{r.reason}</td>
+                    <td className="px-3 py-2.5 hidden lg:table-cell text-xs text-muted-foreground">{r.requestedByName}</td>
+                    <td className="px-3 py-2.5"><StatusBadge status={r.status} /></td>
+                    <td className="px-3 py-2.5 hidden md:table-cell text-xs text-muted-foreground max-w-80">
+                      <div className="truncate" title={r.decisionNote ?? undefined}>{r.decisionNote ?? "—"}</div>
+                      {r.handledByName && <div className="text-[10px]">{r.handledByName} · {fmtDate(r.handledAt)}</div>}
+                    </td>
+                    <td className="px-3 py-2.5 text-right">
+                      {canManage && r.status === "APPROVED" && (
+                        <Button size="sm" variant="ghost" className="h-7 gap-1 text-destructive" disabled={busy} onClick={() => revoke(r)}><Undo2 className="size-3.5" /> Revoke</Button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+
+      <RequestModificationDialog
+        open={requestOpen}
+        receipts={receipts}
+        invoices={invoices}
+        onOpenChange={(o) => !o && setRequestOpen(false)}
+        onDone={() => { setRequestOpen(false); onRefresh(); }}
+      />
+      <DecideDialog
+        key={decideFor ? `${decideFor.req.id}:${decideFor.decision}` : "none"}
+        target={decideFor}
+        onOpenChange={(o) => !o && setDecideFor(null)}
+        busy={busy}
+        onConfirm={(req, decision, note) => decide(req, decision, note)}
+      />
+    </div>
+  );
+}
+
+/* raise an EDIT/DELETE request from the receipts register (or a pasted code) */
+function RequestModificationDialog({ open, receipts, invoices, onOpenChange, onDone }: {
+  open: boolean;
+  receipts: { id: string; receiptNo: string; amount: number; method: string; paidAt: string; student: string; invoiceNo: string }[];
+  invoices: FeeData["invoices"];
+  onOpenChange: (o: boolean) => void;
+  onDone: () => void;
+}) {
+  const { currentSchoolId } = useStore();
+  const [targetType, setTargetType] = useState<"PAYMENT" | "INVOICE">("PAYMENT");
+  const [requestType, setRequestType] = useState<"DELETE" | "EDIT">("DELETE");
+  const [selected, setSelected] = useState(""); // row id from the register
+  const [code, setCode] = useState(""); // pasted receipt no / invoice no
+  const [reason, setReason] = useState("");
+  const [newAmount, setNewAmount] = useState("");
+  const [newMethod, setNewMethod] = useState("CASH");
+  const [newTotal, setNewTotal] = useState("");
+  const [search, setSearch] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (open) { setTargetType("PAYMENT"); setRequestType("DELETE"); setSelected(""); setCode(""); setReason(""); setNewAmount(""); setNewMethod("CASH"); setNewTotal(""); setSearch(""); }
+  }, [open]);
+
+  const list = targetType === "PAYMENT"
+    ? receipts.filter((p) => !search || p.receiptNo.toLowerCase().includes(search.toLowerCase()) || p.student.toLowerCase().includes(search.toLowerCase()))
+    : invoices.filter((i) => !search || i.invoiceNo.toLowerCase().includes(search.toLowerCase()) || i.student.toLowerCase().includes(search.toLowerCase()));
+
+  const chosen: any = targetType === "PAYMENT"
+    ? receipts.find((p) => p.id === selected)
+    : invoices.find((i) => i.id === selected);
+
+  async function submit() {
+    const recordId = selected || code.trim();
+    if (!recordId) { toast({ title: "Pick a record or paste its number" }); return; }
+    if (!reason.trim()) { toast({ title: "A reason is required for the audit trail" }); return; }
+    let newData: Record<string, unknown> | undefined;
+    if (requestType === "EDIT") {
+      if (targetType === "PAYMENT") {
+        const cents = Math.round(parseFloat(newAmount || "0") * 100);
+        if (!cents || cents <= 0) { toast({ title: "Enter the corrected amount" }); return; }
+        newData = { amountCents: cents, method: newMethod };
+      } else {
+        const cents = Math.round(parseFloat(newTotal || "0") * 100);
+        if (!cents || cents <= 0) { toast({ title: "Enter the corrected invoice total" }); return; }
+        newData = { totalCents: cents };
+      }
+    }
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/reports`, {
+        action: "modreq.create", targetType, recordId, requestType, reason: reason.trim(),
+        newData: requestType === "EDIT" ? newData : undefined,
+      });
+      toast({ title: "Request submitted", description: "A Level-1 administrator will review it — the queue lives under Fees → Approvals." });
+      onDone();
+    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg max-h-[92vh] overflow-y-auto nice-scroll">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><PencilLine className="size-4" /> Request a receipt / invoice modification</DialogTitle>
+          <DialogDescription>Corrections need administrator approval before any money record changes — nothing moves until they decide.</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Target</Label>
+              <Select value={targetType} onValueChange={(v: any) => { setTargetType(v); setSelected(""); setCode(""); }}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="PAYMENT">Receipt (payment)</SelectItem>
+                  <SelectItem value="INVOICE">Invoice</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Request type</Label>
+              <Select value={requestType} onValueChange={(v: any) => setRequestType(v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="DELETE">Delete</SelectItem>
+                  <SelectItem value="EDIT">Edit</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Pick from this term&apos;s register</Label>
+            <Input placeholder={targetType === "PAYMENT" ? "Search receipt no / learner…" : "Search invoice no / learner…"} value={search} onChange={(e) => setSearch(e.target.value)} />
+            <div className="border rounded-lg max-h-40 overflow-y-auto nice-scroll">
+              {list.slice(0, 40).map((r: any) => (
+                <button key={r.id} type="button" onClick={() => { setSelected(r.id); setCode(""); }}
+                  className={`w-full flex items-center justify-between px-3 py-2 border-b last:border-0 text-sm text-left ${selected === r.id ? "bg-primary text-primary-foreground" : "hover:bg-secondary/50"}`}>
+                  <span className="truncate">
+                    <span className="font-mono text-xs">{targetType === "PAYMENT" ? r.receiptNo : r.invoiceNo}</span>
+                    <span className="ml-2 opacity-80">{r.student}</span>
+                  </span>
+                  <span className="text-xs tabular-nums shrink-0 ml-2">{fmtCedi(targetType === "PAYMENT" ? r.amount : r.total)}</span>
+                </button>
+              ))}
+              {list.length === 0 && <div className="px-3 py-3 text-xs text-muted-foreground">No matches in this term&apos;s register — paste the number below instead.</div>}
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>…or paste the {targetType === "PAYMENT" ? "receipt no" : "invoice no"} directly</Label>
+            <Input value={code} onChange={(e) => { setCode(e.target.value); setSelected(""); }} placeholder={targetType === "PAYMENT" ? "e.g. RCP-2026-00109" : "e.g. INV-2026-0002"} className="font-mono" />
+          </div>
+
+          {requestType === "EDIT" && (
+            targetType === "PAYMENT" ? (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Corrected amount (GH₵)</Label>
+                  <Input type="number" step="0.01" value={newAmount} onChange={(e) => setNewAmount(e.target.value)} placeholder={chosen ? (chosen.amount / 100).toFixed(2) : "0.00"} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Method</Label>
+                  <Select value={newMethod} onValueChange={setNewMethod}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>{Object.entries(PAYMENT_LABELS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                <Label>Corrected invoice total (GH₵)</Label>
+                <Input type="number" step="0.01" value={newTotal} onChange={(e) => setNewTotal(e.target.value)} placeholder={chosen ? (chosen.total / 100).toFixed(2) : "0.00"} />
+              </div>
+            )
+          )}
+
+          <div className="space-y-1.5">
+            <Label>Reason *</Label>
+            <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Amount keyed as 300 instead of 450 — guardian's slip attached" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={submit} disabled={busy || (!selected && !code.trim())}>{busy ? "Submitting…" : "Submit for approval"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* approve / reject with an optional decision note (Level-1 admin) */
+function DecideDialog({ target, onOpenChange, busy, onConfirm }: {
+  target: { req: ModRequest; decision: "APPROVED" | "REJECTED" } | null;
+  onOpenChange: (o: boolean) => void;
+  busy: boolean;
+  onConfirm: (req: ModRequest, decision: "APPROVED" | "REJECTED", note: string) => void;
+}) {
+  const [note, setNote] = useState("");
+  const approving = target?.decision === "APPROVED";
+  return (
+    <Dialog open={!!target} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            {approving ? <ShieldCheck className="size-4 text-primary" /> : <XCircle className="size-4 text-destructive" />}
+            {approving ? "Approve" : "Reject"} — <span className="font-mono text-sm">{target?.req.recordCode}</span>
+          </DialogTitle>
+          <DialogDescription>
+            {target?.req.requestType === "DELETE" ? "Deleting" : "Editing"} the {target?.req.targetType === "PAYMENT" ? "receipt" : "invoice"}
+            {approving
+              ? target?.req.targetType === "PAYMENT"
+                ? " — the linked invoice will be reversed / re-synced automatically and the change recorded in the audit trail."
+                : " — the invoice will be adjusted as requested."
+              : " — no data will change."}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="rounded-lg bg-secondary/50 p-3 text-sm space-y-1">
+            <div>{target?.req.reason}</div>
+            <div className="text-xs text-muted-foreground">requested by {target?.req.requestedByName} · {fmtDate(target?.req.createdAt)}</div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Decision note (optional)</Label>
+            <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder={approving ? "e.g. Bank slip verified with the guardian." : "e.g. Bank confirmation shows the cash was received."} />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button variant={approving ? "default" : "destructive"} disabled={busy} onClick={() => target && onConfirm(target.req, target.decision, note)}>
+            {busy ? "Applying…" : approving ? "Approve & apply" : "Reject request"}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

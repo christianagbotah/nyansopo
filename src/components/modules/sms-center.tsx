@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -15,7 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatCard, ModuleHeader, LoadingBlock, EmptyState } from "@/components/ui-helpers";
 import { fmtDateTime } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
-import { Smartphone, Send, FileText, History, Settings2, Plus, CheckCheck, XCircle, AlertTriangle, Wallet, Zap, Megaphone } from "lucide-react";
+import { Smartphone, Send, FileText, History, Settings2, Plus, CheckCheck, XCircle, AlertTriangle, Wallet, Zap, Megaphone, ClipboardCheck } from "lucide-react";
 
 type Template = { id: string; name: string; category: string; body: string; isDefault: boolean };
 type Automation = { id: string; name: string; trigger: string; recipients: string; body: string; offsetDays: number; active: boolean; lastRunAt: string | null; sentCount: number };
@@ -50,11 +51,18 @@ const CAT_COLORS: Record<string, string> = {
 };
 
 export function SmsCenter() {
-  const { currentSchoolId } = useStore();
+  const { currentSchoolId, navTarget } = useStore();
   const [data, setData] = useState<SmsData | null>(null);
   const [tab, setTab] = useState("compose");
   const [tplDialog, setTplDialog] = useState<Template | "new" | null>(null);
   const [category, setCategory] = useState("all");
+
+  /* iEduPro nested nav: preselect the Marks SMS tab on deep link */
+  const [appliedTarget, setAppliedTarget] = useState<any>(null);
+  if (navTarget !== appliedTarget) {
+    setAppliedTarget(navTarget);
+    if (navTarget?.tab === "marks") setTab("marks");
+  }
 
   const load = (c?: string) => {
     if (!currentSchoolId) return;
@@ -86,6 +94,7 @@ export function SmsCenter() {
       <Tabs value={tab} onValueChange={setTab} className="mt-5">
         <TabsList className="flex-wrap h-auto">
           <TabsTrigger value="compose">Compose & send</TabsTrigger>
+          <TabsTrigger value="marks" className="gap-1.5"><ClipboardCheck className="size-4" /> Marks SMS</TabsTrigger>
           <TabsTrigger value="automations">Automations ({data.automations.length})</TabsTrigger>
           <TabsTrigger value="templates">Templates ({data.templates.length})</TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>
@@ -95,6 +104,12 @@ export function SmsCenter() {
 
         <TabsContent value="compose">
           <ComposeTab data={data} onSent={() => { load(category); setTab("history"); }} />
+        </TabsContent>
+
+        {/* ── EXAM-MARKS SMS (iEduPro exam_marks_sms parity) — CI3
+            “Year|Term: … Exam Scores of …” blast per learner ── */}
+        <TabsContent value="marks">
+          <MarksSmsTab data={data} onSent={() => { load(category); setTab("history"); }} />
         </TabsContent>
 
         {/* ── NOTICEBOARD (iEduPro noticeboard parity) — school notices for
@@ -698,6 +713,178 @@ function NoticeboardTab() {
           <p className="text-[11px] text-muted-foreground">Notices appear instantly in the Parent Portal and My Learning.</p>
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   EXAM-MARKS SMS (CI3 exam_marks_sms parity) — pick class, exam and
+   receiver, preview the exact CI3 message per learner, then blast:
+     Year|Term: {year}|{term} Exam Scores of {learner}:
+     {Subject} {total}% {grade} {remark}, …
+   Grades come from the WAEC raw-score table; delivery uses the same
+   gateway + credits flow as every other broadcast.                     */
+type MarksSmsPreview = {
+  assessments: { id: string; label: string }[];
+  yearName: string;
+  termName: string;
+  receiver: string;
+  previews: { studentId: string; student: string; guardianName: string; phone: string | null; message: string }[];
+  withPhone: number;
+  withoutPhone: number;
+};
+
+function MarksSmsTab({ data, onSent }: { data: SmsData; onSent: () => void }) {
+  const { currentSchoolId } = useStore();
+  const [classId, setClassId] = useState<string | null>(null);
+  const [assessmentId, setAssessmentId] = useState("all");
+  const [receiver, setReceiver] = useState("guardian");
+  const [examList, setExamList] = useState<{ id: string; label: string }[] | null>(null);
+  const [preview, setPreview] = useState<MarksSmsPreview | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [confirm, setConfirm] = useState(false);
+
+  useEffect(() => {
+    if (!currentSchoolId || !classId) { setExamList(null); setPreview(null); return; }
+    setAssessmentId("all");
+    setPreview(null);
+    apiGet<any>(`/api/school/${currentSchoolId}/ops/academics?tab=marks-sms&classroomId=${classId}`)
+      .then((d) => setExamList(d.assessments ?? []))
+      .catch((e) => toast({ title: "Load failed", description: e.message, variant: "destructive" }));
+  }, [currentSchoolId, classId]);
+
+  async function runPreview() {
+    if (!currentSchoolId || !classId) { toast({ title: "Choose a class first" }); return; }
+    setBusy(true);
+    try {
+      const qs = `tab=marks-sms&classroomId=${classId}&receiver=${receiver}${assessmentId && assessmentId !== "all" ? `&assessmentId=${assessmentId}` : ""}`;
+      const d = await apiGet<MarksSmsPreview>(`/api/school/${currentSchoolId}/ops/academics?${qs}`);
+      setPreview(d);
+      toast({ title: `${d.previews.length} messages drafted`, description: `${d.withPhone} with a phone on file · ${d.withoutPhone} would be skipped.` });
+    } catch (e: any) {
+      toast({ title: "Preview failed", description: e.message, variant: "destructive" });
+    } finally { setBusy(false); }
+  }
+
+  async function send() {
+    if (!currentSchoolId || !classId) return;
+    setBusy(true);
+    try {
+      const res = await apiPost<{ sent: number; failed: number; skipped: number }>(`/api/school/${currentSchoolId}/ops/academics`, {
+        action: "marks-sms.send", classroomId: classId,
+        assessmentId: assessmentId && assessmentId !== "all" ? assessmentId : undefined,
+        receiver,
+      });
+      toast({
+        title: `Marks SMS sent to ${res.sent} guardian${res.sent === 1 ? "" : "s"}`,
+        description: [res.skipped ? `${res.skipped} skipped (no phone)` : null, res.failed ? `${res.failed} failed — check history` : null].filter(Boolean).join(" · ") || "All delivered to the gateway.",
+      });
+      setConfirm(false);
+      setPreview(null);
+      onSent();
+    } catch (e: any) {
+      toast({ title: "Send failed", description: e.message, variant: "destructive" });
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><ClipboardCheck className="size-4" /> Exam-marks blast</CardTitle></CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid sm:grid-cols-3 gap-3">
+            <div className="space-y-1.5">
+              <Label>Class</Label>
+              <Select value={classId ?? ""} onValueChange={setClassId}>
+                <SelectTrigger><SelectValue placeholder="Select class" /></SelectTrigger>
+                <SelectContent>{data.classes.map((c) => <SelectItem key={c.id} value={c.id}>{c.name} ({c.learners})</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Exam / assessment</Label>
+              <Select value={assessmentId} onValueChange={setAssessmentId} disabled={!classId || !examList?.length}>
+                <SelectTrigger><SelectValue placeholder={classId ? "Select exam" : "Pick a class first"} /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All assessments — term totals (30/70)</SelectItem>
+                  {(examList ?? []).map((a) => <SelectItem key={a.id} value={a.id}>{a.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              {examList && examList.length === 0 && <p className="text-xs text-muted-foreground">No assessments recorded for this class this term.</p>}
+            </div>
+            <div className="space-y-1.5">
+              <Label>Receiver</Label>
+              <Select value={receiver} onValueChange={(v) => { setReceiver(v); setPreview(null); }}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="guardian">Guardians</SelectItem>
+                  <SelectItem value="learner">Learners (addressed to the learner)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Each guardian receives one message listing every subject score for the term — or just the chosen exam paper — graded on the WAEC raw-score
+            scale (A1 EXCELLENT … F9 FAIL). Messages are addressed to {receiver === "learner" ? "the learner" : "the guardian"} and delivered to the phone number on file.
+          </p>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3">
+            <div className="text-sm">
+              {preview ? (
+                <>
+                  <span className="font-semibold">{preview.previews.length}</span> message{preview.previews.length === 1 ? "" : "s"} drafted ·{" "}
+                  <span className="font-semibold">{preview.withPhone}</span> sendable ·{" "}
+                  <span className={preview.withoutPhone ? "text-destructive font-semibold" : "text-muted-foreground"}>{preview.withoutPhone}</span> without a phone
+                </>
+              ) : (
+                <span className="text-muted-foreground">Preview first — nothing is sent until you confirm.</span>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={runPreview} disabled={!classId || busy}>Preview messages</Button>
+              <Button size="sm" className="gap-1.5" onClick={() => (preview ? setConfirm(true) : runPreview())} disabled={!classId || busy || !preview?.withPhone}>
+                <Send className="size-4" /> {busy ? "Working…" : "Send marks SMS"}
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {preview && (
+        <Card>
+          <CardHeader className="pb-3 flex-row flex-wrap items-center justify-between gap-2 space-y-0">
+            <CardTitle className="text-base">Message preview — first 3 of {preview.previews.length}</CardTitle>
+            <Badge variant="secondary">{preview.yearName} · {preview.termName}</Badge>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {preview.previews.slice(0, 3).map((p) => (
+              <div key={p.studentId} className="rounded-lg border p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground">{p.student}</span>
+                  <span className="font-mono">{p.phone ?? "no phone on file"}</span>
+                </div>
+                <pre className="mt-2 text-xs whitespace-pre-wrap font-mono bg-secondary/50 rounded-md p-2.5 leading-relaxed">{p.message}</pre>
+              </div>
+            ))}
+            {preview.previews.length > 3 && <p className="text-xs text-muted-foreground text-center">…and {preview.previews.length - 3} more in the same format.</p>}
+            {preview.previews.length === 0 && <EmptyState title="No learners in this class" />}
+          </CardContent>
+        </Card>
+      )}
+
+      <AlertDialog open={confirm} onOpenChange={setConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Send exam scores to {preview?.withPhone ?? 0} recipients?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Each message costs 1 credit ({data.stats.credits} available). {receiver === "learner" ? "Messages are addressed to the learners" : "Messages are addressed to the guardians"}
+              {" "}of {preview?.previews.length ?? 0} learners in {data.classes.find((c) => c.id === classId)?.name}.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction className="gap-1.5" disabled={busy} onClick={send}><Send className="size-3.5" /> {busy ? "Sending…" : "Send now"}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

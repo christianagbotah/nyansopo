@@ -14,7 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatCard, ModuleHeader, LoadingBlock, StatusBadge, EmptyState } from "@/components/ui-helpers";
 import { fmtCedi, fmtDate } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
-import { Calculator, Users, Plus, CheckCheck, Banknote, Printer, Pencil, Trash2, ShieldCheck, FileText, AlertTriangle, Settings2, Landmark, GraduationCap } from "lucide-react";
+import { Calculator, Users, Plus, CheckCheck, Banknote, Printer, Pencil, Trash2, ShieldCheck, FileText, AlertTriangle, Settings2, Landmark, GraduationCap, Download } from "lucide-react";
 import { LogoMark, KenteStrip } from "@/components/brand";
 
 type StaffRow = { id: string; fullName: string; role: string; title: string | null; phone: string | null; email?: string | null; category?: string; position?: string | null; qualification?: string | null; department?: string | null; staffCode?: string | null; tier2Provider?: string | null; accountNumber?: string | null; bankName?: string | null; tin?: string | null; salary: number; employmentType: string; ssnitNumber: string | null; momoNumber: string | null; hiredAt: string | null; active: boolean };
@@ -39,7 +39,7 @@ type PayrollData = {
 };
 
 export function Payroll() {
-  const { currentSchoolId } = useStore();
+  const { currentSchoolId, navTarget } = useStore();
   const [data, setData] = useState<PayrollData | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
   const [staffDialog, setStaffDialog] = useState<StaffRow | null>(null);
@@ -48,6 +48,14 @@ export function Payroll() {
   const [slipFor, setSlipFor] = useState<Slip | null>(null);
   const [newPeriod, setNewPeriod] = useState("");
   const [busy, setBusy] = useState(false);
+  const [tab, setTab] = useState("runs");
+
+  /* iEduPro nested nav: deep-link to a payroll tab (runs / staff / ssnit / statutory / ghana) */
+  const [appliedTarget, setAppliedTarget] = useState<any>(null);
+  if (navTarget !== appliedTarget) {
+    setAppliedTarget(navTarget);
+    if (navTarget?.tab && ["runs", "staff", "ssnit", "statutory", "ghana"].includes(navTarget.tab)) setTab(navTarget.tab);
+  }
 
   const load = (rid?: string) => {
     if (!currentSchoolId) return;
@@ -91,7 +99,7 @@ export function Payroll() {
         <StatCard icon={<Banknote className="size-4" />} label="Total cost (month)" value={run ? fmtCedi(run.net + run.employerSsnit, { compact: true }) : "—"} sub="net + employer SSNIT" />
       </div>
 
-      <Tabs defaultValue="runs" className="mt-5">
+      <Tabs value={tab} onValueChange={setTab} className="mt-5">
         <TabsList className="flex-wrap">
           <TabsTrigger value="runs">Payroll runs</TabsTrigger>
           <TabsTrigger value="staff">Staff & salaries ({data.staff.length})</TabsTrigger>
@@ -235,86 +243,9 @@ export function Payroll() {
           </Card>
         </TabsContent>
 
-        {/* ── SSNIT REPORTS (Tier 1 / Tier 2 statutory schedules) ── */}
+        {/* ── SSNIT REPORTS (Tier 1 / Tier 2 statutory schedules — CI3 printable parity) ── */}
         <TabsContent value="ssnit">
-          {!run ? <Card><CardContent><EmptyState icon={<Landmark className="size-5" />} title="No payroll run selected" hint="Run payroll first — Tier 1 and Tier 2 schedules are generated per run." /></CardContent></Card> : (
-            <div className="space-y-4">
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base flex items-center gap-2"><Landmark className="size-4 text-primary" /> SSNIT Tier 1 schedule — {run.period}</CardTitle>
-                </CardHeader>
-                <CardContent className="p-0">
-                  <table className="w-full text-sm">
-                    <thead className="bg-secondary/70">
-                      <tr className="text-left border-b">
-                        <th className="px-3 py-2 font-medium">Staff</th>
-                        <th className="px-3 py-2 font-medium hidden sm:table-cell">SSNIT No.</th>
-                        <th className="px-3 py-2 font-medium text-right">Basic</th>
-                        <th className="px-3 py-2 font-medium text-right">Employee {data.rates.ssnitTier1Employee}%</th>
-                        <th className="px-3 py-2 font-medium text-right">Employer {data.rates.ssnitTier1Employer}%</th>
-                        <th className="px-3 py-2 font-medium text-right">Total Tier 1</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.payslips.map((p) => (
-                        <tr key={p.id} className="border-b last:border-0">
-                          <td className="px-3 py-2 font-medium">{p.staff}</td>
-                          <td className="px-3 py-2 hidden sm:table-cell font-mono text-xs text-muted-foreground">{p.ssnitNumber ?? "—"}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">{fmtCedi(p.base)}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">{fmtCedi(p.ssnit.tier1Employee)}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">{fmtCedi(p.ssnit.tier1Employer)}</td>
-                          <td className="px-3 py-2 text-right tabular-nums font-semibold">{fmtCedi(p.ssnit.tier1Employee + p.ssnit.tier1Employer)}</td>
-                        </tr>
-                      ))}
-                      <tr className="border-t bg-secondary/40">
-                        <td className="px-3 py-2 font-semibold" colSpan={3}>Totals</td>
-                        <td className="px-3 py-2 text-right tabular-nums font-semibold">{fmtCedi(data.payslips.reduce((a, p) => a + p.ssnit.tier1Employee, 0))}</td>
-                        <td className="px-3 py-2 text-right tabular-nums font-semibold">{fmtCedi(data.payslips.reduce((a, p) => a + p.ssnit.tier1Employer, 0))}</td>
-                        <td className="px-3 py-2 text-right tabular-nums font-bold">{fmtCedi(data.payslips.reduce((a, p) => a + p.ssnit.tier1Employee + p.ssnit.tier1Employer, 0))}</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base flex items-center gap-2"><ShieldCheck className="size-4 text-primary" /> SSNIT Tier 2 schedule (occupational pension) — {run.period}</CardTitle>
-                </CardHeader>
-                <CardContent className="p-0">
-                  <table className="w-full text-sm">
-                    <thead className="bg-secondary/70">
-                      <tr className="text-left border-b">
-                        <th className="px-3 py-2 font-medium">Staff</th>
-                        <th className="px-3 py-2 font-medium hidden sm:table-cell">SSNIT No.</th>
-                        <th className="px-3 py-2 font-medium text-right">Basic</th>
-                        <th className="px-3 py-2 font-medium text-right">Tier 2 {data.rates.ssnitTier2}%</th>
-                        <th className="px-3 py-2 font-medium text-right hidden md:table-cell">GETFund {data.rates.getfund}%</th>
-                        <th className="px-3 py-2 font-medium text-right hidden md:table-cell">NHIL {data.rates.nhil}%</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.payslips.map((p) => (
-                        <tr key={p.id} className="border-b last:border-0">
-                          <td className="px-3 py-2 font-medium">{p.staff}</td>
-                          <td className="px-3 py-2 hidden sm:table-cell font-mono text-xs text-muted-foreground">{p.ssnitNumber ?? "—"}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">{fmtCedi(p.base)}</td>
-                          <td className="px-3 py-2 text-right tabular-nums font-semibold">{fmtCedi(p.ssnit.tier2)}</td>
-                          <td className="px-3 py-2 text-right tabular-nums hidden md:table-cell">{fmtCedi(p.ssnit.getfund)}</td>
-                          <td className="px-3 py-2 text-right tabular-nums hidden md:table-cell">{fmtCedi(p.ssnit.nhil)}</td>
-                        </tr>
-                      ))}
-                      <tr className="border-t bg-secondary/40">
-                        <td className="px-3 py-2 font-semibold" colSpan={3}>Totals</td>
-                        <td className="px-3 py-2 text-right tabular-nums font-bold">{fmtCedi(data.payslips.reduce((a, p) => a + p.ssnit.tier2, 0))}</td>
-                        <td className="px-3 py-2 text-right tabular-nums font-semibold hidden md:table-cell">{fmtCedi(data.payslips.reduce((a, p) => a + p.ssnit.getfund, 0))}</td>
-                        <td className="px-3 py-2 text-right tabular-nums font-semibold hidden md:table-cell">{fmtCedi(data.payslips.reduce((a, p) => a + p.ssnit.nhil, 0))}</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </CardContent>
-              </Card>
-            </div>
-          )}
+          <SsnitReportsTab defaultPeriod={run?.period ?? data.runs[0]?.period ?? data.currentPeriod} />
         </TabsContent>
 
         {/* ── STATUTORY SETTINGS ── */}
@@ -858,5 +789,205 @@ function PayslipDialog({ slip, period, school, rates, onOpenChange }: { slip: Sl
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/* ── SSNIT TIER 1 / TIER 2 PRINTABLE STATUTORY REPORTS (CI3 ssnit_report parity) ──
+   Header: establishment + registration number + Year & Month.
+   Tier 1: SSNIT column = employer share (13.5% under Act 766 as configured).
+   Tier 2: occupational pension (5%) with member IDs + provider line.
+   Amounts are computed from basic × statutory settings (CI3 behaviour);
+   payslip-stored cents are carried in the CSV for reconciliation. */
+type SsnitRow = {
+  sn: number; staffId: string; firstName: string; lastName: string; otherNames: string; lastToken: string;
+  ssnitNumber: string; tier2MemberId: string; tier2Provider: string; staffCode: string;
+  basicSalaryCents: number; tier1EmployerCents: number; tier1EmployeeCents: number; tier2Cents: number;
+  storedSsnitEmployeeCents: number; storedSsnitEmployerCents: number;
+};
+type SsnitReport = {
+  period: string | null;
+  run: { id: string; status: string; payslipCount: number } | null;
+  rates: { tier1Employer: number; tier1Employee: number; tier2: number };
+  establishment: string; registrationNo: string; town: string | null; region: string | null;
+  rows: SsnitRow[];
+  totals: { basicSalaryCents: number; tier1EmployerCents: number; tier1EmployeeCents: number; tier2Cents: number };
+  providers: string[];
+};
+
+function SsnitReportsTab({ defaultPeriod }: { defaultPeriod?: string }) {
+  const { currentSchoolId } = useStore();
+  const [period, setPeriod] = useState(defaultPeriod ?? "");
+  const [tier, setTier] = useState<"T1" | "T2">("T1");
+  const [report, setReport] = useState<SsnitReport | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => { if (defaultPeriod && !period) setPeriod(defaultPeriod); }, [defaultPeriod]); // eslint-disable-line react-hooks/set-state-in-effect
+
+  const load = (p?: string) => {
+    if (!currentSchoolId) return;
+    const target = p ?? period;
+    if (!target) return;
+    setBusy(true);
+    apiGet<SsnitReport>(`/api/school/${currentSchoolId}/ops/reports?tab=ssnit&period=${target}`)
+      .then(setReport)
+      .catch((e) => toast({ title: "Could not load SSNIT schedule", description: e.message, variant: "destructive" }))
+      .finally(() => setBusy(false));
+  };
+  useEffect(() => { if (period) load(period); }, [currentSchoolId, period]); // eslint-disable-line react-hooks/set-state-in-effect
+
+  const monthLabel = (p: string | null) => {
+    if (!p) return "—";
+    const [y, m] = p.split("-");
+    return `${["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"][Number(m) - 1] ?? m} ${y}`;
+  };
+
+  function exportCsv() {
+    if (!report) return;
+    const r = report.rates;
+    const header = tier === "T1"
+      ? ["S/N", "SSNIT No.", "First Name", "Last Name", "Option", "Hazd.", `Salary (GH₵)`, `SSNIT ${r.tier1Employer}% (GH₵)`, `Employee ${r.tier1Employee}% (GH₵)`, "Payslip-stored employee SSNIT (GH₵)", "Payslip-stored employer SSNIT (GH₵)"]
+      : ["S/N", "Tier 2 Member ID", "Last", "First", "Other", "Basic Salary (GH₵)", `Tier 2 Contribution ${r.tier2}% (GH₵)`, "Provider"];
+    const lines = report.rows.map((x) => tier === "T1"
+      ? [x.sn, x.ssnitNumber, x.firstName, x.lastName, "ACT 766", "NO", x.basicSalaryCents / 100, x.tier1EmployerCents / 100, x.tier1EmployeeCents / 100, x.storedSsnitEmployeeCents / 100, x.storedSsnitEmployerCents / 100]
+      : [x.sn, x.tier2MemberId, x.lastToken, x.firstName, x.otherNames, x.basicSalaryCents / 100, x.tier2Cents / 100, x.tier2Provider]);
+    lines.push(tier === "T1"
+      ? ["", "", "TOTAL", "", "", "", report.totals.basicSalaryCents / 100, report.totals.tier1EmployerCents / 100, report.totals.tier1EmployeeCents / 100, "", ""]
+      : ["", "", "TOTAL", "", "", report.totals.basicSalaryCents / 100, report.totals.tier2Cents / 100, ""]);
+    const csv = [header, ...lines].map((l) => l.map((c) => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    const a = document.createElement("a"); a.href = url; a.download = `ssnit-tier${tier === "T1" ? "1" : "2"}-${report.period ?? "schedule"}.csv`; a.click(); URL.revokeObjectURL(url);
+  }
+
+  if (!report && busy) return <Card><CardContent><LoadingBlock label="Computing SSNIT contributions…" /></CardContent></Card>;
+
+  return (
+    <div className="space-y-4">
+      {/* controls */}
+      <Card className="no-print">
+        <CardContent className="p-4 flex flex-wrap items-end gap-3">
+          <div className="space-y-1.5">
+            <Label className="text-xs">Payroll month</Label>
+            <Input type="month" value={period} onChange={(e) => setPeriod(e.target.value)} className="w-40 h-9" />
+          </div>
+          <div className="flex rounded-lg border overflow-hidden h-9">
+            {(["T1", "T2"] as const).map((t) => (
+              <button key={t} type="button" onClick={() => setTier(t)}
+                className={`px-4 text-sm font-medium transition-colors ${tier === t ? "bg-primary text-primary-foreground" : "hover:bg-secondary"}`}>
+                {t === "T1" ? "Tier 1" : "Tier 2"}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-2 ml-auto">
+            <Button size="sm" variant="outline" className="gap-1.5 h-9" disabled={!report} onClick={exportCsv}><Download className="size-4" /> Export CSV</Button>
+            <Button size="sm" className="gap-1.5 h-9" disabled={!report} onClick={() => window.print()}><Printer className="size-4" /> Print (A4)</Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {!report ? (
+        <Card><CardContent><EmptyState icon={<Landmark className="size-5" />} title="No schedule yet" hint="Pick a payroll month above — schedules are generated from that run's payslips." /></CardContent></Card>
+      ) : report.rows.length === 0 ? (
+        <Card><CardContent><EmptyState icon={<Landmark className="size-5" />} title={`No payslips for ${report.period}`} hint="Run payroll for that month first — the SSNIT schedules are generated per run." /></CardContent></Card>
+      ) : (
+        /* printable A4 statutory schedule */
+        <div className="print-area">
+          <div className="bg-card text-card-foreground rounded-xl border shadow-sm overflow-hidden">
+            <KenteStrip />
+            <div className="px-6 py-6">
+              {/* establishment header */}
+              <div className="text-center border-b-2 border-foreground/70 pb-3">
+                <div className="text-lg font-bold uppercase tracking-wide">{report.establishment}</div>
+                <div className="text-xs text-muted-foreground">{[report.town, report.region].filter(Boolean).join(", ")}</div>
+                <div className="text-sm font-semibold mt-2">Social Security and National Insurance Trust Contribution Report</div>
+                <div className="text-xs mt-1">
+                  <span className="font-medium">Registration No.:</span> {report.registrationNo || "—"} · <span className="font-medium">Year &amp; Month:</span> {monthLabel(report.period)}
+                </div>
+                <div className="text-xs mt-0.5 font-medium">
+                  {tier === "T1"
+                    ? `Tier 1 — Basic Social Security (Act 766) · Employer ${report.rates.tier1Employer}% of basic`
+                    : `Tier 2 — Occupational Pension · ${report.rates.tier2}% of basic${report.providers.length ? ` · Provider: ${report.providers.join(", ")}` : ""}`}
+                </div>
+              </div>
+
+              {/* Tier 1 schedule */}
+              {tier === "T1" && (
+                <table className="w-full text-[11.5px] mt-4 border-collapse">
+                  <thead>
+                    <tr className="bg-secondary/70">
+                      {["S/N", "SSNIT No.", "First Name", "Last Name", "Option", "Hazd.", "Salary (GH₵)", `SSNIT (${report.rates.tier1Employer}%)`].map((h) => (
+                        <th key={h} className="border px-2 py-1.5 text-left font-semibold whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.rows.map((x) => (
+                      <tr key={x.staffId}>
+                        <td className="border px-2 py-1.5 tabular-nums">{x.sn}</td>
+                        <td className="border px-2 py-1.5 font-mono">{x.ssnitNumber || "—"}</td>
+                        <td className="border px-2 py-1.5">{x.firstName}</td>
+                        <td className="border px-2 py-1.5">{x.lastName}</td>
+                        <td className="border px-2 py-1.5 text-center">ACT 766</td>
+                        <td className="border px-2 py-1.5 text-center">NO</td>
+                        <td className="border px-2 py-1.5 text-right tabular-nums">{(x.basicSalaryCents / 100).toLocaleString("en-GH", { minimumFractionDigits: 2 })}</td>
+                        <td className="border px-2 py-1.5 text-right tabular-nums font-semibold">{(x.tier1EmployerCents / 100).toLocaleString("en-GH", { minimumFractionDigits: 2 })}</td>
+                      </tr>
+                    ))}
+                    <tr className="bg-secondary/40 font-bold">
+                      <td className="border px-2 py-1.5" colSpan={6}>TOTAL</td>
+                      <td className="border px-2 py-1.5 text-right tabular-nums">{(report.totals.basicSalaryCents / 100).toLocaleString("en-GH", { minimumFractionDigits: 2 })}</td>
+                      <td className="border px-2 py-1.5 text-right tabular-nums">{(report.totals.tier1EmployerCents / 100).toLocaleString("en-GH", { minimumFractionDigits: 2 })}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              )}
+
+              {/* Tier 2 schedule */}
+              {tier === "T2" && (
+                <table className="w-full text-[11.5px] mt-4 border-collapse">
+                  <thead>
+                    <tr className="bg-secondary/70">
+                      {["S/N", "Tier 2 Member ID", "Last", "First", "Other", "Basic Salary (GH₵)", `Tier 2 Contribution (${report.rates.tier2}%)`].map((h) => (
+                        <th key={h} className="border px-2 py-1.5 text-left font-semibold whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.rows.map((x) => (
+                      <tr key={x.staffId}>
+                        <td className="border px-2 py-1.5 tabular-nums">{x.sn}</td>
+                        <td className="border px-2 py-1.5 font-mono">{x.tier2MemberId || "—"}</td>
+                        <td className="border px-2 py-1.5">{x.lastToken}</td>
+                        <td className="border px-2 py-1.5">{x.firstName}</td>
+                        <td className="border px-2 py-1.5">{x.otherNames || ""}</td>
+                        <td className="border px-2 py-1.5 text-right tabular-nums">{(x.basicSalaryCents / 100).toLocaleString("en-GH", { minimumFractionDigits: 2 })}</td>
+                        <td className="border px-2 py-1.5 text-right tabular-nums font-semibold">{(x.tier2Cents / 100).toLocaleString("en-GH", { minimumFractionDigits: 2 })}</td>
+                      </tr>
+                    ))}
+                    <tr className="bg-secondary/40 font-bold">
+                      <td className="border px-2 py-1.5" colSpan={5}>TOTAL</td>
+                      <td className="border px-2 py-1.5 text-right tabular-nums">{(report.totals.basicSalaryCents / 100).toLocaleString("en-GH", { minimumFractionDigits: 2 })}</td>
+                      <td className="border px-2 py-1.5 text-right tabular-nums">{(report.totals.tier2Cents / 100).toLocaleString("en-GH", { minimumFractionDigits: 2 })}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              )}
+
+              {/* footnotes + signature */}
+              <div className="mt-3 text-[10px] text-muted-foreground leading-relaxed">
+                Contributions computed from basic salary × statutory rates (employer {report.rates.tier1Employer}%, employee {report.rates.tier1Employee}%, Tier 2 {report.rates.tier2}%) as configured in Statutory settings.
+                {report.providers.length > 0 && ` Tier 2 contributions are remitted to ${report.providers.join(", ")}.`}
+                {" "}Run: {report.period} ({report.run?.status ?? "—"}, {report.rows.length} payslips).
+              </div>
+              <div className="grid grid-cols-3 gap-8 pt-8 text-[10px] text-muted-foreground">
+                <div className="border-t border-border pt-1">Prepared by</div>
+                <div className="border-t border-border pt-1">Head of Finance</div>
+                <div className="border-t border-border pt-1 text-right">Date</div>
+              </div>
+            </div>
+            <KenteStrip />
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

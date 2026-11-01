@@ -147,6 +147,16 @@ model School {
   walletTxns           WalletTxn[]
   libraryBooks        LibraryBook[]
   libraryLoans        LibraryLoan[]
+  bookRequests        BookRequest[]
+  boardingHouses      BoardingHouse[]
+  dormitories         Dormitory[]
+  beds                Bed[]
+  questionPapers      QuestionPaper[]
+  modificationRequests ModificationRequest[]
+  rawScoreGrades      RawScoreGrade[]
+  portfolioEntries    PortfolioEntry[]
+  dailyFeeAudits      DailyFeeAudit[]
+  handoverReports     HandoverReport[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -199,6 +209,7 @@ model Classroom {
   timetableSlots     TimetableSlot[]
   dailyServiceRates  DailyServiceRate[]
   onlineExams        OnlineExam[]
+  questionPapers     QuestionPaper[]
 }
 
 model Subject {
@@ -244,6 +255,7 @@ model Staff {
   payslips         Payslip[]
   timetableSlots  TimetableSlot[]
   users            User[]         @relation("UserStaff")
+  housesMastered   BoardingHouse[] @relation("HouseMaster")
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -288,6 +300,12 @@ model Student {
   smsMessages          SmsMessage[]
   discountApplications DiscountApplication[]
   libraryLoans         LibraryLoan[]
+  bookRequests         BookRequest[]
+  portfolioEntries     PortfolioEntry[]
+  dailyFeeAudits       DailyFeeAudit[]
+  bedAssigned          Bed?                @relation("BedOccupant")
+  housePrefectOf       BoardingHouse[]    @relation("HousePrefect")
+  dormPrefectOf        Dormitory[]        @relation("DormitoryPrefect")
   onlineExamAttempts  OnlineExamAttempt[]
   stockIssues          StockMovement[]
   posPayments          Payment[]
@@ -310,6 +328,8 @@ model Enrollment {
   // was moved up from, and when — the placement row itself is reassigned
   promotedFromName String?
   promotedAt       DateTime?
+  // boarding (iEduPro enroll.residence_type): DAY | BOARDING
+  residenceType    String    @default("DAY")
 }
 
 // Weekly class routine (timetable). Day 1 = Monday … 5 = Friday (0/6 weekend).
@@ -1213,6 +1233,7 @@ model LibraryBook {
   shelf       String? // location e.g. "Shelf B-3"
   createdAt   DateTime      @default(now())
   loans       LibraryLoan[]
+  requests    BookRequest[]
 }
 
 model LibraryLoan {
@@ -1242,4 +1263,200 @@ model OpsSetting {
   updatedAt DateTime @default(now())
 
   @@unique([schoolId, key])
+}
+
+// ─────────────────────────────────────────────────────────────
+// BOARDING (iEduPro boarding_system parity — houses / dormitories / beds)
+// ─────────────────────────────────────────────────────────────
+model BoardingHouse {
+  id              String    @id @default(cuid())
+  schoolId        String
+  school          School    @relation(fields: [schoolId], references: [id])
+  name            String
+  description     String?
+  houseMasterId   String? // staff — house master / warden
+  houseMaster     Staff?   @relation("HouseMaster", fields: [houseMasterId], references: [id])
+  prefectId       String? // learner — house prefect
+  prefect         Student? @relation("HousePrefect", fields: [prefectId], references: [id])
+  capacity        Int       @default(0)
+  yearEstablished String?
+  gpsCode         String?
+  termlyFeeCents  Int       @default(0)
+  status          String    @default("AVAILABLE") // AVAILABLE | ASSIGNED | MAINTENANCE
+  dormitories     Dormitory[]
+  createdAt       DateTime  @default(now())
+}
+
+model Dormitory {
+  id          String        @id @default(cuid())
+  schoolId    String
+  school      School        @relation(fields: [schoolId], references: [id])
+  houseId     String
+  house       BoardingHouse @relation(fields: [houseId], references: [id])
+  name        String
+  capacity    Int           @default(0)
+  type        String? // Male | Female
+  floor       String?
+  description String?
+  prefectId   String? // learner — dormitory prefect
+  prefect     Student?      @relation("DormitoryPrefect", fields: [prefectId], references: [id])
+  status      String        @default("AVAILABLE") // AVAILABLE | ASSIGNED | MAINTENANCE
+  beds        Bed[]
+  createdAt   DateTime      @default(now())
+}
+
+model Bed {
+  id          String    @id @default(cuid())
+  schoolId    String
+  school      School    @relation(fields: [schoolId], references: [id])
+  dormitoryId String
+  dormitory   Dormitory @relation(fields: [dormitoryId], references: [id])
+  code        String // e.g. AGY-014
+  bedType     String    @default("SINGLE") // SINGLE | BUNK
+  status      String    @default("AVAILABLE") // AVAILABLE | ASSIGNED | MAINTENANCE
+  studentId   String?   @unique // currently assigned boarder (one-to-one)
+  student     Student?  @relation("BedOccupant", fields: [studentId], references: [id])
+  assignedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@unique([schoolId, code])
+}
+
+// ─────────────────────────────────────────────────────────────
+// LIBRARY BOOK REQUESTS (student/parent portal → librarian queue)
+// ─────────────────────────────────────────────────────────────
+model BookRequest {
+  id             String      @id @default(cuid())
+  schoolId       String
+  school         School      @relation(fields: [schoolId], references: [id])
+  bookId         String
+  book           LibraryBook @relation(fields: [bookId], references: [id])
+  studentId      String
+  student        Student     @relation(fields: [studentId], references: [id])
+  startAt        DateTime // requested issue date
+  endAt          DateTime // requested return date
+  status         String      @default("PENDING") // PENDING | ISSUED | REJECTED
+  handledAt      DateTime?
+  handledByName  String?
+  loanId         String? // the LibraryLoan created on accept
+  createdAt      DateTime    @default(now())
+}
+
+// ─────────────────────────────────────────────────────────────
+// QUESTION PAPER BANK (iEduPro question_paper parity)
+// ─────────────────────────────────────────────────────────────
+model QuestionPaper {
+  id          String    @id @default(cuid())
+  schoolId    String
+  school      School    @relation(fields: [schoolId], references: [id])
+  classroomId String
+  classroom   Classroom @relation(fields: [classroomId], references: [id])
+  title       String
+  body        String // rich text (HTML) — the paper itself
+  examName    String? // e.g. "End of Term 1 Examination 2026/27"
+  authorName  String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+// ─────────────────────────────────────────────────────────────
+// RECEIPT / INVOICE MODIFICATION-APPROVAL QUEUE (iEduPro parity)
+// cashiers request an edit/delete; super admin approves, rejects or revokes
+// ─────────────────────────────────────────────────────────────
+model ModificationRequest {
+  id              String    @id @default(cuid())
+  schoolId        String
+  school          School    @relation(fields: [schoolId], references: [id])
+  targetType      String // PAYMENT | INVOICE
+  recordId        String
+  recordCode      String // receipt no / invoice no
+  requestType     String // EDIT | DELETE
+  reason          String
+  status          String    @default("PENDING") // PENDING | APPROVED | REJECTED | REVOKED
+  requestedById   String
+  requestedByName String
+  originalData    String? // JSON snapshot of the record at request time
+  newData         String? // JSON of the proposed replacement (EDiT)
+  handledById     String?
+  handledByName   String?
+  handledAt       DateTime?
+  decisionNote    String?
+  createdAt       DateTime  @default(now())
+}
+
+// ─────────────────────────────────────────────────────────────
+// WAEC RAW-SCORE GRADING (BECE/WASSCE scale — editable per school)
+// ─────────────────────────────────────────────────────────────
+model RawScoreGrade {
+  id                String  @id @default(cuid())
+  schoolId          String
+  school            School  @relation(fields: [schoolId], references: [id])
+  name              String // remark word: EXCELLENT / VERY GOOD / CREDIT / PASS / FAIL
+  gradePoint        String // A1 … F9 (or 1–9)
+  gradePointNumeric Float   @default(0) // BECE aggregate weight
+  markFrom          Float
+  markUpto          Float
+  comment           String?
+  sortOrder         Int     @default(0)
+}
+
+// ─────────────────────────────────────────────────────────────
+// PORTFOLIO ASSESSMENT (GES weekly SBA — strand scores feed class score)
+// ─────────────────────────────────────────────────────────────
+model PortfolioEntry {
+  id          String   @id @default(cuid())
+  schoolId    String
+  school      School   @relation(fields: [schoolId], references: [id])
+  studentId   String
+  student     Student  @relation(fields: [studentId], references: [id])
+  classroomId String
+  subjectId   String
+  subjectName String
+  week        String // ISO week "2026-W44"
+  entryDate   DateTime // the school day (Mon–Fri)
+  strandCode  String? // curriculum strand / sub-strand code e.g. "B4.1.2.1"
+  score       Float    @default(0) // 0–10 daily strand score
+  createdAt   DateTime @default(now())
+
+  @@unique([studentId, subjectId, entryDate])
+}
+
+// ─────────────────────────────────────────────────────────────
+// DAILY-FEE PER-CHARGE AUDIT LOG (iEduPro daily_fee_audit_log parity)
+// ─────────────────────────────────────────────────────────────
+model DailyFeeAudit {
+  id                 String   @id @default(cuid())
+  schoolId           String
+  school             School   @relation(fields: [schoolId], references: [id])
+  studentId          String
+  student            Student  @relation(fields: [studentId], references: [id])
+  actionType         String // CHARGE | CHARGE_REVERSAL | PAYMENT | PAYMENT_REVERSAL | TOPUP | ADJUSTMENT | RECONCILIATION
+  serviceCode        String // FEEDING | BREAKFAST | CLASSES | WATER | TRANSPORT | MULTIPLE
+  amountCents        Int      @default(0)
+  balanceBeforeCents Int      @default(0)
+  balanceAfterCents  Int      @default(0)
+  arrearsBeforeCents Int      @default(0)
+  arrearsAfterCents  Int      @default(0)
+  performedByName    String
+  performedByRole    String
+  reference          String? // receipt no / charge id
+  notes              String?
+  createdAt          DateTime @default(now())
+}
+
+// ─────────────────────────────────────────────────────────────
+// CASHIER HANDOVER REPORTS (signed daily float handover)
+// ─────────────────────────────────────────────────────────────
+model HandoverReport {
+  id            String   @id @default(cuid())
+  schoolId      String
+  school        School   @relation(fields: [schoolId], references: [id])
+  date          DateTime
+  cashierId     String
+  cashierName   String
+  receiverId    String
+  receiverName  String
+  totalCents    Int      @default(0)
+  cashCents     Int      @default(0)
+  createdAt     DateTime @default(now())
 }

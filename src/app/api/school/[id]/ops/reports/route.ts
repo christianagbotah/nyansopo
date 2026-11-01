@@ -1,0 +1,479 @@
+import { NextRequest, NextResponse } from "next/server";
+import { db } from "@/lib/db";
+import { opsAuth } from "@/lib/ops-auth";
+
+/* ── /api/school/[id]/ops/reports — finance parity batch (Task 3-d)
+   iEduPro CI3 parity:
+   · GET  ?tab=approvals                    — receipt/invoice modification-approval queue
+   · GET  ?tab=ssnit&period=YYYY-MM         — SSNIT Tier 1 / Tier 2 statutory schedules
+   · GET  ?tab=aging                        — receivables aging report (advanced, dueAt-based)
+   · GET  ?tab=cashier-summary&date&collector — cashier daily summary + handover data
+   · POST action=modreq.create / modreq.decide / modreq.revoke / handover.save ── */
+
+const DAY_MS = 864e5;
+const fmtGhs = (cents: number) => `GH₵${(cents / 100).toFixed(2)}`;
+
+/** invoice status per the fees conventions: PAID when paid ≥ total−discount, PARTIAL above 0, UNPAID at 0 */
+function invoiceStatus(totalCents: number, discountCents: number, paidCents: number): string {
+  const due = totalCents - discountCents;
+  if (paidCents >= due && due > 0) return "PAID";
+  if (paidCents <= 0) return "UNPAID";
+  return "PARTIAL";
+}
+
+// ─────────────────────────────────────────────────────────────
+// GET
+// ─────────────────────────────────────────────────────────────
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id: schoolId } = await params;
+  const url = new URL(req.url);
+  const tab = url.searchParams.get("tab") ?? "";
+
+  const PERMS: Record<string, string[]> = {
+    approvals: ["fees.view", "approvals.request", "approvals.manage"],
+    ssnit: ["payroll.view"],
+    aging: ["finance.view"],
+    "cashier-summary": ["cashier.reports"],
+  };
+  if (!PERMS[tab]) return NextResponse.json({ error: "Unknown or missing ?tab= (approvals | ssnit | aging | cashier-summary)" }, { status: 400 });
+  const auth = await opsAuth(req, schoolId, "GET", { perms: PERMS[tab] });
+  if (!auth.ok) return auth.res;
+
+  /* ══════════════════ TAB: approvals (modification queue) ══════════════════ */
+  if (tab === "approvals") {
+    const requests = await db.modificationRequest.findMany({
+      where: { schoolId },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+    });
+    const shape = (r: (typeof requests)[number]) => ({
+      id: r.id,
+      targetType: r.targetType, // PAYMENT | INVOICE
+      recordId: r.recordId,
+      recordCode: r.recordCode, // receipt no / invoice no
+      requestType: r.requestType, // EDIT | DELETE
+      reason: r.reason,
+      status: r.status, // PENDING | APPROVED | REJECTED | REVOKED
+      requestedById: r.requestedById,
+      requestedByName: r.requestedByName,
+      originalData: r.originalData ? JSON.parse(r.originalData) : null,
+      newData: r.newData ? JSON.parse(r.newData) : null,
+      handledByName: r.handledByName,
+      handledAt: r.handledAt,
+      decisionNote: r.decisionNote,
+      createdAt: r.createdAt,
+    });
+    return NextResponse.json({
+      pending: requests.filter((r) => r.status === "PENDING").map(shape),
+      recent: requests.filter((r) => r.status !== "PENDING").map(shape),
+    });
+  }
+
+  /* ══════════════════ TAB: ssnit (Tier 1 / Tier 2 statutory schedules) ══════════════════ */
+  if (tab === "ssnit") {
+    const periodParam = url.searchParams.get("period") ?? undefined;
+    const period = periodParam && /^\d{4}-\d{2}$/.test(periodParam)
+      ? periodParam
+      : (await db.payrollRun.findFirst({ where: { schoolId }, orderBy: { period: "desc" } }))?.period ?? null;
+
+    // statutory rates from OpsSetting (SSNIT_TIER1_EMPLOYER=13.5, SSNIT_TIER1_EMPLOYEE=5.5, SSNIT_TIER2=5.0)
+    const settingRows = await db.opsSetting.findMany({ where: { schoolId, key: { in: ["SSNIT_TIER1_EMPLOYER", "SSNIT_TIER1_EMPLOYEE", "SSNIT_TIER2", "SSNIT_NUMBER"] } } });
+    const settings: Record<string, string> = Object.fromEntries(settingRows.map((r) => [r.key, r.value]));
+    const rateTier1Employer = parseFloat(settings.SSNIT_TIER1_EMPLOYER ?? "13.5");
+    const rateTier1Employee = parseFloat(settings.SSNIT_TIER1_EMPLOYEE ?? "5.5");
+    const rateTier2 = parseFloat(settings.SSNIT_TIER2 ?? "5");
+
+    const school = await db.school.findUnique({ where: { id: schoolId } });
+    const run = period ? await db.payrollRun.findUnique({ where: { schoolId_period: { schoolId, period } } }) : null;
+    const payslips = run
+      ? await db.payslip.findMany({ where: { payrollRunId: run.id }, include: { staff: true }, orderBy: { staff: { fullName: "asc" } } })
+      : [];
+
+    // CI3 computes from basic × statutory rate (uncapped); stored payslip cents are exposed alongside
+    const rows = payslips.map((p, i) => {
+      const base = p.baseSalaryCents;
+      const nameParts = p.staff.fullName.trim().split(/\s+/);
+      return {
+        sn: i + 1,
+        staffId: p.staffId,
+        firstName: nameParts[0] ?? p.staff.fullName,
+        lastName: nameParts.length > 1 ? nameParts.slice(1).join(" ") : "—",
+        otherNames: nameParts.length > 2 ? nameParts.slice(1, -1).join(" ") : "",
+        lastToken: nameParts.length > 1 ? nameParts[nameParts.length - 1] : "—",
+        ssnitNumber: p.staff.ssnitNumber ?? "",
+        tier2MemberId: p.staff.tier2Provider ?? "",
+        tier2Provider: p.staff.tier2Provider ?? "",
+        staffCode: p.staff.staffCode ?? "",
+        basicSalaryCents: base,
+        tier1EmployerCents: Math.round((base * rateTier1Employer) / 100),
+        tier1EmployeeCents: Math.round((base * rateTier1Employee) / 100),
+        tier2Cents: Math.round((base * rateTier2) / 100),
+        storedSsnitEmployeeCents: p.ssnitEmployeeCents,
+        storedSsnitEmployerCents: p.ssnitEmployerCents,
+      };
+    });
+
+    return NextResponse.json({
+      period,
+      run: run ? { id: run.id, status: run.status, payslipCount: payslips.length } : null,
+      rates: { tier1Employer: rateTier1Employer, tier1Employee: rateTier1Employee, tier2: rateTier2 },
+      establishment: school?.name ?? "—",
+      registrationNo: settings.SSNIT_NUMBER ?? school?.code ?? "",
+      town: school?.town ?? null,
+      region: school?.region ?? null,
+      rows,
+      totals: {
+        basicSalaryCents: rows.reduce((s, r) => s + r.basicSalaryCents, 0),
+        tier1EmployerCents: rows.reduce((s, r) => s + r.tier1EmployerCents, 0),
+        tier1EmployeeCents: rows.reduce((s, r) => s + r.tier1EmployeeCents, 0),
+        tier2Cents: rows.reduce((s, r) => s + r.tier2Cents, 0),
+      },
+      providers: [...new Set(rows.map((r) => r.tier2Provider).filter(Boolean))],
+    });
+  }
+
+  /* ══════════════════ TAB: aging (receivables, CI3 advanced — dueAt when present) ══════════════════ */
+  if (tab === "aging") {
+    const invoices = await db.invoice.findMany({
+      where: { schoolId, writtenOff: false, status: { not: "WRITTEN_OFF" } },
+      include: { student: true },
+      orderBy: { createdAt: "asc" },
+    });
+    const now = Date.now();
+    const summary = { currentCents: 0, currentCount: 0, d31Cents: 0, d31Count: 0, d61Cents: 0, d61Count: 0, d90Cents: 0, d90Count: 0 };
+    const rows = invoices
+      .map((i) => {
+        const balanceCents = i.totalCents - i.discountCents - i.paidCents;
+        if (balanceCents <= 0) return null;
+        const anchor = i.dueDate ?? i.createdAt; // CI3 advanced aging: age from due date when set
+        const daysOutstanding = Math.max(0, Math.floor((now - anchor.getTime()) / DAY_MS));
+        const bucket = daysOutstanding <= 30 ? "current" : daysOutstanding <= 60 ? "d31" : daysOutstanding <= 90 ? "d61" : "d90";
+        if (bucket === "current") { summary.currentCents += balanceCents; summary.currentCount++; }
+        else if (bucket === "d31") { summary.d31Cents += balanceCents; summary.d31Count++; }
+        else if (bucket === "d61") { summary.d61Cents += balanceCents; summary.d61Count++; }
+        else { summary.d90Cents += balanceCents; summary.d90Count++; }
+        return {
+          student: `${i.student.firstName} ${i.student.lastName}`,
+          classroom: i.classroomName,
+          invoiceNo: i.invoiceNo,
+          invoiceDate: i.createdAt,
+          dueDate: i.dueDate,
+          daysOutstanding,
+          balanceCents,
+          bucket, // current | d31 | d61 | d90
+        };
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null)
+      .sort((a, b) => b.daysOutstanding - a.daysOutstanding || b.balanceCents - a.balanceCents);
+
+    return NextResponse.json({
+      summary,
+      rows,
+      totalCents: summary.currentCents + summary.d31Cents + summary.d61Cents + summary.d90Cents,
+      totalCount: summary.currentCount + summary.d31Count + summary.d61Count + summary.d90Count,
+    });
+  }
+
+  /* ══════════════════ TAB: cashier-summary (daily account rendering + handover) ══════════════════ */
+  if (tab === "cashier-summary") {
+    const dateStr = url.searchParams.get("date") ?? new Date().toISOString().slice(0, 10);
+    const collector = url.searchParams.get("collector") ?? ""; // "" or "all" = everyone
+    const dayStart = new Date(`${dateStr}T00:00:00.000Z`);
+    const dayEnd = new Date(dayStart.getTime() + DAY_MS - 1);
+    const inDay = { gte: dayStart, lte: dayEnd };
+
+    const payments = await db.payment.findMany({
+      where: {
+        schoolId, voided: false, paymentType: "PAYMENT", paidAt: inDay,
+        ...(collector && collector !== "all" ? { receivedByName: collector } : {}),
+      },
+      include: { student: { include: { enrollments: { where: { status: "ACTIVE" }, take: 1, include: { classroom: true } } } } },
+      orderBy: { paidAt: "asc" },
+    });
+
+    const totalCents = payments.reduce((s, p) => s + p.amountCents, 0);
+    const byCategory: Record<string, number> = {};
+    const byMethod: Record<string, number> = {};
+    const students = new Set<string>();
+    for (const p of payments) {
+      byCategory[p.category] = (byCategory[p.category] ?? 0) + p.amountCents;
+      byMethod[p.method] = (byMethod[p.method] ?? 0) + p.amountCents;
+      if (p.studentId) students.add(p.studentId);
+    }
+
+    // outstanding daily-fee arrears (all-time OWED day-charges — same derivation as the cashier console)
+    const owed = await db.dailyCharge.aggregate({ where: { schoolId, status: "OWED" }, _sum: { amountCents: true } });
+
+    // wallet top-ups of the day (prepaid + transport credits)
+    const topups = await db.walletTxn.findMany({
+      where: { schoolId, kind: "TOPUP", at: inDay },
+      include: { student: true },
+      orderBy: { at: "asc" },
+    });
+
+    // existing signed handover reports for the date
+    const handovers = await db.handoverReport.findMany({ where: { schoolId, date: inDay }, orderBy: { createdAt: "desc" } });
+
+    // collector roster (anyone who ever took a payment) + back-office users for the handover signature selects
+    const collectorRows = await db.payment.findMany({ where: { schoolId, receivedByName: { not: null } }, select: { receivedByName: true }, distinct: ["receivedByName"] });
+    const users = await db.user.findMany({
+      where: { schoolId, role: { in: ["SUPER_ADMIN", "GROUP_OWNER", "SCHOOL_ADMIN", "ACCOUNTANT", "CASHIER"] }, status: { not: "SUSPENDED" } },
+      select: { id: true, fullName: true, role: true },
+      orderBy: { fullName: "asc" },
+    });
+
+    return NextResponse.json({
+      date: dateStr,
+      collector: collector || "all",
+      totals: {
+        totalCents,
+        cashCents: byMethod.CASH ?? 0,
+        transactions: payments.length,
+        distinctStudents: students.size,
+        receipts: payments.length,
+      },
+      byCategory,
+      byMethod,
+      dailyArrearsCents: owed._sum.amountCents ?? 0,
+      topups: topups.map((t) => ({
+        id: t.id, student: `${t.student.firstName} ${t.student.lastName}`, wallet: t.wallet,
+        amountCents: Math.abs(t.amountCents), byName: t.byName, at: t.at,
+      })),
+      receipts: payments.map((p) => ({
+        id: p.id, receiptNo: p.receiptNo,
+        student: p.student ? `${p.student.firstName} ${p.student.lastName}` : "—",
+        classroom: p.student?.enrollments[0]?.classroom?.name ?? null,
+        amountCents: p.amountCents, method: p.method, category: p.category,
+        collector: p.receivedByName, paidAt: p.paidAt,
+      })),
+      handovers,
+      collectors: collectorRows.map((c) => c.receivedByName!).filter(Boolean).sort(),
+      users,
+    });
+  }
+
+  return NextResponse.json({ error: "Unknown tab" }, { status: 400 });
+}
+
+// ─────────────────────────────────────────────────────────────
+// POST — modreq.create / modreq.decide / modreq.revoke / handover.save
+// ─────────────────────────────────────────────────────────────
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id: schoolId } = await params;
+  const body = await req.json().catch(() => ({}));
+  const action: string = body.action;
+
+  const PERMS: Record<string, string[]> = {
+    "modreq.create": ["approvals.request", "approvals.manage"],
+    "modreq.decide": ["approvals.manage"], // iEduPro: only level-1 admins adjudicate
+    "modreq.revoke": ["approvals.manage"],
+    "handover.save": ["cashier.reports"],
+  };
+  if (!PERMS[action]) return NextResponse.json({ error: "Unknown action" }, { status: 400 });
+  const auth = await opsAuth(req, schoolId, "POST", { perms: PERMS[action] });
+  if (!auth.ok) return auth.res;
+  const user = auth.user;
+
+  /* ══════════════════ cashier handover save (one per cashier+date, upsert-style replace) ══════════════════ */
+  if (action === "handover.save") {
+    const { date, cashierId, cashierName, receiverId, receiverName, totalCents, cashCents } = body;
+    if (!date || !cashierId || !cashierName || !receiverId || !receiverName) {
+      return NextResponse.json({ error: "Date, cashier and receiver are required" }, { status: 400 });
+    }
+    const dayStart = new Date(`${String(date).slice(0, 10)}T00:00:00.000Z`);
+    const dayEnd = new Date(dayStart.getTime() + DAY_MS - 1);
+    const total = Math.max(0, Math.round(Number(totalCents) || 0));
+    const cash = Math.min(total, Math.max(0, Math.round(Number(cashCents) || 0)));
+    const saved = await db.$transaction(async (tx) => {
+      await tx.handoverReport.deleteMany({ where: { schoolId, cashierId, date: { gte: dayStart, lte: dayEnd } } });
+      return tx.handoverReport.create({
+        data: {
+          schoolId, date: dayStart, cashierId, cashierName, receiverId, receiverName,
+          totalCents: total, cashCents: cash,
+        },
+      });
+    });
+    return NextResponse.json({ handover: saved });
+  }
+
+  /* ══════════════════ modreq.create — cashier/bursar raises an EDIT/DELETE request ══════════════════ */
+  if (action === "modreq.create") {
+    const { targetType, recordId, requestType, reason, newData } = body;
+    if (!["PAYMENT", "INVOICE"].includes(targetType)) return NextResponse.json({ error: "targetType must be PAYMENT or INVOICE" }, { status: 400 });
+    if (!["EDIT", "DELETE"].includes(requestType)) return NextResponse.json({ error: "requestType must be EDIT or DELETE" }, { status: 400 });
+    if (!reason?.trim()) return NextResponse.json({ error: "A reason is required" }, { status: 400 });
+    if (requestType === "EDIT" && !newData) return NextResponse.json({ error: "EDIT requests need the proposed newData" }, { status: 400 });
+
+    let recordCode: string;
+    let resolvedRecordId: string; // the row id — decide-time actions always act on this
+    let originalData: Record<string, unknown>;
+    // recordId may be the row id OR the human code (receipt no / invoice no) — cashiers paste what they see
+    const recordKey = String(recordId ?? "").trim();
+    if (targetType === "PAYMENT") {
+      const p = await db.payment.findFirst({ where: { schoolId, OR: [{ id: recordKey }, { receiptNo: recordKey }] } });
+      if (!p) return NextResponse.json({ error: "Receipt not found" }, { status: 404 });
+      recordCode = p.receiptNo;
+      resolvedRecordId = p.id;
+      originalData = {
+        id: p.id, receiptNo: p.receiptNo, amountCents: p.amountCents, method: p.method,
+        category: p.category, paidAt: p.paidAt, invoiceId: p.invoiceId, voided: p.voided,
+      };
+      if (newData) {
+        if (newData.amountCents !== undefined && (!Number.isFinite(Number(newData.amountCents)) || Number(newData.amountCents) <= 0)) {
+          return NextResponse.json({ error: "newData.amountCents must be a positive amount (pesewas)" }, { status: 400 });
+        }
+      }
+    } else {
+      const i = await db.invoice.findFirst({ where: { schoolId, OR: [{ id: recordKey }, { invoiceNo: recordKey }] } });
+      if (!i) return NextResponse.json({ error: "Invoice not found" }, { status: 404 });
+      recordCode = i.invoiceNo;
+      resolvedRecordId = i.id;
+      originalData = {
+        id: i.id, invoiceNo: i.invoiceNo, totalCents: i.totalCents, discountCents: i.discountCents,
+        paidCents: i.paidCents, status: i.status, studentId: i.studentId,
+      };
+    }
+
+    // dedupe: only one PENDING request per record
+    const dupe = await db.modificationRequest.findFirst({ where: { schoolId, recordCode, status: "PENDING" } });
+    if (dupe) {
+      return NextResponse.json({ error: `A pending ${dupe.requestType.toLowerCase()} request already exists for ${recordCode}`, status: "PENDING", requestId: dupe.id }, { status: 409 });
+    }
+
+    const created = await db.modificationRequest.create({
+      data: {
+        schoolId, targetType, recordId: resolvedRecordId, recordCode, requestType,
+        reason: String(reason).trim(),
+        status: "PENDING",
+        requestedById: user.id, requestedByName: user.fullName,
+        originalData: JSON.stringify(originalData),
+        newData: newData ? JSON.stringify(newData) : null,
+      },
+    });
+    return NextResponse.json({ request: created });
+  }
+
+  /* ══════════════════ modreq.decide — level-1 admin approves / rejects ══════════════════ */
+  if (action === "modreq.decide") {
+    const { id, decision, note } = body;
+    if (!["APPROVED", "REJECTED"].includes(decision)) return NextResponse.json({ error: "decision must be APPROVED or REJECTED" }, { status: 400 });
+    const reqRow = await db.modificationRequest.findFirst({ where: { id, schoolId } });
+    if (!reqRow) return NextResponse.json({ error: "Request not found" }, { status: 404 });
+    if (reqRow.status !== "PENDING") return NextResponse.json({ error: `Request is already ${reqRow.status}` }, { status: 400 });
+
+    const adminNote = note?.trim() ? ` ${String(note).trim()}` : "";
+    let audit = "";
+
+    if (decision === "APPROVED") {
+      // perform the modification faithfully, inside one transaction
+      try {
+        await db.$transaction(async (tx) => {
+          if (reqRow.targetType === "PAYMENT") {
+            const p = await tx.payment.findFirst({ where: { id: reqRow.recordId, schoolId } });
+            if (!p) {
+              audit = `Approved — but receipt ${reqRow.recordCode} no longer exists; nothing to ${reqRow.requestType.toLowerCase()}.`;
+              return;
+            }
+            if (reqRow.requestType === "DELETE") {
+              // 1) reverse the linked invoice's paid amount (clamp ≥ 0), recompute status
+              if (p.invoiceId) {
+                const inv = await tx.invoice.findUnique({ where: { id: p.invoiceId } });
+                if (inv) {
+                  const paid = Math.max(0, inv.paidCents - p.amountCents);
+                  const status = invoiceStatus(inv.totalCents, inv.discountCents, paid);
+                  await tx.invoice.update({ where: { id: inv.id }, data: { paidCents: paid, status } });
+                  audit += `Invoice ${inv.invoiceNo} paidCents reversed ${fmtGhs(inv.paidCents)} → ${fmtGhs(paid)}, status ${inv.status} → ${status}. `;
+                }
+              }
+              // 2) unlink any day-charges settled by this receipt so the daily ledger stays honest
+              const charges = await tx.dailyCharge.findMany({ where: { paymentId: p.id } });
+              if (charges.length) {
+                await tx.dailyCharge.updateMany({ where: { paymentId: p.id }, data: { paymentId: null, status: "OWED" } });
+                audit += `${charges.length} daily charge(s) reverted to OWED. `;
+              }
+              // 3) delete the payment row
+              await tx.payment.delete({ where: { id: p.id } });
+              audit += `Receipt ${p.receiptNo} (${fmtGhs(p.amountCents)}, ${p.method}) deleted.`;
+            } else {
+              // EDIT: apply proposed amount/method, then re-sync the invoice from its live receipts
+              const nd = reqRow.newData ? JSON.parse(reqRow.newData) : {};
+              const newAmount = nd.amountCents !== undefined ? Math.round(Number(nd.amountCents)) : p.amountCents;
+              const newMethod = nd.method ?? p.method;
+              if (!Number.isFinite(newAmount) || newAmount <= 0) throw new Error("Proposed amount is invalid");
+              const updated = await tx.payment.update({ where: { id: p.id }, data: { amountCents: newAmount, method: newMethod } });
+              audit += `Receipt ${p.receiptNo} adjusted ${fmtGhs(p.amountCents)}/${p.method} → ${fmtGhs(newAmount)}/${newMethod}.`;
+              if (p.invoiceId) {
+                const live = await tx.payment.aggregate({ where: { invoiceId: p.invoiceId, voided: false }, _sum: { amountCents: true } });
+                const paid = live._sum.amountCents ?? 0;
+                const inv = await tx.invoice.findUnique({ where: { id: p.invoiceId } });
+                if (inv) {
+                  const status = invoiceStatus(inv.totalCents, inv.discountCents, paid);
+                  await tx.invoice.update({ where: { id: inv.id }, data: { paidCents: paid, status } });
+                  audit += ` Invoice ${inv.invoiceNo} paidCents re-synced ${fmtGhs(inv.paidCents)} → ${fmtGhs(paid)}, status ${inv.status} → ${status}.`;
+                }
+              }
+              void updated;
+            }
+          } else {
+            // INVOICE target
+            const inv = await tx.invoice.findFirst({ where: { id: reqRow.recordId, schoolId } });
+            if (!inv) {
+              audit = `Approved — but invoice ${reqRow.recordCode} no longer exists; nothing to ${reqRow.requestType.toLowerCase()}.`;
+              return;
+            }
+            if (reqRow.requestType === "DELETE") {
+              const linked = await tx.payment.count({ where: { invoiceId: inv.id, voided: false } });
+              if (linked > 0) {
+                throw new Error(`Invoice ${inv.invoiceNo} has ${linked} linked receipt(s) — reverse them first (request a receipt deletion)`);
+              }
+              await tx.invoice.delete({ where: { id: inv.id } });
+              audit = `Invoice ${inv.invoiceNo} (${fmtGhs(inv.totalCents - inv.discountCents)} billed) deleted.`;
+            } else {
+              const nd = reqRow.newData ? JSON.parse(reqRow.newData) : {};
+              const total = nd.totalCents !== undefined ? Math.round(Number(nd.totalCents)) : inv.totalCents;
+              const discount = nd.discountCents !== undefined ? Math.round(Number(nd.discountCents)) : inv.discountCents;
+              if (!Number.isFinite(total) || total <= 0) throw new Error("Proposed totalCents is invalid");
+              const status = invoiceStatus(total, discount, inv.paidCents);
+              await tx.invoice.update({ where: { id: inv.id }, data: { totalCents: total, discountCents: Math.max(0, discount), status } });
+              audit = `Invoice ${inv.invoiceNo} adjusted total ${fmtGhs(inv.totalCents)} → ${fmtGhs(total)}${discount !== inv.discountCents ? `, discount ${fmtGhs(inv.discountCents)} → ${fmtGhs(discount)}` : ""}, status ${inv.status} → ${status}.`;
+            }
+          }
+        });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Modification failed";
+        return NextResponse.json({ error: `Could not apply approval: ${msg}` }, { status: 400 });
+      }
+    } else {
+      audit = "No data change — request rejected.";
+    }
+
+    const updated = await db.modificationRequest.update({
+      where: { id: reqRow.id },
+      data: {
+        status: decision,
+        handledById: user.id, handledByName: user.fullName, handledAt: new Date(),
+        decisionNote: `${decision === "APPROVED" ? "Approved" : "Rejected"} by ${user.fullName}.${adminNote}${audit ? ` ${audit}` : ""}`,
+      },
+    });
+    return NextResponse.json({ request: updated });
+  }
+
+  /* ══════════════════ modreq.revoke — un-approve (manual reversal, CI3 audit posture) ══════════════════ */
+  if (action === "modreq.revoke") {
+    const reqRow = await db.modificationRequest.findFirst({ where: { id: body.id, schoolId } });
+    if (!reqRow) return NextResponse.json({ error: "Request not found" }, { status: 404 });
+    if (reqRow.status !== "APPROVED") return NextResponse.json({ error: "Only approved requests can be revoked" }, { status: 400 });
+    const prior = reqRow.decisionNote ?? "";
+    const updated = await db.modificationRequest.update({
+      where: { id: reqRow.id },
+      data: {
+        status: "REVOKED",
+        handledById: user.id, handledByName: user.fullName, handledAt: new Date(),
+        decisionNote: `${prior} Revoked by ${user.fullName} — manual reversal required.`,
+      },
+    });
+    return NextResponse.json({ request: updated });
+  }
+
+  return NextResponse.json({ error: "Unknown action" }, { status: 400 });
+}

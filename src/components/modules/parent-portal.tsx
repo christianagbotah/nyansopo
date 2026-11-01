@@ -1,18 +1,23 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
-import { apiGet } from "@/lib/api";
+import { apiGet, apiPost } from "@/lib/api";
 import { ModuleHeader, LoadingBlock, EmptyState } from "@/components/ui-helpers";
 import { fmtCedi, fmtDate, PAYMENT_LABELS } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "@/hooks/use-toast";
 import { initials, avatarColor } from "@/lib/format";
-import { Home, Wallet, CalendarCheck, GraduationCap, Bus, MessageSquareText, Megaphone, Phone, ArrowUpRight, CheckCircle2, AlertTriangle, Receipt } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { Home, Wallet, CalendarCheck, GraduationCap, Bus, MessageSquareText, Megaphone, Phone, ArrowUpRight, CheckCircle2, AlertTriangle, Receipt, BookOpen, BookPlus, Hourglass, XCircle, Send } from "lucide-react";
 
 type Invoice = {
   id: string; invoiceNo: string; status: string; dueDate: string | null; createdAt: string;
@@ -38,6 +43,20 @@ type Child = {
     recentBoardings: { date: string; direction: string; fare: number; paid: number }[];
   };
   wallet: null | { prepaid: number; transport: number };
+  // iEduPro parity: library loans + book requests per child
+  library: { book: string; dueAt: string; overdue: boolean }[];
+  bookRequests: BookRequestLite[];
+};
+// iEduPro parity: parents request books on behalf of their children
+type BookRequestLite = {
+  id: string; book: string; startAt: string; endAt: string; status: string;
+  handledAt: string | null; handledByName: string | null; createdAt: string; overdue: boolean;
+};
+type CatalogueBook = { id: string; title: string; author: string | null; category: string; available: number };
+const REQ_STATUS: Record<string, { label: string; className: string; icon: React.ReactNode }> = {
+  PENDING: { label: "Waiting for librarian", className: "bg-amber-600", icon: <Hourglass className="size-3" /> },
+  ISSUED: { label: "Issued", className: "bg-emerald-600", icon: <CheckCircle2 className="size-3" /> },
+  REJECTED: { label: "Declined", className: "bg-destructive", icon: <XCircle className="size-3" /> },
 };
 type ParentData = {
   role: string; school: { name: string; motto: string | null; phone: string | null; town: string; region: string } | null;
@@ -45,6 +64,7 @@ type ParentData = {
   children: Child[];
   announcements: { id: string; title: string; body: string; postedByName: string; postedAt: string; category: string; priority: string }[];
   messages: { id: string; recipientName: string; recipientPhone: string; body: string; sentAt: string; status: string }[];
+  libraryCatalogue: CatalogueBook[];
 };
 
 const ATT_COLOR: Record<string, string> = { PRESENT: "bg-emerald-600", LATE: "bg-amber-500", ABSENT: "bg-destructive", SICK: "bg-sky-500", EXCUSED: "bg-zinc-400" };
@@ -55,13 +75,15 @@ export function ParentPortal() {
   const [data, setData] = useState<ParentData | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [childIdx, setChildIdx] = useState(0);
+  const [requestOpen, setRequestOpen] = useState(false);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     if (!currentSchoolId) return;
     apiGet<ParentData>(`/api/school/${currentSchoolId}/ops/portal?view=parent`)
-      .then((d) => { setData(d); setChildIdx(0); })
+      .then((d) => { setData(d); setChildIdx((i) => Math.min(i, Math.max(0, d.children.length - 1))); })
       .catch((e) => setErr(e.message));
   }, [currentSchoolId]);
+  useEffect(() => { load(); }, [load]);
 
   if (err) return <div className="text-destructive text-sm">{err}</div>;
   if (!data) return <LoadingBlock label="Fetching your children…" />;
@@ -106,6 +128,7 @@ export function ParentPortal() {
           <TabsTrigger value="fees">Fees & Payments</TabsTrigger>
           <TabsTrigger value="attendance">Attendance</TabsTrigger>
           <TabsTrigger value="reports">Reports</TabsTrigger>
+          <TabsTrigger value="library">Library</TabsTrigger>
           {child.transport && <TabsTrigger value="transport">Transport</TabsTrigger>}
           <TabsTrigger value="messages">Messages</TabsTrigger>
         </TabsList>
@@ -311,6 +334,73 @@ export function ParentPortal() {
           )) : <EmptyState icon={<GraduationCap className="size-8" />} title="No reports yet" hint="Terminal reports appear here once the school publishes them." />}
         </TabsContent>
 
+        {/* ── LIBRARY (iEduPro parity): books out + request on behalf of the child ── */}
+        <TabsContent value="library" className="mt-3 space-y-4">
+          <div className="grid lg:grid-cols-2 gap-4">
+            <Card>
+              <CardHeader className="pb-2 flex-row items-center justify-between space-y-0">
+                <CardTitle className="text-base flex items-center gap-2"><BookOpen className="size-4" /> Books out — {child.name}</CardTitle>
+                <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={() => setRequestOpen(true)}>
+                  <BookPlus className="size-3.5" /> Request a book
+                </Button>
+              </CardHeader>
+              <CardContent>
+                {child.library.length ? (
+                  <div className="space-y-2">
+                    {child.library.map((l, i) => (
+                      <div key={i} className={`flex items-center justify-between rounded-lg border px-3 py-2.5 ${l.overdue ? "border-destructive/40 bg-destructive/5" : ""}`}>
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className="flex size-8 shrink-0 items-center justify-center rounded-full text-white" style={{ background: avatarColor(l.book) }}><BookOpen className="size-4" /></span>
+                          <div className="min-w-0">
+                            <div className="text-sm font-medium truncate">{l.book}</div>
+                            <div className="text-xs text-muted-foreground">due {fmtDate(l.dueAt)}</div>
+                          </div>
+                        </div>
+                        {l.overdue
+                          ? <Badge className="bg-destructive gap-1"><AlertTriangle className="size-3" /> overdue</Badge>
+                          : <Badge variant="secondary" className="gap-1"><CheckCircle2 className="size-3" /> on time</Badge>}
+                      </div>
+                    ))}
+                  </div>
+                ) : <EmptyState title="No books out" hint="Request a book on the right — the librarian will issue it." />}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <BookPlus className="size-4" /> Book requests — {child.name}
+                  {child.bookRequests.some((r) => r.status === "PENDING") && <Badge className="bg-amber-600 text-[10px]">waiting</Badge>}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {child.bookRequests.length ? (
+                  <div className="space-y-2 max-h-96 overflow-y-auto nice-scroll">
+                    {child.bookRequests.map((r) => {
+                      const s = REQ_STATUS[r.status] ?? REQ_STATUS.PENDING;
+                      return (
+                        <div key={r.id} className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-2.5 ${r.overdue ? "border-destructive/40 bg-destructive/5" : ""}`}>
+                          <div className="min-w-0">
+                            <div className="text-sm font-medium truncate">{r.book}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {fmtDate(r.startAt)} → {fmtDate(r.endAt)}
+                              {r.status !== "PENDING" && r.handledByName ? ` · by ${r.handledByName}` : ""}
+                            </div>
+                          </div>
+                          <div className="flex flex-col items-end gap-1 shrink-0">
+                            <Badge className={cn("gap-1", s.className)}>{s.icon} {s.label}</Badge>
+                            {r.overdue && <Badge className="bg-destructive gap-1"><AlertTriangle className="size-3" /> overdue</Badge>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : <EmptyState title="No requests yet" hint={`Pick a book from the catalogue and ${child.name.split(" ")[0]} gets it once the librarian confirms.`} />}
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
         {child.transport && (
           <TabsContent value="transport" className="mt-3 space-y-4">
             <Card>
@@ -364,7 +454,95 @@ export function ParentPortal() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* iEduPro parity: request a book on behalf of the selected child */}
+      <BookRequestDialog
+        open={requestOpen}
+        onOpenChange={setRequestOpen}
+        catalogue={data.libraryCatalogue ?? []}
+        studentId={child.id}
+        studentName={child.name}
+        schoolId={currentSchoolId!}
+        onDone={load}
+      />
     </div>
+  );
+}
+
+/* ── Request-a-book dialog (iEduPro parity) — the parent picks a title from the
+    catalogue and the dates on behalf of their child; the librarian confirms. ── */
+function BookRequestDialog({ open, onOpenChange, catalogue, studentId, studentName, schoolId, onDone }: {
+  open: boolean; onOpenChange: (o: boolean) => void;
+  catalogue: CatalogueBook[]; studentId: string; studentName: string; schoolId: string; onDone: () => void;
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+  const defaultEnd = new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10);
+  const [bookId, setBookId] = useState("");
+  const [startAt, setStartAt] = useState(today);
+  const [endAt, setEndAt] = useState(defaultEnd);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (open) { setBookId(""); setStartAt(today); setEndAt(defaultEnd); }
+  }, [open]);
+
+  const book = catalogue.find((b) => b.id === bookId) ?? null;
+
+  async function submit() {
+    if (!bookId) { toast({ title: "Choose a book" }); return; }
+    if (!startAt || !endAt || endAt <= startAt) { toast({ title: "Check your dates", description: "The return date must be after the issue date." }); return; }
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${schoolId}/ops/portal`, { action: "book-request.create", bookId, studentId, startAt, endAt });
+      toast({ title: "Request sent", description: `"${book?.title}" for ${studentName} — the librarian will confirm shortly.` });
+      onOpenChange(false);
+      onDone();
+    } catch (e: any) {
+      toast({ title: "Request failed", description: e.message, variant: "destructive" });
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><BookPlus className="size-4.5" /> Request a book for {studentName}</DialogTitle>
+          <DialogDescription>Pick a title and the dates — the librarian issues it if a copy is on the shelf.</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3">
+          <div className="space-y-1.5">
+            <Label>Book *</Label>
+            <Select value={bookId} onValueChange={setBookId}>
+              <SelectTrigger><SelectValue placeholder="Choose from the catalogue…" /></SelectTrigger>
+              <SelectContent className="max-h-64">
+                {catalogue.map((b) => (
+                  <SelectItem key={b.id} value={b.id} disabled={b.available < 1}>
+                    {b.title} — {b.available < 1 ? "all copies out" : `${b.available} on shelf`}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {book && <p className="text-[11px] text-muted-foreground">{book.author ?? "—"} · {book.category}</p>}
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Issue date</Label>
+              <Input type="date" value={startAt} onChange={(e) => setStartAt(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Return by</Label>
+              <Input type="date" value={endAt} onChange={(e) => setEndAt(e.target.value)} />
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button disabled={busy || !bookId} onClick={submit} className="gap-1.5">
+            {busy ? "Sending…" : <><Send className="size-4" /> Send request</>}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

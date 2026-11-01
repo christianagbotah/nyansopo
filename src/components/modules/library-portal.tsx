@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "@/hooks/use-toast";
-import { BookOpen, BookPlus, BookMarked, Library, AlertTriangle, Users, Search, RotateCcw, Pencil, Trash2, BookUp2 } from "lucide-react";
+import { BookOpen, BookPlus, BookMarked, Library, AlertTriangle, Users, Search, RotateCcw, Pencil, Trash2, BookUp2, Check, X, Hourglass, XCircle, Inbox } from "lucide-react";
 
 type Book = { id: string; title: string; author: string | null; isbn: string | null; category: string; copies: number; available: number; shelf: string | null; borrowers: string[] };
 type Loan = {
@@ -22,7 +22,13 @@ type Loan = {
   issuedAt: string; dueAt: string; returnedAt: string | null; issuedByName: string | null; conditionNote: string | null;
   overdue: boolean; daysOverdue: number;
 };
-type LibData = { stats: { titles: number; copies: number; available: number; activeLoans: number; overdue: number; members: number }; books: Book[]; loans: Loan[] };
+// iEduPro parity: learner/parent book requests waiting for the librarian's decision
+type BookRequestRow = {
+  id: string; bookId: string; book: string; studentId: string; student: string; classroom: string | null;
+  startAt: string; endAt: string; status: string; handledAt: string | null; handledByName: string | null;
+  loanId: string | null; createdAt: string; overdue: boolean;
+};
+type LibData = { stats: { titles: number; copies: number; available: number; activeLoans: number; overdue: number; members: number }; books: Book[]; loans: Loan[]; requests: BookRequestRow[]; pendingRequests: number };
 type StudentLite = { id: string; name: string; nyansapoIndex: string; classroom: string };
 
 const CATEGORIES = ["Storybook", "Textbook", "Reference", "Fiction", "Science", "History", "Language", "General"];
@@ -42,7 +48,7 @@ export function LibraryPortal() {
       .catch((e) => toast({ title: "Could not load library", description: e.message, variant: "destructive" }))
       .finally(() => setLoading(false));
   }, [currentSchoolId]);
-  useEffect(() => { load(); }, [load]); // eslint-disable-line react-hooks/set-state-in-effect
+  useEffect(() => { load(); }, [load]);
 
   async function act(body: Record<string, unknown>, okMsg: string) {
     try {
@@ -101,6 +107,10 @@ export function LibraryPortal() {
           <TabsTrigger value="catalogue">Catalogue ({data.books.length})</TabsTrigger>
           <TabsTrigger value="circulation">On loan ({activeLoans.length})</TabsTrigger>
           {data.stats.overdue > 0 && <TabsTrigger value="overdue" className="text-destructive data-[state=active]:text-destructive gap-1.5">Overdue <span className="inline-flex items-center justify-center rounded-full bg-destructive px-1.5 min-w-4 h-4 text-[10px] font-bold text-white">{data.stats.overdue}</span></TabsTrigger>}
+          <TabsTrigger value="requests" className="gap-1.5">
+            Requests
+            {data.pendingRequests > 0 && <span className="inline-flex items-center justify-center rounded-full bg-amber-600 px-1.5 min-w-4 h-4 text-[10px] font-bold text-white">{data.pendingRequests}</span>}
+          </TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>
         </TabsList>
 
@@ -162,6 +172,16 @@ export function LibraryPortal() {
             <LoanTable loans={activeLoans.filter((l) => l.overdue)} onReturn={(id) => act({ action: "loan.return", loanId: id }, "Book returned")} highlight />
           </TabsContent>
         )}
+
+        {/* ── REQUESTS (iEduPro parity): pending queue + decision history ── */}
+        <TabsContent value="requests" className="mt-3">
+          <RequestsTab
+            requests={data.requests}
+            books={data.books}
+            onAccept={(id) => act({ action: "request.accept", id }, "Book issued — request accepted")}
+            onReject={(id) => act({ action: "request.reject", id }, "Request declined")}
+          />
+        </TabsContent>
 
         <TabsContent value="history" className="mt-3">
           <LoanTable loans={returned} />
@@ -231,6 +251,132 @@ function LoanTable({ loans, onReturn, highlight }: { loans: Loan[]; onReturn?: (
           ))}
         </TableBody>
       </Table>
+    </div>
+  );
+}
+
+/* ── REQUESTS tab (iEduPro parity) — pending queue with Accept/Reject plus the
+    decision history. Accept issues the book on the requested dates (blocked when
+    no copies are on the shelf); Reject closes the request. ── */
+function RequestsTab({ requests, books, onAccept, onReject }: {
+  requests: BookRequestRow[]; books: Book[];
+  onAccept: (id: string) => Promise<boolean>; onReject: (id: string) => Promise<boolean>;
+}) {
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const pending = requests.filter((r) => r.status === "PENDING");
+  const history = requests.filter((r) => r.status !== "PENDING");
+
+  async function run(fn: (id: string) => Promise<boolean>, id: string) {
+    setBusyId(id);
+    await fn(id);
+    setBusyId(null);
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border bg-card">
+        <div className="p-3 border-b flex items-center justify-between gap-2">
+          <div className="text-sm font-semibold flex items-center gap-2"><Inbox className="size-4 text-amber-600" /> Pending queue</div>
+          <Badge variant="secondary">{pending.length} waiting</Badge>
+        </div>
+        {pending.length ? (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Book</TableHead>
+                <TableHead>Learner</TableHead>
+                <TableHead className="hidden md:table-cell">Requested dates</TableHead>
+                <TableHead className="hidden lg:table-cell">Requested at</TableHead>
+                <TableHead className="w-40" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {pending.map((r) => {
+                const book = books.find((b) => b.id === r.bookId) ?? null;
+                const noCopies = !book || book.available < 1;
+                return (
+                  <TableRow key={r.id}>
+                    <TableCell>
+                      <div className="font-medium">{r.book}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {book ? `${book.available} of ${book.copies} on shelf` : "—"}
+                        {noCopies && <span className="text-amber-600 dark:text-amber-400"> · none available</span>}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div>{r.student}</div>
+                      <div className="text-xs text-muted-foreground">{r.classroom ?? "—"}</div>
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
+                      {fmtDate(r.startAt)} → {fmtDate(r.endAt)}
+                    </TableCell>
+                    <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">{fmtDate(r.createdAt)}</TableCell>
+                    <TableCell>
+                      <div className="flex gap-1.5 justify-end">
+                        <Button size="sm" className="h-7 gap-1 text-xs" disabled={busyId === r.id || noCopies}
+                          title={noCopies ? "No copy of this book is available" : "Issue the book for the requested dates"}
+                          onClick={() => run(onAccept, r.id)}>
+                          <Check className="size-3.5" /> Accept
+                        </Button>
+                        <Button size="sm" variant="outline" className="h-7 gap-1 text-xs text-destructive" disabled={busyId === r.id}
+                          onClick={() => confirm(`Decline ${r.student}'s request for "${r.book}"?`) && run(onReject, r.id)}>
+                          <X className="size-3.5" /> Reject
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        ) : (
+          <EmptyState icon={<Inbox className="size-8" />} title="No pending requests" hint="Requests from learners and parents land here for a decision." />
+        )}
+      </div>
+
+      <div className="rounded-xl border bg-card">
+        <div className="p-3 border-b text-sm font-semibold flex items-center gap-2"><Hourglass className="size-4 text-muted-foreground" /> Decision history</div>
+        {history.length ? (
+          <div className="max-h-96 overflow-y-auto nice-scroll">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Book</TableHead>
+                  <TableHead>Learner</TableHead>
+                  <TableHead className="hidden md:table-cell">Dates</TableHead>
+                  <TableHead>Decision</TableHead>
+                  <TableHead className="hidden lg:table-cell">Handled</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {history.map((r) => (
+                  <TableRow key={r.id} className={r.overdue ? "bg-destructive/5" : undefined}>
+                    <TableCell className="font-medium">{r.book}</TableCell>
+                    <TableCell>
+                      <div>{r.student}</div>
+                      <div className="text-xs text-muted-foreground">{r.classroom ?? "—"}</div>
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell text-xs text-muted-foreground">{fmtDate(r.startAt)} → {fmtDate(r.endAt)}</TableCell>
+                    <TableCell>
+                      <div className="flex flex-col gap-1 items-start">
+                        {r.status === "ISSUED"
+                          ? <Badge className="bg-emerald-600 gap-1"><Check className="size-3" /> issued</Badge>
+                          : <Badge variant="destructive" className="gap-1"><XCircle className="size-3" /> declined</Badge>}
+                        {r.overdue && <Badge className="bg-destructive gap-1"><AlertTriangle className="size-3" /> overdue</Badge>}
+                      </div>
+                    </TableCell>
+                    <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
+                      {r.handledByName ?? "—"}{r.handledAt ? ` · ${fmtDate(r.handledAt)}` : ""}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        ) : (
+          <EmptyState title="No decisions yet" hint="Accepted and declined requests appear here." />
+        )}
+      </div>
     </div>
   );
 }

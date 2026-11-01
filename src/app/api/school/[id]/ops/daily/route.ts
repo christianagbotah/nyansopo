@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
-import { generateDayCharges, settleDailyCharges, effectivePrice, applyTransportUsage, parseTeacherPerms, DEFAULT_TEACHER_PERMS, collectionAllowed, TRANSPORT_USAGES, type CollectionMode, type TeacherPerms, type TransportUsage } from "@/lib/daily-billing";
+import { generateDayCharges, settleDailyCharges, effectivePrice, applyTransportUsage, parseTeacherPerms, DEFAULT_TEACHER_PERMS, collectionAllowed, TRANSPORT_USAGES, logDailyFeeAudit, arrearsTotalCents, type CollectionMode, type TeacherPerms, type TransportUsage } from "@/lib/daily-billing";
 import { sendAutomated } from "@/lib/sms";
 import { dailyServicesReceipt } from "@/lib/receipt-payload";
+import { PAYMENT_LABELS } from "@/lib/format";
 
 // ── GET /api/school/[id]/ops/daily — services, ledger, POS, wallets, settings ──
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -201,6 +202,16 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     };
   }
 
+  // ── daily-fee audit log (iedupro daily_fee_audit_log): latest 100 wallet/charge
+  //    events — charges, payments, top-ups, adjustments — with a learner filter ──
+  const auditStudentId = q("auditStudentId");
+  const auditRows = await db.dailyFeeAudit.findMany({
+    where: { schoolId, ...(auditStudentId ? { studentId: auditStudentId } : {}) },
+    orderBy: { createdAt: "desc" },
+    take: 100,
+    include: { student: { include: { enrollments: { where: { status: "ACTIVE" }, take: 1, include: { classroom: { select: { name: true } } } } } } },
+  });
+
   return NextResponse.json({
     date: dateStr,
     services: services.map((s) => ({
@@ -235,6 +246,18 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     //    settled at the counter vs wallet deductions, with the collector breakdown
     //    for the handover report ──
     reconciliation: await buildReconciliation(),
+    // ── audit log (iedupro daily_fee_audit_log): every charge / payment / top-up /
+    //    adjustment event, newest first (latest 100, filterable by learner) ──
+    audit: auditRows.map((a) => ({
+      id: a.id, studentId: a.studentId,
+      student: `${a.student.firstName} ${a.student.lastName}`,
+      classroom: a.student.enrollments[0]?.classroom?.name ?? null,
+      actionType: a.actionType, service: a.serviceCode, amount: a.amountCents,
+      balanceBefore: a.balanceBeforeCents, balanceAfter: a.balanceAfterCents,
+      arrearsBefore: a.arrearsBeforeCents, arrearsAfter: a.arrearsAfterCents,
+      by: a.performedByName, byRole: a.performedByRole,
+      reference: a.reference, notes: a.notes, at: a.createdAt,
+    })),
     settings: {
       collectionMode,
       teacherPerms,
@@ -320,7 +343,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   if (action === "generate-day") {
     const date = new Date(body.date ?? new Date().toISOString().slice(0, 10));
-    const res = await generateDayCharges(db, schoolId, date);
+    const res = await generateDayCharges(db, schoolId, date, { performedByName: user.fullName, performedByRole: user.role });
     return NextResponse.json(res);
   }
 
@@ -362,6 +385,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const txn = await db.walletTxn.create({
       data: { schoolId, studentId, wallet, kind: "TOPUP", amountCents: amt, balanceAfter, note: note ?? null, byName: user.fullName },
     });
+    // iEduPro daily_fee_audit_log: every top-up leaves a trail
+    await logDailyFeeAudit(db, {
+      schoolId, studentId, actionType: "TOPUP", serviceCode: wallet, amountCents: amt,
+      balanceBeforeCents: (existing ? existing.prepaidCents + existing.transportCents : 0),
+      balanceAfterCents: w.prepaidCents + w.transportCents,
+      performedByName: user.fullName, performedByRole: user.role,
+      reference: txn.id,
+      notes: `${wallet === "PREPAID" ? "Prepaid" : "Transport"} wallet top-up${note ? ` — ${note}` : ""}`,
+    });
     return NextResponse.json({ wallet: w, txn });
   }
 
@@ -381,6 +413,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const txn = await db.walletTxn.create({
       data: { schoolId, studentId, wallet, kind: "ADJUST", amountCents: target - before, balanceAfter: target, note: note ?? "balance correction", byName: user.fullName },
     });
+    // iEduPro daily_fee_audit_log: balance corrections are audit-trailed with the reason
+    await logDailyFeeAudit(db, {
+      schoolId, studentId, actionType: "ADJUSTMENT", serviceCode: wallet, amountCents: target - before,
+      balanceBeforeCents: w0.prepaidCents + w0.transportCents,
+      balanceAfterCents: w.prepaidCents + w.transportCents,
+      performedByName: user.fullName, performedByRole: user.role,
+      reference: txn.id,
+      notes: `${wallet === "PREPAID" ? "Prepaid" : "Transport"} wallet set to GH₵${(target / 100).toFixed(2)} — ${note ?? "balance correction"}`,
+    });
     return NextResponse.json({ wallet: w, txn });
   }
 
@@ -393,7 +434,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     // the route fare is ONE-WAY: morning or afternoon 1×, both ways 2×, not riding 0
     if (transportUsage) {
       if (!TRANSPORT_USAGES.includes(transportUsage)) return NextResponse.json({ error: "Invalid transport usage" }, { status: 400 });
-      const applied = await applyTransportUsage(db, schoolId, studentId, new Date(body.date ?? new Date().toISOString().slice(0, 10)), transportUsage as TransportUsage);
+      const applied = await applyTransportUsage(db, schoolId, studentId, new Date(body.date ?? new Date().toISOString().slice(0, 10)), transportUsage as TransportUsage, { performedByName: user.fullName, performedByRole: user.role });
       if (transportUsage !== "NOT_USING" && !applied)
         return NextResponse.json({ error: "This learner has no active route assignment — transport fare follows the bus route." }, { status: 400 });
     }
@@ -421,9 +462,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     let walletTxnId: string | null = null;
     let payMethod = method ?? "CASH";
     let onlyCategory: string | undefined;
+    let walletBalBefore: number | null = null; // for the audit trail (total wallet credit pre-debit)
     if (walletKind === "PREPAID") {
       const w = await db.studentWallet.findUnique({ where: { studentId } });
       if (!w || w.prepaidCents < amt) return NextResponse.json({ error: `Prepaid wallet short — balance is GH₵${(w?.prepaidCents ?? 0) / 100}` }, { status: 400 });
+      walletBalBefore = w.prepaidCents + w.transportCents;
       await db.studentWallet.update({ where: { studentId }, data: { prepaidCents: { decrement: amt } } });
       const t = await db.walletTxn.create({ data: { schoolId, studentId, wallet: "PREPAID", kind: "PAY", amountCents: -amt, balanceAfter: w.prepaidCents - amt, note: reference ?? null, byName: user.fullName } });
       walletTxnId = t.id;
@@ -431,6 +474,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     } else if (walletKind === "TRANSPORT") {
       const w = await db.studentWallet.findUnique({ where: { studentId } });
       if (!w || w.transportCents < amt) return NextResponse.json({ error: `Transport wallet short — balance is GH₵${(w?.transportCents ?? 0) / 100}` }, { status: 400 });
+      walletBalBefore = w.prepaidCents + w.transportCents;
       await db.studentWallet.update({ where: { studentId }, data: { transportCents: { decrement: amt } } });
       const t = await db.walletTxn.create({ data: { schoolId, studentId, wallet: "TRANSPORT", kind: "PAY", amountCents: -amt, balanceAfter: w.transportCents - amt, note: reference ?? null, byName: user.fullName } });
       walletTxnId = t.id;
@@ -448,6 +492,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       },
     });
     const applied = await settleDailyCharges(db, payment.id, studentId, amt, onlyCategory);
+
+    // ── daily-fee audit log (iEduPro daily_fee_audit_log): every payment leaves a trail ──
+    const settledCharges = await db.dailyCharge.findMany({ where: { paymentId: payment.id }, include: { service: true } });
+    const settledServices = [...new Set(settledCharges.map((c) => c.service.name))];
+    const arrearsAfterAgg = await db.dailyCharge.aggregate({ where: { studentId, status: "OWED" }, _sum: { amountCents: true } });
+    await logDailyFeeAudit(db, {
+      schoolId, studentId, actionType: "PAYMENT",
+      serviceCode: settledServices.length === 1 ? settledServices[0] : settledServices.length ? "MULTIPLE" : "DAILY",
+      amountCents: amt,
+      ...(walletBalBefore != null ? { balanceBeforeCents: walletBalBefore, balanceAfterCents: walletBalBefore - amt } : {}),
+      arrearsBeforeCents: owedCents, arrearsAfterCents: arrearsAfterAgg._sum.amountCents ?? 0,
+      performedByName: user.fullName, performedByRole: user.role,
+      reference: payment.receiptNo,
+      notes: `${PAYMENT_LABELS[payMethod] ?? payMethod} payment${reference ? ` · ref ${reference}` : ""}${applied < amt ? ` · ${((amt - applied) / 100).toFixed(2)} not applicable to ${onlyCategory ? `${onlyCategory.toLowerCase()} charges` : "open charges"}` : ""}`,
+    });
 
     // ── mark present (iedupro §1): flip today's class attendance to PRESENT ──
     let present: string | null = null;
@@ -486,9 +545,20 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   if (action === "waive-charge") {
-    const c = await db.dailyCharge.findUnique({ where: { id: body.chargeId } });
+    const c = await db.dailyCharge.findUnique({ where: { id: body.chargeId }, include: { service: true } });
     if (!c || c.schoolId !== schoolId) return NextResponse.json({ error: "Charge not found" }, { status: 404 });
+    const wasOwed = c.status === "OWED";
+    const arrearsBefore = wasOwed ? await arrearsTotalCents(db, c.studentId) : 0;
     const updated = await db.dailyCharge.update({ where: { id: body.chargeId }, data: { status: "WAIVED" } });
+    // iEduPro daily_fee_audit_log: a waiver is an adjustment that clears arrears
+    if (wasOwed) {
+      await logDailyFeeAudit(db, {
+        schoolId, studentId: c.studentId, actionType: "ADJUSTMENT", serviceCode: c.service.name, amountCents: c.amountCents,
+        arrearsBeforeCents: arrearsBefore, arrearsAfterCents: Math.max(0, arrearsBefore - c.amountCents),
+        performedByName: user.fullName, performedByRole: user.role,
+        reference: c.id, notes: `charge waived — ${c.service.name} · ${c.date.toISOString().slice(0, 10)}${body.reason ? ` · ${body.reason}` : ""}`,
+      });
+    }
     return NextResponse.json({ charge: updated });
   }
 
@@ -497,7 +567,23 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const d = new Date(date);
     const dStart = new Date(d); dStart.setHours(0, 0, 0, 0);
     const dEnd = new Date(d); dEnd.setHours(23, 59, 59, 999);
+    const dayOwed = await db.dailyCharge.findMany({
+      where: { schoolId, studentId, date: { gte: dStart, lte: dEnd }, status: "OWED" }, include: { service: true },
+    });
     const res = await db.dailyCharge.updateMany({ where: { schoolId, studentId, date: { gte: dStart, lte: dEnd }, status: "OWED" }, data: { status: "WAIVED" } });
+    // iEduPro daily_fee_audit_log: one adjustment row for the day's waived charges
+    if (res.count && dayOwed.length) {
+      const names = [...new Set(dayOwed.map((c) => c.service.name))];
+      const waivedTotal = dayOwed.reduce((s, c) => s + c.amountCents, 0);
+      const arrearsAfter = await arrearsTotalCents(db, studentId);
+      await logDailyFeeAudit(db, {
+        schoolId, studentId, actionType: "ADJUSTMENT",
+        serviceCode: names.length === 1 ? names[0] : "MULTIPLE", amountCents: waivedTotal,
+        arrearsBeforeCents: arrearsAfter + waivedTotal, arrearsAfterCents: arrearsAfter,
+        performedByName: user.fullName, performedByRole: user.role,
+        notes: `day waived · ${dStart.toISOString().slice(0, 10)} · ${res.count} charges${body.reason ? ` · ${body.reason}` : ""}`,
+      });
+    }
     return NextResponse.json({ waived: res.count });
   }
 

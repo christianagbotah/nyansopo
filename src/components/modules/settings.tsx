@@ -10,18 +10,28 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { ModuleHeader, LoadingBlock, StatusBadge } from "@/components/ui-helpers";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { ModuleHeader, LoadingBlock, StatusBadge, StatCard, EmptyState } from "@/components/ui-helpers";
 import { SCALES_TABLE } from "@/lib/grading-scale";
 import { toast } from "@/hooks/use-toast";
-import { Settings as SettingsIcon, GraduationCap, BookOpen, Users, CalendarRange, Plus, Save, MessageSquareQuote, Sparkles, Trash2 } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { Settings as SettingsIcon, GraduationCap, BookOpen, Users, CalendarRange, Plus, Save, MessageSquareQuote, Sparkles, Trash2, Award, Pencil } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 
 export function Settings() {
-  const { currentSchoolId } = useStore();
+  const { currentSchoolId, navTarget } = useStore();
   const [data, setData] = useState<any | null>(null);
   const [busy, setBusy] = useState(false);
   const [clsOpen, setClsOpen] = useState(false);
+  const [tab, setTab] = useState("profile");
   const [form, setForm] = useState<any>({ motto: "", phone: "", email: "", curriculum: "GES", nasiaStatus: "", gnacopsStatus: "" });
+
+  /* iEduPro nested nav: preselect the WAEC Grading tab on deep link */
+  const [appliedTarget, setAppliedTarget] = useState<any>(null);
+  if (navTarget !== appliedTarget) {
+    setAppliedTarget(navTarget);
+    if (navTarget?.tab === "waec") setTab("waec");
+  }
 
   const load = () => {
     if (!currentSchoolId) return;
@@ -48,7 +58,7 @@ export function Settings() {
   return (
     <div>
       <ModuleHeader title="School Settings" description="Profile, curriculum pathway, classes, subjects and the academic calendar." />
-      <Tabs defaultValue="profile">
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="flex-wrap">
           <TabsTrigger value="profile">Profile & curriculum</TabsTrigger>
           <TabsTrigger value="classes">Classes ({data.classrooms.length})</TabsTrigger>
@@ -56,6 +66,7 @@ export function Settings() {
           <TabsTrigger value="calendar">Calendar</TabsTrigger>
           <TabsTrigger value="staff">Staff ({data.staff.length})</TabsTrigger>
           <TabsTrigger value="grading">Grading scale</TabsTrigger>
+          <TabsTrigger value="waec" className="gap-1.5"><Award className="size-4" /> WAEC grading</TabsTrigger>
           <TabsTrigger value="reportlib">Report library ({(data.remarkTemplates?.length ?? 0) + (data.conductItems?.length ?? 0)})</TabsTrigger>
         </TabsList>
 
@@ -211,6 +222,10 @@ export function Settings() {
               <p className="text-xs text-muted-foreground mt-3">{SCALES_TABLE[s.curriculum]?.examLabel} — class score 30% + exam 70% (GES basic convention).</p>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="waec">
+          <WaecGradingTab />
         </TabsContent>
 
         <TabsContent value="reportlib">
@@ -409,5 +424,176 @@ function ReportLibraryTab({ data, onChanged }: { data: any; onChanged: () => voi
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   WAEC RAW-SCORE GRADING (CI3 raw_score_grade parity) — the A1–F9
+   scale used by exam-marks SMS, cumulative sheets and BECE
+   aggregates. CRUD + CI3 stats (pass mark = lowest markFrom ≥ 50). */
+type RawGradeRow = { id: string; name: string; gradePoint: string; gradePointNumeric: number; markFrom: number; markUpto: number; comment: string | null };
+
+function WaecGradingTab() {
+  const { currentSchoolId } = useStore();
+  const [data, setData] = useState<{ grades: RawGradeRow[]; stats: { total: number; highest: number; lowest: number; passMark: number } } | null>(null);
+  const [editing, setEditing] = useState<RawGradeRow | "new" | null>(null);
+  const [deleting, setDeleting] = useState<RawGradeRow | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = () => {
+    if (!currentSchoolId) return;
+    apiGet<{ grades: RawGradeRow[]; stats: { total: number; highest: number; lowest: number; passMark: number } }>(`/api/school/${currentSchoolId}/ops/academics?tab=rawgrades`)
+      .then(setData)
+      .catch((e) => toast({ title: "Load failed", description: e.message, variant: "destructive" }));
+  };
+  useEffect(load, [currentSchoolId]);
+
+  async function remove(g: RawGradeRow) {
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/academics`, { action: "rawgrade.delete", id: g.id });
+      toast({ title: "Grade deleted", description: `${g.gradePoint} (${g.name}) removed from the scale.` });
+      setDeleting(null);
+      load();
+    } catch (e: any) {
+      toast({ title: "Delete failed", description: e.message, variant: "destructive" });
+    } finally { setBusy(false); }
+  }
+
+  if (!data) return <LoadingBlock label="Loading WAEC grading scale…" />;
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <StatCard icon={<Award className="size-4" />} label="Total grades" value={data.stats.total} tone="primary" sub="A1 … F9 bands" />
+        <StatCard label="Highest mark" value={`${data.stats.highest}%`} sub="top of the scale" />
+        <StatCard label="Lowest mark" value={`${data.stats.lowest}%`} sub="bottom of the scale" />
+        <StatCard label="Pass mark" value={`${data.stats.passMark}%`} tone="gold" sub="lowest credit band (≥ 50)" />
+      </div>
+
+      <Card>
+        <CardHeader className="pb-3 flex-row flex-wrap items-center justify-between gap-2 space-y-0">
+          <div>
+            <CardTitle className="text-base">WAEC raw-score grades</CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">Raw exam percentages map onto these bands for exam-marks SMS, cumulative sheets and the BECE aggregate (grade points summed).</p>
+          </div>
+          <Button size="sm" className="gap-1.5" onClick={() => setEditing("new")}><Plus className="size-4" /> Add grade</Button>
+        </CardHeader>
+        <CardContent className="p-0">
+          {data.grades.length === 0 ? (
+            <EmptyState icon={<Award className="size-5" />} title="No grades configured" hint="Add the A1–F9 WAEC bands so raw scores can be graded." />
+          ) : (
+            <div className="overflow-x-auto nice-scroll">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-secondary/70 backdrop-blur">
+                  <tr className="text-left border-b">
+                    <th className="px-3 py-2.5 font-medium">Grade</th>
+                    <th className="px-3 py-2.5 font-medium">Remark</th>
+                    <th className="px-3 py-2.5 font-medium text-right">Numeric</th>
+                    <th className="px-3 py-2.5 font-medium text-right">Marks</th>
+                    <th className="px-3 py-2.5 font-medium hidden md:table-cell">Comment</th>
+                    <th className="px-3 py-2.5"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.grades.map((g) => (
+                    <tr key={g.id} className="border-b last:border-0 hover:bg-secondary/30">
+                      <td className="px-3 py-2.5">
+                        <Badge className={cn("font-semibold", g.markFrom >= 50 ? "bg-emerald-600" : g.markFrom >= 40 ? "bg-amber-600" : "bg-red-600")}>{g.gradePoint}</Badge>
+                      </td>
+                      <td className="px-3 py-2.5 font-medium">{g.name}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums">{g.gradePointNumeric}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums">{g.markFrom}–{g.markUpto}%</td>
+                      <td className="px-3 py-2.5 text-muted-foreground hidden md:table-cell">{g.comment ?? "—"}</td>
+                      <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                        <Button size="sm" variant="outline" className="h-8 gap-1" onClick={() => setEditing(g)}><Pencil className="size-3.5" /> Edit</Button>
+                        <Button size="sm" variant="ghost" className="h-8 size-8 p-0 text-destructive ml-1" onClick={() => setDeleting(g)} aria-label={`Delete ${g.gradePoint}`}><Trash2 className="size-4" /></Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <RawGradeDialog grade={editing} onOpenChange={(o) => !o && setEditing(null)} onDone={() => { setEditing(null); load(); }} />
+
+      <AlertDialog open={!!deleting} onOpenChange={(o) => !o && setDeleting(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete grade {deleting?.gradePoint}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleting?.name} ({deleting?.markFrom}–{deleting?.markUpto}%) will be removed from the WAEC scale. Raw scores in that band will fall through to the next matching grade.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" disabled={busy} onClick={() => deleting && remove(deleting)}>Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
+function RawGradeDialog({ grade, onOpenChange, onDone }: { grade: RawGradeRow | "new" | null; onOpenChange: (o: boolean) => void; onDone: () => void }) {
+  const { currentSchoolId } = useStore();
+  const isNew = grade === "new";
+  const [form, setForm] = useState({ name: "", gradePoint: "", gradePointNumeric: "1", markFrom: "0", markUpto: "100", comment: "" });
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (grade && grade !== "new") {
+      setForm({ name: grade.name, gradePoint: grade.gradePoint, gradePointNumeric: String(grade.gradePointNumeric), markFrom: String(grade.markFrom), markUpto: String(grade.markUpto), comment: grade.comment ?? "" });
+    } else if (grade === "new") {
+      setForm({ name: "CREDIT", gradePoint: "", gradePointNumeric: "1", markFrom: "50", markUpto: "54", comment: "" });
+    }
+  }, [grade]);
+
+  async function submit() {
+    if (!form.name.trim() || !form.gradePoint.trim()) { toast({ title: "Remark name and grade point are required" }); return; }
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/academics`, {
+        action: isNew ? "rawgrade.create" : "rawgrade.update",
+        id: isNew ? undefined : (grade as RawGradeRow).id,
+        name: form.name, gradePoint: form.gradePoint, gradePointNumeric: Number(form.gradePointNumeric) || 0,
+        markFrom: Number(form.markFrom), markUpto: Number(form.markUpto), comment: form.comment || null,
+      });
+      toast({ title: isNew ? "Grade added" : "Grade updated", description: `${form.gradePoint} · ${form.name} (${form.markFrom}–${form.markUpto}%).` });
+      onDone();
+    } catch (e: any) {
+      toast({ title: "Failed", description: e.message, variant: "destructive" });
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <Dialog open={!!grade} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>{isNew ? "Add WAEC grade" : `Edit grade ${grade ? grade.gradePoint : ""}`}</DialogTitle></DialogHeader>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5"><Label>Grade point *</Label><Input placeholder="e.g. C6" value={form.gradePoint} onChange={(e) => setForm({ ...form, gradePoint: e.target.value.toUpperCase().slice(0, 8) })} /></div>
+          <div className="space-y-1.5">
+            <Label>Remark name *</Label>
+            <Select value={form.name} onValueChange={(v) => setForm({ ...form, name: v })}>
+              <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+              <SelectContent>
+                {["EXCELLENT", "VERY GOOD", "GOOD", "CREDIT", "PASS", "FAIL"].map((n) => <SelectItem key={n} value={n}>{n.charAt(0) + n.slice(1).toLowerCase()}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5"><Label>Mark from (%)</Label><Input type="number" value={form.markFrom} onChange={(e) => setForm({ ...form, markFrom: e.target.value })} /></div>
+          <div className="space-y-1.5"><Label>Mark up to (%)</Label><Input type="number" value={form.markUpto} onChange={(e) => setForm({ ...form, markUpto: e.target.value })} /></div>
+          <div className="space-y-1.5"><Label>Grade numeric (BECE weight)</Label><Input type="number" value={form.gradePointNumeric} onChange={(e) => setForm({ ...form, gradePointNumeric: e.target.value })} /></div>
+          <div className="space-y-1.5 col-span-2"><Label>Comment</Label><Input placeholder="Shown with the grade" value={form.comment} onChange={(e) => setForm({ ...form, comment: e.target.value })} /></div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={submit} disabled={busy}>{busy ? "Saving…" : isNew ? "Add grade" : "Save grade"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

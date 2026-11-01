@@ -75,7 +75,15 @@ EXAMID=$(echo "$EJSON" | jq "[e for e in d['exams'] if e['status']=='PUBLISHED' 
 SUB=$(curl -s -X POST "$BASE/api/school/$SCHOOL/ops/exams" -H 'content-type: application/json' -H "x-user-id: $STUDENT_USER" -d "{\"action\":\"submit-attempt\",\"examId\":\"$EXAMID\",\"studentId\":\"$STUDENT_ID\",\"answers\":{\"0\":\"A\",\"1\":\"C\",\"2\":\"B\",\"3\":\"A\"}}")
 SCORE=$(echo "$SUB" | jq "d['score']")
 MAX=$(echo "$SUB" | jq "d['max']")
-[ "$SCORE" = "8" ] && [ "$MAX" = "8" ] && ok "auto-marked perfect 8/8 (all four correct keys)" || bad "auto-mark wrong: $SUB"
+if [ "$SCORE" = "8" ] && [ "$MAX" = "8" ]; then
+  ok "auto-marked perfect 8/8 (all four correct keys)"
+elif echo "$SUB" | grep -q "Already submitted"; then
+  # idempotent re-run: verify the existing attempt already scored 8/8
+  MYScore=$(curl -s "$BASE/api/school/$SCHOOL/ops/exams" -H "x-user-id: $STUDENT_USER" | jq "[e for e in d['exams'] if e['id']=='$EXAMID'][0]['attempts'][0]['score']")
+  [ "$MYScore" = "8" ] && ok "re-run idempotent — existing attempt verified 8/8" || bad "existing attempt score wrong: $MYScore"
+else
+  bad "auto-mark wrong: $SUB"
+fi
 DUP=$(curl -s -X POST "$BASE/api/school/$SCHOOL/ops/exams" -H 'content-type: application/json' -H "x-user-id: $STUDENT_USER" -d "{\"action\":\"submit-attempt\",\"examId\":\"$EXAMID\",\"studentId\":\"$STUDENT_ID\",\"answers\":{\"0\":\"A\"}}" | jq "d.get('error','')")
 [ -n "$DUP" ] && ok "double submit rejected: $DUP" || bad "double submission allowed"
 

@@ -20,7 +20,7 @@ import { LogoMark, KenteStrip } from "@/components/brand";
 import { amountInWords } from "@/components/receipts";
 import {
   TrendingUp, Wallet, AlertTriangle, Receipt, PieChart, BookOpenText, Timer, FileText, Plus,
-  ArrowUpRight, ArrowDownLeft, Printer, Banknote, Trash2, Search, Users, ReceiptText,
+  ArrowUpRight, ArrowDownLeft, Printer, Banknote, Trash2, Search, Users, ReceiptText, Download,
 } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
@@ -186,33 +186,9 @@ export function Finance() {
           <LedgerTab data={data} yearId={yearId} />
         </TabsContent>
 
-        {/* ── AGING ── */}
+        {/* ── AGING (CI3 advanced receivables aging — dueAt-based buckets) ── */}
         <TabsContent value="aging">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-4">
-            {[
-              { label: "Current (0–30 days)", v: data.aging.current, tone: "default" as const, icon: <Timer className="size-4" /> },
-              { label: "31–60 days", v: data.aging.b31, tone: "primary" as const, icon: <AlertTriangle className="size-4" /> },
-              { label: "61–90 days", v: data.aging.b61, tone: "gold" as const, icon: <AlertTriangle className="size-4" /> },
-              { label: "Over 90 days", v: data.aging.b90, tone: "danger" as const, icon: <AlertTriangle className="size-4" /> },
-            ].map((b) => (
-              <StatCard key={b.label} icon={b.icon} label={b.label} value={fmtCedi(b.v.amount, { compact: true })} tone={b.tone} sub={`${b.v.students} learners`} />
-            ))}
-          </div>
-          <Card>
-            <CardHeader className="pb-3"><CardTitle className="text-base">Collection priorities</CardTitle></CardHeader>
-            <CardContent className="text-sm text-muted-foreground space-y-2">
-              <p>
-                <b className="text-foreground">{data.aging.b90.students}</b> learners are beyond 90 days — these belong on the association defaulter watch-list (Fees &amp; Billing → flag) and qualify for guardian SMS campaigns from the SMS Centre.
-              </p>
-              <p>
-                Use <b className="text-foreground">Terminal bills</b> to print end-of-term arrears slips with next-term bills attached, exactly like the paper terminal bills parents expect.
-              </p>
-              <div className="rounded-lg border bg-secondary/40 p-3 flex items-center justify-between">
-                <span>Total receivables across all buckets</span>
-                <b className="tabular-nums text-foreground">{fmtCedi(data.aging.current.amount + data.aging.b31.amount + data.aging.b61.amount + data.aging.b90.amount)}</b>
-              </div>
-            </CardContent>
-          </Card>
+          <AgingTab />
         </TabsContent>
 
         {/* ── TERMINAL BILLS ── */}
@@ -840,6 +816,169 @@ function CashierTab() {
           </div>
           <p className="px-3 py-2 text-[10px] text-muted-foreground border-t">
             {schoolName} · cashier collections report · rendered {new Date().toLocaleString("en-GB")}
+          </p>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+/* ── AGING REPORT (CI3 advanced receivables aging — dueAt-based buckets) ──
+   Buckets: Current 0–30 (#10b981), 31–60 (#f59e0b), 61–90 (#ef4444), Over 90 (#991b1b).
+   Age is counted from the due date when present, else the invoice date. */
+type AgingRow = {
+  student: string; classroom: string | null; invoiceNo: string; invoiceDate: string;
+  dueDate: string | null; daysOutstanding: number; balanceCents: number; bucket: "current" | "d31" | "d61" | "d90";
+};
+type AgingReport = {
+  summary: { currentCents: number; currentCount: number; d31Cents: number; d31Count: number; d61Cents: number; d61Count: number; d90Cents: number; d90Count: number };
+  rows: AgingRow[];
+  totalCents: number;
+  totalCount: number;
+};
+
+const AGING_BUCKETS: { key: "current" | "d31" | "d61" | "d90"; label: string; color: string }[] = [
+  { key: "current", label: "Current (0–30 days)", color: "#10b981" },
+  { key: "d31", label: "31–60 days", color: "#f59e0b" },
+  { key: "d61", label: "61–90 days", color: "#ef4444" },
+  { key: "d90", label: "Over 90 days", color: "#991b1b" },
+];
+
+function AgingTab() {
+  const { currentSchoolId, schools } = useStore();
+  const schoolName = schools.find((s) => s.id === currentSchoolId)?.name ?? "";
+  const [report, setReport] = useState<AgingReport | null>(null);
+  const [busy, setBusy] = useState(true);
+  const [filter, setFilter] = useState<"all" | AgingRow["bucket"]>("all");
+
+  const load = () => {
+    if (!currentSchoolId) return;
+    setBusy(true);
+    apiGet<AgingReport>(`/api/school/${currentSchoolId}/ops/reports?tab=aging`)
+      .then(setReport)
+      .catch((e) => toast({ title: "Could not load aging report", description: e.message, variant: "destructive" }))
+      .finally(() => setBusy(false));
+  };
+  useEffect(() => { load(); }, [currentSchoolId]); // eslint-disable-line react-hooks/set-state-in-effect
+
+  const rows = (report?.rows ?? []).filter((r) => filter === "all" || r.bucket === filter);
+
+  function exportCsv() {
+    if (!report) return;
+    const header = ["Student", "Class", "Invoice", "Invoice Date", "Due Date", "Days Outstanding", "Balance (GH₵)", "Aging Bucket"];
+    const lines = report.rows.map((r) => [
+      r.student, r.classroom ?? "", r.invoiceNo, r.invoiceDate.slice(0, 10), r.dueDate ? r.dueDate.slice(0, 10) : "",
+      r.daysOutstanding, r.balanceCents / 100, AGING_BUCKETS.find((b) => b.key === r.bucket)?.label ?? r.bucket,
+    ]);
+    lines.push(["", "", "", "", "TOTAL", "", report.totalCents / 100, `${report.totalCount} invoices`]);
+    const csv = [header, ...lines].map((l) => l.map((c) => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    const a = document.createElement("a"); a.href = url; a.download = "receivables-aging.csv"; a.click(); URL.revokeObjectURL(url);
+  }
+
+  if (!report && busy) return <Card><CardContent><LoadingBlock label="Aging the receivables…" /></CardContent></Card>;
+
+  return (
+    <div className="space-y-4">
+      {/* bucket cards — CI3 colors */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 no-print">
+        {AGING_BUCKETS.map((b) => {
+          const cents = report ? report.summary[`${b.key}Cents` as keyof AgingReport["summary"]] as number : 0;
+          const count = report ? report.summary[`${b.key}Count` as keyof AgingReport["summary"]] as number : 0;
+          return (
+            <button key={b.key} type="button" onClick={() => setFilter(filter === b.key ? "all" : b.key)}
+              className={`rounded-xl border bg-card p-4 text-left transition-colors ${filter === b.key ? "ring-2 ring-offset-background" : "hover:bg-secondary/40"}`}
+              style={filter === b.key ? { boxShadow: `0 0 0 2px ${b.color}` } : undefined}>
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{b.label}</span>
+                <span className="size-2.5 rounded-full" style={{ backgroundColor: b.color }} />
+              </div>
+              <div className="mt-2 text-2xl font-bold tabular-nums" style={{ color: b.color }}>{fmtCedi(cents, { compact: true })}</div>
+              <div className="mt-1 text-xs text-muted-foreground">{count} invoice{count === 1 ? "" : "s"}</div>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-2 no-print">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Timer className="size-4" />
+          {filter === "all"
+            ? <>All {report?.totalCount ?? 0} open invoices · <b className="text-foreground tabular-nums">{fmtCedi(report?.totalCents ?? 0)}</b> receivables</>
+            : <>Filtered to <b className="text-foreground">{AGING_BUCKETS.find((b) => b.key === filter)?.label}</b> — <button className="underline" onClick={() => setFilter("all")}>clear</button></>}
+        </div>
+        <div className="flex gap-2">
+          <Button size="sm" variant="outline" className="gap-1.5" disabled={!report} onClick={exportCsv}><Download className="size-4" /> Export CSV</Button>
+          <Button size="sm" variant="outline" className="gap-1.5" disabled={!report} onClick={() => window.print()}><Printer className="size-4" /> Print</Button>
+          <Button size="sm" variant="ghost" className="gap-1.5" onClick={load}><ArrowUpRight className="size-4" /> Refresh</Button>
+        </div>
+      </div>
+
+      {/* printable aging statement */}
+      <div className="print-area">
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Receivables aging — {schoolName}</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Aged from the due date when set (invoice date otherwise) · rendered {new Date().toLocaleString("en-GB")}
+            </p>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="overflow-x-auto nice-scroll max-h-[560px]">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-secondary/70 backdrop-blur">
+                  <tr className="text-left border-b">
+                    <th className="px-3 py-2.5 font-medium">Student</th>
+                    <th className="px-3 py-2.5 font-medium hidden md:table-cell">Class</th>
+                    <th className="px-3 py-2.5 font-medium">Invoice</th>
+                    <th className="px-3 py-2.5 font-medium hidden sm:table-cell">Date</th>
+                    <th className="px-3 py-2.5 font-medium text-right">Days outstanding</th>
+                    <th className="px-3 py-2.5 font-medium text-right">Balance</th>
+                    <th className="px-3 py-2.5 font-medium">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.length === 0 && <tr><td colSpan={7}><EmptyState title="No open receivables" hint="Every invoice in this bucket is settled — the school is whole." /></td></tr>}
+                  {rows.map((r) => {
+                    const b = AGING_BUCKETS.find((x) => x.key === r.bucket)!;
+                    return (
+                      <tr key={r.invoiceNo} className="border-b last:border-0 hover:bg-secondary/30">
+                        <td className="px-3 py-2.5 font-medium">{r.student}</td>
+                        <td className="px-3 py-2.5 hidden md:table-cell text-muted-foreground">{r.classroom ?? "—"}</td>
+                        <td className="px-3 py-2.5 font-mono text-xs">{r.invoiceNo}</td>
+                        <td className="px-3 py-2.5 hidden sm:table-cell text-muted-foreground whitespace-nowrap">{fmtDate(r.invoiceDate)}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums">{r.daysOutstanding}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-destructive">{fmtCedi(r.balanceCents)}</td>
+                        <td className="px-3 py-2.5">
+                          <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full text-white whitespace-nowrap" style={{ backgroundColor: b.color }}>{b.label}</span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 border-t">
+              {AGING_BUCKETS.map((b) => (
+                <div key={b.key} className="px-4 py-2.5 border-r last:border-0">
+                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{b.label}</div>
+                  <div className="text-sm font-bold tabular-nums" style={{ color: b.color }}>
+                    {fmtCedi(report ? (report.summary[`${b.key}Cents` as keyof AgingReport["summary"]] as number) : 0)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card className="no-print">
+        <CardContent className="text-sm text-muted-foreground space-y-2 pt-5">
+          <p>
+            <b className="text-foreground">{report?.summary.d90Count ?? 0}</b> invoices are beyond 90 days — these belong on the association defaulter watch-list (Fees &amp; Billing → flag) and qualify for guardian SMS campaigns from the SMS Centre.
+          </p>
+          <p>
+            Use <b className="text-foreground">Terminal bills</b> to print end-of-term arrears slips with next-term bills attached, exactly like the paper terminal bills parents expect.
           </p>
         </CardContent>
       </Card>

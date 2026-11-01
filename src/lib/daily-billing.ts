@@ -56,6 +56,89 @@ export function effectivePrice(
   return enrollment?.priceCentsOverride ?? classRateCents ?? svc.priceCents;
 }
 
+// ── Daily-fee audit log (iEduPro daily_fee_audit_log parity) ──
+//  Every wallet/charge event writes an immutable audit row: action type, the
+//  service it relates to, amount, wallet balance before/after, arrears
+//  before/after, who performed it, reference and notes. Writes are
+//  best-effort — an audit failure must never break a payment or charge.
+export type DailyFeeAuditAction =
+  | "CHARGE" | "CHARGE_REVERSAL" | "PAYMENT" | "PAYMENT_REVERSAL"
+  | "TOPUP" | "ADJUSTMENT" | "RECONCILIATION";
+
+export type DailyFeeAuditInput = {
+  schoolId: string;
+  studentId: string;
+  actionType: DailyFeeAuditAction;
+  /** the service the event relates to (service name, wallet name, or MULTIPLE) */
+  serviceCode: string;
+  amountCents: number;
+  /** wallet balance (prepaid + transport) before/after — derived from current state when omitted */
+  balanceBeforeCents?: number;
+  balanceAfterCents?: number;
+  /** arrears (sum of OWED daily charges) before/after — derived from current state when omitted */
+  arrearsBeforeCents?: number;
+  arrearsAfterCents?: number;
+  /** the acting user; falls back to "System" when the lib doesn't know the actor */
+  performedByName?: string;
+  performedByRole?: string;
+  reference?: string | null;
+  notes?: string | null;
+};
+
+/** Write one DailyFeeAudit row (iEduPro daily_fee_audit_log). Any before/after
+ *  figure not supplied is derived from the current ledger state. Never throws. */
+export async function logDailyFeeAudit(db: PrismaClient, input: DailyFeeAuditInput): Promise<void> {
+  try {
+    let balB = input.balanceBeforeCents;
+    let balA = input.balanceAfterCents;
+    let arrB = input.arrearsBeforeCents;
+    let arrA = input.arrearsAfterCents;
+    if (balB == null || balA == null) {
+      const w = await db.studentWallet.findUnique({ where: { studentId: input.studentId } });
+      const total = (w?.prepaidCents ?? 0) + (w?.transportCents ?? 0);
+      if (balB == null) balB = total;
+      if (balA == null) balA = total;
+    }
+    if (arrB == null || arrA == null) {
+      const owed = await db.dailyCharge.aggregate({ where: { studentId: input.studentId, status: "OWED" }, _sum: { amountCents: true } });
+      const total = owed._sum.amountCents ?? 0;
+      if (arrB == null) arrB = total;
+      if (arrA == null) arrA = total;
+    }
+    await db.dailyFeeAudit.create({
+      data: {
+        schoolId: input.schoolId,
+        studentId: input.studentId,
+        actionType: input.actionType,
+        serviceCode: input.serviceCode,
+        amountCents: Math.round(input.amountCents || 0),
+        balanceBeforeCents: balB ?? 0,
+        balanceAfterCents: balA ?? 0,
+        arrearsBeforeCents: arrB ?? 0,
+        arrearsAfterCents: arrA ?? 0,
+        performedByName: input.performedByName?.trim() || "System",
+        performedByRole: input.performedByRole?.trim() || "SYSTEM",
+        reference: input.reference ?? null,
+        notes: input.notes ?? null,
+      },
+    });
+  } catch {
+    // best-effort: an audit failure must never break the billing flow
+  }
+}
+
+/** Total wallet credit for a learner (prepaid + transport), 0 when no wallet. */
+export async function walletTotalCents(db: PrismaClient, studentId: string): Promise<number> {
+  const w = await db.studentWallet.findUnique({ where: { studentId } });
+  return (w?.prepaidCents ?? 0) + (w?.transportCents ?? 0);
+}
+
+/** Current daily-fee arrears for a learner (sum of OWED charges). */
+export async function arrearsTotalCents(db: PrismaClient, studentId: string): Promise<number> {
+  const owed = await db.dailyCharge.aggregate({ where: { studentId, status: "OWED" }, _sum: { amountCents: true } });
+  return owed._sum.amountCents ?? 0;
+}
+
 // ── Transport fare resolution (CI3 §record_transport_decision / mark_boarding) ──
 // one-way fare for a learner = stop-level override (pickup/drop stop) → route per-trip fare
 export type TransportFareInfo = {
@@ -89,8 +172,15 @@ export async function resolveTransportFare(db: PrismaClient, studentId: string):
 
 /** Generate charges for one school day for all active enrolments whose service runs that weekday.
  *  TRANSPORT-category services are skipped here — iEduPro bills a transport day-charge
- *  only when a direction is confirmed (counter usage pick or conductor boarding mark). */
-export async function generateDayCharges(db: PrismaClient, schoolId: string, date: Date) {
+ *  only when a direction is confirmed (counter usage pick or conductor boarding mark).
+ *  Each created charge writes a DailyFeeAudit row (iEduPro daily_fee_audit_log);
+ *  pass the acting user so the trail shows who generated the day. */
+export async function generateDayCharges(
+  db: PrismaClient,
+  schoolId: string,
+  date: Date,
+  opts?: { performedByName?: string; performedByRole?: string },
+) {
   const day = new Date(date); day.setHours(0, 0, 0, 0);
   const weekday = day.getDay(); // 0 Sun … 6 Sat
   const services = await db.dailyService.findMany({ where: { schoolId, active: true }, include: { classRates: true } });
@@ -121,6 +211,12 @@ export async function generateDayCharges(db: PrismaClient, schoolId: string, dat
   });
   const weeklySeen = new Set(weeklyChargesThisWeek.map((c) => `${c.serviceId}:${c.studentId}`));
 
+  // audit-trail baselines (iEduPro daily_fee_audit_log): per-learner arrears + wallet totals
+  const owedAgg = await db.dailyCharge.groupBy({ by: ["studentId"], where: { schoolId, status: "OWED" }, _sum: { amountCents: true } });
+  const arrearsByStudent = new Map(owedAgg.map((g) => [g.studentId, g._sum.amountCents ?? 0]));
+  const walletRows = await db.studentWallet.findMany({ where: { schoolId }, select: { studentId: true, prepaidCents: true, transportCents: true } });
+  const walletByStudent = new Map(walletRows.map((w) => [w.studentId, w.prepaidCents + w.transportCents]));
+
   let created = 0, skipped = 0, transportSkipped = 0;
   for (const svc of services) {
     if (svc.category === "TRANSPORT") { transportSkipped += enrollments.filter((e) => e.serviceId === svc.id).length; continue; }
@@ -135,8 +231,20 @@ export async function generateDayCharges(db: PrismaClient, schoolId: string, dat
       const classRate = classroomByStudent.get(en.studentId) ? rates.get(classroomByStudent.get(en.studentId)!) ?? null : null;
       const amount = effectivePrice(svc, en, classRate);
       if (amount <= 0) { skipped++; continue; }
-      await db.dailyCharge.create({ data: { serviceId: svc.id, studentId: en.studentId, schoolId, date: day, amountCents: amount } });
+      const charge = await db.dailyCharge.create({ data: { serviceId: svc.id, studentId: en.studentId, schoolId, date: day, amountCents: amount } });
       created++;
+      // iEduPro daily_fee_audit_log: a CHARGE row per successful daily charge creation
+      const arrearsBefore = arrearsByStudent.get(en.studentId) ?? 0;
+      arrearsByStudent.set(en.studentId, arrearsBefore + amount);
+      const walletTotal = walletByStudent.get(en.studentId) ?? 0;
+      await logDailyFeeAudit(db, {
+        schoolId, studentId: en.studentId, actionType: "CHARGE", serviceCode: svc.name, amountCents: amount,
+        balanceBeforeCents: walletTotal, balanceAfterCents: walletTotal,
+        arrearsBeforeCents: arrearsBefore, arrearsAfterCents: arrearsBefore + amount,
+        performedByName: opts?.performedByName, performedByRole: opts?.performedByRole,
+        reference: charge.id,
+        notes: `day charge · ${svc.name} · ${day.toISOString().slice(0, 10)}`,
+      });
       if (svc.chargeMode === "WEEKLY") weeklySeen.add(`${svc.id}:${en.studentId}`);
     }
   }
@@ -165,8 +273,16 @@ export function usageFare(onewayCents: number, boardingFareCents?: number | null
 /** Apply a usage choice to a learner's transport-fare charge on a given day.
  *  iEduPro parity: the charge is created lazily here (a direction pick at the
  *  counter materialises the day's transport bill). Returns the charge, or null
- *  when the learner has no active route assignment. */
-export async function applyTransportUsage(db: PrismaClient, schoolId: string, studentId: string, date: Date, usage: TransportUsage) {
+ *  when the learner has no active route assignment. Charge creations and fare
+ *  adjustments are audit-logged (iEduPro daily_fee_audit_log). */
+export async function applyTransportUsage(
+  db: PrismaClient,
+  schoolId: string,
+  studentId: string,
+  date: Date,
+  usage: TransportUsage,
+  opts?: { performedByName?: string; performedByRole?: string },
+) {
   const fare = await resolveTransportFare(db, studentId);
   if (!fare) return null; // CI3: "Student not assigned to any route"
   const dStart = new Date(date); dStart.setHours(0, 0, 0, 0);
@@ -186,13 +302,25 @@ export async function applyTransportUsage(db: PrismaClient, schoolId: string, st
     include: { service: true },
   });
   if (!charge) {
-    return db.dailyCharge.create({
+    const createdCharge = await db.dailyCharge.create({
       data: {
         serviceId: svc.id, studentId, schoolId, date: dStart,
         amountCents: amount, usage,
         status: usage === "NOT_USING" ? "WAIVED" : "OWED",
       },
     });
+    if (createdCharge.status === "OWED" && amount > 0) {
+      // iEduPro daily_fee_audit_log: the direction pick materialised the day's fare
+      const arrearsAfter = await arrearsTotalCents(db, studentId);
+      await logDailyFeeAudit(db, {
+        schoolId, studentId, actionType: "CHARGE", serviceCode: svc.name, amountCents: amount,
+        arrearsBeforeCents: arrearsAfter - amount, arrearsAfterCents: arrearsAfter,
+        performedByName: opts?.performedByName, performedByRole: opts?.performedByRole,
+        reference: createdCharge.id,
+        notes: `transport fare · ${usage.toLowerCase()} · ${dStart.toISOString().slice(0, 10)}`,
+      });
+    }
+    return createdCharge;
   }
   if (charge.status === "PAID") {
     // already settled — only stamp the usage marker
@@ -201,7 +329,38 @@ export async function applyTransportUsage(db: PrismaClient, schoolId: string, st
   let status = charge.status;
   if (usage === "NOT_USING") status = "WAIVED";
   else if (status === "WAIVED") status = "OWED"; // re-instating a waived charge
-  return db.dailyCharge.update({ where: { id: charge.id }, data: { usage, amountCents: amount, status } });
+  const updated = await db.dailyCharge.update({ where: { id: charge.id }, data: { usage, amountCents: amount, status } });
+  // audit the fare change when it moves what the learner owes (amount change or waive/re-instate)
+  if (charge.status === "OWED" && status === "OWED" && amount !== charge.amountCents) {
+    const delta = amount - charge.amountCents;
+    const arrearsAfter = await arrearsTotalCents(db, studentId);
+    await logDailyFeeAudit(db, {
+      schoolId, studentId, actionType: "CHARGE", serviceCode: charge.service.name, amountCents: delta,
+      arrearsBeforeCents: arrearsAfter - delta, arrearsAfterCents: arrearsAfter,
+      performedByName: opts?.performedByName, performedByRole: opts?.performedByRole,
+      reference: charge.id,
+      notes: `transport fare adjusted · ${usage.toLowerCase()} · ${dStart.toISOString().slice(0, 10)}`,
+    });
+  } else if (charge.status === "OWED" && status === "WAIVED") {
+    const arrearsAfter = await arrearsTotalCents(db, studentId);
+    await logDailyFeeAudit(db, {
+      schoolId, studentId, actionType: "ADJUSTMENT", serviceCode: charge.service.name, amountCents: charge.amountCents,
+      arrearsBeforeCents: arrearsAfter + charge.amountCents, arrearsAfterCents: arrearsAfter,
+      performedByName: opts?.performedByName, performedByRole: opts?.performedByRole,
+      reference: charge.id,
+      notes: `transport fare waived · not using · ${dStart.toISOString().slice(0, 10)}`,
+    });
+  } else if (charge.status === "WAIVED" && status === "OWED") {
+    const arrearsAfter = await arrearsTotalCents(db, studentId);
+    await logDailyFeeAudit(db, {
+      schoolId, studentId, actionType: "CHARGE", serviceCode: charge.service.name, amountCents: amount,
+      arrearsBeforeCents: arrearsAfter - amount, arrearsAfterCents: arrearsAfter,
+      performedByName: opts?.performedByName, performedByRole: opts?.performedByRole,
+      reference: charge.id,
+      notes: `transport fare re-instated · ${usage.toLowerCase()} · ${dStart.toISOString().slice(0, 10)}`,
+    });
+  }
+  return updated;
 }
 
 // ── Daily-fee collection policy (iedupro §1) ──

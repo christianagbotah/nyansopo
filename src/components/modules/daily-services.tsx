@@ -12,9 +12,9 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatCard, ModuleHeader, LoadingBlock, EmptyState } from "@/components/ui-helpers";
-import { fmtCedi, fmtDate, PAYMENT_LABELS } from "@/lib/format";
+import { fmtCedi, fmtDate, fmtDateTime, PAYMENT_LABELS } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
-import { UtensilsCrossed, Wallet, CalendarPlus, Plus, TrendingUp, Search, Droplets, BookOpenCheck, Coffee, HandCoins, CheckCircle2, Printer, Percent, Bus, Settings2, CircleDollarSign, ArrowDownToLine, History, BadgeCheck, UserCheck, Landmark } from "lucide-react";
+import { UtensilsCrossed, Wallet, CalendarPlus, Plus, TrendingUp, Search, Droplets, BookOpenCheck, Coffee, HandCoins, CheckCircle2, Printer, Percent, Bus, Settings2, CircleDollarSign, ArrowDownToLine, History, BadgeCheck, UserCheck, Landmark, ScrollText } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ReceiptDocument } from "@/components/receipts";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -41,6 +41,22 @@ type Reconciliation = {
   billed: number; collected: number; waived: number; outstanding: number; counter: number; walletPays: number; variance: number; txns: number;
   byCollector: { name: string; counter: number; receipts: number; wallet: number; total: number }[];
 };
+// iEduPro daily_fee_audit_log parity: one row per charge / payment / top-up / adjustment event
+type AuditRow = {
+  id: string; studentId: string; student: string; classroom: string | null;
+  actionType: string; service: string; amount: number;
+  balanceBefore: number; balanceAfter: number; arrearsBefore: number; arrearsAfter: number;
+  by: string; byRole: string; reference: string | null; notes: string | null; at: string;
+};
+const AUDIT_ACTION: Record<string, { label: string; className: string }> = {
+  CHARGE: { label: "Charge", className: "bg-amber-600 text-white" },
+  CHARGE_REVERSAL: { label: "Charge reversed", className: "bg-amber-800 text-white" },
+  PAYMENT: { label: "Payment", className: "bg-emerald-600 text-white" },
+  PAYMENT_REVERSAL: { label: "Payment reversed", className: "bg-destructive text-white" },
+  TOPUP: { label: "Top-up", className: "bg-primary text-primary-foreground" },
+  ADJUSTMENT: { label: "Adjustment", className: "bg-zinc-500 text-white" },
+  RECONCILIATION: { label: "Reconciliation", className: "bg-zinc-700 text-white" },
+};
 type DailyData = {
   date: string;
   services: Service[];
@@ -54,6 +70,7 @@ type DailyData = {
   walletTxns: WalletTxnRow[];
   settings: DailySettings;
   reconciliation: Reconciliation;
+  audit: AuditRow[];
 };
 
 const MODE_LABELS: Record<string, string> = { CLASSROOM: "Classroom only", CASHIER: "Cashier only", HYBRID: "Hybrid (classroom + counter)" };
@@ -75,6 +92,7 @@ export function DailyServices() {
   const [search, setSearch] = useState("");
   const [topUpFor, setTopUpFor] = useState<PosStudent | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [auditStudentId, setAuditStudentId] = useState(""); // audit-log learner filter (recon tab)
 
   /* iEduPro nested nav: open on the deep-linked tab (POS / wallets / rates…) */
   const [appliedTarget, setAppliedTarget] = useState<any>(null);
@@ -88,11 +106,11 @@ export function DailyServices() {
 
   const load = (d?: string) => {
     if (!currentSchoolId) return;
-    apiGet<DailyData>(`/api/school/${currentSchoolId}/ops/daily?date=${d ?? date}`)
+    apiGet<DailyData>(`/api/school/${currentSchoolId}/ops/daily?date=${d ?? date}${auditStudentId ? `&auditStudentId=${auditStudentId}` : ""}`)
       .then(setData)
       .catch((e) => toast({ title: "Load failed", description: e.message, variant: "destructive" }));
   };
-  useEffect(() => { load(date); }, [currentSchoolId, date]);
+  useEffect(() => { load(date); }, [currentSchoolId, date, auditStudentId]);
 
   const filteredStudents = useMemo(() => {
     const q = search.toLowerCase();
@@ -466,9 +484,9 @@ export function DailyServices() {
           <RatesTab data={data} onSaved={() => load(date)} />
         </TabsContent>
 
-        {/* ── RECONCILIATION (iedupro daily_fee_reconciliation + handover) ── */}
+        {/* ── RECONCILIATION (iedupro daily_fee_reconciliation + handover + audit log) ── */}
         <TabsContent value="recon">
-          <ReconciliationTab data={data} date={date} />
+          <ReconciliationTab data={data} date={date} auditStudentId={auditStudentId} onAuditStudent={setAuditStudentId} />
         </TabsContent>
       </Tabs>
 
@@ -1178,8 +1196,9 @@ function RatesTab({ data, onSaved }: { data: DailyData; onSaved: () => void }) {
   );
 }
 
-// ── RECONCILIATION tab (iedupro daily_fee_reconciliation + collector handover) ──
-function ReconciliationTab({ data, date }: { data: DailyData; date: string }) {
+// ── RECONCILIATION tab (iedupro daily_fee_reconciliation + collector handover
+//    + daily_fee_audit_log: every charge/payment/top-up/adjustment event) ──
+function ReconciliationTab({ data, date, auditStudentId, onAuditStudent }: { data: DailyData; date: string; auditStudentId: string; onAuditStudent: (id: string) => void }) {
   const r = data.reconciliation;
   const ok = Math.abs(r.variance) < 1; // pesewa-level match
   return (
@@ -1223,6 +1242,94 @@ function ReconciliationTab({ data, date }: { data: DailyData; date: string }) {
           )}
           <p className="text-xs text-muted-foreground mt-3">
             Counter takings are cash/MoMo receipts; wallet deductions are prepaid and transport-wallet settlements (including boarding marks made by the conductor). Balanced means every settled charge traces back to a receipt or wallet entry.
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* ── AUDIT LOG (iEduPro daily_fee_audit_log): every wallet/charge event, newest first ── */}
+      <Card>
+        <CardHeader className="pb-3 flex-row items-center justify-between space-y-0 flex-wrap gap-2">
+          <CardTitle className="text-base flex items-center gap-2"><ScrollText className="size-4 text-primary" /> Daily-fee audit log</CardTitle>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground hidden sm:inline">Learner</span>
+            <Select value={auditStudentId || "all"} onValueChange={(v) => onAuditStudent(v === "all" ? "" : v)}>
+              <SelectTrigger className="h-8 w-52"><SelectValue /></SelectTrigger>
+              <SelectContent className="max-h-64">
+                <SelectItem value="all">All learners</SelectItem>
+                {data.posStudents.map((s) => (
+                  <SelectItem key={s.id} value={s.id}>{s.name} · {s.classroom}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          {data.audit.length ? (
+            <div className="overflow-x-auto max-h-[520px] nice-scroll">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="whitespace-nowrap">When</TableHead>
+                    <TableHead>Learner</TableHead>
+                    <TableHead>Action</TableHead>
+                    <TableHead className="hidden md:table-cell">Service</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
+                    <TableHead className="text-right hidden lg:table-cell whitespace-nowrap">Wallet →</TableHead>
+                    <TableHead className="text-right hidden lg:table-cell whitespace-nowrap">Arrears →</TableHead>
+                    <TableHead className="hidden md:table-cell">By</TableHead>
+                    <TableHead className="hidden xl:table-cell">Reference / notes</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data.audit.map((a) => {
+                    const act = AUDIT_ACTION[a.actionType] ?? { label: a.actionType, className: "bg-zinc-500 text-white" };
+                    const isCredit = a.actionType === "TOPUP";
+                    const isDebit = a.actionType === "CHARGE" || a.actionType === "ADJUSTMENT";
+                    return (
+                      <TableRow key={a.id} className={a.actionType === "PAYMENT_REVERSAL" || a.actionType === "CHARGE_REVERSAL" ? "bg-destructive/5" : undefined}>
+                        <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{fmtDateTime(a.at)}</TableCell>
+                        <TableCell>
+                          <div className="font-medium">{a.student}</div>
+                          <div className="text-[11px] text-muted-foreground">{a.classroom ?? "—"}</div>
+                        </TableCell>
+                        <TableCell><span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${act.className}`}>{act.label}</span></TableCell>
+                        <TableCell className="hidden md:table-cell text-xs">{a.service}</TableCell>
+                        <TableCell className={`text-right tabular-nums font-semibold whitespace-nowrap ${isCredit ? "text-emerald-600 dark:text-emerald-400" : isDebit ? "text-amber-600 dark:text-amber-400" : ""}`}>
+                          {fmtCedi(a.amount)}
+                        </TableCell>
+                        <TableCell className="text-right hidden lg:table-cell tabular-nums text-xs whitespace-nowrap">
+                          {a.balanceBefore === a.balanceAfter
+                            ? <span className="text-muted-foreground">{fmtCedi(a.balanceAfter, { compact: true })}</span>
+                            : <>{fmtCedi(a.balanceBefore, { compact: true })} <span className="text-muted-foreground">→</span> <b>{fmtCedi(a.balanceAfter, { compact: true })}</b></>}
+                        </TableCell>
+                        <TableCell className="text-right hidden lg:table-cell tabular-nums text-xs whitespace-nowrap">
+                          {a.arrearsBefore === a.arrearsAfter
+                            ? <span className="text-muted-foreground">{fmtCedi(a.arrearsAfter, { compact: true })}</span>
+                            : <>{fmtCedi(a.arrearsBefore, { compact: true })} <span className="text-muted-foreground">→</span> <b className={a.arrearsAfter > a.arrearsBefore ? "text-destructive" : "text-emerald-600 dark:text-emerald-400"}>{fmtCedi(a.arrearsAfter, { compact: true })}</b></>}
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell text-xs">
+                          <div>{a.by}</div>
+                          <div className="text-[10px] text-muted-foreground">{a.byRole}</div>
+                        </TableCell>
+                        <TableCell className="hidden xl:table-cell text-xs text-muted-foreground max-w-56">
+                          <div className="truncate">{a.notes ?? "—"}</div>
+                          {a.reference && <div className="font-mono text-[10px] truncate">{a.reference}</div>}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          ) : (
+            <EmptyState
+              icon={<ScrollText className="size-6" />}
+              title={auditStudentId ? "No audit entries for this learner yet" : "No audit entries yet"}
+              hint={"Every day-charge generation, counter or wallet payment, top-up, waiver and balance correction is recorded here (latest 100)."}
+            />
+          )}
+          <p className="text-xs text-muted-foreground px-4 pb-4 pt-2">
+            Immutable trail (iEduPro daily_fee_audit_log): wallet column shows prepaid + transport credit before → after the event; arrears show unpaid daily charges before → after. Latest 100 events{auditStudentId ? " · filtered to one learner" : ""}.
           </p>
         </CardContent>
       </Card>

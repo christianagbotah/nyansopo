@@ -42,11 +42,12 @@ import { ConductorPortal } from "@/components/modules/conductor-portal";
 import { StaffPortal } from "@/components/modules/staff-portal";
 import { ParentPortal } from "@/components/modules/parent-portal";
 import { StudentPortal } from "@/components/modules/student-portal";
+import { Boarding } from "@/components/modules/boarding";
 import {
   LayoutDashboard, Users, Banknote, CalendarCheck, ClipboardList, GraduationCap, ArrowLeftRight, Building2,
   BrainCircuit, Settings as SettingsIcon, Landmark, Menu, CloudOff, Cloud, RefreshCcw, LogOut, Moon, Sun,
   Download, ChevronDown, ChevronRight, School, MessageSquareText, UtensilsCrossed, Bus, Smartphone, Calculator, Package, PieChart, LayoutList,
-  BookOpen, ShieldCheck, Receipt, Route, UserRound, Home, Backpack, Laptop,
+  BookOpen, ShieldCheck, Receipt, Route, UserRound, Home, Backpack, Laptop, BedDouble,
 } from "lucide-react";
 
 type NavLeaf = { id: string; label: string; icon?: any; target?: NavTarget };
@@ -65,6 +66,7 @@ const SCHOOL_NAV: NavItem[] = [
   { id: "fees", label: "Fees & Billing", icon: Banknote, section: "Finance" },
   { id: "daily", label: "Daily Services & Tuck", icon: UtensilsCrossed, section: "Finance" },
   { id: "transport", label: "Transportation", icon: Bus, section: "Finance" },
+  { id: "boarding", label: "Boarding Houses", icon: BedDouble, section: "Facilities" },
   { id: "payroll", label: "HR & Payroll", icon: Calculator, section: "Finance" },
   { id: "inventory", label: "Inventory & Stores", icon: Package, section: "Finance" },
   { id: "finance", label: "Finance & Analytics", icon: PieChart, section: "Finance" },
@@ -304,6 +306,15 @@ export function AppShell() {
       { id: "fees-arrears", label: "Arrears chase-list", target: { tab: "arrears" } },
     ];
 
+    // boarding (iEduPro navigation.php FACILITIES): houses → dorms → beds + reports
+    const boardingChildren: NavChild[] = [
+      { id: "boarding-houses", label: "Boarding houses", target: { tab: "houses" } },
+      { id: "boarding-dorms", label: "Dormitories", target: { tab: "dorms" } },
+      { id: "boarding-beds", label: "Beds", target: { tab: "beds" } },
+      { id: "boarding-assign", label: "Student assignment", target: { tab: "assign" } },
+      { id: "boarding-reports", label: "Occupancy reports", target: { tab: "reports" } },
+    ];
+
     // permission-gated school modules
     for (const item of SCHOOL_NAV) {
       if (item.id === "branches") continue;
@@ -313,6 +324,7 @@ export function AppShell() {
       if (item.id === "classes" && classGroups.length) enriched.children = classChildren;
       if (item.id === "daily") enriched.children = dailyChildren;
       if (item.id === "fees") enriched.children = feesChildren;
+      if (item.id === "boarding") enriched.children = boardingChildren;
       items.push(enriched);
     }
     // proprietor branch console
@@ -523,6 +535,7 @@ export function AppShell() {
              module === "reports" && show("reports") ? <Reports /> :
              module === "exams" && show("exams") ? <OnlineExams /> :
              module === "library" && show("library") ? <LibraryPortal /> :
+             module === "boarding" && show("boarding") ? <Boarding /> :
              module === "rbac" && show("rbac") ? <RbacConsole /> :
              module === "cashier" && show("cashier") ? <CashierConsole /> :
              module === "conductor" && show("conductor") ? <ConductorPortal /> :

@@ -62,6 +62,12 @@ export const PERMISSIONS: PermDef[] = [
   { id: "library.view", label: "View library catalogue", group: "Library" },
   { id: "library.issue", label: "Issue & return books", group: "Library" },
   { id: "library.manage", label: "Manage catalogue & members", group: "Library" },
+  // Boarding
+  { id: "boarding.view", label: "View boarding houses & occupancy", group: "Boarding" },
+  { id: "boarding.manage", label: "Manage houses, dormitories, beds & assignment", group: "Boarding" },
+  // Approvals (receipt/invoice modification queue)
+  { id: "approvals.request", label: "Request receipt/invoice modifications", group: "Fees & Finance" },
+  { id: "approvals.manage", label: "Approve or reject modification requests", group: "System" },
   // System
   { id: "settings.manage", label: "School & statutory settings", group: "System" },
   { id: "rbac.manage", label: "Manage users, roles & permissions", group: "System" },
@@ -100,7 +106,8 @@ const minus = (ids: string[], drop: string[]) => ids.filter((x) => !drop.include
 export const ROLE_DEFAULTS: Record<string, string[] | "*"> = {
   SUPER_ADMIN: minus(ALL_PERM_IDS, ["portal.self", "campus.self"]),
   GROUP_OWNER: minus(ALL_PERM_IDS, ["portal.self", "campus.self"]),
-  SCHOOL_ADMIN: minus(ALL_PERM_IDS, ["rbac.manage", "portal.self", "campus.self"]),
+  // iEduPro: only level-1 admins adjudicate receipt/invoice modifications
+  SCHOOL_ADMIN: minus(ALL_PERM_IDS, ["rbac.manage", "approvals.manage", "portal.self", "campus.self"]),
   ACCOUNTANT: [
     "students.view", "admissions.manage",
     "fees.view", "fees.manage", "fees.collect", "discounts.manage", "cashier.reports",
@@ -109,11 +116,12 @@ export const ROLE_DEFAULTS: Record<string, string[] | "*"> = {
     "payroll.view", "payroll.process",
     "inventory.view", "inventory.manage", "inventory.pos",
     "finance.view", "finance.manage",
+    "boarding.view",
     "sms.view", "sms.send",
     "settings.manage", "ai.use", "staffhub.self",
   ],
   CASHIER: [
-    "students.view", "fees.view", "fees.collect", "cashier.reports",
+    "students.view", "fees.view", "fees.collect", "cashier.reports", "approvals.request",
     "daily.view", "daily.collect",
     "transport.view", "transport.conduct",
   ],
@@ -240,6 +248,7 @@ export const MODULE_PERMS: Record<string, string[]> = {
   ai: ["ai.use"],
   settings: ["settings.manage"],
   library: ["library.view"],
+  boarding: ["boarding.view"],
   rbac: ["rbac.manage"],
   cashier: ["cashier.reports"],
   conductor: ["transport.conduct"],

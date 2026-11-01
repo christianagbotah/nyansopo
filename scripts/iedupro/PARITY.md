@@ -1,7 +1,7 @@
 # Nyansapo ↔ iEduPro (CI3) — parity map
 
 Live record of the CI3 feature surface vs the Nyansapo implementation.
-CI3 source: `scripts/ci3app/` (1,947 files · 598 admin views · ~150K view lines).
+CI3 source: `upload/ci3_full/` (1,947 files · ~150K view lines, full controllers/models/views).
 This file is the continuation plan — check items off as they land.
 
 Legend: ✅ done & verified · 🟡 partial (notes) · ⬜ not yet
@@ -25,17 +25,21 @@ Legend: ✅ done & verified · 🟡 partial (notes) · ⬜ not yet
       per-collector breakdown, variance)
 - ✅ Daily-fee discounts at charge time (subsidy → enrolment override)
 - ✅ Fee-module enable/disable per service (active flag)
-- 🟡 Charge log audit trail: covered by wallet txn log + reconciliation
-      (CI3's daily_fee_audit_log per-charge rows not mirrored 1:1)
-- ⬜ Cashier "daily summary"/"handover report" as printable PDF views
-      (data exists in reconciliation tab; print layout not built)
+- ✅ Charge log audit trail: per-charge DailyFeeAudit rows (CI3
+      daily_fee_audit_log parity) — CHARGE/PAYMENT/TOPUP/ADJUSTMENT/
+      RECONCILIATION with balance & arrears before→after, actor name+role,
+      reference; viewer in Reconciliation tab (latest 100 + learner filter)
+- ✅ Cashier "daily summary"/"handover report" as printable views —
+      Summary & Handover tab in cashier console (fee-category totals,
+      payment-method split, txn stats, signature boxes, save + print)
 
 ## 2. Navigation (CI3 navigation.php, 1,616 lines)
 - ✅ Parent → child → grandchild nesting with class groups
       (Creche&Nursery/KG/Primary B1–B6/JHS B7–B9/Senior, canonical order)
 - ✅ Class deep links: Students → level → class (directory pre-filtered);
       Classes → level → class; Daily → POS/wallets/ledger/rates/recon/trend;
-      Fees → invoices/receipts/structures/discounts/arrears
+      Fees → invoices/receipts/structures/discounts/arrears/approvals;
+      Boarding → houses/dorms/beds/assignment/reports
 - ✅ URL deep links ?module=…&tab=…&class=…
 - ✅ Permission-gated per role (RBAC levels 1–5 + all portals)
 - 🟡 CI3 per-class Subject & per-class Timetable sub-menus: covered by the
@@ -48,8 +52,13 @@ Legend: ✅ done & verified · 🟡 partial (notes) · ⬜ not yet
 - ✅ Special diet notes (per-learner editor + class-list indicator)
 - ✅ 360° profile (fees, academics, flags, transfers), CSV export
 - ✅ Admission wizard (bill preview + discounts + deposit) — earlier session
-- ⬜ Bulk student ID cards (printable sheet)
-- ⬜ Barcode-scanner attendance (CI3 level ≤2)
+- ✅ Bulk student ID cards — printable 10-per-sheet cards (kente header,
+      learner photo/avatar, nyansapoIndex + CSS barcode, guardian phone,
+      print-only CSS, CSV roster)
+- ✅ Barcode-scanner attendance — Scanner tab in Attendance (AUTO/MANUAL,
+      check-in/check-out, duplicate rejection, arrears gate + operator
+      approve-bypass, unknown-code handling, today's log with cancel;
+      admin level ≤2 enforced server-side)
 
 ## 4. Online exams (CI3 online_exam)
 - ✅ Full module: MCQ papers, publish→close lifecycle, results ranking
@@ -64,11 +73,18 @@ Legend: ✅ done & verified · 🟡 partial (notes) · ⬜ not yet
       Modern / Primary-KG descriptor); editable remarks & conduct;
       remark template library + conduct/interest traits (settings)
 - ✅ Bulk print views; receipts register + bulk reprint (4 styles)
-- ⬜ Portfolio assessment mode
-- ⬜ Cumulative (multi-term) reports
-- ⬜ WAEC raw-score grading view (settings has rawScore in CI3)
-- ⬜ Exam-marks SMS blast (SMS centre exists; the marks-specific blast not wired)
-- ⬜ Question-paper bank
+- ✅ Portfolio assessment mode — weekly SBA grid (class × subject × ISO week,
+      Mon–Fri strand codes + 0–10 scores, today-only editing), aggregate
+      feeds a 20-mark PROJECT assessment (CI3 test1 = avg×10×0.2 formula)
+- ✅ Cumulative (multi-term) reports — per-subject × per-term totals,
+      cumulative average + grade, WAEC aggregate column (red ≥15), print
+- ✅ WAEC raw-score grading — editable A1(80-100)…F9(0-39) table with
+      numeric points, stats (pass-mark = min markFrom ≥ 50), settings tab
+- ✅ Exam-marks SMS blast — exact CI3 message format
+      "Year|Term: … Exam Scores of {name}: Subject {n}% {grade} {remark}, …"
+      guardian/learner targeting, preview + send (SmsMessage rows)
+- ✅ Question-paper bank — rich-text papers per class/exam, CRUD + print
+      (reports tab), 3 seeded past papers
 
 ## 6. Communication
 - ✅ SMS centre: compose, automations (9 triggers), templates, log, settings
@@ -85,27 +101,43 @@ Legend: ✅ done & verified · 🟡 partial (notes) · ⬜ not yet
       purchase orders, categories
 - ✅ Transport: routes, vehicles, drivers, statutory expiry, assignments,
       trips, per-stop fares, term billing, conductor portal
-- ⬜ Receipt/invoice modification-approval queue (payment void flag exists in
-      the schema; no admin UI yet)
-- ⬜ SSNIT tier-1/tier-2 printable reports (payroll data exists)
-- ⬜ Aging report printable (data exists in finance module)
-- ⬜ Bank reconciliation / chart of accounts (CI3 marks most of these
-      sections commented-out in its own nav)
+- ✅ Receipt/invoice modification-approval queue — cashiers/bursars request
+      EDIT/DELETE with reason + snapshot; super-admin (level 1) decides;
+      APPROVED executes transactionally (payment delete reverses invoice
+      paidCents, edit re-syncs); REJECT/REVOKE paths; dedupe one-pending;
+      Approvals tab in Fees with pending badge
+- ✅ SSNIT tier-1/tier-2 printable reports — CI3 layouts (Tier 1: ACT 766,
+      Hazd. NO, 13.5% employer column; Tier 2: member IDs + provider line),
+      statutory-setting rates with 13.5/5.5/5.0 fallbacks, totals, CSV + A4 print
+- ✅ Aging report printable — 0-30/31-60/61-90/90+ buckets (CI3 palette),
+      stat cards, detail table, CSV + print
+- 🟡 Bank reconciliation / chart of accounts (CI3 marks most of these
+      sections commented-out in its own nav — represented by finance module)
 
 ## 8. Portals
 - ✅ Super admin / admin / accountant / cashier / bus conductor (levels 1–5)
 - ✅ Teacher, non-teaching staff, librarian, parent, student
 - ✅ Parent portal: children, fees & payments (+ MoMo how-to), attendance,
-      reports, transport, messages, notices
-- ✅ Student portal: attendance, results, timetable, library, online exams
+      reports, transport, messages, notices, library (requests on behalf)
+- ✅ Student portal: attendance, results, timetable, library (request a book
+      + my requests), online exams
 - ✅ Employee (staff) portal: payslips, profile, payment history
-- ⬜ Parent/student library book-request flow (library circulation exists;
-      the request queue from portals not built)
-- ⬜ HOD portal (CI3's is lesson-note approval — inactive in CI3)
+- ✅ Parent/student library book-request flow — request with dates →
+      librarian queue → accept (creates loan, decrements availability,
+      409 when no copies) / reject; overdue flags; forged-studentId 403
+- 🟡 HOD portal (CI3's is lesson-note approval — inactive in CI3)
 
 ## 9. Boarding management (CI3 boarding_system)
-- ⬜ Boarding houses / dormitories / beds / boarding reports — no schema
-      models yet; CI3 gates it behind the boarding_system setting
+- ✅ Boarding houses (house master, prefect, capacity, GPS, termly fee,
+      status) / dormitories (house, type M/F, floor) / beds (code, SINGLE/
+      BUNK, status) — full CRUD, referential guards (409 on delete with
+      children), bulk bed creation (PREFIX-001…N, cap 100)
+- ✅ Student assignment: bed picker grouped by house→dorm, assign/release
+      transactions, DAY↔BOARDING residence conversion, unassigned-boarders
+      queue
+- ✅ Boarding reports: per-house + per-dorm occupancy (rate badges
+      danger>80/warning>50), summary cards, boarder directory, print
+- ✅ RBAC boarding.view/manage; nav under Facilities (CI3 parity)
 
 ## 10. Cloud sync
 - 🟡 PWA offline queue + sync exists (queueable payments/attendance/marks).
@@ -115,6 +147,9 @@ Legend: ✅ done & verified · 🟡 partial (notes) · ⬜ not yet
 ## Verification harness (all green at time of writing)
 - scripts/test-fare-engine.sh — 14 checks (one-way fare model)
 - scripts/test-students-exams.sh — 15 checks (roster/promotion/diet/exams)
-- scripts/verify-rbac.sh — 10 roles + 9 API permission checks
-- scripts/verify-portals-ui.sh — 9 portal renders, zero console errors
+- scripts/test-parity2.sh — 41 checks (boarding · scanner · portfolio ·
+  cumulative · WAEC · papers · marks-SMS · approvals · SSNIT math ·
+  aging · cashier summary/handover · library requests · audit log)
+- scripts/verify-rbac.sh — 10 roles + API permission enforcement
+- scripts/verify-portals-ui.sh — portal renders, zero console errors
 - scripts/verify-interactions.sh — library issue + permission editor

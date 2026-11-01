@@ -61,10 +61,18 @@ server.log
 /mini-services/
 /dev.log
 
-# embedded PostgreSQL runtime (binaries + data dir) — re-fetch via scripts/pg/README
+# embedded PostgreSQL runtime — binaries tracked (bin/lib/share) so a recycled
+# sandbox can restart the server; the data cluster is regenerable
+# (initdb cluster + prisma db push + seed chain — see scripts/pg/README.md)
 /scripts/pg/*
 !/scripts/pg/start-postgres.sh
 !/scripts/pg/README.md
+!/scripts/pg/bin/
+!/scripts/pg/lib/
+!/scripts/pg/share/
+!/scripts/pg/sockets/
+/scripts/pg/data/
+/scripts/pg/postgres.log
 # generated prisma clients (sqlite reader for migrations)
 /generated/
 # legacy sqlite backup

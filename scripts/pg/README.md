@@ -54,3 +54,24 @@ The original SQLite database is kept at `db/legacy-sqlite-backup.db`
 one-time data migration (17,887 rows across 61 models, verified 1:1).
 `prisma/schema-sqlite-read.prisma` (+ `generated/sqlite-client`) exist only so
 that script can read the old file; the live schema is `prisma/schema.prisma`.
+
+## Recycling recovery (sandbox wiped `data/`)
+
+The DB cluster (`scripts/pg/data/`) is NOT tracked. If it is missing:
+
+```bash
+export LD_LIBRARY_PATH=scripts/pg/lib:$LD_LIBRARY_PATH
+scripts/pg/bin/initdb -D scripts/pg/data -U nyansapo -A trust
+mkdir -p scripts/pg/data/pg_notify scripts/pg/data/pg_stat scripts/pg/data/pg_stat_tmp \
+  scripts/pg/data/pg_snapshots scripts/pg/data/pg_tblspc scripts/pg/data/pg_twophase \
+  scripts/pg/data/pg_logical/snapshots scripts/pg/data/pg_logical/mappings
+chmod 700 scripts/pg/data
+bash scripts/pg/start-postgres.sh
+node -e "const{Client}=require('pg');(async()=>{const c=new Client({connectionString:'postgresql://nyansapo@127.0.0.1:5433/postgres'});await c.connect();const r=await c.query(\"SELECT 1 FROM pg_database WHERE datname='nyansapo'\");if(!r.rowCount)await c.query('CREATE DATABASE nyansapo');await c.end();})()"
+export DATABASE_URL='postgresql://nyansapo@127.0.0.1:5433/nyansapo?schema=public'
+npx prisma db push --accept-data-loss
+for s in prisma/seed.ts prisma/seed-classes.ts prisma/seed-ops.ts prisma/seed-ops-extra.ts \
+         prisma/seed-rbac.ts prisma/seed-daily-ext.ts prisma/seed-exams.ts \
+         prisma/seed-fare-parity.ts prisma/seed-parity2.ts \
+         scripts/seed-jhs3-bece.ts scripts/seed-pos-sales.ts; do bun "$s"; done
+```

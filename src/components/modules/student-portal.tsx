@@ -1,20 +1,23 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
 import { apiGet, apiPost } from "@/lib/api";
 import { ModuleHeader, LoadingBlock, EmptyState } from "@/components/ui-helpers";
 import { fmtCedi, fmtDate } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "@/hooks/use-toast";
 import { avatarColor } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { Backpack, CalendarDays, BookOpen, GraduationCap, Wallet, Megaphone, Clock, AlertTriangle, CheckCircle2, UserRound, Laptop, Send } from "lucide-react";
+import { Backpack, CalendarDays, BookOpen, GraduationCap, Wallet, Megaphone, Clock, AlertTriangle, CheckCircle2, UserRound, Laptop, Send, BookPlus, Hourglass, XCircle } from "lucide-react";
 
 type Slot = { day: number; start: number; end: number; subject: string; teacher: string | null };
 type Mark = { subject: string; assessment: string; type: string; score: number; max: number };
@@ -24,6 +27,18 @@ type ReportCard = {
   promotion: string | null; published: boolean;
   results: { subject: string; isCore: boolean; total: number | null; grade: string | null; remark: string | null }[];
 };
+// iEduPro parity: learners request books themselves and track the librarian's decision
+type BookRequestLite = {
+  id: string; book: string; startAt: string; endAt: string; status: string;
+  handledAt: string | null; handledByName: string | null; createdAt: string; overdue: boolean;
+};
+type CatalogueBook = { id: string; title: string; author: string | null; category: string; available: number };
+const REQ_STATUS: Record<string, { label: string; className: string; icon: React.ReactNode }> = {
+  PENDING: { label: "Waiting for librarian", className: "bg-amber-600", icon: <Hourglass className="size-3" /> },
+  ISSUED: { label: "Issued", className: "bg-emerald-600", icon: <CheckCircle2 className="size-3" /> },
+  REJECTED: { label: "Declined", className: "bg-destructive", icon: <XCircle className="size-3" /> },
+};
+
 type StudentData = {
   role: string; school: { name: string; motto: string | null; town: string; region: string } | null;
   year: string | null; term: string | null;
@@ -35,10 +50,12 @@ type StudentData = {
     marks: Mark[];
     reportCards: ReportCard[];
     library: { book: string; dueAt: string; overdue: boolean }[];
+    bookRequests: BookRequestLite[];
     wallet: { prepaid: number; transport: number } | null;
     feesBalance: number;
   };
   announcements: { id: string; title: string; body: string; postedByName: string; postedAt: string; priority: string }[];
+  libraryCatalogue: CatalogueBook[];
 };
 
 const DAYS = ["", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
@@ -49,13 +66,15 @@ export function StudentPortal() {
   const { currentSchoolId } = useStore();
   const [data, setData] = useState<StudentData | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [requestOpen, setRequestOpen] = useState(false);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     if (!currentSchoolId) return;
     apiGet<StudentData>(`/api/school/${currentSchoolId}/ops/portal?view=student`)
       .then(setData)
       .catch((e) => setErr(e.message));
   }, [currentSchoolId]);
+  useEffect(() => { load(); }, [load]);
 
   const byDay = useMemo(() => {
     const g: Record<number, Slot[]> = {};
@@ -68,6 +87,7 @@ export function StudentPortal() {
   if (!data) return <LoadingBlock label="Loading your portal…" />;
   const me = data.me;
   const overdueBooks = me.library.filter((l) => l.overdue);
+  const pendingRequests = me.bookRequests.filter((r) => r.status === "PENDING").length;
 
   return (
     <div>
@@ -223,30 +243,71 @@ export function StudentPortal() {
           )) : <EmptyState icon={<GraduationCap className="size-8" />} title="No reports yet" hint="Your terminal reports appear here once published." />}
         </TabsContent>
 
-        <TabsContent value="library" className="mt-3">
-          <Card>
-            <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><BookOpen className="size-4" /> Books out in my name</CardTitle></CardHeader>
-            <CardContent>
-              {me.library.length ? (
-                <div className="space-y-2">
-                  {me.library.map((l, i) => (
-                    <div key={i} className={`flex items-center justify-between rounded-lg border px-3 py-2.5 ${l.overdue ? "border-destructive/40 bg-destructive/5" : ""}`}>
-                      <div className="flex items-center gap-2.5">
-                        <span className="flex size-8 items-center justify-center rounded-full text-white" style={{ background: avatarColor(l.book) }}><BookOpen className="size-4" /></span>
-                        <div>
-                          <div className="text-sm font-medium">{l.book}</div>
-                          <div className="text-xs text-muted-foreground">due {fmtDate(l.dueAt)}</div>
+        <TabsContent value="library" className="mt-3 space-y-4">
+          <div className="grid lg:grid-cols-2 gap-4">
+            <Card>
+              <CardHeader className="pb-2 flex-row items-center justify-between space-y-0">
+                <CardTitle className="text-base flex items-center gap-2"><BookOpen className="size-4" /> Books out in my name</CardTitle>
+                <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={() => setRequestOpen(true)}>
+                  <BookPlus className="size-3.5" /> Request a book
+                </Button>
+              </CardHeader>
+              <CardContent>
+                {me.library.length ? (
+                  <div className="space-y-2">
+                    {me.library.map((l, i) => (
+                      <div key={i} className={`flex items-center justify-between rounded-lg border px-3 py-2.5 ${l.overdue ? "border-destructive/40 bg-destructive/5" : ""}`}>
+                        <div className="flex items-center gap-2.5">
+                          <span className="flex size-8 items-center justify-center rounded-full text-white" style={{ background: avatarColor(l.book) }}><BookOpen className="size-4" /></span>
+                          <div>
+                            <div className="text-sm font-medium">{l.book}</div>
+                            <div className="text-xs text-muted-foreground">due {fmtDate(l.dueAt)}</div>
+                          </div>
                         </div>
+                        {l.overdue
+                          ? <Badge className="bg-destructive gap-1"><AlertTriangle className="size-3" /> overdue</Badge>
+                          : <Badge variant="secondary" className="gap-1"><CheckCircle2 className="size-3" /> on time</Badge>}
                       </div>
-                      {l.overdue
-                        ? <Badge className="bg-destructive gap-1"><AlertTriangle className="size-3" /> overdue</Badge>
-                        : <Badge variant="secondary" className="gap-1"><CheckCircle2 className="size-3" /> on time</Badge>}
-                    </div>
-                  ))}
-                </div>
-              ) : <EmptyState title="No books out" hint="Visit the library to borrow — your loans show up here." />}
-            </CardContent>
-          </Card>
+                    ))}
+                  </div>
+                ) : <EmptyState title="No books out" hint="Request a book below — the librarian will issue it." />}
+              </CardContent>
+            </Card>
+
+            {/* iEduPro parity: my book requests with the librarian's decision */}
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <BookPlus className="size-4" /> My requests
+                  {pendingRequests > 0 && <Badge className="bg-amber-600 text-[10px]">{pendingRequests} waiting</Badge>}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {me.bookRequests.length ? (
+                  <div className="space-y-2 max-h-96 overflow-y-auto nice-scroll">
+                    {me.bookRequests.map((r) => {
+                      const s = REQ_STATUS[r.status] ?? REQ_STATUS.PENDING;
+                      return (
+                        <div key={r.id} className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-2.5 ${r.overdue ? "border-destructive/40 bg-destructive/5" : ""}`}>
+                          <div className="min-w-0">
+                            <div className="text-sm font-medium truncate">{r.book}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {fmtDate(r.startAt)} → {fmtDate(r.endAt)}
+                              {r.status !== "PENDING" && r.handledByName ? ` · by ${r.handledByName}` : ""}
+                            </div>
+                          </div>
+                          <div className="flex flex-col items-end gap-1 shrink-0">
+                            <Badge className={cn("gap-1", s.className)}>{s.icon} {s.label}</Badge>
+                            {r.overdue && <Badge className="bg-destructive gap-1"><AlertTriangle className="size-3" /> overdue</Badge>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : <EmptyState title="No requests yet" hint="Pick a book from the catalogue and choose your dates — the librarian confirms." />}
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
 
         <TabsContent value="attendance" className="mt-3">
@@ -284,7 +345,94 @@ export function StudentPortal() {
           <StudentExams studentId={me.id} classroomId={me.classroomId ?? null} />
         </TabsContent>
       </Tabs>
+
+      {/* iEduPro parity: request a book from the catalogue with desired dates */}
+      <BookRequestDialog
+        open={requestOpen}
+        onOpenChange={setRequestOpen}
+        catalogue={data.libraryCatalogue}
+        studentId={me.id}
+        schoolId={currentSchoolId!}
+        onDone={load}
+      />
     </div>
+  );
+}
+
+/* ── Request-a-book dialog (iEduPro parity) — pick a title from the catalogue,
+    choose the issue/return dates, and the librarian sees it in their queue. ── */
+function BookRequestDialog({ open, onOpenChange, catalogue, studentId, schoolId, onDone }: {
+  open: boolean; onOpenChange: (o: boolean) => void;
+  catalogue: CatalogueBook[]; studentId: string; schoolId: string; onDone: () => void;
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+  const defaultEnd = new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10);
+  const [bookId, setBookId] = useState("");
+  const [startAt, setStartAt] = useState(today);
+  const [endAt, setEndAt] = useState(defaultEnd);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (open) { setBookId(""); setStartAt(today); setEndAt(defaultEnd); }
+  }, [open]);
+
+  const book = catalogue.find((b) => b.id === bookId) ?? null;
+
+  async function submit() {
+    if (!bookId) { toast({ title: "Choose a book" }); return; }
+    if (!startAt || !endAt || endAt <= startAt) { toast({ title: "Check your dates", description: "The return date must be after the issue date." }); return; }
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${schoolId}/ops/portal`, { action: "book-request.create", bookId, studentId, startAt, endAt });
+      toast({ title: "Request sent", description: `"${book?.title}" — the librarian will confirm shortly.` });
+      onOpenChange(false);
+      onDone();
+    } catch (e: any) {
+      toast({ title: "Request failed", description: e.message, variant: "destructive" });
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><BookPlus className="size-4.5" /> Request a book</DialogTitle>
+          <DialogDescription>Pick a title and when you&apos;d like it — the librarian issues it if a copy is on the shelf.</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3">
+          <div className="space-y-1.5">
+            <Label>Book *</Label>
+            <Select value={bookId} onValueChange={setBookId}>
+              <SelectTrigger><SelectValue placeholder="Choose from the catalogue…" /></SelectTrigger>
+              <SelectContent className="max-h-64">
+                {catalogue.map((b) => (
+                  <SelectItem key={b.id} value={b.id} disabled={b.available < 1}>
+                    {b.title} — {b.available < 1 ? "all copies out" : `${b.available} on shelf`}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {book && <p className="text-[11px] text-muted-foreground">{book.author ?? "—"} · {book.category}</p>}
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Issue date</Label>
+              <Input type="date" value={startAt} onChange={(e) => setStartAt(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Return by</Label>
+              <Input type="date" value={endAt} onChange={(e) => setEndAt(e.target.value)} />
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button disabled={busy || !bookId} onClick={submit} className="gap-1.5">
+            {busy ? "Sending…" : <><Send className="size-4" /> Send request</>}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -330,7 +478,7 @@ function StudentExams({ studentId, classroomId }: { studentId: string; classroom
       .then((d) => setExams(d.exams))
       .catch(() => setExams([]));
   };
-  useEffect(() => { load(); }, [currentSchoolId]); // eslint-disable-line react-hooks/set-state-in-effect
+  useEffect(() => { load(); }, [currentSchoolId]);
 
   if (!exams) return <LoadingBlock label="Loading exams…" />;
   const forMe = exams.filter((e) => e.status === "PUBLISHED" && (!e.classroomId || e.classroomId === classroomId));

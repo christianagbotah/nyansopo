@@ -36,9 +36,10 @@ async function main() {
     },
   });
 
-  // a few JHS 3 learners sit it
+  // a few JHS 3 learners sit it (skip the demo student-portal learner — her
+  // attempt is left unsent so the interactive submit flow stays testable)
   const jhs3Enrolments = await db.enrollment.findMany({
-    where: { schoolId, status: "ACTIVE", classroomId: jhs3?.id },
+    where: { schoolId, status: "ACTIVE", classroomId: jhs3?.id, student: { guardianEmail: { not: "student@nyansapo.gh" } } },
     include: { student: true }, take: 6,
   });
   // read the questions back and submit attempts

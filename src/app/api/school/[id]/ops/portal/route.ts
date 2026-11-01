@@ -16,6 +16,19 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const view = new URL(req.url).searchParams.get("view") ?? "parent";
   const now = new Date();
 
+  // ── shared: library catalogue for the "Request a book" dialog (iEduPro parity) ──
+  const loadCatalogue = () => db.libraryBook.findMany({
+    where: { schoolId },
+    orderBy: { title: "asc" },
+    take: 200,
+    select: { id: true, title: true, author: true, category: true, available: true },
+  });
+  const mapBookRequest = (r: { id: string; book: { title: string }; startAt: Date; endAt: Date; status: string; handledAt: Date | null; handledByName: string | null; createdAt: Date }) => ({
+    id: r.id, book: r.book.title, startAt: r.startAt, endAt: r.endAt, status: r.status,
+    handledAt: r.handledAt, handledByName: r.handledByName, createdAt: r.createdAt,
+    overdue: r.status === "ISSUED" && r.endAt < now, // issued and the requested return date has passed
+  });
+
   // ─────────────────────────── PARENT ───────────────────────────
   if (view === "parent") {
     if (user.role !== "PARENT" || !user.linkedStudentIds.length) {
@@ -35,6 +48,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
           reportCards: { orderBy: { createdAt: "desc" }, take: 3, include: { term: { include: { academicYear: true } }, results: true } },
           transportAssignments: { where: { active: true }, include: { route: true } },
           wallet: true,
+          libraryLoans: { where: { returnedAt: null }, include: { book: true }, orderBy: { dueAt: "asc" } },
+          bookRequests: { include: { book: true }, orderBy: { createdAt: "desc" }, take: 30 },
         },
       });
       if (!s) continue;
@@ -80,6 +95,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
           recentBoardings: boardings.map((b) => ({ date: b.date, direction: b.direction, fare: b.fareCents, paid: b.paidCents })),
         } : null,
         wallet: s.wallet ? { prepaid: s.wallet.prepaidCents, transport: s.wallet.transportCents } : null,
+        library: (s.libraryLoans ?? []).map((l) => ({ book: l.book.title, dueAt: l.dueAt, overdue: l.dueAt < now })),
+        bookRequests: (s.bookRequests ?? []).map(mapBookRequest),
       });
     }
 
@@ -95,6 +112,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     return NextResponse.json({
       role: "PARENT", school, year: year?.name ?? null, term: term?.name ?? null, children, announcements, messages,
       messagesNote: "Messages sent by the school about your children",
+      libraryCatalogue: await loadCatalogue(),
     });
   }
 
@@ -111,6 +129,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         reportCards: { orderBy: { createdAt: "desc" }, take: 4, include: { term: { include: { academicYear: true } }, results: true } },
         marks: { include: { assessment: { include: { subject: true, term: true } } } },
         libraryLoans: { where: { returnedAt: null }, include: { book: true }, orderBy: { dueAt: "asc" } },
+        bookRequests: { include: { book: true }, orderBy: { createdAt: "desc" }, take: 30 },
         wallet: true,
         invoices: { where: { schoolId }, include: { items: true } },
       },
@@ -154,10 +173,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
           results: rc.results.map((r) => ({ subject: r.subjectName, isCore: r.isCore, total: r.total, grade: r.grade, remark: r.remark, position: r.position })),
         })),
         library: s.libraryLoans.map((l) => ({ book: l.book.title, dueAt: l.dueAt, overdue: l.dueAt < now })),
+        bookRequests: s.bookRequests.map(mapBookRequest),
         wallet: s.wallet ? { prepaid: s.wallet.prepaidCents, transport: s.wallet.transportCents } : null,
         feesBalance: balance,
       },
       announcements,
+      libraryCatalogue: await loadCatalogue(),
     });
   }
 
@@ -201,4 +222,47 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 
   return NextResponse.json({ error: "Unknown view" }, { status: 400 });
+}
+
+// ── POST /api/school/[id]/ops/portal — self-service actions (book requests) ──
+//    Learners and parents request library books for the learner's own record:
+//    a student may only request for themself, a parent only for their linked
+//    children. The librarian then accepts/rejects from the library module. ──
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id: schoolId } = await params;
+  const user = await getUser(req);
+  if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  if (user.schoolId !== schoolId && !(user.schoolIds ?? []).includes(schoolId)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  const body = await req.json().catch(() => ({}));
+
+  if (body.action === "book-request.create") {
+    const { bookId, studentId, startAt, endAt } = body;
+    // scoping: the requesting user may only request for their own learner record / their child
+    const allowedStudentIds = user.role === "STUDENT" && user.studentId
+      ? [user.studentId]
+      : user.role === "PARENT"
+        ? user.linkedStudentIds
+        : [];
+    if (!studentId || !allowedStudentIds.includes(studentId)) {
+      return NextResponse.json({ error: "You can only request books for yourself or your own children" }, { status: 403 });
+    }
+    if (!bookId) return NextResponse.json({ error: "Choose a book from the catalogue" }, { status: 400 });
+    const book = await db.libraryBook.findUnique({ where: { id: bookId } });
+    if (!book || book.schoolId !== schoolId) return NextResponse.json({ error: "Book not found" }, { status: 404 });
+    if (book.available < 1) {
+      return NextResponse.json({ error: `No copies of "${book.title}" are on the shelf right now — pick another title or check back soon.` }, { status: 409 });
+    }
+    const start = new Date(startAt);
+    const end = new Date(endAt);
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) return NextResponse.json({ error: "Pick both an issue date and a return date" }, { status: 400 });
+    if (end <= start) return NextResponse.json({ error: "The return date must be after the issue date" }, { status: 400 });
+    const duplicate = await db.bookRequest.findFirst({ where: { bookId, studentId, status: "PENDING" } });
+    if (duplicate) return NextResponse.json({ error: `There is already a pending request for "${book.title}" — wait for the librarian's decision.` }, { status: 409 });
+    const request = await db.bookRequest.create({ data: { schoolId, bookId, studentId, startAt: start, endAt: end } });
+    return NextResponse.json({ request: { id: request.id, status: request.status } });
+  }
+
+  return NextResponse.json({ error: "Unknown action" }, { status: 400 });
 }
