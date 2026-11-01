@@ -100,7 +100,7 @@ export function LibraryPortal() {
         <TabsList>
           <TabsTrigger value="catalogue">Catalogue ({data.books.length})</TabsTrigger>
           <TabsTrigger value="circulation">On loan ({activeLoans.length})</TabsTrigger>
-          {data.stats.overdue > 0 && <TabsTrigger value="overdue" className="text-destructive data-[state=active]:text-destructive">Overdue ({data.stats.overdue})</TabsTrigger>}
+          {data.stats.overdue > 0 && <TabsTrigger value="overdue" className="text-destructive data-[state=active]:text-destructive gap-1.5">Overdue <span className="inline-flex items-center justify-center rounded-full bg-destructive px-1.5 min-w-4 h-4 text-[10px] font-bold text-white">{data.stats.overdue}</span></TabsTrigger>}
           <TabsTrigger value="history">History</TabsTrigger>
         </TabsList>
 
@@ -141,8 +141,8 @@ export function LibraryPortal() {
                     <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">{b.shelf ?? "—"}</TableCell>
                     <TableCell>
                       <div className="flex gap-1">
-                        <Button variant="ghost" size="icon" className="size-7" title="Edit" onClick={() => setBookDialog({ open: true, book: b })}><Pencil className="size-3.5" /></Button>
-                        <Button variant="ghost" size="icon" className="size-7 text-destructive" title="Delete" onClick={() => confirm(`Remove "${b.title}" from the catalogue?`) && act({ action: "book.delete", id: b.id }, "Book removed")}><Trash2 className="size-3.5" /></Button>
+                        <Button variant="ghost" size="icon" className="size-8" title="Edit" onClick={() => setBookDialog({ open: true, book: b })}><Pencil className="size-3.5" /></Button>
+                        <Button variant="ghost" size="icon" className="size-8 text-destructive" title="Delete" onClick={() => confirm(`Remove "${b.title}" from the catalogue?`) && act({ action: "book.delete", id: b.id }, "Book removed")}><Trash2 className="size-3.5" /></Button>
                       </div>
                     </TableCell>
                   </TableRow>

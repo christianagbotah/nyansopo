@@ -7,30 +7,39 @@ import { Login } from "@/components/login";
 import { AppShell } from "@/components/app-shell";
 import { apiGet } from "@/lib/api";
 
+// every module a signed-in session can deep-link to (?module=…) — the app-shell
+// guard still resets out-of-scope modules for the role, so this is safe
+const DEEPLINK_MODULES = [
+  "dashboard", "students", "admissions", "fees", "attendance", "gradebook",
+  "reports", "branches", "ai", "association", "settings", "daily", "transport",
+  "payroll", "inventory", "finance", "classes", "library", "rbac", "cashier",
+  "conductor", "staffhub", "portal", "campus", "sms",
+];
+
 export default function Home() {
   const { session, screen, setSchools, setScreen, setModule } = useStore();
 
   // If a persisted session exists, re-hydrate school scope + deep link (?module=)
   useEffect(() => {
     if (!session) return;
+    const deep = new URLSearchParams(window.location.search).get("module");
     apiGet<any>("/api/context")
       .then((ctx) => {
         setSchools(ctx.schools);
         const role = ctx.user.role;
         if (role.startsWith("ASSOCIATION_")) setModule("association");
-        // land on this role's portal (RBAC landing map) — keeps deep links
-        // and out-of-scope resets consistent with the app-shell guard
-        else setModule(((useStore.getState().session?.landingModule as string) ?? LANDING_MODULE[role] ?? "dashboard") as any);
+        // land on this role's portal (RBAC landing map) unless a valid deep link
+        // was requested — the app-shell guard still resets out-of-scope modules
+        else if (!(deep && DEEPLINK_MODULES.includes(deep)))
+          setModule(((useStore.getState().session?.landingModule as string) ?? LANDING_MODULE[role] ?? "dashboard") as any);
       })
       .catch(() => {
         // session stale — sign out
         useStore.getState().logout();
         setScreen("landing");
       });
-    const params = new URLSearchParams(window.location.search);
-    const m = params.get("module");
-    if (m && ["dashboard", "students", "admissions", "fees", "attendance", "gradebook", "reports", "branches", "ai", "association", "settings"].includes(m)) {
-      setModule(m as any);
+    if (deep && DEEPLINK_MODULES.includes(deep)) {
+      setModule(deep as any);
     }
   }, [session?.id]);
 

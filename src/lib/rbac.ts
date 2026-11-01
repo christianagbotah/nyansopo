@@ -153,15 +153,49 @@ export function parseOverrides(json?: string | null): PermOverrides {
   }
 }
 
-/** Effective permission list for a user (role defaults + extra grants − denials). */
+/** Action permissions imply their view permission (e.g. granting "enter marks"
+ *  also shows the Gradebook module). Explicit denials still win over implications. */
+export const PERM_IMPLIES: Record<string, string[]> = {
+  "students.manage": ["students.view"],
+  "admissions.manage": ["students.view"],
+  "staff.manage": ["staff.view"],
+  "fees.manage": ["fees.view"],
+  "fees.collect": ["fees.view"],
+  "discounts.manage": ["fees.view"],
+  "daily.collect": ["daily.view"],
+  "daily.manage": ["daily.view"],
+  "transport.conduct": ["transport.view"],
+  "transport.manage": ["transport.view"],
+  "payroll.process": ["payroll.view"],
+  "inventory.manage": ["inventory.view"],
+  "inventory.pos": ["inventory.view"],
+  "finance.manage": ["finance.view"],
+  "attendance.take": ["attendance.view"],
+  "classes.manage": ["classes.view"],
+  "gradebook.enter": ["gradebook.view"],
+  "reports.publish": ["reports.view"],
+  "sms.send": ["sms.view"],
+  "library.issue": ["library.view"],
+  "library.manage": ["library.view"],
+};
+
+/** Effective permission list for a user (role defaults + extra grants − denials,
+ *  with action→view implications expanded so granted permissions are usable). */
 export function effectivePermissions(role: string, overridesJson?: string | null): string[] {
   const base = ROLE_DEFAULTS[role] ?? [];
   const { extra = [], denied = [] } = parseOverrides(overridesJson);
   if (base === "*") {
     return minus([...ALL_PERM_IDS, ...extra], denied);
   }
+  const deniedSet = new Set(denied);
   const set = new Set([...base, ...extra]);
-  denied.forEach((d) => set.delete(d));
+  // expand implications (action ⇒ view) — unless the view is explicitly denied
+  for (const p of Array.from(set)) {
+    for (const impl of PERM_IMPLIES[p] ?? []) {
+      if (!deniedSet.has(impl)) set.add(impl);
+    }
+  }
+  deniedSet.forEach((d) => set.delete(d));
   return ALL_PERM_IDS.filter((p) => set.has(p)); // stable catalogue order
 }
 

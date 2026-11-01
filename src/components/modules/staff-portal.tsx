@@ -66,7 +66,7 @@ export function StaffPortal() {
         <Tile icon={<Wallet className="size-4" />} label="Latest net pay" value={latestPaid ? fmtCedi(latestPaid.net, { compact: true }) : "—"} sub={latestPaid ? latestPaid.period : "no payroll yet"} tone="good" />
         <Tile icon={<Receipt className="size-4" />} label="Payslips" value={me.payslips.length} sub="last 12 months" />
         <Tile icon={<TrendingDown className="size-4" />} label="Deductions (latest)" value={me.payslips[0] ? fmtCedi(me.payslips[0].deductions, { compact: true }) : "—"} sub="SSNIT · PAYE · others" />
-        <Tile icon={<Clock className="size-4" />} label="Weekly periods" value={me.timetable.length} sub={me.classrooms.length ? me.classrooms.join(", ") : me.subjects.join(", ") || "—"} />
+        <Tile icon={<Clock className="size-4" />} label="Weekly periods" value={me.timetable.length} sub={me.classrooms.length ? me.classrooms.join(", ") : me.subjects.length ? me.subjects.join(", ") : me.timetable.length ? "teaching this term" : "no classes assigned"} />
       </div>
 
       <Tabs defaultValue="profile">
@@ -74,7 +74,7 @@ export function StaffPortal() {
           <TabsTrigger value="profile">My profile</TabsTrigger>
           <TabsTrigger value="payslips">Payslips ({me.payslips.length})</TabsTrigger>
           {me.timetable.length > 0 && <TabsTrigger value="routine">My routine</TabsTrigger>}
-          <TabsTrigger value="notices">Notices</TabsTrigger>
+          <TabsTrigger value="notices">Notices {data.announcements?.length ? <span className="ml-1 inline-flex items-center justify-center rounded-full bg-primary px-1.5 min-w-4 h-4 text-[10px] font-bold text-primary-foreground">{data.announcements.length}</span> : null}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="profile" className="mt-3 grid lg:grid-cols-3 gap-4">

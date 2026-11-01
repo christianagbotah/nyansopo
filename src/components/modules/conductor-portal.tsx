@@ -155,7 +155,12 @@ export function ConductorPortal() {
                         <TableRow>
                           <TableHead>Learner</TableHead>
                           <TableHead className="hidden md:table-cell">Stops</TableHead>
-                          <TableHead>Boarding</TableHead>
+                          <TableHead>
+                            <div className="flex flex-col gap-0.5">
+                              Boarding
+                              <span className="text-[10px] font-normal normal-case text-muted-foreground">tap to mark today</span>
+                            </div>
+                          </TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -172,10 +177,11 @@ export function ConductorPortal() {
                                 <div className="flex items-center gap-1 opacity-60"><ArrowRightLeft className="size-3" /> {r.dropStop ?? "—"}</div>
                               </TableCell>
                               <TableCell>
-                                <div className="flex flex-wrap gap-1">
+                                <div className="inline-flex rounded-lg border bg-muted/40 p-0.5" role="group" aria-label="Mark boarding">
                                   {(["IN", "BOTH", "OUT", "NONE"] as const).map((d) => (
-                                    <button key={d} onClick={() => saveBoarding(r.id, d)}
-                                      className={`rounded-md px-2 py-1 text-[10px] font-semibold transition-colors ${b?.direction === d ? `${DIR_CLASS[d]} text-white` : "border hover:bg-secondary"}`}>
+                                    <button key={d} onClick={() => saveBoarding(r.id, d)} title={d === "IN" ? "Morning only" : d === "BOTH" ? "Morning & afternoon" : d === "OUT" ? "Afternoon only" : "Not riding today"}
+                                      aria-pressed={b?.direction === d}
+                                      className={`rounded-md px-2 py-1 text-[10px] font-semibold transition-all ${b?.direction === d ? `${DIR_CLASS[d]} text-white shadow-sm` : "text-muted-foreground hover:bg-background hover:text-foreground hover:shadow-sm"}`}>
                                       {d === "IN" ? "AM" : d === "BOTH" ? "AM+PM" : d === "OUT" ? "PM" : "None"}
                                     </button>
                                   ))}
@@ -200,9 +206,20 @@ export function ConductorPortal() {
                 <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><RouteIcon className="size-4" /> Record trip</CardTitle></CardHeader>
                 <CardContent className="space-y-3">
                   <div className="grid grid-cols-2 gap-2">
-                    <div className="space-y-1"><Label className="text-xs">Morning count</Label><Input type="number" min={0} value={morning} onChange={(e) => setMorning(e.target.value)} placeholder="e.g. 12" /></div>
-                    <div className="space-y-1"><Label className="text-xs">Afternoon count</Label><Input type="number" min={0} value={evening} onChange={(e) => setEvening(e.target.value)} placeholder="e.g. 12" /></div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Morning count</Label>
+                      <Input type="number" min={0} value={morning} onChange={(e) => setMorning(e.target.value)} placeholder={`e.g. ${boardedIn || 12}`} />
+                      <button className="text-[10px] text-primary hover:underline" onClick={() => setMorning(String(boardedIn))}>use {boardedIn} AM mark{boardedIn === 1 ? "" : "s"}</button>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Afternoon count</Label>
+                      <Input type="number" min={0} value={evening} onChange={(e) => setEvening(e.target.value)} placeholder={`e.g. ${boardedOut || 12}`} />
+                      <button className="text-[10px] text-primary hover:underline" onClick={() => setEvening(String(boardedOut))}>use {boardedOut} PM mark{boardedOut === 1 ? "" : "s"}</button>
+                    </div>
                   </div>
+                  {(Number(morning) > 0 || Number(evening) > 0) && (Number(morning) !== boardedIn || Number(evening) !== boardedOut) && (
+                    <p className="text-[11px] text-amber-600 flex items-center gap-1"><AlertTriangle className="size-3" /> Counts differ from boarding marks (AM {boardedIn} / PM {boardedOut}) — fine if extra riders joined the run.</p>
+                  )}
                   <Button size="sm" className="w-full gap-1.5" onClick={saveTrip}><Save className="size-3.5" /> Save trip for {fmtDate(date)}</Button>
                   <p className="text-[11px] text-muted-foreground">Counts are compared against boarding marks — record them at the end of each run.</p>
                 </CardContent>

@@ -58,23 +58,31 @@ echo "═══ 2. RBAC permission editor (super) ═══"
 login_as "super@nyansapo.gh"
 echo "— nav click: $($AB eval "(() => { const b = Array.from(document.querySelectorAll('aside nav button')).find(x => x.textContent.includes('Users & Access')); if (!b) return 'NAV MISSING'; b.click(); return 'ok'; })()" 2>/dev/null)"
 sleep 4
-echo "— page: $($AB eval "(document.querySelector('main h2') || document.querySelector('main h3') || {innerText:'?'}).innerText" 2>/dev/null)"
+echo "— page: $($AB eval "(document.querySelector('main h1') || document.querySelector('main h2') || {innerText:'?'}).innerText" 2>/dev/null)"
 echo "— rows: $($AB eval "document.querySelectorAll('tbody tr').length" 2>/dev/null) | cashier row: $($AB eval "(() => { const row = Array.from(document.querySelectorAll('tbody tr')).find(tr => tr.textContent.includes('cashier@nyansapo.gh')); return row ? 'FOUND' : 'NOT FOUND'; })()" 2>/dev/null)"
-echo "— open menu: $($AB eval "(() => { const row = Array.from(document.querySelectorAll('tbody tr')).find(tr => tr.textContent.includes('cashier@nyansapo.gh')); if (!row) return 'NO ROW'; row.querySelector('td:last-child button').click(); return 'menu opened'; })()" 2>/dev/null)"
+echo "— open menu: $($AB eval "(() => { const row = Array.from(document.querySelectorAll('tbody tr')).find(tr => tr.textContent.includes('cashier@nyansapo.gh')); if (!row) return 'NO ROW'; const btn = row.querySelector('td:last-child button'); btn.dispatchEvent(new PointerEvent('pointerdown', {bubbles:true, button:0, pointerId:1, pointerType:'mouse'})); btn.dispatchEvent(new PointerEvent('pointerup', {bubbles:true, button:0, pointerId:1, pointerType:'mouse'})); btn.click(); return 'menu opened'; })()" 2>/dev/null)"
 sleep 2
 echo "— menu: $($AB eval "Array.from(document.querySelectorAll('[role=menuitem]')).map(m => m.textContent.trim()).join(' / ')" 2>/dev/null)"
 echo "— open editor: $($AB eval "(() => { const mi = Array.from(document.querySelectorAll('[role=menuitem]')).find(m => m.textContent.includes('Permissions')); if (!mi) return 'NO PERMISSIONS ITEM'; mi.click(); return 'editor opening'; })()" 2>/dev/null)"
 sleep 2.5
 echo "— dialog: $($AB eval "(document.querySelector('[role=dialog] h2') || {innerText:'NO DIALOG'}).innerText" 2>/dev/null)"
-echo "— academic tab: $($AB eval "(() => { const t = Array.from(document.querySelectorAll('[role=dialog] [role=tab]')).find(x => x.textContent.includes('Academic')); if (!t) return 'TAB NOT FOUND'; t.click(); return 'clicked'; })()" 2>/dev/null)"
+echo "— academic tab: $($AB eval "(() => { const t = Array.from(document.querySelectorAll('[role=dialog] [role=tab]')).find(x => x.textContent.includes('Academic')); if (!t) return 'TAB NOT FOUND'; t.id = 'perm-academic-tab'; return 'tagged'; })()" 2>/dev/null)"
+$AB scrollintoview "#perm-academic-tab" > /dev/null 2>&1
+$AB click "#perm-academic-tab" > /dev/null 2>&1
 sleep 1.5
 echo "— checkboxes: $($AB eval "Array.from(document.querySelectorAll('[role=dialog] [role=checkbox]')).length" 2>/dev/null)"
-echo "— toggle: $($AB eval "(() => { const lbl = Array.from(document.querySelectorAll('[role=dialog] label')).find(l => l.textContent.includes('Enter marks')); if (!lbl) return 'LABEL NOT FOUND'; lbl.click(); return 'toggled'; })()" 2>/dev/null)"
+echo "— toggle: $($AB eval "(() => { const lbl = Array.from(document.querySelectorAll('[role=dialog] label')).find(l => l.textContent.includes('Enter marks')); if (!lbl) return 'LABEL NOT FOUND'; const cb = lbl.querySelector('[role=checkbox]'); if (!cb) return 'NO CHECKBOX'; cb.id = 'perm-gb-enter'; return 'tagged'; })()" 2>/dev/null)"
+$AB scrollintoview "#perm-gb-enter" > /dev/null 2>&1
+$AB click "#perm-gb-enter" > /dev/null 2>&1
 sleep 1.5
-echo "— aria-checked: $($AB eval "(() => { const lbl = Array.from(document.querySelectorAll('[role=dialog] label')).find(l => l.textContent.includes('Enter marks')); if (!lbl) return '?'; const cb = lbl.querySelector('[role=checkbox]'); return cb ? cb.getAttribute('aria-checked') : 'no cb'; })()" 2>/dev/null)"
+echo "— aria-checked: $($AB eval "(() => { const el = document.getElementById('perm-gb-enter'); return el ? el.getAttribute('aria-checked') : 'gone'; })()" 2>/dev/null)"
+echo "— implied view badge: $($AB eval "(() => { const lbl = Array.from(document.querySelectorAll('[role=dialog] label')).find(l => l.textContent.includes('View gradebook')); if (!lbl) return 'NO LABEL'; const cb = lbl.querySelector('[role=checkbox]'); const badge = lbl.innerText.includes('implied') ? ' (implied badge shown)' : ''; return 'gradebook.view checked=' + (cb ? cb.getAttribute('aria-checked') : 'none') + badge; })()" 2>/dev/null)"
 $AB screenshot /tmp/rbac-verify/perm-editor.png > /dev/null 2>&1
-echo "— save: $($AB eval "(() => { const b = Array.from(document.querySelectorAll('[role=dialog] button')).find(x => x.textContent.trim() === 'Save permissions'); if (!b) return 'NO SAVE'; b.click(); return 'saved'; })()" 2>/dev/null)"
+echo "— save: $($AB eval "(() => { const b = Array.from(document.querySelectorAll('[role=dialog] button')).find(x => x.textContent.trim() === 'Save permissions'); if (!b) return 'NO SAVE'; b.id = 'perm-save-btn'; return 'tagged'; })()" 2>/dev/null)"
+$AB scrollintoview "#perm-save-btn" > /dev/null 2>&1
+$AB click "#perm-save-btn" > /dev/null 2>&1
 sleep 3
+echo "— dialog after save: $($AB eval "document.querySelector('[role=dialog]') ? 'STILL OPEN (bad)' : 'closed (saved)'" 2>/dev/null)"
 echo "— persisted via API:"
 SUPER_ID=$(curl -s -X POST http://127.0.0.1:3000/api/auth -H 'content-type: application/json' -d '{"email":"super@nyansapo.gh","password":"nyansapo"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['user']['id'])")
 SCHOOL=$(curl -s -H "x-user-id: $SUPER_ID" http://127.0.0.1:3000/api/context | python3 -c "import sys,json; print(json.load(sys.stdin)['schools'][0]['id'])")
@@ -82,7 +90,7 @@ curl -s -H "x-user-id: $SUPER_ID" "http://127.0.0.1:3000/api/school/$SCHOOL/ops/
 import sys, json
 d = json.load(sys.stdin)
 u = next(x for x in d['users'] if x['email'] == 'cashier@nyansapo.gh')
-print('  overrides:', json.dumps(u['overrides']), '| gradebook.enter effective:', 'gradebook.enter' in u['permissions'])"
+print('  overrides:', json.dumps(u['overrides']), '| gradebook.enter effective:', 'gradebook.enter' in u['permissions'], '| implied gradebook.view:', 'gradebook.view' in u['permissions'])"
 echo ""
 echo "— cashier nav reflects new permission?"
 login_as "cashier@nyansapo.gh"

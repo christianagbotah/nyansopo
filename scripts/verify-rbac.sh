@@ -17,8 +17,16 @@ curl -s -o /dev/null --max-time 3 http://127.0.0.1:3000 && echo "SERVER UP" || {
 mkdir -p /tmp/rbac-verify
 AB="agent-browser"
 
-login_as() {  # email -> sets localStorage session from real auth API, then opens app
-  local email="$1" mod="${2:-dashboard}"
+# ── purge stale service worker + caches (dev builds share chunk URLs) ──
+$AB open http://localhost:3000/ > /dev/null 2>&1
+sleep 1
+$AB eval "Promise.all([navigator.serviceWorker.getRegistrations().then(rs => Promise.all(rs.map(r => r.unregister()))), caches.keys().then(ks => Promise.all(ks.map(k => caches.delete(k))))]).then(() => 'purged')" > /dev/null 2>&1
+sleep 1
+$AB reload > /dev/null 2>&1
+sleep 2
+
+login_as() {  # email -> real UI login (deterministic, same flow a user takes)
+  local email="$1"
   local resp
   resp=$(curl -s -X POST http://127.0.0.1:3000/api/auth -H 'content-type: application/json' -d "{\"email\":\"$email\",\"password\":\"nyansapo\"}")
   local ok
@@ -26,20 +34,22 @@ login_as() {  # email -> sets localStorage session from real auth API, then open
   if [[ "$ok" != OK* ]]; then echo "  !! AUTH $email → $ok"; echo "$resp" | head -c 200; echo; return 1; fi
   local landing
   landing=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['user'].get('landingModule') or 'dashboard')")
-  local store
-  store=$(echo "$resp" | python3 -c "
-import sys, json
-u = json.load(sys.stdin)['user']
-print(json.dumps({'state': {'session': u, 'currentSchoolId': u.get('schoolId'), 'module': u.get('landingModule') or 'dashboard', 'queue': [], 'lastSyncAt': None}, 'version': 0}))")
+
   $AB open http://localhost:3000/ > /dev/null 2>&1
-  $AB eval "localStorage.setItem('nyansapo-store', $(python3 -c "import sys; print(json.dumps(sys.argv[1]))" "$store")); 'set'" > /dev/null 2>&1
-  $AB open "http://localhost:3000/" > /dev/null 2>&1
-  sleep 3.5
+  sleep 1
+  $AB eval "localStorage.clear(); 'cleared'" > /dev/null 2>&1
+  $AB reload > /dev/null 2>&1
+  $AB wait --fn "!!Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === 'Sign in')" --timeout 20000 > /dev/null 2>&1
+  $AB eval "Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === 'Sign in').click(); 'signin-clicked'" > /dev/null 2>&1
+  $AB wait --fn "!!Array.from(document.querySelectorAll('button')).find(b => b.textContent.includes('nyansapo.gh'))" --timeout 20000 > /dev/null 2>&1
+  $AB eval "Array.from(document.querySelectorAll('button')).find(b => b.textContent.includes('$email')).click(); 'quick-clicked'" > /dev/null 2>&1
+  $AB wait --fn "!!document.querySelector('aside nav button, [data-slot=sheet-content] nav button') || document.body.innerText.includes('Sign-in failed')" --timeout 30000 > /dev/null 2>&1
+  sleep 2
   echo "  auth=$ok landing=$landing"
 }
 
 navdump() {
-  $AB eval "Array.from(document.querySelectorAll('aside nav button, header button')).map(b => b.textContent.trim()).filter(t => t && t.length < 30).join(' | ')" 2>/dev/null
+  $AB eval "Array.from(document.querySelectorAll('aside nav button')).map(b => b.textContent.trim()).filter(t => t && t.length < 30).join(' | ')" 2>/dev/null
 }
 
 pagetext() {

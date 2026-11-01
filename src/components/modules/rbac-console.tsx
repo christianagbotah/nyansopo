@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
 import { apiGet, apiPost } from "@/lib/api";
-import { PERMISSIONS, ROLE_DEFAULTS, ROLE_LEVELS, ROLE_LEVEL_LABELS, effectivePermissions } from "@/lib/rbac";
+import { PERMISSIONS, PERM_IMPLIES, ROLE_DEFAULTS, ROLE_LEVELS, ROLE_LEVEL_LABELS, effectivePermissions } from "@/lib/rbac";
 import { ModuleHeader, LoadingBlock, EmptyState } from "@/components/ui-helpers";
 import { fmtDateTime } from "@/lib/format";
 import { Button } from "@/components/ui/button";
@@ -380,10 +380,24 @@ function PermissionsDialog({ user, onOpenChange, schoolId, onSaved }: {
     return g;
   }, []);
 
+  // permId → an action permission that implies it (for the "implied" badge)
+  const impliedBy = useMemo(() => {
+    const map: Record<string, string> = {};
+    Object.entries(PERM_IMPLIES).forEach(([action, views]) => views.forEach((v) => { map[v] ??= action; }));
+    return map;
+  }, []);
+  const manualExtras = useMemo(() => new Set(user?.overrides.extra ?? []), [user]);
+
   function toggle(permId: string) {
     setEffective((prev) => {
       const next = new Set(prev);
-      if (next.has(permId)) next.delete(permId); else next.add(permId);
+      if (next.has(permId)) {
+        next.delete(permId);
+      } else {
+        next.add(permId);
+        // granting an action auto-includes its view permission
+        for (const impl of PERM_IMPLIES[permId] ?? []) next.add(impl);
+      }
       return next;
     });
   }
@@ -398,6 +412,9 @@ function PermissionsDialog({ user, onOpenChange, schoolId, onSaved }: {
       const byDefault = roleDefaults.has(p.id);
       if (isOn && !byDefault) extra.push(p.id);
       if (!isOn && byDefault) denied.push(p.id);
+      // an OFF permission that an ON action would re-imply must be denied explicitly,
+      // otherwise the server-side implication closure would silently re-grant it
+      if (!isOn && !byDefault && !!impliedBy[p.id] && effective.has(impliedBy[p.id])) denied.push(p.id);
     });
     try {
       await apiPost(`/api/school/${schoolId}/ops/rbac`, { action: "user.perms", id: user.id, extra, denied });
@@ -421,7 +438,7 @@ function PermissionsDialog({ user, onOpenChange, schoolId, onSaved }: {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><ShieldCheck className="size-4.5" /> Permissions — {user?.fullName}</DialogTitle>
           <DialogDescription>
-            Role <b>{user ? ROLE_SHORT[user.role] ?? user.role : ""}</b> grants its defaults; tick or untick to override for this person only.
+            Role <b>{user ? ROLE_SHORT[user.role] ?? user.role : ""}</b> grants its defaults; tick or untick to override for this person only. Actions auto-include their view permission (e.g. Enter marks ⇒ View gradebook) — untick the view to override.
             {overridesCount > 0 && <span className="ml-1 text-amber-600 font-medium">{overridesCount} override(s) active.</span>}
           </DialogDescription>
         </DialogHeader>
@@ -440,13 +457,16 @@ function PermissionsDialog({ user, onOpenChange, schoolId, onSaved }: {
                 {perms.map((p) => {
                   const on = effective.has(p.id);
                   const isDefault = roleDefaults.has(p.id);
+                  const isImplied = on && !isDefault && !manualExtras.has(p.id) && !!impliedBy[p.id] && effective.has(impliedBy[p.id]);
                   return (
                     <label key={p.id} className={`flex items-start gap-2.5 rounded-lg border p-2.5 cursor-pointer transition-colors ${on ? "border-primary/40 bg-primary/5" : "hover:bg-secondary/40"}`}>
                       <Checkbox checked={on} onCheckedChange={() => toggle(p.id)} className="mt-0.5" />
                       <div className="min-w-0">
                         <div className="text-sm font-medium flex items-center gap-1.5 flex-wrap">
                           {p.label}
-                          {isDefault ? <Badge variant="outline" className="text-[9px] px-1">role default</Badge> : <Badge variant="secondary" className="text-[9px] px-1">custom</Badge>}
+                          {isDefault ? <Badge variant="outline" className="text-[9px] px-1">role default</Badge>
+                            : isImplied ? <Badge variant="outline" className="text-[9px] px-1 text-sky-700 border-sky-300 bg-sky-50 dark:text-sky-300 dark:border-sky-800 dark:bg-sky-950">implied</Badge>
+                            : <Badge variant="secondary" className="text-[9px] px-1">custom</Badge>}
                         </div>
                         <div className="text-[10px] text-muted-foreground font-mono">{p.id}</div>
                       </div>
