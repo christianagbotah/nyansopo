@@ -22,7 +22,7 @@ type Template = { id: string; name: string; category: string; body: string; isDe
 type Automation = { id: string; name: string; trigger: string; recipients: string; body: string; offsetDays: number; active: boolean; lastRunAt: string | null; sentCount: number };
 type Message = { id: string; recipientName: string; recipientPhone: string; body: string; category: string; status: string; sentByName: string | null; sentAt: string; errorReason: string | null };
 type SmsData = {
-  setting: { provider: string; senderId: string; credits: number; autoFeeReminders: boolean; autoAbsenceAlerts: boolean; autoPaymentReceipts: boolean } | null;
+  setting: { provider: string; senderId: string; credits: number; autoFeeReminders: boolean; autoAbsenceAlerts: boolean; autoPaymentReceipts: boolean; autoLessonNoteAlerts: boolean } | null;
   templates: Template[];
   messages: Message[];
   stats: { total: number; delivered: number; deliveredRate: number; credits: number };
@@ -38,6 +38,16 @@ const TRIGGER_LABELS: Record<string, string> = {
   ABSENCE_MARKED: "Absence marked",
   RESULTS_PUBLISHED: "Results published",
   BILL_REMINDER: "Bill reminder",
+  LESSON_NOTE_RETURNED: "Lesson note returned",
+  LESSON_NOTE_ENDORSED: "Lesson note endorsed",
+};
+
+// teacher-directed triggers: recipient is the note's author (Staff record),
+// placeholders differ from the guardian-oriented ones
+const LESSON_NOTE_TRIGGERS = ["LESSON_NOTE_RETURNED", "LESSON_NOTE_ENDORSED"];
+const LESSON_NOTE_BODY: Record<string, string> = {
+  LESSON_NOTE_RETURNED: 'Hi {teacher} — your lesson note "{note}" ({class} · {subject}, week {week}) was returned for revision. Reviewer: "{comment}". Please revise and resubmit. — {school}',
+  LESSON_NOTE_ENDORSED: 'Good news {teacher} — your lesson note "{note}" ({class} · {subject}, week {week}) was endorsed by {reviewer}. — {school}',
 };
 
 const CAT_COLORS: Record<string, string> = {
@@ -47,6 +57,7 @@ const CAT_COLORS: Record<string, string> = {
   RESULTS: "bg-violet-100 text-violet-800 dark:bg-violet-950 dark:text-violet-300",
   ANNOUNCEMENT: "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300",
   TRANSPORT: "bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300",
+  STAFF: "bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-300",
   GENERAL: "bg-secondary text-secondary-foreground",
 };
 
@@ -297,6 +308,7 @@ function ComposeTab({ data, onSent }: { data: SmsData; onSent: () => void }) {
               { on: data.setting?.autoPaymentReceipts, label: "Payment receipts", desc: "Every fee & tuck payment" },
               { on: data.setting?.autoAbsenceAlerts, label: "Absence alerts", desc: "When a learner is marked absent" },
               { on: data.setting?.autoFeeReminders, label: "Fee reminders", desc: "Scheduled arrears chasing" },
+              { on: data.setting?.autoLessonNoteAlerts, label: "Lesson-note alerts", desc: "Teachers notified when notes are returned / endorsed" },
             ].map((x, i) => (
               <div key={i} className="flex items-center justify-between gap-2 text-sm">
                 <div>
@@ -344,13 +356,14 @@ function SettingsTab({ data, onSaved }: { data: SmsData; onSaved: () => void }) 
   const [fee, setFee] = useState(!!data.setting?.autoFeeReminders);
   const [absence, setAbsence] = useState(!!data.setting?.autoAbsenceAlerts);
   const [receipts, setReceipts] = useState(!!data.setting?.autoPaymentReceipts);
+  const [lessonNotes, setLessonNotes] = useState(data.setting?.autoLessonNoteAlerts !== false);
   const [topup, setTopup] = useState("500");
   const [busy, setBusy] = useState(false);
 
   async function save() {
     setBusy(true);
     try {
-      await apiPost(`/api/school/${currentSchoolId}/ops/sms`, { action: "save-settings", provider, senderId, autoFeeReminders: fee, autoAbsenceAlerts: absence, autoPaymentReceipts: receipts });
+      await apiPost(`/api/school/${currentSchoolId}/ops/sms`, { action: "save-settings", provider, senderId, autoFeeReminders: fee, autoAbsenceAlerts: absence, autoPaymentReceipts: receipts, autoLessonNoteAlerts: lessonNotes });
       toast({ title: "Settings saved" });
       onSaved();
     } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
@@ -396,6 +409,7 @@ function SettingsTab({ data, onSaved }: { data: SmsData; onSaved: () => void }) 
             { label: "Payment receipts", desc: "SMS receipt for every fee and daily-service payment", val: receipts, set: setReceipts },
             { label: "Absence alerts", desc: "Notify guardians when a learner is marked absent", val: absence, set: setAbsence },
             { label: "Fee reminders", desc: "Include guardians in scheduled arrears reminders", val: fee, set: setFee },
+            { label: "Lesson-note alerts", desc: "Text the teacher when their GES note is returned for revision (or endorsed, with a rule)", val: lessonNotes, set: setLessonNotes },
           ].map((x) => (
             <div key={x.label} className="flex items-center justify-between gap-3">
               <div>
@@ -573,6 +587,15 @@ function AutomationDialog({ rule, onOpenChange, onDone }: { rule: Automation | "
     } else { setName(""); setTrigger("BILL_REMINDER"); setRecipients("GUARDIANS"); setBody("Friendly reminder: {student}'s term balance is {balance}. Kindly settle at the office or via MoMo. Thank you — {school}."); setOffsetDays("3"); }
   }, [rule]);
 
+  // switching to a lesson-note trigger: teacher-directed defaults (recipients + body)
+  function onTriggerChange(v: string) {
+    setTrigger(v);
+    if (LESSON_NOTE_TRIGGERS.includes(v)) {
+      setRecipients("TEACHERS");
+      if (!body.trim() || Object.values(LESSON_NOTE_BODY).includes(body) || body.startsWith("Friendly reminder:")) setBody(LESSON_NOTE_BODY[v]);
+    }
+  }
+
   async function submit() {
     if (!name.trim() || !body.trim()) { toast({ title: "Rule name and message are required" }); return; }
     setBusy(true);
@@ -591,14 +614,18 @@ function AutomationDialog({ rule, onOpenChange, onDone }: { rule: Automation | "
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><Zap className="size-4 text-amber-500" /> {isNew ? "New automation rule" : "Edit automation rule"}</DialogTitle>
-          <DialogDescription>Message sent automatically when the event fires. Placeholders: {"{student}"} {"{amount}"} {"{balance}"} {"{receipt}"} {"{term}"} {"{date}"} {"{school}"} {"{class}"}</DialogDescription>
+          <DialogDescription>
+            {LESSON_NOTE_TRIGGERS.includes(trigger)
+              ? <>Sent to the note's teacher automatically. Placeholders: {"{teacher}"} {"{note}"} {"{class}"} {"{subject}"} {"{week}"} {"{reviewer}"} {"{comment}"} {"{school}"}</>
+              : <>Message sent automatically when the event fires. Placeholders: {"{student}"} {"{amount}"} {"{balance}"} {"{receipt}"} {"{term}"} {"{date}"} {"{school}"} {"{class}"}</>}
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <div className="space-y-1.5"><Label>Rule name</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Fee reminder — 3 days before due" /></div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Trigger</Label>
-              <Select value={trigger} onValueChange={setTrigger}>
+              <Select value={trigger} onValueChange={onTriggerChange}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {Object.entries(TRIGGER_LABELS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
@@ -623,6 +650,9 @@ function AutomationDialog({ rule, onOpenChange, onDone }: { rule: Automation | "
               <Input type="number" value={offsetDays} onChange={(e) => setOffsetDays(e.target.value)} placeholder="3" />
               <p className="text-xs text-muted-foreground">Reminders cover unpaid invoices due within this many days (and anything overdue). Run manually from the rule card.</p>
             </div>
+          )}
+          {trigger === "LESSON_NOTE_ENDORSED" && (
+            <p className="text-xs text-muted-foreground rounded-md bg-secondary/60 px-3 py-2">Endorsement texts are opt-in — they only send while this rule is active. Returns-for-revision text by default even without a rule.</p>
           )}
           <div className="space-y-1.5">
             <Label>Message</Label>

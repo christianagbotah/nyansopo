@@ -275,6 +275,10 @@ model Staff {
   momoNumber     String?
   bankName       String?
   hiredAt        DateTime?
+  // SMS notification preference (iedupro user_notification_preferences parity):
+  // per-teacher opt-out for lesson-note return/endorse alerts; school-level kill
+  // switch lives on SmsSetting.autoLessonNoteAlerts
+  smsNotify      Boolean         @default(true)
   active         Boolean         @default(true)
   classrooms       Classroom[]
   payslips         Payslip[]
@@ -1003,9 +1007,10 @@ model SmsSetting {
   provider            String  @default("SIMULATED") // SIMULATED | ARKESEL | TERMII
   senderId            String  @default("NYANSAPO")
   credits             Int     @default(500)
-  autoFeeReminders    Boolean @default(true)
-  autoAbsenceAlerts   Boolean @default(true)
-  autoPaymentReceipts Boolean @default(true)
+  autoFeeReminders      Boolean @default(true)
+  autoAbsenceAlerts     Boolean @default(true)
+  autoPaymentReceipts   Boolean @default(true)
+  autoLessonNoteAlerts  Boolean @default(true) // teacher SMS when a GES note is returned / endorsed
 }
 
 model SmsTemplate {

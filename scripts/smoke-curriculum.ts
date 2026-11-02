@@ -139,6 +139,9 @@ async function main() {
   console.log("\n── cleanup smoke note ──");
   const del = await post(head, `/api/school/${schoolId}/ops/curriculum`, { action: "note.delete", id: noteId });
   check("smoke note removed", del.status === 200, String(del.status));
+  // the return-for-revision in this suite fires a teacher SMS (STAFF category) — remove it
+  const smokeSms = await db.smsMessage.findMany({ where: { schoolId, category: "STAFF", sentAt: { gte: new Date(Date.now() - 10 * 60 * 1000) } } });
+  for (const m of smokeSms) await db.smsMessage.delete({ where: { id: m.id } }).catch(() => {});
 
   console.log(`\n${fail === 0 ? "🎉" : "⚠️ "} ${pass} passed, ${fail} failed`);
   if (fail > 0) process.exitCode = 1;

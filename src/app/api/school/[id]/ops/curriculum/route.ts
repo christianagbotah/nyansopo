@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
+import { sendAutomated } from "@/lib/sms";
 
 // ── Curriculum & Lesson Notes (iEduPro lesson-note lifecycle parity)
 //    GET  ?tab=overview (default) — catalogues, notes, templates, review queue, completion
@@ -303,7 +304,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   // HOD / head-teacher review: endorse or return with feedback
   if (action === "note.review") {
-    const note = await db.lessonNote.findUnique({ where: { id: body.id } });
+    const note = await db.lessonNote.findUnique({
+      where: { id: body.id },
+      include: { staff: true, classroom: true, subject: true },
+    });
     if (!note || note.schoolId !== schoolId) return NextResponse.json({ error: "Lesson note not found" }, { status: 404 });
     if (note.status !== "PENDING") return NextResponse.json({ error: "Only notes awaiting review can be actioned" }, { status: 400 });
     const decision = body.decision === "ENDORSE" ? "ENDORSE" : body.decision === "REQUEST_REVISION" ? "REQUEST_REVISION" : null;
@@ -322,6 +326,41 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       await tx.lessonNoteReview.create({ data: { noteId: note.id, action: decision, actorName, comment } });
       return updated;
     });
+
+    // ── teacher SMS (school toggle SmsSetting.autoLessonNoteAlerts × per-teacher
+    //    Staff.smsNotify opt-out). RETURNED sends by default (reviewer feedback is
+    //    time-critical); ENDORSED only fires when the school has an explicit
+    //    LESSON_NOTE_ENDORSED automation rule (saves credits). An active rule for
+    //    either trigger overrides the default body via sendAutomated. ──
+    try {
+      const setting = await db.smsSetting.findUnique({ where: { schoolId } });
+      if (setting?.autoLessonNoteAlerts && note.staff.smsNotify && note.staff.phone) {
+        const school = await db.school.findUnique({ where: { id: schoolId }, select: { name: true } });
+        const vars = {
+          teacher: note.staff.fullName, note: note.title, class: note.classroom.name,
+          subject: note.subject.name, week: String(note.weekNumber), reviewer: actorName,
+          comment: comment ?? "", school: school?.name ?? "the school",
+          date: new Date().toLocaleDateString("en-GB"),
+        };
+        if (decision === "REQUEST_REVISION") {
+          await sendAutomated({
+            db, schoolId, trigger: "LESSON_NOTE_RETURNED",
+            defaultBody: `Hi {teacher} — your lesson note "{note}" ({class} · {subject}, week {week}) was returned for revision. Reviewer: "{comment}". Please revise and resubmit. — {school}`,
+            vars, recipientName: note.staff.fullName, recipientPhone: note.staff.phone, sentByName: actorName,
+          });
+        } else {
+          const endorseRule = await db.smsAutomation.findFirst({ where: { schoolId, trigger: "LESSON_NOTE_ENDORSED", active: true }, orderBy: { createdAt: "asc" } });
+          if (endorseRule) {
+            await sendAutomated({
+              db, schoolId, trigger: "LESSON_NOTE_ENDORSED", rule: endorseRule,
+              defaultBody: `Good news {teacher} — your lesson note "{note}" ({class} · {subject}, week {week}) was endorsed by {reviewer}. — {school}`,
+              vars, recipientName: note.staff.fullName, recipientPhone: note.staff.phone, sentByName: actorName,
+            });
+          }
+        }
+      }
+    } catch { /* SMS must never break the review action */ }
+
     return NextResponse.json({ note: updated });
   }
 

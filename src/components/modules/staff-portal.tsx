@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useStore } from "@/lib/store";
-import { apiGet } from "@/lib/api";
+import { apiGet, apiPost } from "@/lib/api";
 import { ModuleHeader, LoadingBlock, EmptyState } from "@/components/ui-helpers";
 import { fmtCedi, fmtDate, initials, avatarColor } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
@@ -10,7 +10,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { UserRound, Receipt, Megaphone, Clock, BadgeCheck, CalendarDays, Wallet, TrendingDown, School } from "lucide-react";
+import { UserRound, Receipt, Megaphone, Clock, BadgeCheck, CalendarDays, Wallet, TrendingDown, School, MessageSquareWarning } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { toast } from "@/hooks/use-toast";
 
 type Allowance = { name: string; amountCents: number };
 type Payslip = {
@@ -24,6 +26,7 @@ type StaffData = {
     fullName: string; title: string | null; position: string | null; category: string; department: string | null;
     staffCode: string | null; qualification: string | null; employmentType: string; hiredAt: string | null;
     phone: string | null; email: string | null; ssnitNumber: string | null; accountNumber: string | null; momoNumber: string | null;
+    smsNotify: boolean;
     subjects: string[]; classrooms: string[];
     timetable: { day: number; start: number; end: number; subject: string; classroom: string }[];
     payslips: Payslip[];
@@ -111,6 +114,8 @@ export function StaffPortal() {
           </Card>
 
           <div className="space-y-4">
+            {/* SMS lesson-note alerts — self-service opt-out (iedupro parity) */}
+            <SmsAlertsCard phone={me.phone} initial={me.smsNotify} />
             <Card>
               <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><BadgeCheck className="size-4" /> Responsibilities</CardTitle></CardHeader>
               <CardContent className="space-y-2">
@@ -292,5 +297,44 @@ function Tile({ icon, label, value, sub, tone }: { icon: React.ReactNode; label:
       <div className={`mt-1.5 text-xl font-bold tabular-nums ${tone === "good" ? "text-emerald-600 dark:text-emerald-400" : ""}`}>{value}</div>
       <div className="text-[11px] text-muted-foreground truncate">{sub}</div>
     </div>
+  );
+}
+
+/* ── SMS lesson-note alerts card: self-service opt-out ──
+    Teacher controls whether the school texts them when a lesson note is
+    returned for revision (or endorsed). Enabling requires a phone on the
+    staff record (iedupro user_notification_preferences parity). */
+function SmsAlertsCard({ phone, initial }: { phone: string | null; initial: boolean }) {
+  const { currentSchoolId } = useStore();
+  const [on, setOn] = useState(initial);
+  const [busy, setBusy] = useState(false);
+
+  async function toggle(next: boolean) {
+    setBusy(true);
+    try {
+      const res = await apiPost<{ smsNotify: boolean }>(`/api/school/${currentSchoolId}/ops/portal`, { action: "staff.set-sms-preference", enabled: next });
+      setOn(res.smsNotify);
+      toast({ title: res.smsNotify ? "SMS alerts on" : "SMS alerts off", description: res.smsNotify ? `Lesson-note texts will go to ${phone}.` : "You will no longer receive lesson-note texts." });
+    } catch (e: any) {
+      toast({ title: "Could not change preference", description: e.message, variant: "destructive" });
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><MessageSquareWarning className="size-4" /> SMS lesson-note alerts</CardTitle></CardHeader>
+      <CardContent className="space-y-2">
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-sm">
+            Text me when my lesson notes are returned for revision{phone ? <> — <span className="font-medium">{phone}</span></> : null}
+          </div>
+          <Switch checked={on} disabled={busy} onCheckedChange={toggle} />
+        </div>
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          {on ? "On — the reviewer's feedback is texted to you the moment a note is returned." : "Off — check the Curriculum & Notes module for reviewer feedback instead."}
+          {phone ? "" : " No phone number on your staff record yet — ask the administrator to add one."}
+        </p>
+      </CardContent>
+    </Card>
   );
 }

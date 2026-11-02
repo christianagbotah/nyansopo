@@ -40,7 +40,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 
   return NextResponse.json({
-    setting: setting ? { provider: setting.provider, senderId: setting.senderId, credits: setting.credits, autoFeeReminders: setting.autoFeeReminders, autoAbsenceAlerts: setting.autoAbsenceAlerts, autoPaymentReceipts: setting.autoPaymentReceipts } : null,
+    setting: setting ? { provider: setting.provider, senderId: setting.senderId, credits: setting.credits, autoFeeReminders: setting.autoFeeReminders, autoAbsenceAlerts: setting.autoAbsenceAlerts, autoPaymentReceipts: setting.autoPaymentReceipts, autoLessonNoteAlerts: setting.autoLessonNoteAlerts } : null,
     templates: templates.map((t) => ({ id: t.id, name: t.name, category: t.category, body: t.body, isDefault: t.isDefault })),
     messages: messages.map((m) => ({ id: m.id, recipientName: m.recipientName, recipientPhone: m.recipientPhone, body: m.body, category: m.category, status: m.status, sentByName: m.sentByName, sentAt: m.sentAt, errorReason: m.errorReason })),
     stats: { total, delivered, deliveredRate: total ? Math.round((delivered / total) * 100) : 0, credits: setting?.credits ?? 0 },
@@ -61,11 +61,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const user = auth.user;
 
   if (action === "save-settings") {
-    const { provider, senderId, autoFeeReminders, autoAbsenceAlerts, autoPaymentReceipts } = body;
+    const { provider, senderId, autoFeeReminders, autoAbsenceAlerts, autoPaymentReceipts, autoLessonNoteAlerts } = body;
     const existing = await db.smsSetting.findUnique({ where: { schoolId } });
     const data = {
       provider: provider ?? "SIMULATED", senderId: senderId ?? "NYANSAPO",
       autoFeeReminders: !!autoFeeReminders, autoAbsenceAlerts: !!autoAbsenceAlerts, autoPaymentReceipts: !!autoPaymentReceipts,
+      // lesson-note toggle: preserve the stored value when the caller omits it
+      ...(autoLessonNoteAlerts !== undefined ? { autoLessonNoteAlerts: !!autoLessonNoteAlerts } : existing ? {} : { autoLessonNoteAlerts: true }),
     };
     const setting = existing ? await db.smsSetting.update({ where: { schoolId }, data }) : await db.smsSetting.create({ data: { ...data, schoolId } });
     return NextResponse.json({ setting });

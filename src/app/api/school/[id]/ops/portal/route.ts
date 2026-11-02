@@ -204,6 +204,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         department: st.department, staffCode: st.staffCode, qualification: st.qualification,
         employmentType: st.employmentType, hiredAt: st.hiredAt, phone: st.phone, email: st.email,
         ssnitNumber: mask(st.ssnitNumber), accountNumber: mask(st.accountNumber), momoNumber: mask(st.momoNumber),
+        smsNotify: st.smsNotify, // lesson-note SMS opt-out (self-service below)
         subjects: st.subjects?.split(",").map((x) => x.trim()).filter(Boolean) ?? [],
         classrooms: st.classrooms.map((c) => c.name),
         timetable: st.timetableSlots.map((t) => ({
@@ -262,6 +263,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (duplicate) return NextResponse.json({ error: `There is already a pending request for "${book.title}" — wait for the librarian's decision.` }, { status: 409 });
     const request = await db.bookRequest.create({ data: { schoolId, bookId, studentId, startAt: start, endAt: end } });
     return NextResponse.json({ request: { id: request.id, status: request.status } });
+  }
+
+  // ── staff self-service: SMS lesson-note alert opt-in/opt-out
+  //    (iedupro user_notification_preferences parity — a teacher manages their
+  //    own preference; enabling requires a phone on the staff record) ──
+  if (body.action === "staff.set-sms-preference") {
+    if (!user.staffId) return NextResponse.json({ error: "This account is not linked to a staff record" }, { status: 403 });
+    const st = await db.staff.findUnique({ where: { id: user.staffId } });
+    if (!st || st.schoolId !== schoolId) return NextResponse.json({ error: "Staff record not found" }, { status: 404 });
+    const enabled = !!body.enabled;
+    if (enabled && !st.phone) {
+      return NextResponse.json({ error: "No phone number on your staff record yet — ask the administrator to add one before enabling SMS alerts." }, { status: 400 });
+    }
+    const updated = await db.staff.update({ where: { id: st.id }, data: { smsNotify: enabled } });
+    return NextResponse.json({ smsNotify: updated.smsNotify });
   }
 
   return NextResponse.json({ error: "Unknown action" }, { status: 400 });

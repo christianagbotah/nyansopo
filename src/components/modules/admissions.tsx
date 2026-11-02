@@ -18,8 +18,14 @@ import { toast } from "@/hooks/use-toast";
 import { Search, UserPlus, FileSearch, ShieldAlert, ShieldCheck, Inbox, Send, ArrowLeftRight, Phone, Mail, MapPin, School as SchoolIcon, MessageSquare, Ban, CheckCheck, FileDown, Upload } from "lucide-react";
 
 export function Admissions() {
-  const { currentSchoolId, schools } = useStore();
+  const { currentSchoolId, schools, navTarget } = useStore();
   const [tab, setTab] = useState("admit");
+  // deep-link support (notification bell: record requests → Record requests tab)
+  const [appliedTarget, setAppliedTarget] = useState<typeof navTarget>(null);
+  if (navTarget !== appliedTarget) {
+    setAppliedTarget(navTarget);
+    if (navTarget?.tab && ["admit", "bulk", "inquiries", "registry", "requests", "transfers"].includes(navTarget.tab)) setTab(navTarget.tab);
+  }
   const [inquiries, setInquiries] = useState<any[] | null>(null);
   const [requests, setRequests] = useState<{ inbox: any[]; outbox: any[] } | null>(null);
   const [transfers, setTransfers] = useState<{ outgoing: any[]; incoming: any[] } | null>(null);

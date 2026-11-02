@@ -125,7 +125,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const { staffId, salaryCents, employmentType, ssnitNumber, momoNumber, active,
             fullName, role, title, phone, email, category, position, qualification, department,
             tier2Provider, tier2MemberId, accountNumber, bankName, tin,
-            subjects, sex, birthday, ghanaCardId, address, hiredAt } = body;
+            subjects, sex, birthday, ghanaCardId, address, hiredAt, smsNotify } = body;
     const st = await db.staff.findUnique({ where: { id: staffId } });
     if (!st || st.schoolId !== schoolId) return NextResponse.json({ error: "Staff not found" }, { status: 404 });
     const updated = await db.staff.update({
@@ -136,6 +136,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         ssnitNumber: ssnitNumber ?? st.ssnitNumber,
         momoNumber: momoNumber ?? st.momoNumber,
         ...(typeof active === "boolean" ? { active } : {}),
+        ...(typeof smsNotify === "boolean" ? { smsNotify } : {}),
         ...(fullName?.trim() ? { fullName: fullName.trim() } : {}),
         ...(role ? { role } : {}),
         ...(title !== undefined ? { title: title || null } : {}),

@@ -64,12 +64,28 @@ Verdicts: ✅ covered · 🟡 partial (gaps listed) · ❌ missing (before this 
 
 ## Open items (not blocking, tracked for later)
 
-1. Split father/mother guardian fields + medical section + photo upload in the
-   admission wizard; boarding house/bed allocation at intake.
-2. Terminal-bill landscape variant + per-item discount breakdown.
-3. Settings branding uploads (logo, head-teacher signature) + term runtime
-   (`days opened` per term) + receipt-style picker.
-4. Notification centre (bell + list) and Ctrl+K command palette.
-5. Bulk arrears CSV import + clone-previous-term bills in Fees.
-6. Print layouts assume A4 portrait; wide months/classes render small (tweak
-   print CSS to landscape per sheet).
+1. ~~Split father/mother guardian fields + medical section + photo upload in the
+   admission wizard; boarding house/bed allocation at intake.~~ — closed by
+   open-items wave 1 (`dded0fa`).
+2. ~~Terminal-bill landscape variant + per-item discount breakdown.~~ — closed
+   by wave 1.
+3. ~~Settings branding uploads (logo, head-teacher signature) + term runtime
+   (`days opened` per term) + receipt-style picker.~~ — closed by wave 1.
+4. ~~Notification centre (bell + list) and Ctrl+K command palette.~~ — closed
+   by wave 1; wave 2 (`lesson-note SMS`) fixed the record-request bell item
+   (deep-links to Admissions › Record requests; gated on `admissions.manage`
+   so school admins actually see it).
+5. ~~Bulk arrears CSV import + clone-previous-term bills in Fees.~~ — closed
+   by wave 1.
+6. ~~Print layouts assume A4 portrait; wide months/classes render small.~~ —
+   closed by wave 1 (landscape toggles + per-sheet `@page` rules).
+
+**Follow-ons closed by wave 2** (`agent-ctx/10-lesson-note-sms.md`): SMS to
+teachers when GES lesson notes are returned for revision (default on) or
+endorsed (opt-in rule), with school × teacher × credits gating and
+self-service opt-out in the Staff Portal — iEduPro `Sms_model` /
+`sms_automation` / `user_notification_preferences` parity.
+
+**Still open:** admission portraits & branding images are stored as data-URLs
+in Postgres — move to blob storage before large-scale rollouts; wire a real
+SMS gateway (ARKESEL/TERMII) into `sendSms` for live delivery.

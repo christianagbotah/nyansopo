@@ -35,6 +35,13 @@ export async function GET(req: NextRequest) {
         module: "fees", tab: "approvals", at: modLatest[0].createdAt,
       });
     }
+  }
+
+  // 1b — incoming cross-school record requests. Gated by admissions.manage —
+  //      the same permission that allows responding in the Admissions desk —
+  //      so school admins (and above) see them; approvals.manage alone is
+  //      reserved for the level-1 receipt-modification queue.
+  if (can("admissions.manage")) {
     const recLatest = await db.recordRequest.findMany({
       where: { targetSchoolId: schoolId, status: "PENDING" }, orderBy: { requestedAt: "desc" }, take: 1,
       include: { student: true },
@@ -45,7 +52,7 @@ export async function GET(req: NextRequest) {
         id: "record-requests", kind: "records", severity: "info", count: cnt,
         title: `${cnt} learner record request${cnt > 1 ? "s" : ""} from other schools`,
         detail: `${recLatest[0].student.firstName} ${recLatest[0].student.lastName} · ${recLatest[0].purpose.toLowerCase()} · by ${recLatest[0].requestedByName}`,
-        module: "students", at: recLatest[0].requestedAt,
+        module: "admissions", tab: "requests", at: recLatest[0].requestedAt,
       });
     }
   }

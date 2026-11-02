@@ -18,7 +18,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Calculator, Users, Plus, CheckCheck, Banknote, Printer, Pencil, Trash2, ShieldCheck, FileText, AlertTriangle, Settings2, Landmark, GraduationCap, Download, Wand2 } from "lucide-react";
 import { LogoMark, KenteStrip } from "@/components/brand";
 
-type StaffRow = { id: string; fullName: string; role: string; title: string | null; phone: string | null; email?: string | null; category?: string; position?: string | null; qualification?: string | null; department?: string | null; staffCode?: string | null; tier2Provider?: string | null; tier2MemberId?: string | null; accountNumber?: string | null; bankName?: string | null; tin?: string | null; salary: number; employmentType: string; ssnitNumber: string | null; momoNumber: string | null; hiredAt: string | null; active: boolean; sex?: string | null; birthday?: string | null; ghanaCardId?: string | null; address?: string | null; subjects?: string | null };
+type StaffRow = { id: string; fullName: string; role: string; title: string | null; phone: string | null; email?: string | null; category?: string; position?: string | null; qualification?: string | null; department?: string | null; staffCode?: string | null; tier2Provider?: string | null; tier2MemberId?: string | null; accountNumber?: string | null; bankName?: string | null; tin?: string | null; salary: number; employmentType: string; ssnitNumber: string | null; momoNumber: string | null; hiredAt: string | null; active: boolean; sex?: string | null; birthday?: string | null; ghanaCardId?: string | null; address?: string | null; subjects?: string | null; smsNotify?: boolean };
 type Run = { id: string; period: string; status: string; payslipCount: number; gross: number; deductions: number; net: number; employerSsnit: number; approvedByName: string | null; paidAt: string | null };
 type Slip = {
   id: string; staffId: string; staff: string; role: string; title: string | null; ssnitNumber: string | null; momoNumber: string | null;
@@ -444,6 +444,7 @@ function StaffDialog({ staff, onOpenChange, onDone }: { staff: StaffRow | null; 
     phone: "", email: "", position: "", qualification: "", department: "", category: "TEACHING",
     tier2Provider: "", accountNumber: "", bankName: "", tin: "",
     sex: "", birthday: "", ghanaCard: "", address: "", subjects: "", tier2MemberId: "", hiredAt: "",
+    smsNotify: true,
   });
   const [busy, setBusy] = useState(false);
 
@@ -463,6 +464,7 @@ function StaffDialog({ staff, onOpenChange, onDone }: { staff: StaffRow | null; 
         sex: staff.sex ?? "", birthday: staff.birthday ? staff.birthday.slice(0, 10) : "",
         ghanaCard: staff.ghanaCardId ?? "", address: staff.address ?? "", subjects: staff.subjects ?? "",
         tier2MemberId: staff.tier2MemberId ?? "", hiredAt: staff.hiredAt ? staff.hiredAt.slice(0, 10) : "",
+        smsNotify: staff.smsNotify !== false,
       });
     }
   }, [staff]);
@@ -480,6 +482,7 @@ function StaffDialog({ staff, onOpenChange, onDone }: { staff: StaffRow | null; 
         accountNumber: f.accountNumber, bankName: f.bankName, tin: f.tin,
         sex: f.sex || null, birthday: f.birthday || null, ghanaCardId: f.ghanaCard,
         address: f.address, subjects: f.subjects, tier2MemberId: f.tier2MemberId, hiredAt: f.hiredAt || null,
+        smsNotify: f.smsNotify,
       });
       toast({ title: "Staff record saved" });
       onDone();
@@ -527,6 +530,15 @@ function StaffDialog({ staff, onOpenChange, onDone }: { staff: StaffRow | null; 
           <div className="space-y-1.5">
             <Label>Phone</Label>
             <Input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} />
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <label className="flex items-start gap-2 text-sm font-medium leading-tight cursor-pointer" onClick={() => setF({ ...f, smsNotify: !f.smsNotify })}>
+              <Checkbox checked={f.smsNotify} className="mt-0.5" />
+              <span>
+                SMS lesson-note alerts to this phone
+                <span className="block text-xs font-normal text-muted-foreground">Text the teacher when a GES lesson note is returned for revision (or endorsed, with a rule). School-wide kill switch: SMS Centre → Settings.</span>
+              </span>
+            </label>
           </div>
           <div className="space-y-1.5">
             <Label>Email</Label>
