@@ -72,7 +72,7 @@ $default_msg = "Dear Parent, kindly note that {name} ({class}) has an outstandin
     <div class="sms-counter"><span id="smsChars">0</span> characters · <span id="smsParts">1</span> SMS part(s) · personalised per parent</div>
 
     <div style="font-size: 13px; font-weight: 700; margin-top: 14px;">
-        <i class="fa fa-users" style="color:#667eea;"></i> Recipients — debtors (<?php echo $running_term; ?> / <?php echo $running_year); ?>)
+        <i class="fa fa-users" style="color:#667eea;"></i> Recipients — debtors (<?php echo $running_term; ?> / <?php echo $running_year; ?>)
     </div>
     <?php if (empty($debtors)): ?>
     <div style="text-align:center;padding:26px;color:#6b7280;background:#f9fafb;border:1.5px dashed #d1d5db;border-radius:10px;margin-top:8px;">
