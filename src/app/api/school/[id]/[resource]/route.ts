@@ -219,6 +219,18 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       const staff = await db.staff.findMany({ where: { schoolId } });
       const remarkTemplates = await db.remarkTemplate.findMany({ where: { schoolId }, orderBy: [{ category: "asc" }, { minPercent: "asc" }] });
       const conductItems = await db.conductItem.findMany({ where: { schoolId }, orderBy: [{ kind: "asc" }, { sortOrder: "asc" }] });
+      // branding & receipts preferences (SchoolSetting JSON values)
+      const prefSettings = await db.schoolSetting.findMany({ where: { schoolId, key: { in: ["branding.logoUrl", "branding.signatureUrl", "receipts.style"] } } });
+      const daysOpened = await db.schoolSetting.findMany({ where: { schoolId, key: { startsWith: "term.daysOpened:" } } });
+      const pref = (k: string) => {
+        const raw = prefSettings.find((r) => r.key === k)?.value;
+        try { return raw ? JSON.parse(raw) : null; } catch { return null; }
+      };
+      const daysMap: Record<string, number> = {};
+      for (const d of daysOpened) {
+        const v = Number(JSON.parse(d.value ?? "0"));
+        if (Number.isFinite(v)) daysMap[d.key.slice("term.daysOpened:".length)] = v;
+      }
       return NextResponse.json({
         school: { ...school, group: school.group ? { id: school.group.id, name: school.group.name, proprietorName: school.group.proprietorName } : null },
         years: years.map((y) => ({ id: y.id, name: y.name, isCurrent: y.isCurrent, terms: y.terms.map((t) => ({ id: t.id, name: t.name, startsAt: t.startsAt, endsAt: t.endsAt, isCurrent: t.isCurrent })) })),
@@ -227,6 +239,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         staff: staff.map((s) => ({ id: s.id, fullName: s.fullName, role: s.role, title: s.title })),
         remarkTemplates: remarkTemplates.map((t) => ({ id: t.id, category: t.category, minPercent: t.minPercent, maxPercent: t.maxPercent, text: t.text, active: t.active })),
         conductItems: conductItems.map((c) => ({ id: c.id, name: c.name, kind: c.kind, active: c.active })),
+        branding: { logoUrl: pref("branding.logoUrl"), signatureUrl: pref("branding.signatureUrl"), receiptStyle: pref("receipts.style") ?? "A5" },
+        daysOpened: daysMap,
       });
     }
 
@@ -283,6 +297,75 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   switch (resource) {
     // ── FEES ──────────────────────────────────────────────
     case "fees": {
+      // ── clone previous term's fee structures into the current term ──
+      // (iEduPro parity: one click re-bills every class that had a structure
+      // last term; classes already billed this term are left untouched)
+      if (action === "clone-structures") {
+        const { sourceTermId } = body;
+        const source = await db.term.findUnique({ where: { id: sourceTermId }, include: { academicYear: true } });
+        if (!source || source.academicYear.schoolId !== schoolId) return NextResponse.json({ error: "Source term not found" }, { status: 404 });
+        const currentTerm = await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId } } });
+        if (!currentTerm) return NextResponse.json({ error: "No current term" }, { status: 400 });
+        if (source.id === currentTerm.id) return NextResponse.json({ error: "Pick a different term to clone from" }, { status: 400 });
+        const sourceStructures = await db.feeStructure.findMany({ where: { schoolId, termId: source.id }, include: { items: true } });
+        const currentStructures = await db.feeStructure.findMany({ where: { schoolId, termId: currentTerm.id }, select: { classroomId: true } });
+        const have = new Set(currentStructures.map((s) => s.classroomId));
+        const todo = sourceStructures.filter((s) => !have.has(s.classroomId));
+        let cloned = 0;
+        for (const src of todo) {
+          const created = await db.feeStructure.create({
+            data: { schoolId, termId: currentTerm.id, classroomId: src.classroomId, totalCents: src.totalCents },
+          });
+          for (const it of src.items) {
+            await db.feeItem.create({ data: { feeStructureId: created.id, name: it.name, amountCents: it.amountCents, isOptional: it.isOptional } });
+          }
+          cloned++;
+        }
+        return NextResponse.json({ cloned, skipped: sourceStructures.length - cloned, term: currentTerm.name });
+      }
+      // ── bulk arrears CSV import (legacy balances / catch-up billing) ──
+      // rows: studentIndex,description,amount — one arrears invoice per row,
+      // created OVERDUE in the current term so they land on the chase-list.
+      if (action === "import-arrears") {
+        const csv: string = typeof body.csv === "string" ? body.csv : "";
+        const rows = csv.replace(/^\uFEFF/, "").trim().split(/\r?\n/).map((l) => l.split(",").map((c) => c.trim()));
+        if (rows.length < 2) return NextResponse.json({ error: "The file needs a header row plus at least one learner row" }, { status: 400 });
+        const header = rows[0].map((h) => h.toLowerCase());
+        const idxCol = header.indexOf("studentindex"), descCol = header.indexOf("description"), amtCol = header.indexOf("amount");
+        if (idxCol === -1 || amtCol === -1) return NextResponse.json({ error: "Header must include at least: studentIndex,amount (description optional)" }, { status: 400 });
+        const term = await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId } } });
+        if (!term) return NextResponse.json({ error: "No current term" }, { status: 400 });
+        const results: { line: number; index: string; ok: boolean; error?: string; duplicate?: boolean }[] = [];
+        let imported = 0, importedCents = 0;
+        for (let i = 1; i < rows.length; i++) {
+          const cells = rows[i];
+          const index = cells[idxCol] ?? "";
+          const description = (descCol >= 0 ? cells[descCol] : "") || "Arrears carried forward";
+          const amount = Math.round(Number((cells[amtCol] ?? "").replace(/[^0-9.]/g, "")) * 100);
+          const line = i + 1;
+          if (!index || !Number.isFinite(amount) || amount <= 0) {
+            results.push({ line, index, ok: false, error: "Needs a student index and an amount > 0" });
+            continue;
+          }
+          const student = await db.student.findFirst({
+            where: { nyansapoIndex: index, enrollments: { some: { schoolId, status: "ACTIVE" } } },
+          });
+          if (!student) { results.push({ line, index, ok: false, error: "No active learner with this index in this school" }); continue; }
+          const dupe = await db.invoice.findFirst({ where: { schoolId, studentId: student.id, termId: term.id, items: { some: { name: `Arrears — ${description}` } } } });
+          if (dupe) { results.push({ line, index, ok: true, duplicate: true }); continue; }
+          const invoice = await db.invoice.create({
+            data: {
+              invoiceNo: await nextInvoiceNo(), studentId: student.id, schoolId, termId: term.id,
+              classroomName: (await db.enrollment.findFirst({ where: { studentId: student.id, schoolId, status: "ACTIVE" }, include: { classroom: true } }))?.classroom.name ?? "",
+              totalCents: amount, status: "OVERDUE", dueDate: new Date(Date.now() - 864e5),
+            },
+          });
+          await db.invoiceItem.create({ data: { invoiceId: invoice.id, name: `Arrears — ${description}`, amountCents: amount } });
+          results.push({ line, index, ok: true });
+          imported++; importedCents += amount;
+        }
+        return NextResponse.json({ results, imported, importedCents, failed: results.filter((r) => !r.ok).length });
+      }
       // bulk receipt payloads for reprinting issued receipts
       if (action === "receipt-payloads") {
         const ids: string[] = Array.isArray(body.paymentIds) ? body.paymentIds : [];
@@ -693,6 +776,32 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         const { curriculum, motto, phone, email, nasiaStatus, gnacopsStatus } = body;
         const s = await db.school.update({ where: { id: schoolId }, data: { curriculum: curriculum ?? school.curriculum, motto: motto ?? school.motto, phone: phone ?? school.phone, email: email ?? school.email, nasiaStatus: nasiaStatus ?? school.nasiaStatus, gnacopsStatus: gnacopsStatus ?? school.gnacopsStatus } });
         return NextResponse.json({ school: s });
+      }
+      if (action === "update-preferences") {
+        // branding uploads + default receipt style + per-term "days opened"
+        // (CI3 system_settings_modern parity, stored as SchoolSetting JSON rows)
+        const { logoUrl, signatureUrl, receiptStyle, daysOpened } = body as {
+          logoUrl?: string | null; signatureUrl?: string | null; receiptStyle?: string; daysOpened?: Record<string, number>;
+        };
+        const entries: [string, string][] = [];
+        const saneImage = (v: any) => (typeof v === "string" && v.startsWith("data:image/") && v.length < 700_000 ? v : null);
+        entries.push(["branding.logoUrl", JSON.stringify(saneImage(logoUrl))]);
+        entries.push(["branding.signatureUrl", JSON.stringify(saneImage(signatureUrl))]);
+        if (receiptStyle != null) {
+          if (!["A5", "FORMAL", "MODERN", "THERMAL"].includes(receiptStyle)) return NextResponse.json({ error: "Unknown receipt style" }, { status: 400 });
+          entries.push(["receipts.style", JSON.stringify(receiptStyle)]);
+        }
+        for (const [termId, days] of Object.entries(daysOpened ?? {})) {
+          const term = await db.term.findUnique({ where: { id: termId }, include: { academicYear: true } });
+          if (!term || term.academicYear.schoolId !== schoolId) return NextResponse.json({ error: "Term not found" }, { status: 404 });
+          const n = Number(days);
+          if (!Number.isFinite(n) || n < 0 || n > 400) return NextResponse.json({ error: "Days opened must be between 0 and 400" }, { status: 400 });
+          entries.push([`term.daysOpened:${termId}`, JSON.stringify(Math.round(n))]);
+        }
+        for (const [key, value] of entries) {
+          await db.schoolSetting.upsert({ where: { schoolId_key: { schoolId, key } }, create: { schoolId, key, value }, update: { value } });
+        }
+        return NextResponse.json({ ok: true });
       }
       if (action === "create-classroom") {
         const { name, grade, stage, capacity } = body;

@@ -14,9 +14,10 @@ import { StatCard, ModuleHeader, LoadingBlock, StatusBadge, EmptyState, FilterBa
 import { fmtCedi, fmtDate, PAYMENT_LABELS } from "@/lib/format";
 import { canAny } from "@/lib/rbac";
 import { toast } from "@/hooks/use-toast";
-import { Banknote, Receipt, AlertTriangle, CheckCircle2, Plus, Flag, Printer, Wallet, Ticket, Percent, UserPlus, XCircle, ListChecks, Copy as CopyIcon, Eye, Link2, ClipboardList, ShieldCheck, Undo2, PencilLine, Trash2, FileWarning, Ban, Download, History, ArrowRightLeft, PiggyBank, HandCoins } from "lucide-react";
+import { Banknote, Receipt, AlertTriangle, CheckCircle2, Plus, Flag, Printer, Wallet, Ticket, Percent, UserPlus, XCircle, ListChecks, Copy as CopyIcon, Eye, Link2, ClipboardList, ShieldCheck, Undo2, PencilLine, Trash2, FileWarning, Ban, Download, History, ArrowRightLeft, PiggyBank, HandCoins, CopyPlus, FileUp } from "lucide-react";
 import { ReceiptDocument, BulkReceiptsDocument, RECEIPT_STYLES, type ReceiptStyle } from "@/components/receipts";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Textarea } from "@/components/ui/textarea";
 import { DiscountProfilesTab, DiscountApprovalsTab, type DiscountData } from "@/components/modules/discounts-workspace";
 
 type FeeData = {
@@ -67,6 +68,14 @@ export function Fees() {
   const [payFor, setPayFor] = useState<FeeData["invoices"][0] | null>(null);
   const [flagFor, setFlagFor] = useState<FeeData["invoices"][0] | null>(null);
   const [discFor, setDiscFor] = useState<FeeData["invoices"][0] | null>(null);
+  // clone-previous-term billing + bulk arrears CSV import (CI3 parity)
+  const [cloneOpen, setCloneOpen] = useState(false);
+  const [cloneSource, setCloneSource] = useState("");
+  const [cloneBusy, setCloneBusy] = useState(false);
+  const [arrearsOpen, setArrearsOpen] = useState(false);
+  const [arrearsCsv, setArrearsCsv] = useState("");
+  const [arrearsResult, setArrearsResult] = useState<any | null>(null);
+  const [arrearsBusy, setArrearsBusy] = useState(false);
 
   /* iEduPro nested nav: open on the deep-linked tab (invoices / receipts / credits / discounts…) */
   const [appliedTarget, setAppliedTarget] = useState<any>(null);
@@ -344,6 +353,14 @@ export function Fees() {
         </TabsContent>
 
         <TabsContent value="structures">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+            <p className="text-sm text-muted-foreground">Per-class fee structures for the selected term.</p>
+            {canAny(session?.permissions, ["fees.manage"]) && (
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => { setCloneSource(""); setCloneOpen(true); }}>
+                <CopyPlus className="size-4" /> Clone previous term
+              </Button>
+            )}
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {data.structures.map((s) => (
               <Card key={s.id}>
@@ -381,6 +398,11 @@ export function Fees() {
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-base flex items-center gap-2"><Flag className="size-4 text-destructive" /> Arrears chase-list</CardTitle>
+              {canAny(session?.permissions, ["fees.manage"]) && (
+                <Button size="sm" variant="outline" className="gap-1.5" onClick={() => { setArrearsCsv(""); setArrearsResult(null); setArrearsOpen(true); }}>
+                  <FileUp className="size-4" /> Import arrears (CSV)
+                </Button>
+              )}
             </CardHeader>
             <CardContent className="space-y-2 max-h-[520px] overflow-y-auto nice-scroll">
               {overdue.length === 0 && <EmptyState icon={<CheckCircle2 className="size-5" />} title="No arrears — everything collected!" />}
@@ -450,6 +472,106 @@ export function Fees() {
       <ReceiptDialog receipt={receipt} onOpenChange={(o) => !o && setReceipt(null)} />
       <CreditHistoryDialog target={creditHistoryFor} onOpenChange={(o) => !o && setCreditHistoryFor(null)} />
       {bulkReceipts && <BulkReceiptsDocument receipts={bulkReceipts} onDone={() => { setBulkReceipts(null); setCheckedReceipts(new Set()); }} />}
+
+      {/* ── clone previous term's fee structures ── */}
+      <Dialog open={cloneOpen} onOpenChange={setCloneOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><CopyPlus className="size-4" /> Clone previous term bills</DialogTitle>
+            <DialogDescription>
+              Copies every fee structure from the term you pick into <b>{data.terms.find((t) => t.id === data.termId)?.name ?? "the current term"}</b>.
+              Classes already billed this term are left untouched — nothing is overwritten.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <Label>Clone from</Label>
+            <Select value={cloneSource} onValueChange={setCloneSource}>
+              <SelectTrigger><SelectValue placeholder="Pick the source term" /></SelectTrigger>
+              <SelectContent>
+                {data.terms.filter((t) => t.id !== data.termId).map((t) => (
+                  <SelectItem key={t.id} value={t.id}>{t.name}{t.isCurrent ? " (current)" : ""}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCloneOpen(false)}>Cancel</Button>
+            <Button
+              disabled={!cloneSource || cloneBusy}
+              onClick={async () => {
+                setCloneBusy(true);
+                try {
+                  const res = await apiPost<any>(`/api/school/${currentSchoolId}/fees`, { action: "clone-structures", sourceTermId: cloneSource });
+                  toast({ title: `${res.cloned} structure${res.cloned === 1 ? "" : "s"} cloned`, description: `${res.skipped} skipped (already billed) · now billing ${res.term}` });
+                  setCloneOpen(false);
+                  load(termId ?? undefined);
+                } catch (e: any) { toast({ title: "Clone failed", description: e.message, variant: "destructive" }); }
+                finally { setCloneBusy(false); }
+              }}
+            >
+              {cloneBusy ? "Cloning…" : "Clone structures"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── bulk arrears CSV import ── */}
+      <Dialog open={arrearsOpen} onOpenChange={setArrearsOpen}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><FileUp className="size-4" /> Import arrears (CSV)</DialogTitle>
+            <DialogDescription>
+              Bring legacy balances onto this term's chase-list. One row per learner: <code className="text-xs">studentIndex,description,amount</code> —
+              e.g. <code className="text-xs">NY-2012-00103,Balance from Term 2,246.00</code>. Each row becomes an overdue arrears invoice.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm" variant="outline" className="gap-1.5"
+                onClick={() => downloadCsv("nyansapo-arrears-template.csv", ["studentIndex", "description", "amount"], [["NY-2012-00103", "Balance from Term 2", 246.00]])}
+              >
+                <Download className="size-3.5" /> Template
+              </Button>
+              <Input
+                type="file" accept=".csv,text/csv" className="h-8 flex-1 text-xs file:mr-2 file:h-6 file:px-2 file:text-xs"
+                onChange={async (e) => { const f = e.target.files?.[0]; if (f) setArrearsCsv(await f.text()); }}
+              />
+            </div>
+            <Textarea rows={5} value={arrearsCsv} onChange={(e) => setArrearsCsv(e.target.value)} placeholder="…or paste CSV rows here" className="font-mono text-xs" />
+            {arrearsResult && (
+              <div className="rounded-lg border p-3 text-xs space-y-1.5 max-h-48 overflow-y-auto nice-scroll">
+                <div className="font-semibold">
+                  {arrearsResult.imported} imported · {arrearsResult.failed} failed · total {fmtCedi(arrearsResult.importedCents ?? 0)}
+                </div>
+                {(arrearsResult.results ?? []).filter((r: any) => !r.ok || r.duplicate).slice(0, 20).map((r: any, i: number) => (
+                  <div key={i} className={r.ok ? "text-muted-foreground" : "text-destructive"}>
+                    Line {r.line} · {r.index} — {r.duplicate ? "already imported (skipped)" : r.error}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setArrearsOpen(false)}>Close</Button>
+            <Button
+              disabled={!arrearsCsv.trim() || arrearsBusy}
+              onClick={async () => {
+                setArrearsBusy(true);
+                try {
+                  const res = await apiPost<any>(`/api/school/${currentSchoolId}/fees`, { action: "import-arrears", csv: arrearsCsv });
+                  setArrearsResult(res);
+                  if (res.imported > 0) { toast({ title: `${res.imported} arrears invoice${res.imported > 1 ? "s" : ""} imported`, description: `${fmtCedi(res.importedCents)} added to the chase-list` }); load(termId ?? undefined); }
+                  else toast({ title: "Nothing imported", description: `${res.failed} row(s) failed — see the details below.`, variant: "destructive" });
+                } catch (e: any) { toast({ title: "Import failed", description: e.message, variant: "destructive" }); }
+                finally { setArrearsBusy(false); }
+              }}
+            >
+              {arrearsBusy ? "Importing…" : "Import arrears"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

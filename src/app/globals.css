@@ -182,6 +182,9 @@
 }
 @media print {
   .a5-sheet { width: 148mm; }
+  /* A4 landscape variant (terminal bills & wide sheets) — the component
+     injects the matching @page landscape rule at print time */
+  .a5-sheet.landscape-sheet { width: 272mm; }
 }
 /* 80mm thermal roll for counter printers */
 @media print {

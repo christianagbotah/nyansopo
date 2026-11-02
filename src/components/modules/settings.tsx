@@ -15,9 +15,28 @@ import { ModuleHeader, LoadingBlock, StatusBadge, StatCard, EmptyState } from "@
 import { SCALES_TABLE } from "@/lib/grading-scale";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { Settings as SettingsIcon, GraduationCap, BookOpen, Users, CalendarRange, Plus, Save, MessageSquareQuote, Sparkles, Trash2, Award, Pencil, Baby, Sigma, PencilLine, ChevronDown, ChevronRight } from "lucide-react";
+import { Settings as SettingsIcon, GraduationCap, BookOpen, Users, CalendarRange, Plus, Save, MessageSquareQuote, Sparkles, Trash2, Award, Pencil, Baby, Sigma, PencilLine, ChevronDown, ChevronRight, ImageUp, ReceiptText } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
+
+/** Image file → resized JPEG data-URL (logos ≤256px, signatures ≤320px wide). */
+function imageToDataUrl(file: File, maxW: number, maxH: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const scale = Math.min(1, maxW / Math.max(1, img.width), maxH / Math.max(1, img.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(img.width * scale));
+      canvas.height = Math.max(1, Math.round(img.height * scale));
+      canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL("image/png"));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Not a readable image")); };
+    img.src = url;
+  });
+}
 
 export function Settings() {
   const { currentSchoolId, navTarget } = useStore();
@@ -26,6 +45,10 @@ export function Settings() {
   const [clsOpen, setClsOpen] = useState(false);
   const [tab, setTab] = useState("profile");
   const [form, setForm] = useState<any>({ motto: "", phone: "", email: "", curriculum: "GES", nasiaStatus: "", gnacopsStatus: "" });
+  // branding & receipts preferences (SchoolSetting-backed)
+  const [branding, setBranding] = useState<{ logoUrl: string | null; signatureUrl: string | null; receiptStyle: string }>({ logoUrl: null, signatureUrl: null, receiptStyle: "A5" });
+  // per-term "days opened" edits (termId → value as typed)
+  const [daysEdits, setDaysEdits] = useState<Record<string, string>>({});
 
   /* iEduPro nested nav: preselect the WAEC Grading tab on deep link */
   const [appliedTarget, setAppliedTarget] = useState<any>(null);
@@ -39,6 +62,8 @@ export function Settings() {
     apiGet<any>(`/api/school/${currentSchoolId}/settings`).then((d) => {
       setData(d);
       setForm({ motto: d.school.motto ?? "", phone: d.school.phone ?? "", email: d.school.email ?? "", curriculum: d.school.curriculum, nasiaStatus: d.school.nasiaStatus, gnacopsStatus: d.school.gnacopsStatus });
+      setBranding({ logoUrl: d.branding?.logoUrl ?? null, signatureUrl: d.branding?.signatureUrl ?? null, receiptStyle: d.branding?.receiptStyle ?? "A5" });
+      setDaysEdits({});
     }).catch((e) => toast({ title: "Load failed", description: e.message, variant: "destructive" }));
   };
   useEffect(load, [currentSchoolId]);
@@ -51,6 +76,16 @@ export function Settings() {
     try {
       await apiPost(`/api/school/${currentSchoolId}/settings`, { action: "update-school", ...form });
       toast({ title: "School profile updated", description: form.curriculum !== s.curriculum ? `Curriculum switched to ${form.curriculum}. New grade bands and subjects now apply across the app.` : undefined });
+      load();
+    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); }
+    finally { setBusy(false); }
+  }
+
+  async function savePreferences(prefs: { logoUrl?: string | null; signatureUrl?: string | null; receiptStyle?: string; daysOpened?: Record<string, number> }) {
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/settings`, { action: "update-preferences", ...prefs });
+      toast({ title: "Preferences saved" });
       load();
     } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); }
     finally { setBusy(false); }
@@ -138,6 +173,57 @@ export function Settings() {
                 </div>
               </CardContent>
             </Card>
+
+            <Card className="lg:row-span-2">
+              <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><ReceiptText className="size-4" /> Branding &amp; receipts</CardTitle></CardHeader>
+              <CardContent className="space-y-4">
+                {/* logo */}
+                <div className="flex items-center gap-3">
+                  <div className="size-16 rounded-xl border bg-secondary/50 flex items-center justify-center overflow-hidden shrink-0">
+                    {branding.logoUrl ? <img src={branding.logoUrl} alt="School logo" className="size-full object-contain" /> : <ImageUp className="size-6 text-muted-foreground/50" />}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <Label className="text-xs">School logo (receipt letterheads)</Label>
+                    <div className="flex items-center gap-2 mt-1.5">
+                      <Input type="file" accept="image/*" className="h-8 w-44 text-xs file:mr-1.5 file:h-6 file:px-2 file:text-xs"
+                        onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; try { setBranding({ ...branding, logoUrl: await imageToDataUrl(f, 256, 256) }); } catch (err: any) { toast({ title: "Skipped", description: err.message, variant: "destructive" }); } }} />
+                      {branding.logoUrl && <Button size="sm" variant="ghost" className="h-8 text-xs text-muted-foreground" onClick={() => setBranding({ ...branding, logoUrl: null })}>Remove</Button>}
+                    </div>
+                  </div>
+                </div>
+                {/* head-teacher signature */}
+                <div className="flex items-center gap-3">
+                  <div className="h-14 w-40 rounded-xl border bg-secondary/50 flex items-center justify-center overflow-hidden shrink-0">
+                    {branding.signatureUrl ? <img src={branding.signatureUrl} alt="Head-teacher signature" className="h-full object-contain" /> : <ImageUp className="size-6 text-muted-foreground/50" />}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <Label className="text-xs">Head-teacher / bursar signature (receipts)</Label>
+                    <div className="flex items-center gap-2 mt-1.5">
+                      <Input type="file" accept="image/*" className="h-8 w-44 text-xs file:mr-1.5 file:h-6 file:px-2 file:text-xs"
+                        onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; try { setBranding({ ...branding, signatureUrl: await imageToDataUrl(f, 320, 120) }); } catch (err: any) { toast({ title: "Skipped", description: err.message, variant: "destructive" }); } }} />
+                      {branding.signatureUrl && <Button size="sm" variant="ghost" className="h-8 text-xs text-muted-foreground" onClick={() => setBranding({ ...branding, signatureUrl: null })}>Remove</Button>}
+                    </div>
+                  </div>
+                </div>
+                {/* default receipt style */}
+                <div className="space-y-1.5">
+                  <Label>Default receipt style</Label>
+                  <Select value={branding.receiptStyle} onValueChange={(v) => setBranding({ ...branding, receiptStyle: v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="A5">Standard A5 — kente-accented, itemised</SelectItem>
+                      <SelectItem value="FORMAL">Formal Bursar A5 — serif, dotted fields, amount in words</SelectItem>
+                      <SelectItem value="MODERN">Modern Gradient — bold paid banner</SelectItem>
+                      <SelectItem value="THERMAL">Thermal 80mm — counter roll printer</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[11px] text-muted-foreground">Every newly issued receipt (fees, counter, store, transport) opens in this style. Cashiers can still reprint in another style.</p>
+                </div>
+                <Button className="gap-1.5" disabled={busy} onClick={() => savePreferences({ logoUrl: branding.logoUrl, signatureUrl: branding.signatureUrl, receiptStyle: branding.receiptStyle })}>
+                  <Save className="size-4" /> {busy ? "Saving…" : "Save branding & receipts"}
+                </Button>
+              </CardContent>
+            </Card>
           </div>
         </TabsContent>
 
@@ -183,9 +269,34 @@ export function Settings() {
                     <div key={t.id} className={`rounded-lg border p-3 ${t.isCurrent ? "border-primary" : ""}`}>
                       <div className="font-medium text-sm flex items-center justify-between">{t.name} {t.isCurrent && <Badge variant="secondary">current</Badge>}</div>
                       <div className="text-xs text-muted-foreground mt-1">{new Date(t.startsAt).toLocaleDateString("en-GB")} → {new Date(t.endsAt).toLocaleDateString("en-GB")}</div>
+                      <div className="mt-2">
+                        <Label className="text-[11px] text-muted-foreground">Days opened (term runtime)</Label>
+                        <Input
+                          type="number" min="0" max="400" className="h-8 mt-1" placeholder="e.g. 60"
+                          value={daysEdits[t.id] ?? (data.daysOpened?.[t.id] != null ? String(data.daysOpened[t.id]) : "")}
+                          onChange={(e) => setDaysEdits({ ...daysEdits, [t.id]: e.target.value })}
+                        />
+                      </div>
                     </div>
                   ))}
                 </CardContent>
+                {(() => {
+                  const changed: Record<string, number> = {};
+                  for (const [termId, v] of Object.entries(daysEdits)) {
+                    const n = Number(v);
+                    if (v !== "" && Number.isFinite(n) && n !== (data.daysOpened?.[termId] ?? null)) changed[termId] = n;
+                  }
+                  const hasChanges = Object.keys(changed).length > 0;
+                  return (
+                    <div className="px-6 pb-5 -mt-1">
+                      <Button size="sm" variant="outline" className="gap-1.5" disabled={!hasChanges || busy}
+                        onClick={() => savePreferences({ daysOpened: changed })}>
+                        <Save className="size-3.5" /> Save days opened{hasChanges ? ` (${Object.keys(changed).length})` : ""}
+                      </Button>
+                      <p className="text-[11px] text-muted-foreground mt-1.5">Term runtime used for attendance-rate maths and lesson-note compliance (weeks elapsed ÷ days opened).</p>
+                    </div>
+                  );
+                })()}
               </Card>
             ))}
           </div>

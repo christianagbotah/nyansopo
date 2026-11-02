@@ -360,6 +360,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         termLabel: `${i.term.name} · ${year.name}`,
         items: feeCategory === "DAILY" ? [] : i.items.map((x) => ({ name: x.name, amount: x.amountCents })),
         discount: feeCategory === "DAILY" ? 0 : i.discountCents,
+        discountReason: feeCategory === "DAILY" ? null : i.discountReason,
         paid: feeCategory === "DAILY" ? 0 : i.paidCents,
         balance: feeCategory === "DAILY" ? 0 : bal,
         dailyArrears: daily,

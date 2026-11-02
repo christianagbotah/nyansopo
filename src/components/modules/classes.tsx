@@ -132,7 +132,7 @@ export function Classes() {
         description="Manage classes, class teachers and the weekly routine — subjects, periods and subject teachers per class."
         actions={
           <>
-            <Button size="sm" variant="outline" className="gap-1.5" onClick={() => window.print()}>
+            <Button size="sm" variant="outline" className="gap-1.5" onClick={() => window.print()} title="Prints the whole routine in landscape">
               <Printer className="size-4" /> Print routine
             </Button>
             <Button size="sm" className="gap-1.5" onClick={() => { setEditClass({ capacity: 30, gradeLevel: "B4" }); setClassFormOpen(true); }}>
@@ -182,6 +182,8 @@ export function Classes() {
         </div>
 
         {/* ── timetable ── */}
+        {/* weekly routines are wide — always print landscape */}
+        <style>{"@media print { @page { size: A4 landscape; margin: 8mm; } }"}</style>
         <Card className="print-area">
           <CardContent className="pt-5 pb-5">
             {!cls ? (

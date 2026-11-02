@@ -461,6 +461,9 @@ type MonthlyData = {
 };
 
 function MonthlyPanel({ schoolId }: { schoolId: string }) {
+  // wide day-by-day grid prints best in landscape (toggle preserved for
+  // portrait register folders); the injected @page rule only applies at print
+  const [landscape, setLandscape] = useState(true);
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [classId, setClassId] = useState<string | null>(null);
   const [data, setData] = useState<MonthlyData | null>(null);
@@ -495,10 +498,17 @@ function MonthlyPanel({ schoolId }: { schoolId: string }) {
           <SelectTrigger className="w-64"><SelectValue placeholder="Select a class" /></SelectTrigger>
           <SelectContent>{data.classrooms.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
         </Select>
-        <Button size="sm" variant="outline" className="gap-1.5 ml-auto" onClick={() => window.print()}>
-          <Printer className="size-4" /> Print grid
-        </Button>
+        <div className="ml-auto flex items-center gap-2">
+          <div className="flex rounded-lg border overflow-hidden">
+            <button onClick={() => setLandscape(false)} className={cn("px-3 py-1.5 text-xs font-medium", !landscape ? "bg-primary text-primary-foreground" : "hover:bg-secondary/60")}>Portrait</button>
+            <button onClick={() => setLandscape(true)} className={cn("px-3 py-1.5 text-xs font-medium", landscape ? "bg-primary text-primary-foreground" : "hover:bg-secondary/60")}>Landscape</button>
+          </div>
+          <Button size="sm" variant="outline" className="gap-1.5" onClick={() => window.print()}>
+            <Printer className="size-4" /> Print grid
+          </Button>
+        </div>
       </div>
+      {landscape && <style>{"@media print { @page { size: A4 landscape; margin: 8mm; } }"}</style>}
 
       <Card className="print-area">
         <CardHeader className="pb-3">

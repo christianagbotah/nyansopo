@@ -18,6 +18,7 @@ import { fmtCedi, fmtDate, PAYMENT_LABELS } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
 import { LogoMark, KenteStrip } from "@/components/brand";
 import { amountInWords } from "@/components/receipts";
+import { cn } from "@/lib/utils";
 import {
   TrendingUp, Wallet, AlertTriangle, Receipt, PieChart, BookOpenText, Timer, FileText, Plus,
   ArrowUpRight, ArrowDownLeft, Printer, Banknote, Trash2, Search, Users, ReceiptText, Download,
@@ -58,6 +59,7 @@ type TerminalBill = {
   termLabel: string;
   items: { name: string; amount: number }[];
   discount: number;
+  discountReason: string | null;
   paid: number;
   balance: number;
   dailyArrears: number;
@@ -310,6 +312,9 @@ function TerminalBillsTab({ data }: { data: FinanceData }) {
   const [feeCategory, setFeeCategory] = useState("ALL");
   const [bills, setBills] = useState<TerminalBill[] | null>(null);
   const [busy, setBusy] = useState(false);
+  // print orientation (CI3 creche_bill_landscape parity): landscape spreads
+  // wide item names / month grids across the A4 sheet
+  const [landscape, setLandscape] = useState(false);
 
   useEffect(() => {
     if (!currentSchoolId) return;
@@ -386,26 +391,46 @@ function TerminalBillsTab({ data }: { data: FinanceData }) {
         <Card><CardContent><EmptyState icon={<FileText className="size-5" />} title="No terminal bills generated yet" hint="Pick a class, choose learners (or select all), then generate — each learner gets a printable slip with arrears and next-term bill." /></CardContent></Card>
       ) : (
         <div className="print-area space-y-4">
-          <div className="no-print flex items-center justify-between">
+          {landscape && <style>{"@media print { @page { size: A4 landscape; margin: 10mm; } }"}</style>}
+          <div className="no-print flex flex-wrap items-center justify-between gap-2">
             <div className="text-sm text-muted-foreground">{bills.length} bill{bills.length === 1 ? "" : "s"} ready</div>
-            <Button size="sm" onClick={() => window.print()} className="gap-1.5"><Printer className="size-4" /> Print all</Button>
+            <div className="flex items-center gap-2">
+              <div className="flex rounded-lg border overflow-hidden">
+                <button onClick={() => setLandscape(false)} className={cn("px-3 py-1.5 text-xs font-medium", !landscape ? "bg-primary text-primary-foreground" : "hover:bg-secondary/60")}>Portrait</button>
+                <button onClick={() => setLandscape(true)} className={cn("px-3 py-1.5 text-xs font-medium", landscape ? "bg-primary text-primary-foreground" : "hover:bg-secondary/60")}>Landscape</button>
+              </div>
+              <Button size="sm" onClick={() => window.print()} className="gap-1.5"><Printer className="size-4" /> Print all</Button>
+            </div>
           </div>
-          {bills.map((b, i) => <TerminalBill key={i} bill={b} />)}
+          {bills.map((b, i) => <TerminalBill key={i} bill={b} landscape={landscape} />)}
         </div>
       )}
     </div>
   );
 }
 
-function TerminalBill({ bill }: { bill: TerminalBill }) {
+function TerminalBill({ bill, landscape }: { bill: TerminalBill; landscape?: boolean }) {
   const net = bill.items.reduce((a, x) => a + x.amount, 0);
   const balance = bill.balance;
   // prepaid credit (overpayment) offsets the arrears — never the future bus fare
   const creditApplied = bill.credit > 0 ? Math.min(bill.credit, balance + bill.dailyArrears) : 0;
   const totalDue = balance + bill.dailyArrears - creditApplied;
   const grandTotal = totalDue + (bill.transport?.fare ?? 0);
+  // per-item discount breakdown: the invoice-level discount apportioned
+  // pro-rata across the bill items (last row absorbs the rounding difference)
+  const itemsWithDisc = (() => {
+    const gross = bill.items.reduce((s, x) => s + x.amount, 0);
+    if (!bill.discount || gross <= 0) return bill.items.map((x) => ({ ...x, disc: 0 }));
+    let left = bill.discount;
+    return bill.items.map((x, idx) => {
+      const isLast = idx === bill.items.length - 1;
+      const disc = isLast ? left : Math.round((x.amount * bill.discount) / gross);
+      left -= disc;
+      return { ...x, disc };
+    });
+  })();
   return (
-    <div className="print-sheet a5-sheet mx-auto bg-card text-card-foreground rounded-xl border shadow-sm overflow-hidden">
+    <div className={cn("print-sheet a5-sheet mx-auto bg-card text-card-foreground rounded-xl border shadow-sm overflow-hidden", landscape && "landscape-sheet")}>
       <KenteStrip />
       <div className="px-6 py-5">
         <div className="flex items-start justify-between gap-3">
@@ -441,18 +466,29 @@ function TerminalBill({ bill }: { bill: TerminalBill }) {
             <thead>
               <tr className="border-b text-left text-[9px] uppercase tracking-wider text-muted-foreground">
                 <th className="py-1.5 font-medium">Current term bill item</th>
-                <th className="py-1.5 font-medium text-right">Amount</th>
+                <th className="py-1.5 font-medium text-right">Gross</th>
+                {bill.discount > 0 && <th className="py-1.5 font-medium text-right">Discount</th>}
+                <th className="py-1.5 font-medium text-right">Net</th>
               </tr>
             </thead>
             <tbody>
-              {bill.items.map((it, i) => (
+              {itemsWithDisc.map((it, i) => (
                 <tr key={i} className="border-b border-dashed">
                   <td className="py-1.5">{it.name}</td>
                   <td className="py-1.5 text-right tabular-nums">{fmtCedi(it.amount)}</td>
+                  {bill.discount > 0 && <td className="py-1.5 text-right tabular-nums text-emerald-700 dark:text-emerald-400">{it.disc ? `−${fmtCedi(it.disc)}` : "—"}</td>}
+                  <td className="py-1.5 text-right tabular-nums font-medium">{fmtCedi(it.amount - it.disc)}</td>
                 </tr>
               ))}
-              {bill.discount > 0 && <tr className="border-b border-dashed text-emerald-700"><td className="py-1.5">Discount</td><td className="py-1.5 text-right tabular-nums">−{fmtCedi(bill.discount)}</td></tr>}
-              <tr className="border-b"><td className="py-1.5 font-semibold">Paid to date</td><td className="py-1.5 text-right font-semibold tabular-nums text-emerald-700">{fmtCedi(bill.paid)}</td></tr>
+              {bill.discount > 0 && (
+                <tr className="border-b border-dashed text-emerald-700 font-medium">
+                  <td className="py-1.5">Total discount{bill.discountReason ? ` — ${bill.discountReason}` : ""}</td>
+                  <td className="py-1.5 text-right tabular-nums">{fmtCedi(net)}</td>
+                  <td className="py-1.5 text-right tabular-nums">−{fmtCedi(bill.discount)}</td>
+                  <td className="py-1.5 text-right tabular-nums">{fmtCedi(net - bill.discount)}</td>
+                </tr>
+              )}
+              <tr className="border-b"><td className="py-1.5 font-semibold" colSpan={bill.discount > 0 ? 3 : 2}>Paid to date</td><td className="py-1.5 text-right font-semibold tabular-nums text-emerald-700">{fmtCedi(bill.paid)}</td></tr>
             </tbody>
           </table>
         )}

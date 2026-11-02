@@ -16,17 +16,25 @@ export type ReceiptPayload = {
   lines?: { item: string; qty: number; amount: number }[];
   transport?: { route: string; vehicle?: string | null; term: string; fare: number };
   amount: number;
-  school: { name: string; motto?: string | null; town?: string | null; region?: string | null; phone?: string | null; email?: string | null };
+  school: { name: string; motto?: string | null; town?: string | null; region?: string | null; phone?: string | null; email?: string | null; logoUrl?: string | null; signatureUrl?: string | null; preferredStyle?: "A5" | "FORMAL" | "MODERN" | "THERMAL" };
   // print styling / watermarks
-  style?: "A5" | "THERMAL";
+  style?: "A5" | "FORMAL" | "MODERN" | "THERMAL";
   multiInvoice?: boolean;
   arrears?: boolean;
   creditCreated?: number;
 };
 
 export async function receiptSchool(db: PrismaClient, schoolId: string) {
-  const s = await db.school.findUnique({ where: { id: schoolId } });
+  const [s, branding] = await Promise.all([
+    db.school.findUnique({ where: { id: schoolId } }),
+    db.schoolSetting.findMany({ where: { schoolId, key: { in: ["branding.logoUrl", "branding.signatureUrl", "receipts.style"] } } }),
+  ]);
   if (!s) throw new Error("School not found");
+  const setting = (k: string) => {
+    const raw = branding.find((r) => r.key === k)?.value;
+    try { return raw ? JSON.parse(raw) : null; } catch { return null; }
+  };
+  const preferredStyle = setting("receipts.style");
   return {
     name: s.name,
     motto: s.motto ?? null,
@@ -34,6 +42,9 @@ export async function receiptSchool(db: PrismaClient, schoolId: string) {
     region: s.region ?? null,
     phone: s.phone ?? null,
     email: s.email ?? null,
+    logoUrl: setting("branding.logoUrl"),
+    signatureUrl: setting("branding.signatureUrl"),
+    preferredStyle: typeof preferredStyle === "string" && ["A5", "FORMAL", "MODERN", "THERMAL"].includes(preferredStyle) ? preferredStyle as "A5" | "FORMAL" | "MODERN" | "THERMAL" : "A5" as const,
   };
 }
 
@@ -88,6 +99,7 @@ export async function invoicePaymentReceipt(db: PrismaClient, paymentId: string)
       : undefined,
     amount: p.amountCents,
     creditCreated,
+    style: school.preferredStyle,
     school,
     arrears,
   } satisfies ReceiptPayload;
@@ -120,6 +132,7 @@ export async function dailyServicesReceipt(db: PrismaClient, paymentId: string) 
     },
     services: Object.entries(byName).map(([name, v]) => ({ name, count: v.count, amount: v.amount })),
     amount: p.amountCents,
+    style: school.preferredStyle,
     school,
   } satisfies ReceiptPayload;
 }
@@ -137,6 +150,7 @@ export function posSaleReceipt(
     buyer: sale.buyer,
     lines: sale.lines,
     amount: sale.total,
+    style: school.preferredStyle,
     school,
   };
 }
@@ -163,6 +177,7 @@ export async function transportFareReceipt(
     student: { name: `${p.student.firstName} ${p.student.lastName}`, index: p.student.nyansapoIndex, guardian: p.student.guardianName },
     transport: { route: route.name, vehicle: route.vehicleReg, term: termLabel, fare: fareCents },
     amount: p.amountCents,
+    style: school.preferredStyle,
     school,
   } satisfies ReceiptPayload;
 }

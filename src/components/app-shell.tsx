@@ -16,6 +16,8 @@ import { cn } from "@/lib/utils";
 import { initials } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
 import { flushQueue } from "@/lib/api";
+import { NotificationBell } from "@/components/notification-bell";
+import { CommandPalette } from "@/components/command-palette";
 import { Dashboard } from "@/components/modules/dashboard";
 import { Students } from "@/components/modules/students";
 import { Admissions } from "@/components/modules/admissions";
@@ -48,7 +50,7 @@ import {
   LayoutDashboard, Users, Banknote, CalendarCheck, ClipboardList, GraduationCap, ArrowLeftRight, Building2,
   BrainCircuit, Settings as SettingsIcon, Landmark, Menu, CloudOff, Cloud, RefreshCcw, LogOut, Moon, Sun,
   Download, ChevronDown, ChevronRight, School, MessageSquareText, UtensilsCrossed, Bus, Smartphone, Calculator, Package, PieChart, LayoutList,
-  BookOpen, ShieldCheck, Receipt, Route, UserRound, Home, Backpack, Laptop, BedDouble, NotebookPen,
+  BookOpen, ShieldCheck, Receipt, Route, UserRound, Home, Backpack, Laptop, BedDouble, NotebookPen, Search,
 } from "lucide-react";
 
 type NavLeaf = { id: string; label: string; icon?: any; target?: NavTarget };
@@ -233,6 +235,7 @@ export function AppShell() {
   });
   const [installEvent, setInstallEvent] = useState<any>(null);
   const [navOpen, setNavOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   /* iEduPro nested navigation: class directory for the level bands
      (Students → level → class; Classes → level → class timetable). Loaded
      from the settings resource of the active school. */
@@ -465,6 +468,21 @@ export function AppShell() {
               </Button>
             )}
 
+            {/* notification centre */}
+            <NotificationBell />
+
+            {/* command palette trigger (also Ctrl+K / ⌘K anywhere) */}
+            <Button
+              size="sm" variant="outline"
+              className="gap-1.5 h-8 text-muted-foreground w-8 sm:w-auto sm:px-2.5"
+              title="Search (Ctrl+K)"
+              onClick={() => setPaletteOpen(true)}
+            >
+              <Search className="size-3.5" />
+              <span className="hidden sm:inline text-xs">Search</span>
+              <kbd className="hidden md:inline-flex items-center gap-0.5 rounded border bg-muted px-1 font-sans text-[10px] font-medium text-muted-foreground">⌘K</kbd>
+            </Button>
+
             {/* AI quick open */}
             {canAny(session?.permissions, ["ai.use"]) && (
               <Button size="sm" variant="ghost" className="size-8 p-0" title="AI Assistant" onClick={() => setModule("ai")}>
@@ -573,6 +591,15 @@ export function AppShell() {
           </div>
         </main>
       </div>
+
+      {/* ⌘K command palette (modules, classes, quick actions) */}
+      <CommandPalette
+        items={navItems}
+        open={paletteOpen}
+        setOpen={setPaletteOpen}
+        onToggleTheme={toggleTheme}
+        theme={theme}
+      />
     </div>
   );
 }

@@ -18,7 +18,7 @@ import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
   UserRound, GraduationCap, Users, ReceiptText, BadgePercent, ClipboardCheck, Check, ChevronRight, ChevronLeft,
-  Plus, Trash2, Printer, Sparkles, School as SchoolIcon,
+  Plus, Trash2, Printer, Sparkles, School as SchoolIcon, BedDouble, Camera, HeartPulse,
 } from "lucide-react";
 
 type ClassRow = {
@@ -26,10 +26,14 @@ type ClassRow = {
   classTeacher: string | null; enrolled: number; feeItems: { name: string; amountCents: number; isOptional: boolean }[]; feeTotal: number;
 };
 type DiscountRow = { id: string; name: string; type: string; value: number; notes?: string | null };
+type BedRow = { id: string; code: string; bedType: string };
+type DormRow = { id: string; name: string; type: string | null; beds: BedRow[] };
+type HouseRow = { id: string; name: string; dorms: DormRow[] };
 type WizardData = {
   term: { name: string; year: string } | null;
   classrooms: ClassRow[];
   discounts: DiscountRow[];
+  boarding: HouseRow[];
   recent: any[];
 };
 
@@ -45,6 +49,27 @@ const STEPS = [
 const money = (v: string | number) => Math.round(Number(v || 0) * 100);
 const gh = (cents: number) => (cents / 100).toFixed(2);
 
+/** Portrait upload → client-side resized JPEG data-URL (≤320px, keeps the
+ *  row small enough to store inline; no blob storage needed at this scale). */
+function fileToPortrait(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const max = 320;
+      const scale = Math.min(1, max / Math.max(img.width, img.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(img.width * scale));
+      canvas.height = Math.max(1, Math.round(img.height * scale));
+      canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL("image/jpeg", 0.82));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Not a readable image")); };
+    img.src = url;
+  });
+}
+
 export function AdmissionWizard({ schoolId, onAdmitted }: { schoolId: string; onAdmitted?: () => void }) {
   const [data, setData] = useState<WizardData | null>(null);
   const [step, setStep] = useState(0);
@@ -57,6 +82,14 @@ export function AdmissionWizard({ schoolId, onAdmitted }: { schoolId: string; on
   const [dateOfBirth, setDateOfBirth] = useState("");
   const [hometown, setHometown] = useState("");
   const [previousSchool, setPreviousSchool] = useState("");
+  const [nationality, setNationality] = useState("Ghanaian");
+  const [religion, setReligion] = useState("");
+  const [photoUrl, setPhotoUrl] = useState("");
+  const [bloodGroup, setBloodGroup] = useState("");
+  const [allergies, setAllergies] = useState("");
+  const [medicalConditions, setMedicalConditions] = useState("");
+  const [emergencyContact, setEmergencyContact] = useState("");
+  const [dietNote, setDietNote] = useState("");
 
   const [classroomId, setClassroomId] = useState("");
   const [guardianName, setGuardianName] = useState("");
@@ -66,19 +99,28 @@ export function AdmissionWizard({ schoolId, onAdmitted }: { schoolId: string; on
   const [guardianOccupation, setGuardianOccupation] = useState("");
   const [guardianAddress, setGuardianAddress] = useState("");
   const [relationship, setRelationship] = useState("Parent");
+  const [fatherName, setFatherName] = useState("");
+  const [fatherPhone, setFatherPhone] = useState("");
+  const [fatherOccupation, setFatherOccupation] = useState("");
+  const [motherName, setMotherName] = useState("");
+  const [motherPhone, setMotherPhone] = useState("");
+  const [motherOccupation, setMotherOccupation] = useState("");
 
   const [bill, setBill] = useState<{ name: string; amountCents: number }[]>([]);
   const [extraItem, setExtraItem] = useState({ name: "", amount: "" });
   const [discountId, setDiscountId] = useState("");
   const [deposit, setDeposit] = useState("");
   const [depositMethod, setDepositMethod] = useState("CASH");
+  const [houseId, setHouseId] = useState("");
+  const [dormId, setDormId] = useState("");
+  const [bedId, setBedId] = useState("");
 
   const [busy, setBusy] = useState(false);
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
-  const [done, setDone] = useState<null | { name: string; index: string; classroom: string; rollNo: number; invoiceNo?: string; payable: number }>(null);
+  const [done, setDone] = useState<null | { name: string; index: string; classroom: string; rollNo: number; invoiceNo?: string; payable: number; bed?: string | null }>(null);
 
   useEffect(() => {
-    apiGet<WizardData>(`/api/school/${schoolId}/ops/admissions`).then(setData).catch(() => setData({ term: null, classrooms: [], discounts: [], recent: [] }));
+    apiGet<WizardData>(`/api/school/${schoolId}/ops/admissions`).then(setData).catch(() => setData({ term: null, classrooms: [], discounts: [], boarding: [], recent: [] }));
   }, [schoolId]);
 
   const chosenClass = useMemo(() => data?.classrooms.find((c) => c.id === classroomId) ?? null, [data, classroomId]);
@@ -88,7 +130,7 @@ export function AdmissionWizard({ schoolId, onAdmitted }: { schoolId: string; on
     if (!chosenClass) { setBill([]); return; }
     setBill(chosenClass.feeItems.filter((i) => !i.isOptional).map((i) => ({ name: i.name, amountCents: i.amountCents })));
     setDiscountId(""); setDeposit("");
-  }, [classroomId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [classroomId]);
 
   const gross = bill.reduce((s, i) => s + i.amountCents, 0);
   const discount = useMemo(() => {
@@ -117,6 +159,10 @@ export function AdmissionWizard({ schoolId, onAdmitted }: { schoolId: string; on
         firstName, lastName, otherNames, gender, dateOfBirth: dateOfBirth || null,
         classroomId, guardianName, guardianPhone, guardianAltPhone, guardianEmail, guardianOccupation, guardianAddress,
         relationship, hometown, previousSchool,
+        fatherName, fatherPhone, fatherOccupation, motherName, motherPhone, motherOccupation,
+        nationality, religion, bloodGroup: bloodGroup || null, allergies, medicalConditions, emergencyContact, dietNote,
+        photoUrl: photoUrl || null,
+        bedId: bedId || null,
         billItems: bill, discountId: discountId || null,
         initialPaymentCents: depositCents > 0 ? depositCents : 0,
         initialPaymentMethod: depositMethod,
@@ -125,6 +171,7 @@ export function AdmissionWizard({ schoolId, onAdmitted }: { schoolId: string; on
         name: res.student.name, index: res.student.nyansapoIndex,
         classroom: res.enrollment.classroom, rollNo: res.enrollment.rollNo,
         invoiceNo: res.invoice?.invoiceNo, payable: res.invoice?.payable ?? 0,
+        bed: res.bed ? `${res.bed.house} · ${res.bed.dorm} · bed ${res.bed.code}` : null,
       });
       if (res.receipt) setReceipt(res.receipt);
       toast({ title: "Learner admitted", description: `${res.student.name} · ${res.student.nyansapoIndex}` });
@@ -137,7 +184,11 @@ export function AdmissionWizard({ schoolId, onAdmitted }: { schoolId: string; on
   function reset() {
     setStep(0); setDone(null); setReceipt(null);
     setFirstName(""); setLastName(""); setOtherNames(""); setGender(""); setDateOfBirth(""); setHometown(""); setPreviousSchool("");
+    setNationality("Ghanaian"); setReligion(""); setPhotoUrl("");
+    setBloodGroup(""); setAllergies(""); setMedicalConditions(""); setEmergencyContact(""); setDietNote("");
     setClassroomId(""); setGuardianName(""); setGuardianPhone(""); setGuardianAltPhone(""); setGuardianEmail(""); setGuardianOccupation(""); setGuardianAddress(""); setRelationship("Parent");
+    setFatherName(""); setFatherPhone(""); setFatherOccupation(""); setMotherName(""); setMotherPhone(""); setMotherOccupation("");
+    setHouseId(""); setDormId(""); setBedId("");
     setBill([]); setDiscountId(""); setDeposit(""); setDepositMethod("CASH");
   }
 
@@ -162,6 +213,7 @@ export function AdmissionWizard({ schoolId, onAdmitted }: { schoolId: string; on
               {done.invoiceNo && <Badge variant="outline">Invoice {done.invoiceNo}</Badge>}
               {done.payable > 0 && <Badge variant="outline">Payable {fmtCedi(done.payable)}</Badge>}
               {depositCents > 0 && <Badge className="bg-emerald-600">Deposit {fmtCedi(depositCents)} received</Badge>}
+              {done.bed && <Badge variant="outline" className="gap-1"><BedDouble className="size-3" /> {done.bed}</Badge>}
             </div>
             <div className="flex justify-center gap-2 pt-2">
               {receipt && <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setReceipt(receipt)}><Printer className="size-4" /> Reprint receipt</Button>}
@@ -226,6 +278,70 @@ export function AdmissionWizard({ schoolId, onAdmitted }: { schoolId: string; on
                     <Label>Hometown</Label>
                     <Input value={hometown} onChange={(e) => setHometown(e.target.value)} placeholder="Kumasi" />
                   </div>
+                  <div className="space-y-1.5">
+                    <Label>Nationality</Label>
+                    <Input value={nationality} onChange={(e) => setNationality(e.target.value)} placeholder="Ghanaian" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Religion</Label>
+                    <Input value={religion} onChange={(e) => setReligion(e.target.value)} placeholder="Christianity / Islam / Traditional…" />
+                  </div>
+                </div>
+                <Separator />
+                <div className="flex flex-wrap items-center gap-4">
+                  <div className="size-20 rounded-xl overflow-hidden border bg-secondary/50 flex items-center justify-center shrink-0">
+                    {photoUrl ? (
+                      <img src={photoUrl} alt="Learner portrait" className="size-full object-cover" />
+                    ) : (
+                      <UserRound className="size-8 text-muted-foreground/50" />
+                    )}
+                  </div>
+                  <div className="space-y-1.5 min-w-0">
+                    <Label className="flex items-center gap-1.5"><Camera className="size-3.5" /> Learner photo (optional)</Label>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type="file" accept="image/*" className="h-8 w-56 text-xs file:mr-2 file:h-6 file:px-2 file:text-xs"
+                        onChange={async (e) => {
+                          const f = e.target.files?.[0];
+                          if (!f) return;
+                          try { setPhotoUrl(await fileToPortrait(f)); } catch (err: any) { toast({ title: "Photo skipped", description: err.message, variant: "destructive" }); }
+                        }}
+                      />
+                      {photoUrl && <Button size="sm" variant="ghost" className="h-8 text-xs text-muted-foreground" onClick={() => setPhotoUrl("")}>Remove</Button>}
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">Resized on this device before upload — shown on the roster and ID cards.</p>
+                  </div>
+                </div>
+                <Separator />
+                <div className="space-y-3">
+                  <Label className="flex items-center gap-1.5 text-sm font-medium"><HeartPulse className="size-4 text-rose-500" /> Medical & welfare</Label>
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label>Blood group</Label>
+                      <Select value={bloodGroup} onValueChange={setBloodGroup}>
+                        <SelectTrigger><SelectValue placeholder="Unknown" /></SelectTrigger>
+                        <SelectContent>
+                          {["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"].map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Emergency contact</Label>
+                      <Input value={emergencyContact} onChange={(e) => setEmergencyContact(e.target.value)} placeholder="Auntie Adjoa · 020 111 2222" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Allergies</Label>
+                      <Input value={allergies} onChange={(e) => setAllergies(e.target.value)} placeholder="Groundnuts, penicillin…" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Special diet</Label>
+                      <Input value={dietNote} onChange={(e) => setDietNote(e.target.value)} placeholder="Vegetarian, no pork…" />
+                    </div>
+                    <div className="space-y-1.5 sm:col-span-2">
+                      <Label>Medical conditions / care notes</Label>
+                      <Textarea rows={2} value={medicalConditions} onChange={(e) => setMedicalConditions(e.target.value)} placeholder="Asthma — inhaler in the school clinic; sickle-cell trait." />
+                    </div>
+                  </div>
                 </div>
                 <Separator />
                 <div className="space-y-1.5">
@@ -263,45 +379,133 @@ export function AdmissionWizard({ schoolId, onAdmitted }: { schoolId: string; on
                     );
                   })}
                 </div>
+
+                {/* optional boarding allocation at intake (iEduPro parity) */}
+                {(data.boarding?.length ?? 0) > 0 && (
+                  <div className="rounded-xl border p-3.5 space-y-3">
+                    <div>
+                      <div className="text-sm font-semibold flex items-center gap-1.5"><BedDouble className="size-4 text-indigo-500" /> Boarding allocation (optional)</div>
+                      <p className="text-[11px] text-muted-foreground">Assign a bed now and the learner appears on the boarding register immediately. Only currently-available beds are listed.</p>
+                    </div>
+                    <div className="grid sm:grid-cols-3 gap-3">
+                      <div className="space-y-1.5">
+                        <Label>House</Label>
+                        <Select value={houseId} onValueChange={(v) => { setHouseId(v === "none" ? "" : v); setDormId(""); setBedId(""); }}>
+                          <SelectTrigger><SelectValue placeholder="Day student" /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">Day student (no boarding)</SelectItem>
+                            {data.boarding.map((h) => <SelectItem key={h.id} value={h.id}>{h.name}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Dormitory</Label>
+                        <Select value={dormId} onValueChange={(v) => { setDormId(v === "none" ? "" : v); setBedId(""); }} disabled={!houseId}>
+                          <SelectTrigger><SelectValue placeholder={houseId ? "Select dorm" : "—"} /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">Decide later</SelectItem>
+                            {(data.boarding.find((h) => h.id === houseId)?.dorms ?? []).map((d) => (
+                              <SelectItem key={d.id} value={d.id}>{d.name}{d.type ? ` · ${d.type}` : ""} ({d.beds.length} free)</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Bed</Label>
+                        <Select value={bedId} onValueChange={(v) => setBedId(v === "none" ? "" : v)} disabled={!dormId}>
+                          <SelectTrigger><SelectValue placeholder={dormId ? "Select bed" : "—"} /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">Decide later</SelectItem>
+                            {(data.boarding.find((h) => h.id === houseId)?.dorms.find((d) => d.id === dormId)?.beds ?? []).map((b) => (
+                              <SelectItem key={b.id} value={b.id}>{b.code} · {b.bedType.toLowerCase()}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
-            {/* STEP 3 — guardian */}
+            {/* STEP 3 — guardians (primary billing contact + father / mother, iEduPro parity) */}
             {step === 2 && (
-              <div className="grid sm:grid-cols-2 gap-3">
-                <div className="space-y-1.5 sm:col-span-2">
-                  <Label>Guardian name *</Label>
-                  <Input value={guardianName} onChange={(e) => setGuardianName(e.target.value)} placeholder="Mr. Kwame Mensah" />
+              <div className="space-y-5">
+                <div className="space-y-3">
+                  <div>
+                    <div className="text-sm font-semibold">Primary guardian</div>
+                    <p className="text-[11px] text-muted-foreground">The billing contact — fees SMS and MoMo payment prompts go to this number.</p>
+                  </div>
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    <div className="space-y-1.5 sm:col-span-2">
+                      <Label>Guardian name *</Label>
+                      <Input value={guardianName} onChange={(e) => setGuardianName(e.target.value)} placeholder="Mr. Kwame Mensah" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Guardian phone (MoMo) *</Label>
+                      <Input value={guardianPhone} onChange={(e) => setGuardianPhone(e.target.value)} placeholder="024 123 4567" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Alternative phone</Label>
+                      <Input value={guardianAltPhone} onChange={(e) => setGuardianAltPhone(e.target.value)} placeholder="055 987 6543" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Email</Label>
+                      <Input type="email" value={guardianEmail} onChange={(e) => setGuardianEmail(e.target.value)} placeholder="guardian@example.com" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Relationship</Label>
+                      <Select value={relationship} onValueChange={setRelationship}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {["Parent", "Father", "Mother", "Guardian", "Other Family"].map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Occupation</Label>
+                      <Input value={guardianOccupation} onChange={(e) => setGuardianOccupation(e.target.value)} placeholder="Trader" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Residential address</Label>
+                      <Input value={guardianAddress} onChange={(e) => setGuardianAddress(e.target.value)} placeholder="Ashaiman, Taifa" />
+                    </div>
+                  </div>
                 </div>
-                <div className="space-y-1.5">
-                  <Label>Guardian phone (MoMo) *</Label>
-                  <Input value={guardianPhone} onChange={(e) => setGuardianPhone(e.target.value)} placeholder="024 123 4567" />
+                <Separator />
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div className="space-y-3">
+                    <div className="text-sm font-semibold">Father</div>
+                    <div className="space-y-1.5">
+                      <Label>Name</Label>
+                      <Input value={fatherName} onChange={(e) => setFatherName(e.target.value)} placeholder="Kwame Mensah" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Phone</Label>
+                      <Input value={fatherPhone} onChange={(e) => setFatherPhone(e.target.value)} placeholder="024 000 1111" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Occupation</Label>
+                      <Input value={fatherOccupation} onChange={(e) => setFatherOccupation(e.target.value)} placeholder="Mason" />
+                    </div>
+                  </div>
+                  <div className="space-y-3">
+                    <div className="text-sm font-semibold">Mother</div>
+                    <div className="space-y-1.5">
+                      <Label>Name</Label>
+                      <Input value={motherName} onChange={(e) => setMotherName(e.target.value)} placeholder="Akua Mansa" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Phone</Label>
+                      <Input value={motherPhone} onChange={(e) => setMotherPhone(e.target.value)} placeholder="055 000 2222" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Occupation</Label>
+                      <Input value={motherOccupation} onChange={(e) => setMotherOccupation(e.target.value)} placeholder="Seamstress" />
+                    </div>
+                  </div>
                 </div>
-                <div className="space-y-1.5">
-                  <Label>Alternative phone</Label>
-                  <Input value={guardianAltPhone} onChange={(e) => setGuardianAltPhone(e.target.value)} placeholder="055 987 6543" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Email</Label>
-                  <Input type="email" value={guardianEmail} onChange={(e) => setGuardianEmail(e.target.value)} placeholder="guardian@example.com" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Relationship</Label>
-                  <Select value={relationship} onValueChange={setRelationship}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {["Parent", "Father", "Mother", "Guardian", "Other Family"].map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Occupation</Label>
-                  <Input value={guardianOccupation} onChange={(e) => setGuardianOccupation(e.target.value)} placeholder="Trader" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Residential address</Label>
-                  <Input value={guardianAddress} onChange={(e) => setGuardianAddress(e.target.value)} placeholder="Ashaiman, Taifa" />
-                </div>
+                <p className="text-[11px] text-muted-foreground">Father and mother details are optional — leave blank for wards under a single guardian.</p>
               </div>
             )}
 
@@ -403,10 +607,18 @@ export function AdmissionWizard({ schoolId, onAdmitted }: { schoolId: string; on
                     ["Learner", `${firstName} ${otherNames} ${lastName}`.replace(/\s+/g, " ")],
                     ["Gender", gender === "F" ? "Female" : "Male"],
                     ["Date of birth", dateOfBirth || "—"],
+                    ["Nationality · religion", [nationality || null, religion || null].filter(Boolean).join(" · ") || "—"],
                     ["Class", chosenClass?.name ?? "—"],
                     ["Roll number", `#${(chosenClass?.enrolled ?? 0) + 1}`],
-                    ["Guardian", `${guardianName} (${relationship})`],
+                    ["Primary guardian", `${guardianName} (${relationship})`],
                     ["Guardian phone", guardianPhone],
+                    ["Father", fatherName ? `${fatherName}${fatherPhone ? ` · ${fatherPhone}` : ""}` : "—"],
+                    ["Mother", motherName ? `${motherName}${motherPhone ? ` · ${motherPhone}` : ""}` : "—"],
+                    ["Blood group", bloodGroup || "—"],
+                    ["Allergies / diet", [allergies || null, dietNote || null].filter(Boolean).join(" · ") || "—"],
+                    ["Medical notes", medicalConditions || "—"],
+                    ["Emergency contact", emergencyContact || "—"],
+                    ["Boarding", bedId ? `${data.boarding.find((h) => h.id === houseId)?.name} · ${data.boarding.find((h) => h.id === houseId)?.dorms.find((d) => d.id === dormId)?.name} · ${data.boarding.find((h) => h.id === houseId)?.dorms.find((d) => d.id === dormId)?.beds.find((b) => b.id === bedId)?.code}` : "Day student"],
                     ["Previous school", previousSchool || "—"],
                   ].map(([k, v]) => (
                     <div key={k} className="flex gap-2">

@@ -327,6 +327,22 @@ function ProfileTabs({ profile, onChanged }: { profile: any; onChanged: () => vo
               </div>
             ))}
           </div>
+          {/* father / mother / medical (iEduPro student_add_new parity) — only when captured */}
+          {[st.fatherName, st.motherName, st.bloodGroup, st.allergies, st.medicalConditions, st.emergencyContact, st.dietNote].some((v: any) => v) && (
+            <div className="rounded-lg border p-4 space-y-2.5">
+              <div className="text-sm font-medium">Family &amp; medical</div>
+              <div className="grid grid-cols-2 gap-2.5 text-[13px]">
+                {st.fatherName && <div><span className="text-muted-foreground">Father</span><div className="font-medium">{st.fatherName}{st.fatherPhone ? ` · ${st.fatherPhone}` : ""}{st.fatherOccupation ? ` · ${st.fatherOccupation}` : ""}</div></div>}
+                {st.motherName && <div><span className="text-muted-foreground">Mother</span><div className="font-medium">{st.motherName}{st.motherPhone ? ` · ${st.motherPhone}` : ""}{st.motherOccupation ? ` · ${st.motherOccupation}` : ""}</div></div>}
+                {st.nationality && <div><span className="text-muted-foreground">Nationality</span><div className="font-medium">{st.nationality}{st.religion ? ` · ${st.religion}` : ""}</div></div>}
+                {st.bloodGroup && <div><span className="text-muted-foreground">Blood group</span><div className="font-medium">{st.bloodGroup}</div></div>}
+                {st.allergies && <div><span className="text-muted-foreground">Allergies</span><div className="font-medium break-words">{st.allergies}</div></div>}
+                {st.dietNote && <div><span className="text-muted-foreground">Special diet</span><div className="font-medium break-words">{st.dietNote}</div></div>}
+                {st.medicalConditions && <div className="col-span-2"><span className="text-muted-foreground">Medical conditions</span><div className="font-medium break-words">{st.medicalConditions}</div></div>}
+                {st.emergencyContact && <div className="col-span-2"><span className="text-muted-foreground">Emergency contact</span><div className="font-medium">{st.emergencyContact}</div></div>}
+              </div>
+            </div>
+          )}
           {att.total > 0 && (
             <div className="rounded-lg border p-4">
               <div className="text-sm font-medium mb-2">Attendance (recorded sessions)</div>

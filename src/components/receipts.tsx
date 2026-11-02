@@ -40,7 +40,7 @@ export function amountInWords(cents: number): string {
 }
 
 // ── receipt payload contract ──────────────────────────────────
-export type ReceiptSchool = { name: string; motto?: string | null; town?: string | null; region?: string | null; phone?: string | null; email?: string | null };
+export type ReceiptSchool = { name: string; motto?: string | null; town?: string | null; region?: string | null; phone?: string | null; email?: string | null; logoUrl?: string | null; signatureUrl?: string | null };
 export type ReceiptData = {
   type: "INVOICE_PAYMENT" | "DAILY_SERVICES" | "POS_SALE" | "TRANSPORT_FARE";
   receiptNo: string;
@@ -289,7 +289,10 @@ export function FormalReceipt({ data }: { data: ReceiptData }) {
 
         {/* signatures */}
         <div className="mt-8 grid grid-cols-2 gap-10 text-[10.5px]">
-          <div className="border-t border-foreground/60 pt-1">Bursar&apos;s Signature</div>
+          <div>
+            {school.signatureUrl ? <img src={school.signatureUrl} alt="Bursar's signature" className="h-10 object-contain object-left-bottom mb-0.5" /> : null}
+            <div className="border-t border-foreground/60 pt-1">Bursar&apos;s Signature</div>
+          </div>
           <div className="border-t border-foreground/60 pt-1 text-right">Issued by: {data.cashier ?? "Front Desk"}</div>
         </div>
         <div className="mt-3 text-center text-[10px] italic text-muted-foreground">Thank you for your payment · Computer-generated receipt</div>
@@ -379,7 +382,7 @@ export function ModernReceipt({ data }: { data: ReceiptData }) {
         {/* signatures */}
         <div className="mt-8 grid grid-cols-2 gap-10 text-[10px] text-muted-foreground">
           <div className="border-t pt-1">Cashier — {data.cashier ?? "Front Desk"}</div>
-          <div className="border-t pt-1 text-right">School stamp</div>
+          <div className="border-t pt-1 text-right">{school.signatureUrl ? <img src={school.signatureUrl} alt="School stamp" className="h-10 object-contain object-right-bottom ml-auto -mt-1" /> : "School stamp"}</div>
         </div>
       </div>
       <div className="bg-secondary/50 px-6 py-2 text-center text-[10px] text-muted-foreground">{school.name} · Computer-generated receipt · {new Date().toLocaleDateString()}</div>
@@ -401,7 +404,11 @@ export function ReceiptDocument({ data, copy = "ORIGINAL" }: { data: ReceiptData
         {/* letterhead */}
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-2.5">
-            <LogoMark size={44} />
+            {school.logoUrl ? (
+              <img src={school.logoUrl} alt="School logo" className="size-11 rounded-lg object-cover border" />
+            ) : (
+              <LogoMark size={44} />
+            )}
             <div className="leading-tight">
               <div className="font-bold text-[17px] tracking-tight">{school.name}</div>
               {school.motto && <div className="text-[10px] italic text-muted-foreground">{school.motto}</div>}

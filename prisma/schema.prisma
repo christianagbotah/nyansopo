@@ -306,6 +306,21 @@ model Student {
   relationship         String                   @default("Parent")
   hometown             String?
   previousSchool       String?
+  // father / mother detail (iEduPro student_add_new parity)
+  fatherName           String?
+  fatherPhone          String?
+  fatherOccupation     String?
+  motherName           String?
+  motherPhone          String?
+  motherOccupation     String?
+  // medical & background (iEduPro parity)
+  nationality          String?
+  religion             String?
+  bloodGroup           String? // A+ | A- | B+ | B- | AB+ | AB- | O+ | O-
+  allergies            String?
+  medicalConditions    String?
+  emergencyContact     String?
+  photoUrl             String? // portrait data-URL (resized client-side at intake)
   dietNote             String? // special-diet flag (iEduPro student_on_special_diet): allergies, vegetarian, religious observance…
   syncClientId         String?                  @unique // offline-queue clientId that created this row — makes /api/sync re-flush idempotent
   status               String                   @default("ACTIVE") // ACTIVE | TRACKED (not currently enrolled)

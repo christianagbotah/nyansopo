@@ -250,6 +250,20 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     orderBy: { name: "asc" },
   });
 
+  // boarding availability for optional at-intake allocation (iEduPro parity):
+  // houses → dorms → currently-AVAILABLE beds only
+  const houses = await db.boardingHouse.findMany({
+    where: { schoolId, status: { not: "MAINTENANCE" } },
+    include: {
+      dormitories: {
+        where: { status: { not: "MAINTENANCE" } },
+        include: { beds: { where: { status: "AVAILABLE" }, orderBy: { code: "asc" } } },
+        orderBy: { name: "asc" },
+      },
+    },
+    orderBy: { name: "asc" },
+  });
+
   const recent = await db.enrollment.findMany({
     where: { schoolId, admissionDate: { gte: new Date(Date.now() - 120 * 864e5) } },
     include: { student: true, classroom: true },
@@ -273,6 +287,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       feeTotal: c.feeStructures[0]?.totalCents ?? 0,
     })),
     discounts: discounts.map((d) => ({ id: d.id, name: d.name, type: d.type, value: d.value, notes: d.notes })),
+    boarding: houses
+      .map((h) => ({
+        id: h.id, name: h.name,
+        dorms: h.dormitories
+          .map((d) => ({ id: d.id, name: d.name, type: d.type, beds: d.beds.map((b) => ({ id: b.id, code: b.code, bedType: b.bedType })) }))
+          .filter((d) => d.beds.length > 0),
+      }))
+      .filter((h) => h.dorms.length > 0),
     recent: recent.map((e) => ({
       id: e.id,
       student: `${e.student.firstName} ${e.student.lastName}`,
@@ -300,6 +322,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       firstName, lastName, otherNames, gender, dateOfBirth,
       classroomId, guardianName, guardianPhone, guardianAltPhone, guardianEmail, guardianOccupation, guardianAddress,
       relationship, hometown, previousSchool,
+      fatherName, fatherPhone, fatherOccupation, motherName, motherPhone, motherOccupation,
+      nationality, religion, bloodGroup, allergies, medicalConditions, emergencyContact, dietNote, photoUrl,
+      bedId,
       billItems, discountId, initialPaymentCents, initialPaymentMethod,
     } = body;
 
@@ -315,6 +340,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       .filter((i: any) => i.name?.trim() && Number(i.amountCents) > 0)
       .map((i: any) => ({ name: String(i.name).trim(), amountCents: Math.round(Number(i.amountCents)) }));
     const gross = items.reduce((s, i) => s + i.amountCents, 0);
+
+    // ── optional boarding bed: fail fast if it slipped away ──
+    let bedTarget: { id: string; code: string; dormName: string; houseName: string } | null = null;
+    if (bedId) {
+      const b = await db.bed.findUnique({ where: { id: bedId }, include: { dormitory: { include: { house: true } } } });
+      if (!b || b.schoolId !== schoolId) return NextResponse.json({ error: "Bed not found" }, { status: 404 });
+      if (b.status !== "AVAILABLE" || b.studentId) return NextResponse.json({ error: `Bed ${b.code} was just taken — pick another` }, { status: 409 });
+      bedTarget = { id: b.id, code: b.code, dormName: b.dormitory.name, houseName: b.dormitory.house.name };
+    }
+    // portrait comes in as a client-resized data-URL — sanity-bound it
+    const photo = typeof photoUrl === "string" && photoUrl.startsWith("data:image/") && photoUrl.length < 700_000 ? photoUrl : null;
 
     // ── student + national index (sync-safe atomic counter) ──
     const nyansapoIndex = await nextStudentIndex(new Date().getFullYear());
@@ -336,9 +372,31 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         relationship: relationship || "Parent",
         hometown: hometown?.trim() || null,
         previousSchool: previousSchool?.trim() || null,
+        fatherName: fatherName?.trim() || null,
+        fatherPhone: fatherPhone?.trim() || null,
+        fatherOccupation: fatherOccupation?.trim() || null,
+        motherName: motherName?.trim() || null,
+        motherPhone: motherPhone?.trim() || null,
+        motherOccupation: motherOccupation?.trim() || null,
+        nationality: nationality?.trim() || null,
+        religion: religion?.trim() || null,
+        bloodGroup: bloodGroup || null,
+        allergies: allergies?.trim() || null,
+        medicalConditions: medicalConditions?.trim() || null,
+        emergencyContact: emergencyContact?.trim() || null,
+        dietNote: dietNote?.trim() || null,
+        photoUrl: photo,
+        photoSeed: photo ? null : `${firstName}${lastName}`.toLowerCase(),
         status: "ACTIVE",
       },
     });
+
+    // ── boarding allocation (optional) ──
+    let bed: { id: string; code: string; dorm: string; house: string } | null = null;
+    if (bedTarget) {
+      await db.bed.update({ where: { id: bedTarget.id }, data: { studentId: student.id, status: "ASSIGNED", assignedAt: new Date() } });
+      bed = { id: bedTarget.id, code: bedTarget.code, dorm: bedTarget.dormName, house: bedTarget.houseName };
+    }
 
     // ── enrollment with roll number ──
     const rollCount = await db.enrollment.count({ where: { classroomId, status: "ACTIVE" } });
@@ -411,6 +469,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({
       student: { id: student.id, name: `${student.firstName} ${student.lastName}`, nyansapoIndex },
       enrollment: { id: enrollment.id, rollNo: enrollment.rollNo, classroom: classroom.name },
+      bed,
       invoice: invoice ? { id: invoice.id, invoiceNo: invoice.invoiceNo, total: gross, discount: discountCents, payable: gross - discountCents } : null,
       receipt,
     });

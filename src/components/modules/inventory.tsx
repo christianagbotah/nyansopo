@@ -38,9 +38,15 @@ const CATS = ["BOOKS", "UNIFORMS", "STATIONERY", "FOOD", "CLEANING", "FUEL", "OT
 const catLabel = (c: string) => c.charAt(0) + c.slice(1).toLowerCase();
 
 export function Inventory() {
-  const { currentSchoolId } = useStore();
+  const { currentSchoolId, navTarget } = useStore();
   const [data, setData] = useState<InventoryData | null>(null);
   const [tab, setTab] = useState("items");
+  // deep-link support (notification bell: low-stock → Low stock tab)
+  const [appliedTarget, setAppliedTarget] = useState<typeof navTarget>(null);
+  if (navTarget !== appliedTarget) {
+    setAppliedTarget(navTarget);
+    if (navTarget?.tab && ["pos", "items", "low", "movements", "returns", "orders", "suppliers"].includes(navTarget.tab)) setTab(navTarget.tab);
+  }
   const [itemDialog, setItemDialog] = useState<Item | "new" | null>(null);
   const [mvFor, setMvFor] = useState<{ item: Item; type: string } | null>(null);
   const [supDialog, setSupDialog] = useState<Supplier | "new" | null>(null);
