@@ -156,7 +156,8 @@ class Discount_model extends MY_Model {
             'discount_method' => null,
             'discount_value' => 0,
             'profile_id' => null,
-            'profile_name' => null
+            'profile_name' => null,
+            'rule_applied' => false
         ];
         
         $charge_date_str = date('Y-m-d', $charge_date);
@@ -177,7 +178,10 @@ class Discount_model extends MY_Model {
         $this->db->where('sda.is_active', 1);  // Discount must be active
         $this->db->where('DATE(sda.assigned_at) <=', $charge_date_str);
         $this->db->where('sda.status', 'approved');  // Must be approved
-        $this->db->order_by('sda.discount_type', 'ASC'); // Prioritize specific fee type over wildcard
+        // Prioritize the SPECIFIC fee type over the 'all_daily_fees' wildcard:
+        // 'all_daily_fees' sorts first alphabetically, so force it to the bottom instead.
+        $this->db->order_by("(sda.discount_type = 'all_daily_fees')", 'ASC', FALSE);
+        $this->db->order_by('sda.assigned_at', 'DESC'); // Most recent assignment wins
         $this->db->limit(1);
         
         $assignment = $this->db->get()->row_array();
@@ -189,9 +193,108 @@ class Discount_model extends MY_Model {
             $result['discount_value'] = $assignment['discount_value'];
             $result['profile_id'] = $assignment['profile_id'];
             $result['profile_name'] = $assignment['profile_name'];
+            
+            // Apply per-class / per-fee-type rule override (discount_profile_rules)
+            // Rules let the same profile carry a different value for a specific class
+            // and/or a specific fee type (bill_category_id stores the fee type for daily fees).
+            $rule_value = $this->get_profile_rule_value($assignment['profile_id'], $class_id, $fee_type);
+            if ($rule_value !== null) {
+                $result['discount_value'] = $rule_value;
+                $result['rule_applied'] = true;
+            }
         }
         
         return $result;
+    }
+
+    /**
+     * Get the effective discount value from discount_profile_rules for a profile,
+     * honouring specificity: (class + fee type) > (class only) > (fee type only) > (global)
+     *
+     * @param  int    $profile_id Discount profile ID
+     * @param  int    $class_id   Student's class ID
+     * @param  string $fee_type   Fee type (feeding|breakfast|classes|water|transport) or null
+     * @return float|null Null when no rule applies (caller keeps profile default)
+     */
+    public function get_profile_rule_value($profile_id, $class_id, $fee_type = null) {
+        if (empty($profile_id)) {
+            return null;
+        }
+        
+        $this->db->select('rule_id, class_id, bill_category_id, discount_value');
+        $this->db->from('discount_profile_rules');
+        $this->db->where('profile_id', $profile_id);
+        $this->db->group_start();
+            $this->db->where('class_id', $class_id);
+            $this->db->or_where('class_id IS NULL');
+        $this->db->group_end();
+        $query = $this->db->get();
+        
+        if ($query->num_rows() === 0) {
+            return null;
+        }
+        
+        $best = null;
+        $best_score = -1;
+        foreach ($query->result_array() as $rule) {
+            $rule_fee = ($rule['bill_category_id'] !== null && $rule['bill_category_id'] !== '')
+                ? (string)$rule['bill_category_id'] : null;
+            $rule_class = ($rule['class_id'] !== null && $rule['class_id'] !== '')
+                ? (string)$rule['class_id'] : null;
+            
+            // Score by specificity - highest wins
+            $score = 0;
+            if ($rule_class !== null && (string)$class_id === $rule_class) $score += 2;
+            if ($fee_type !== null && $rule_fee !== null) {
+                if (strtolower($rule_fee) === strtolower($fee_type)) $score += 1;
+                else continue; // Rule targets a different fee type - skip
+            }
+            
+            if ($score > $best_score) {
+                $best_score = $score;
+                $best = $rule;
+            }
+        }
+        
+        return ($best !== null && $best_score > 0) ? (float)$best['discount_value'] : null;
+    }
+
+    /**
+     * Compatibility wrapper used by Bus_conductor / legacy code.
+     * Delegates to get_student_discount_for_date() as of "now" (or a supplied date).
+     */
+    public function get_daily_fee_discount($student_id, $year, $term, $class_id, $fee_type, $as_of_date = null) {
+        return $this->get_student_discount_for_date(
+            $student_id, $year, $term, $class_id, $fee_type, $as_of_date !== null ? $as_of_date : time()
+        );
+    }
+
+    /**
+     * Get ALL active approved daily-fee discount assignments for a student,
+     * with effective values (per-class rule overrides applied).
+     * Used by attendance / fee-collection views that need the full discount picture.
+     */
+    public function get_student_discounts($student_id, $year = null, $term = null, $class_id = null) {
+        $this->db->select('sda.*, dp.profile_name, dp.description');
+        $this->db->from('student_discount_assignments sda');
+        $this->db->join('discount_profiles dp', 'sda.profile_id = dp.profile_id');
+        $this->db->where('sda.student_id', $student_id);
+        $this->db->where('dp.discount_category', 'daily_fees');
+        $this->db->where('sda.is_active', 1);
+        $this->db->where('sda.status', 'approved');
+        $n        = $this->db->order_by('sda.assigned_at', 'DESC')->get()->result_array();
+        
+        // Apply per-class rule overrides so consumers see effective values
+        foreach ($n as &$row) {
+            if ($class_id) {
+                $rule_value = $this->get_profile_rule_value($row['profile_id'], $class_id);
+                if ($rule_value !== null) {
+                    $row['base_discount_value'] = $row['discount_value'];
+                    $row['discount_value'] = $rule_value;
+                }
+            }
+        }
+        return $n;
     }
     
     /**
@@ -221,8 +324,17 @@ class Discount_model extends MY_Model {
         $assignment = $this->db->get()->row_array();
         
         if ($assignment) {
+            // Apply per-class rule override first (same precedence as the main lookup)
+            $effective_value = $assignment['discount_value'];
+            if (!empty($class_id)) {
+                $rule_value = $this->get_profile_rule_value($assignment['profile_id'], $class_id, null);
+                if ($rule_value !== null) {
+                    $effective_value = $rule_value;
+                }
+            }
+            
             // Check if it's 100% discount
-            if ($assignment['discount_method'] == 'percentage' && $assignment['discount_value'] >= 100) {
+            if ($assignment['discount_method'] == 'percentage' && $effective_value >= 100) {
                 return true;
             }
             // For fixed amount, we need to check if it covers all fees

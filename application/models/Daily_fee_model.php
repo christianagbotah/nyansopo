@@ -433,7 +433,7 @@ class Daily_fee_model extends MY_Model {
             $discount_info = $this->Discount_model->get_student_discount_for_date($student_id, $year, $term, $class_id, 'feeding', $charge_date);
             
             if ($discount_info['has_discount']) {
-                if ($discount_info['discount_type'] == 'percentage') {
+                if ($discount_info['discount_method'] == 'percentage') {
                     $discount_amount = $original_amount * ($discount_info['discount_value'] / 100);
                 } else {
                     $discount_amount = min($discount_info['discount_value'], $original_amount);
@@ -445,7 +445,7 @@ class Daily_fee_model extends MY_Model {
                     'fee_type' => 'feeding',
                     'profile_id' => $discount_info['profile_id'],
                     'original_amount' => $original_amount,
-                    'discount_percentage' => $discount_info['discount_type'] == 'percentage' ? $discount_info['discount_value'] : 0,
+                    'discount_percentage' => $discount_info['discount_method'] == 'percentage' ? $discount_info['discount_value'] : 0,
                     'discount_amount' => $discount_amount,
                     'final_amount' => $final_amount
                 ];
@@ -462,7 +462,7 @@ class Daily_fee_model extends MY_Model {
             $discount_info = $this->Discount_model->get_student_discount_for_date($student_id, $year, $term, $class_id, 'breakfast', $charge_date);
             
             if ($discount_info['has_discount']) {
-                if ($discount_info['discount_type'] == 'percentage') {
+                if ($discount_info['discount_method'] == 'percentage') {
                     $discount_amount = $original_amount * ($discount_info['discount_value'] / 100);
                 } else {
                     $discount_amount = min($discount_info['discount_value'], $original_amount);
@@ -474,7 +474,7 @@ class Daily_fee_model extends MY_Model {
                     'fee_type' => 'breakfast',
                     'profile_id' => $discount_info['profile_id'],
                     'original_amount' => $original_amount,
-                    'discount_percentage' => $discount_info['discount_type'] == 'percentage' ? $discount_info['discount_value'] : 0,
+                    'discount_percentage' => $discount_info['discount_method'] == 'percentage' ? $discount_info['discount_value'] : 0,
                     'discount_amount' => $discount_amount,
                     'final_amount' => $final_amount
                 ];
@@ -491,7 +491,7 @@ class Daily_fee_model extends MY_Model {
             $discount_info = $this->Discount_model->get_student_discount_for_date($student_id, $year, $term, $class_id, 'classes', $charge_date);
             
             if ($discount_info['has_discount']) {
-                if ($discount_info['discount_type'] == 'percentage') {
+                if ($discount_info['discount_method'] == 'percentage') {
                     $discount_amount = $original_amount * ($discount_info['discount_value'] / 100);
                 } else {
                     $discount_amount = min($discount_info['discount_value'], $original_amount);
@@ -503,7 +503,7 @@ class Daily_fee_model extends MY_Model {
                     'fee_type' => 'classes',
                     'profile_id' => $discount_info['profile_id'],
                     'original_amount' => $original_amount,
-                    'discount_percentage' => $discount_info['discount_type'] == 'percentage' ? $discount_info['discount_value'] : 0,
+                    'discount_percentage' => $discount_info['discount_method'] == 'percentage' ? $discount_info['discount_value'] : 0,
                     'discount_amount' => $discount_amount,
                     'final_amount' => $final_amount
                 ];
@@ -531,7 +531,7 @@ class Daily_fee_model extends MY_Model {
                     $discount_info = $this->Discount_model->get_student_discount_for_date($student_id, $year, $term, $class_id, 'water', $charge_date);
                     
                     if ($discount_info['has_discount']) {
-                        if ($discount_info['discount_type'] == 'percentage') {
+                        if ($discount_info['discount_method'] == 'percentage') {
                             $discount_amount = $original_amount * ($discount_info['discount_value'] / 100);
                         } else {
                             $discount_amount = min($discount_info['discount_value'], $original_amount);
@@ -543,7 +543,7 @@ class Daily_fee_model extends MY_Model {
                             'fee_type' => 'water',
                             'profile_id' => $discount_info['profile_id'],
                             'original_amount' => $original_amount,
-                            'discount_percentage' => $discount_info['discount_type'] == 'percentage' ? $discount_info['discount_value'] : 0,
+                            'discount_percentage' => $discount_info['discount_method'] == 'percentage' ? $discount_info['discount_value'] : 0,
                             'discount_amount' => $discount_amount,
                             'final_amount' => $final_amount
                         ];
@@ -579,7 +579,7 @@ class Daily_fee_model extends MY_Model {
                     $discount_info = $this->Discount_model->get_student_discount_for_date($student_id, $year, $term, $class_id, 'transport', $charge_date);
                     
                     if ($discount_info['has_discount']) {
-                        if ($discount_info['discount_type'] == 'percentage') {
+                        if ($discount_info['discount_method'] == 'percentage') {
                             $discount_amount = $original_amount * ($discount_info['discount_value'] / 100);
                         } else {
                             $discount_amount = min($discount_info['discount_value'], $original_amount);
@@ -591,7 +591,7 @@ class Daily_fee_model extends MY_Model {
                             'fee_type' => 'transport',
                             'profile_id' => $discount_info['profile_id'],
                             'original_amount' => $original_amount,
-                            'discount_percentage' => $discount_info['discount_type'] == 'percentage' ? $discount_info['discount_value'] : 0,
+                            'discount_percentage' => $discount_info['discount_method'] == 'percentage' ? $discount_info['discount_value'] : 0,
                             'discount_amount' => $discount_amount,
                             'final_amount' => $final_amount
                         ];
@@ -1027,7 +1027,7 @@ class Daily_fee_model extends MY_Model {
                         $amt = $rates['breakfast_rate'];
                         $disc = $this->Discount_model->get_student_discount_for_date($student_id, $running_year, $running_term, $enroll->class_id, 'breakfast', $target_date);
                         if ($disc['has_discount']) {
-                            $amt = max(0, $amt - ($disc['discount_type'] == 'percentage' ? $amt * $disc['discount_value'] / 100 : min($disc['discount_value'], $amt)));
+                            $amt = max(0, $amt - ($disc['discount_method'] == 'percentage' ? $amt * $disc['discount_value'] / 100 : min($disc['discount_value'], $amt)));
                         }
                         if ($amt > 0) {
                             $retro_charges['breakfast'] = $amt;
@@ -1045,7 +1045,7 @@ class Daily_fee_model extends MY_Model {
                             $amt = $rates['water_rate'];
                             $disc = $this->Discount_model->get_student_discount_for_date($student_id, $running_year, $running_term, $enroll->class_id, 'water', $target_date);
                             if ($disc['has_discount']) {
-                                $amt = max(0, $amt - ($disc['discount_type'] == 'percentage' ? $amt * $disc['discount_value'] / 100 : min($disc['discount_value'], $amt)));
+                                $amt = max(0, $amt - ($disc['discount_method'] == 'percentage' ? $amt * $disc['discount_value'] / 100 : min($disc['discount_value'], $amt)));
                             }
                             if ($amt > 0) {
                                 $retro_charges['water'] = $amt;
@@ -1246,7 +1246,7 @@ class Daily_fee_model extends MY_Model {
                         $amt = $rates['breakfast_rate'];
                         $disc = $this->Discount_model->get_student_discount_for_date($student_id, $running_year, $running_term, $enroll->class_id, 'breakfast', $target_date);
                         if ($disc['has_discount']) {
-                            $amt = max(0, $amt - ($disc['discount_type'] == 'percentage' ? $amt * $disc['discount_value'] / 100 : min($disc['discount_value'], $amt)));
+                            $amt = max(0, $amt - ($disc['discount_method'] == 'percentage' ? $amt * $disc['discount_value'] / 100 : min($disc['discount_value'], $amt)));
                         }
                         if ($amt > 0) {
                             $retro_charges['breakfast'] = $amt;
@@ -1263,7 +1263,7 @@ class Daily_fee_model extends MY_Model {
                             $amt = $rates['water_rate'];
                             $disc = $this->Discount_model->get_student_discount_for_date($student_id, $running_year, $running_term, $enroll->class_id, 'water', $target_date);
                             if ($disc['has_discount']) {
-                                $amt = max(0, $amt - ($disc['discount_type'] == 'percentage' ? $amt * $disc['discount_value'] / 100 : min($disc['discount_value'], $amt)));
+                                $amt = max(0, $amt - ($disc['discount_method'] == 'percentage' ? $amt * $disc['discount_value'] / 100 : min($disc['discount_value'], $amt)));
                             }
                             if ($amt > 0) {
                                 $retro_charges['water'] = $amt;
@@ -1551,7 +1551,7 @@ class Daily_fee_model extends MY_Model {
                         $amt = $rates['breakfast_rate'];
                         $disc = $this->Discount_model->get_student_discount_for_date($student_id, $running_year, $running_term, $enroll->class_id, 'breakfast', $target_date);
                         if ($disc['has_discount']) {
-                            $amt = max(0, $amt - ($disc['discount_type'] == 'percentage' ? $amt * $disc['discount_value'] / 100 : min($disc['discount_value'], $amt)));
+                            $amt = max(0, $amt - ($disc['discount_method'] == 'percentage' ? $amt * $disc['discount_value'] / 100 : min($disc['discount_value'], $amt)));
                         }
                         log_message('debug', 'RETROACTIVE BREAKFAST: Final amount=' . $amt);
                         if ($amt > 0) {
@@ -1571,7 +1571,7 @@ class Daily_fee_model extends MY_Model {
                             $amt = $rates['water_rate'];
                             $disc = $this->Discount_model->get_student_discount_for_date($student_id, $running_year, $running_term, $enroll->class_id, 'water', $target_date);
                             if ($disc['has_discount']) {
-                                $amt = max(0, $amt - ($disc['discount_type'] == 'percentage' ? $amt * $disc['discount_value'] / 100 : min($disc['discount_value'], $amt)));
+                                $amt = max(0, $amt - ($disc['discount_method'] == 'percentage' ? $amt * $disc['discount_value'] / 100 : min($disc['discount_value'], $amt)));
                             }
                             if ($amt > 0) {
                                 $retro_charges['water'] = $amt;
@@ -2461,7 +2461,7 @@ class Daily_fee_model extends MY_Model {
         );
         
         if ($discount_info['has_discount']) {
-            $discount_amount = $discount_info['discount_type'] == 'percentage' 
+            $discount_amount = $discount_info['discount_method'] == 'percentage' 
                 ? $original_fare * ($discount_info['discount_value'] / 100)
                 : min($discount_info['discount_value'], $original_fare);
             $total_fare = max(0, $original_fare - $discount_amount);
@@ -2474,7 +2474,7 @@ class Daily_fee_model extends MY_Model {
                 'reference_id' => $today,
                 'bill_item_type' => 'transport',
                 'original_amount' => $original_fare,
-                'discount_percentage' => $discount_info['discount_type'] == 'percentage' ? $discount_info['discount_value'] : 0,
+                'discount_percentage' => $discount_info['discount_method'] == 'percentage' ? $discount_info['discount_value'] : 0,
                 'discount_amount' => $discount_amount,
                 'final_amount' => $total_fare,
                 'year' => $running_year,

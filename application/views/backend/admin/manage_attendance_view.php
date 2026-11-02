@@ -380,7 +380,13 @@ foreach($students_ids as $sid) {
                 $water_owing_base = $cumulative_owing[$row['student_id']]['water'];
                 $transport_owing_base = $cumulative_owing[$row['student_id']]['transport'];
                 
-                // NEW Discount System - Complete Replacement
+                // Discount System - uses the SAME canonical engine as the daily-fee
+                // charging process (Discount_model::get_student_discount_for_date),
+                // so what is previewed here is exactly what the student is charged.
+                // It transparently handles:
+                //  - profiles scoped to a single fee type (e.g. lunch-only, part or full)
+                //  - profiles scoped to ALL daily fees (all_daily_fees wildcard)
+                //  - per-class / per-fee-type overrides (discount_profile_rules)
                 $feeding_discount = 0;
                 $breakfast_discount = 0;
                 $classes_discount = 0;
@@ -390,65 +396,40 @@ foreach($students_ids as $sid) {
                 $hide_classes = false;
                 $hide_water = false;
                 $has_discount = false;
+                $applied_profiles = [];
                 
                 $this->load->model('Discount_model');
-                $student_discounts = $this->Discount_model->get_student_discounts($row['student_id'], $running_year, $running_term);
+                $fee_bases = [
+                    'feeding'   => $feeding_fee,
+                    'breakfast' => $breakfast_fee,
+                    'classes'   => $classes_fee,
+                    'water'     => $water_fee
+                ];
+                $fee_discounts = [];
                 
-                if(!empty($student_discounts)) {
-                    $has_discount = true;
-                    
-                    foreach($student_discounts as $profile) {
-                        $this->db->select('*');
-                        $this->db->from('discount_profile_rules');
-                        $this->db->where('profile_id', $profile['profile_id']);
-                        $this->db->group_start();
-                            $this->db->where('class_id', $class_id);
-                            $this->db->or_where('class_id IS NULL');
-                        $this->db->group_end();
-                        $rules = $this->db->get()->result_array();
+                foreach ($fee_bases as $ft => $base) {
+                    $fee_discounts[$ft] = 0;
+                    $d = $this->Discount_model->get_student_discount_for_date(
+                        $row['student_id'], $running_year, $running_term, $class_id, $ft, $timestamp
+                    );
+                    if ($d['has_discount']) {
+                        $has_discount = true;
+                        $applied_profiles[$d['profile_id']] = $d['profile_name'];
                         
-                        foreach($rules as $rule) {
-                            $value = $rule['discount_value'];
-                            $fee_type = $rule['fee_type'] ?? null;
-                            
-                            if($profile['discount_type'] == 'percentage') {
-                                if($fee_type == 'feeding' || $fee_type == null) {
-                                    $feeding_discount += ($feeding_fee * $value) / 100;
-                                    if($value >= 100) $hide_feeding = true;
-                                }
-                                if($fee_type == 'breakfast' || $fee_type == null) {
-                                    $breakfast_discount += ($breakfast_fee * $value) / 100;
-                                    if($value >= 100) $hide_breakfast = true;
-                                }
-                                if($fee_type == 'classes' || $fee_type == null) {
-                                    $classes_discount += ($classes_fee * $value) / 100;
-                                    if($value >= 100) $hide_classes = true;
-                                }
-                                if($fee_type == 'water' || $fee_type == null) {
-                                    $water_discount += ($water_fee * $value) / 100;
-                                    if($value >= 100) $hide_water = true;
-                                }
-                            } else {
-                                if($fee_type == 'feeding' || $fee_type == null) {
-                                    $feeding_discount += $value;
-                                    if($feeding_discount >= $feeding_fee) $hide_feeding = true;
-                                }
-                                if($fee_type == 'breakfast' || $fee_type == null) {
-                                    $breakfast_discount += $value;
-                                    if($breakfast_discount >= $breakfast_fee) $hide_breakfast = true;
-                                }
-                                if($fee_type == 'classes' || $fee_type == null) {
-                                    $classes_discount += $value;
-                                    if($classes_discount >= $classes_fee) $hide_classes = true;
-                                }
-                                if($fee_type == 'water' || $fee_type == null) {
-                                    $water_discount += $value;
-                                    if($water_discount >= $water_fee) $hide_water = true;
-                                }
-                            }
+                        if ($base > 0) {
+                            $amount = ($d['discount_method'] == 'percentage')
+                                ? ($base * (float)$d['discount_value'] / 100)
+                                : min((float)$d['discount_value'], $base);
+                            $fee_discounts[$ft] = $amount;
+                            if (($base - $amount) <= 0.001) ${'hide_'.$ft} = true;
                         }
                     }
                 }
+                
+                $feeding_discount   = $fee_discounts['feeding'];
+                $breakfast_discount = $fee_discounts['breakfast'];
+                $classes_discount   = $fee_discounts['classes'];
+                $water_discount     = $fee_discounts['water'];
                 
                 $feeding_fee_final = max(0, $feeding_fee - $feeding_discount);
                 $breakfast_fee_final = max(0, $breakfast_fee - $breakfast_discount);
@@ -462,7 +443,9 @@ foreach($students_ids as $sid) {
             ?>
             <?php if($has_discount): ?>
             <div class="bg-green-50 border border-green-200 rounded p-2 mb-2">
-                <p class="text-xs font-bold text-green-800"><i class="fa fa-gift"></i> Discount Profile Applied</p>
+                <p class="text-xs font-bold text-green-800">
+                    <i class="fa fa-gift"></i> Discount Applied: <?php echo count($applied_profiles) ? implode(', ', array_filter($applied_profiles)) : 'Profile'; ?>
+                </p>
                 <?php if($feeding_discount > 0 || $hide_feeding): ?>
                 <p class="text-xs text-green-700">Feeding: <?php echo $hide_feeding ? '100% Discount (Free)' : 'GH₵'.number_format($feeding_fee, 2).' - GH₵'.number_format($feeding_discount, 2).' = GH₵'.number_format($feeding_fee_final, 2); ?></p>
                 <?php endif; ?>
@@ -476,7 +459,7 @@ foreach($students_ids as $sid) {
                 <p class="text-xs text-green-700">Water: <?php echo $hide_water ? '100% Discount (Free)' : 'GH₵'.number_format($water_fee, 2).' - GH₵'.number_format($water_discount, 2).' = GH₵'.number_format($water_fee_final, 2); ?></p>
                 <?php endif; ?>
                 <?php if($feeding_discount == 0 && $breakfast_discount == 0 && $classes_discount == 0 && $water_discount == 0 && !$hide_feeding && !$hide_breakfast && !$hide_classes && !$hide_water): ?>
-                <p class="text-xs text-orange-700">No discount configured for this class</p>
+                <p class="text-xs text-orange-700">Assigned profile(s) do not reduce today's fees for this class</p>
                 <?php endif; ?>
             </div>
             <?php endif; ?>
@@ -1011,58 +994,58 @@ $(document).ready(function() {
 });
 
 $('#att_selector_form').submit(function(event) {
-	event.preventDefault();
+        event.preventDefault();
 
-	let item_checked = $('.check').filter(':checked').length;
-	if(item_checked < 1) {
-		showAjaxModal_alert('No student was selected!', 'Error');
-		return false;
-	}
+        let item_checked = $('.check').filter(':checked').length;
+        if(item_checked < 1) {
+                showAjaxModal_alert('No student was selected!', 'Error');
+                return false;
+        }
 
-	let student_ids = [];
-	$('.check:checked').each(function() {
-		student_ids.push($(this).val());
-	});
+        let student_ids = [];
+        $('.check:checked').each(function() {
+                student_ids.push($(this).val());
+        });
 
-	$('#main_page').html(`
-		<div class="flex justify-center items-center h-screen">
-			<div class="text-center">
-				<svg class="animate-spin h-16 w-16 text-blue-600 mx-auto mb-4" fill="none" viewBox="0 0 24 24">
-					<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-					<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-				</svg>
-				<p class="text-xl font-semibold text-gray-700">Fetching Data...</p>
-			</div>
-		</div>
-	`);
+        $('#main_page').html(`
+                <div class="flex justify-center items-center h-screen">
+                        <div class="text-center">
+                                <svg class="animate-spin h-16 w-16 text-blue-600 mx-auto mb-4" fill="none" viewBox="0 0 24 24">
+                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                                <p class="text-xl font-semibold text-gray-700">Fetching Data...</p>
+                        </div>
+                </div>
+        `);
 
-	let formData = new FormData(this);
-	student_ids.forEach(id => formData.append('students_ids[]', id));
+        let formData = new FormData(this);
+        student_ids.forEach(id => formData.append('students_ids[]', id));
 
-	$.ajax({
-		url: '<?php echo site_url('admin/attendance_selector/'); ?>',
-		type: 'POST',
-		dataType: 'html',
-		data: formData,
-		cache: false,
-		contentType: false,
-		processData: false
-	})
-	.done(function(data) {
-		
-		if(data == 'promotion error term') {
-			showAjaxModal_confirm('Make sure students were promoted during the previous term. For further assistance, kindly contact the system administrator.', 'Error');
-			navigation('<?php echo site_url('admin/manage_attendance'); ?>');
-		} else if(data == 'promotion error sem') {
-			showAjaxModal_confirm('Make sure students were promoted during the previous semester. For further assistance, kindly contact the system administrator.', 'Error');
-			navigation('<?php echo site_url('admin/manage_attendance'); ?>');
-		} else {
-			$('#main_page').empty();
-			navigation(data);
-			$('#pre_notice').fadeOut('400', function() {
-				$('#pre_notice').remove();
-			}); 
-		}
-	});
+        $.ajax({
+                url: '<?php echo site_url('admin/attendance_selector/'); ?>',
+                type: 'POST',
+                dataType: 'html',
+                data: formData,
+                cache: false,
+                contentType: false,
+                processData: false
+        })
+        .done(function(data) {
+                
+                if(data == 'promotion error term') {
+                        showAjaxModal_confirm('Make sure students were promoted during the previous term. For further assistance, kindly contact the system administrator.', 'Error');
+                        navigation('<?php echo site_url('admin/manage_attendance'); ?>');
+                } else if(data == 'promotion error sem') {
+                        showAjaxModal_confirm('Make sure students were promoted during the previous semester. For further assistance, kindly contact the system administrator.', 'Error');
+                        navigation('<?php echo site_url('admin/manage_attendance'); ?>');
+                } else {
+                        $('#main_page').empty();
+                        navigation(data);
+                        $('#pre_notice').fadeOut('400', function() {
+                                $('#pre_notice').remove();
+                        }); 
+                }
+        });
 });
 </script>

@@ -714,7 +714,7 @@ class Fee_collection extends CI_Controller {
             if ($feeding_info['discount_method'] == 'percentage') {
                 $feeding_discount = ($rates['feeding_rate'] * $feeding_info['discount_value']) / 100;
             } else {
-                $feeding_discount = $feeding_info['discount_value'];
+                $feeding_discount = min((float)$feeding_info['discount_value'], (float)$rates['feeding_rate']);
             }
         }
         
@@ -728,7 +728,7 @@ class Fee_collection extends CI_Controller {
             if ($breakfast_info['discount_method'] == 'percentage') {
                 $breakfast_discount = ($rates['breakfast_rate'] * $breakfast_info['discount_value']) / 100;
             } else {
-                $breakfast_discount = $breakfast_info['discount_value'];
+                $breakfast_discount = min((float)$breakfast_info['discount_value'], (float)$rates['breakfast_rate']);
             }
         }
         
@@ -742,7 +742,7 @@ class Fee_collection extends CI_Controller {
             if ($classes_info['discount_method'] == 'percentage') {
                 $classes_discount = ($rates['classes_rate'] * $classes_info['discount_value']) / 100;
             } else {
-                $classes_discount = $classes_info['discount_value'];
+                $classes_discount = min((float)$classes_info['discount_value'], (float)$rates['classes_rate']);
             }
         }
         
@@ -756,7 +756,7 @@ class Fee_collection extends CI_Controller {
             if ($water_info['discount_method'] == 'percentage') {
                 $water_discount = ($rates['water_rate'] * $water_info['discount_value']) / 100;
             } else {
-                $water_discount = $water_info['discount_value'];
+                $water_discount = min((float)$water_info['discount_value'], (float)$rates['water_rate']);
             }
         }
         
@@ -786,7 +786,7 @@ class Fee_collection extends CI_Controller {
                 
                 $transport_discount = ($transport_rate * $transport_info['discount_value']) / 100;
             } else {
-                $transport_discount = $transport_info['discount_value'];
+                $transport_discount = min((float)$transport_info['discount_value'], (float)$transport_rate);
             }
         }
         

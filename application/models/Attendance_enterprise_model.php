@@ -441,7 +441,7 @@ class Attendance_enterprise_model extends MY_Model {
                         $disc = $this->Discount_model->get_student_discount_for_date($student_id, $year, $term, $class_id, 'breakfast', $timestamp);
                         
                         if ($disc['has_discount']) {
-                            if ($disc['discount_type'] == 'percentage') {
+                            if ($disc['discount_method'] == 'percentage') {
                                 $amt = max(0, $amt - ($amt * $disc['discount_value'] / 100));
                             } else {
                                 $amt = max(0, $amt - min($disc['discount_value'], $amt));
@@ -743,45 +743,45 @@ class Attendance_enterprise_model extends MY_Model {
     }
 
     /**
-	 * Get attendance records by student IDs with batch query optimization
-	 * Returns attendance counts grouped by student and status
-	 * 
-	 * @param array $student_ids Array of student IDs
-	 * @param int $start_timestamp Start date timestamp
-	 * @param int $end_timestamp End date timestamp
-	 * @param int|null $status Optional status filter (1=present, 2=absent, 3=late, 4=sick-home, 5=sick-clinic)
-	 * @return array Multi-dimensional array [student_id][status] = count
-	 */
-	public function get_attendance_by_student_ids($student_ids, $start_timestamp, $end_timestamp, $status = null) {
-		if(empty($student_ids)) {
-			return [];
-		}
-		
-		// Build query to count attendance by student and status
-		$this->db->select('student_id, status, COUNT(*) as count');
-		$this->db->from('attendance');
-		$this->db->where_in('student_id', $student_ids);
-		$this->db->where('timestamp >=', $start_timestamp);
-		$this->db->where('timestamp <=', $end_timestamp);
-		
-		if($status) {
-			$this->db->where('status', $status);
-		}
-		
-		$this->db->group_by(['student_id', 'status']);
-		$results = $this->db->get()->result_array();
-		
-		// Transform into nested array: [student_id][status] = count
-		$data = [];
-		foreach($results as $row) {
-			if(!isset($data[$row['student_id']])) {
-				$data[$row['student_id']] = [];
-			}
-			$data[$row['student_id']][$row['status']] = intval($row['count']);
-		}
-		
-		return $data;
-	}
+         * Get attendance records by student IDs with batch query optimization
+         * Returns attendance counts grouped by student and status
+         * 
+         * @param array $student_ids Array of student IDs
+         * @param int $start_timestamp Start date timestamp
+         * @param int $end_timestamp End date timestamp
+         * @param int|null $status Optional status filter (1=present, 2=absent, 3=late, 4=sick-home, 5=sick-clinic)
+         * @return array Multi-dimensional array [student_id][status] = count
+         */
+        public function get_attendance_by_student_ids($student_ids, $start_timestamp, $end_timestamp, $status = null) {
+                if(empty($student_ids)) {
+                        return [];
+                }
+                
+                // Build query to count attendance by student and status
+                $this->db->select('student_id, status, COUNT(*) as count');
+                $this->db->from('attendance');
+                $this->db->where_in('student_id', $student_ids);
+                $this->db->where('timestamp >=', $start_timestamp);
+                $this->db->where('timestamp <=', $end_timestamp);
+                
+                if($status) {
+                        $this->db->where('status', $status);
+                }
+                
+                $this->db->group_by(['student_id', 'status']);
+                $results = $this->db->get()->result_array();
+                
+                // Transform into nested array: [student_id][status] = count
+                $data = [];
+                foreach($results as $row) {
+                        if(!isset($data[$row['student_id']])) {
+                                $data[$row['student_id']] = [];
+                        }
+                        $data[$row['student_id']][$row['status']] = intval($row['count']);
+                }
+                
+                return $data;
+        }
 }
 
-	
+        

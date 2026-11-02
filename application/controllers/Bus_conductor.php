@@ -284,7 +284,7 @@ class Bus_conductor extends CI_Controller {
         );
         
         if ($discount_info['has_discount'] && $amount > 0) {
-            if ($discount_info['discount_type'] == 'percentage') {
+            if ($discount_info['discount_method'] == 'percentage') {
                 $discount_amount = $amount * ($discount_info['discount_value'] / 100);
             } else {
                 $discount_amount = min($discount_info['discount_value'], $amount);
@@ -348,7 +348,6 @@ class Bus_conductor extends CI_Controller {
         $page_data['page_title'] = get_phrase('bus_attendance_report');
         $this->load->view('backend/main', $page_data);
     }
-}
 
     /**
      * Daily Fees Discount Profiles Management (Restricted to daily_fees category only)
