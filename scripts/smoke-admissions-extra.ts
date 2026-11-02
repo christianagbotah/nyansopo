@@ -72,7 +72,7 @@ async function main() {
   check("student persisted with father/mother split", !!probe?.fatherName && probe.fatherName === "Kofi Probe" && probe.motherName === "Ama Probe");
   check("medical block persisted", probe?.bloodGroup === "O+" && probe?.allergies === "Groundnuts" && probe?.medicalConditions === "Mild asthma" && probe?.emergencyContact === "Auntie Adjoa · 0201112222" && probe?.dietNote === "No groundnuts");
   check("nationality/religion persisted", probe?.nationality === "Ghanaian" && probe?.religion === "Christianity");
-  check("portrait stored as data-URL", !!probe?.photoUrl?.startsWith("data:image/"));
+  check("portrait stored as a media-asset reference", !!probe?.photoUrl?.startsWith("/api/media/"));
   if (bed) {
     const afterBed = await db.bed.findUnique({ where: { id: bed.id } });
     check(`bed ${bed.code} now ASSIGNED to the new learner`, afterBed?.studentId === body.student.id && afterBed?.status === "ASSIGNED" && !!afterBed?.assignedAt);
@@ -98,6 +98,7 @@ async function main() {
   console.log("\n── cleanup ──");
   for (const p of [probe, probe3]) {
     if (!p) continue;
+    if (p.photoUrl?.startsWith("/api/media/")) await db.mediaAsset.deleteMany({ where: { id: p.photoUrl.split("/").pop()! } });
     await db.invoiceItem.deleteMany({ where: { invoice: { studentId: p.id } } });
     await db.invoice.deleteMany({ where: { studentId: p.id } });
     await db.payment.deleteMany({ where: { studentId: p.id } });

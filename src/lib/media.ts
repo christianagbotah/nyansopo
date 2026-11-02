@@ -21,7 +21,7 @@ export const MEDIA_URL_RE = /^\/api\/media\/[A-Za-z0-9]{20,}$/;
 /** Parse + decode an image data-URL into bytes, enforcing mime + size caps. */
 export function decodeImageDataUrl(value: string): { mimeType: string; bytes: Buffer } | null {
   if (typeof value !== "string" || !value.startsWith("data:")) return null;
-  const m = /^data:([a-z]+\/[a-z0-9.+-]+);base64,(.+)$/is.exec(value);
+  const m = /^data:([a-z]+\/[a-z0-9.+-]+);base64,([\s\S]+)$/i.exec(value);
   if (!m) return null;
   const [, mimeType, b64] = m;
   if (!ALLOWED_MIME.has(mimeType.toLowerCase())) return null;
@@ -50,7 +50,7 @@ export async function storeMedia(opts: {
       kind: opts.kind,
       mimeType: decoded.mimeType,
       sizeBytes: decoded.bytes.length,
-      data: decoded.bytes,
+      data: new Uint8Array(decoded.bytes), // plain Uint8Array (Prisma Bytes typing)
     },
   });
   return `/api/media/${asset.id}`;

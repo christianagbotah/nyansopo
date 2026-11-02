@@ -7,6 +7,7 @@ import { sendSms, sendAutomated } from "@/lib/sms";
 import { invoicePaymentReceipt } from "@/lib/receipt-payload";
 import { nextInvoiceNo, nextReceiptNo, nextStudentIndex } from "@/lib/codes";
 import { effectiveValue } from "@/lib/discounts";
+import { storeMedia } from "@/lib/media";
 
 const C = (cedis: number) => Math.round(cedis * 100);
 
@@ -789,9 +790,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         // valid data-URL → media asset; explicit null clears; anything else keeps the stored value
         const saneImage = (v: any) => (v === null ? "null" : typeof v === "string" && v.startsWith("data:image/") && v.length < 700_000 ? "upload" : null);
         const logoKind = saneImage(logoUrl);
-        if (logoKind) entries.push(["branding.logoUrl", logoKind === "null" ? JSON.stringify(null) : JSON.stringify(await storeMedia({ db, schoolId, kind: "LOGO", dataUrl: logoUrl }))]);
+        if (logoKind) entries.push(["branding.logoUrl", logoKind === "null" ? JSON.stringify(null) : JSON.stringify(await storeMedia({ db, schoolId, kind: "LOGO", dataUrl: logoUrl as string }))]);
         const sigKind = saneImage(signatureUrl);
-        if (sigKind) entries.push(["branding.signatureUrl", sigKind === "null" ? JSON.stringify(null) : JSON.stringify(await storeMedia({ db, schoolId, kind: "SIGNATURE", dataUrl: signatureUrl }))]);
+        if (sigKind) entries.push(["branding.signatureUrl", sigKind === "null" ? JSON.stringify(null) : JSON.stringify(await storeMedia({ db, schoolId, kind: "SIGNATURE", dataUrl: signatureUrl as string }))]);
         if (receiptStyle != null) {
           if (!["A5", "FORMAL", "MODERN", "THERMAL"].includes(receiptStyle)) return NextResponse.json({ error: "Unknown receipt style" }, { status: 400 });
           entries.push(["receipts.style", JSON.stringify(receiptStyle)]);

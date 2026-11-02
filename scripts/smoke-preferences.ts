@@ -33,7 +33,7 @@ async function main() {
   const r1 = await post({ action: "update-preferences", logoUrl: TINY_PNG, signatureUrl: "javascript:alert(1)", receiptStyle: "THERMAL", daysOpened: { [term.id]: 62 } });
   check("update-preferences 200", r1.ok);
   const d1 = await get();
-  check("logo persisted, junk signature rejected", d1.branding?.logoUrl?.startsWith("data:image/") === true && !d1.branding?.signatureUrl);
+  check("logo persisted as a media asset, junk signature rejected", d1.branding?.logoUrl?.startsWith("/api/media/") === true && !d1.branding?.signatureUrl);
   check("receipt style saved (THERMAL)", d1.branding?.receiptStyle === "THERMAL");
   check("days opened saved for current term", d1.daysOpened?.[term.id] === 62, JSON.stringify(d1.daysOpened));
 
@@ -67,7 +67,7 @@ async function main() {
     const style = payBody?.receipt?.style ?? payBody?.receipt?.data?.style;
     check("payment ok + receipt payload carries THERMAL default", payRes.ok && style === "THERMAL", JSON.stringify(payBody).slice(0, 160));
     const schoolBlock = payBody?.receipt?.school ?? payBody?.receipt?.data?.school;
-    check("receipt school block carries logo for letterhead", !!schoolBlock?.logoUrl?.startsWith("data:image/"));
+    check("receipt school block carries logo for letterhead", !!schoolBlock?.logoUrl?.startsWith("/api/media/"));
     // cleanup
     const pay = await db.payment.findFirst({ where: { schoolId, id: { notIn: [...preReceipts] } } });
     if (pay) await db.payment.delete({ where: { id: pay.id } });
@@ -82,6 +82,8 @@ async function main() {
   await db.schoolSetting.deleteMany({ where: { schoolId, key: `term.daysOpened:${term.id}` } });
   const preKeys = ["branding.logoUrl", "branding.signatureUrl", "receipts.style"];
   await db.schoolSetting.deleteMany({ where: { schoolId, key: { in: preKeys } } });
+  // drop the media assets this run created (nothing references them now)
+  await db.mediaAsset.deleteMany({ where: { schoolId, kind: { in: ["LOGO", "SIGNATURE"] } } });
   const d3 = await get();
   check("demo DB restored (branding cleared)", !d3.branding?.logoUrl && d3.branding?.receiptStyle === "A5" && d3.daysOpened?.[term.id] == null);
 

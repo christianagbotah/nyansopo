@@ -23,6 +23,7 @@ type Automation = { id: string; name: string; trigger: string; recipients: strin
 type Message = { id: string; recipientName: string; recipientPhone: string; body: string; category: string; status: string; sentByName: string | null; sentAt: string; errorReason: string | null };
 type SmsData = {
   setting: { provider: string; senderId: string; credits: number; autoFeeReminders: boolean; autoAbsenceAlerts: boolean; autoPaymentReceipts: boolean; autoLessonNoteAlerts: boolean } | null;
+  gateway?: { arkesel: boolean; termii: boolean };
   templates: Template[];
   messages: Message[];
   stats: { total: number; delivered: number; deliveredRate: number; credits: number };
@@ -327,7 +328,15 @@ function ComposeTab({ data, onSent }: { data: SmsData; onSent: () => void }) {
             Provider <b className="text-foreground">{data.setting?.provider ?? "—"}</b> · Sender ID <b className="text-foreground">{data.setting?.senderId ?? "—"}</b>.
             {data.setting?.provider === "SIMULATED"
               ? " Demo mode — messages are logged with realistic statuses instead of hitting a real gateway. Switch to Arkesel or Termii in Settings for live delivery."
-              : " Live gateway — configure the API key during deployment."}
+              : data.setting?.provider === "ARKESEL"
+                ? (data.gateway?.arkesel
+                    ? " Arkesel is configured — messages go out live."
+                    : " Arkesel selected but no API key on the server (SMS_ARKESEL_API_KEY) — messages will be recorded as FAILED without using credits.")
+                : data.setting?.provider === "TERMII"
+                  ? (data.gateway?.termii
+                      ? " Termii is configured — messages go out live."
+                      : " Termii selected but no API key on the server (SMS_TERMII_API_KEY) — messages will be recorded as FAILED without using credits.")
+                  : " Live gateway — configure the API key during deployment."}
           </CardContent>
         </Card>
       </div>
@@ -393,7 +402,11 @@ function SettingsTab({ data, onSaved }: { data: SmsData; onSaved: () => void }) 
                 <SelectItem value="TERMII">Termii (Africa)</SelectItem>
               </SelectContent>
             </Select>
-            <p className="text-xs text-muted-foreground">Arkesel / Termii API keys are configured at deployment time — messages are recorded here either way.</p>
+            <p className="text-xs text-muted-foreground">
+              {provider === "ARKESEL" ? (data.gateway?.arkesel ? "Arkesel API key detected on the server — live delivery active." : "No Arkesel API key on the server yet — set SMS_ARKESEL_API_KEY during deployment; sends stay free until then.")
+                : provider === "TERMII" ? (data.gateway?.termii ? "Termii API key detected on the server — live delivery active." : "No Termii API key on the server yet — set SMS_TERMII_API_KEY during deployment; sends stay free until then.")
+                : "Demo mode records messages locally with realistic statuses — no real SMS is sent."}
+            </p>
           </div>
           <div className="space-y-1.5">
             <Label>Sender ID</Label>

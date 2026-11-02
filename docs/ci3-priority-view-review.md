@@ -86,6 +86,13 @@ endorsed (opt-in rule), with school × teacher × credits gating and
 self-service opt-out in the Staff Portal — iEduPro `Sms_model` /
 `sms_automation` / `user_notification_preferences` parity.
 
-**Still open:** admission portraits & branding images are stored as data-URLs
-in Postgres — move to blob storage before large-scale rollouts; wire a real
-SMS gateway (ARKESEL/TERMII) into `sendSms` for live delivery.
+**Closed by wave 3** (`agent-ctx/11-media-sms-gateway.md`): portraits &
+branding images now live as binary `MediaAsset` rows served from
+`/api/media/{id}` (auth + school-scoped, immutable cache) instead of base64
+data-URLs inside hot rows — `scripts/backfill-media.ts` migrates legacy
+values. The real SMS gateways are wired: `SmsSetting.provider` ARKESEL /
+TERMII dispatches through `src/lib/sms-gateway.ts` (env-keyed, Ghana
+MSISDN normalisation, provider message refs, debit-only-on-success); the
+SMS Centre shows which gateways have keys configured. Remaining for
+rollout: set `SMS_ARKESEL_API_KEY` / `SMS_TERMII_API_KEY` in the
+deployment environment.
