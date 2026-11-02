@@ -72,6 +72,48 @@ notifications and multi-location sync.
 * Server-side search bug fixed in `Ajaxdataload_model` (search dropped the income/year scope
   and the OR-grouping broke the WHERE clause).
 
+---
+
+## 2b. Session 2 (2026-11-02) — portals completed, whole codebase parses
+
+### Critical fatals fixed
+* **Cashier controller fataled on every request** — a stray class-closing brace orphaned all
+  `daily_fee_rates*` methods outside the class (pre-existing parse error).
+* **Entire vehicle/haulage module fataled** — 40 `ajaxload->` DataTable backends called by
+  Driver/Vehicle/Type/Model/Insurance/Department/Expenditure/Destination/Loading/Claims
+  models never existed. Implemented in `models/vehicle_ajaxdataload.php`, dispatched
+  transparently through `Ajaxdataload_model::__call()` (search + full filter sets + joins).
+* **Entire accountant portal fataled** — controllers referenced views that only existed for
+  admin. 9 page wrappers + 4 income fragments now render; hardcoded `site_url('admin/…')`
+  calls in shared views are parametrized to `login_type`-based URLs.
+* **9 views were corrupted** (truncated double-paste at byte 1024) — parent/subject_teachers,
+  parent/tabulation_sheet, librarian/modal_edit_book, teacher/class_routine_section_subject_edit,
+  teacher/manage_online_exam_question, teacher/marks_get_subject, student/attendance_report_view,
+  plus `\'` escape bugs in payments/receivables_MODERNIZED. All repaired.
+* **Final sweep: 1291 PHP files, zero parse errors.**
+
+### Views built this session (every static view reference in the codebase now resolves)
+* Discount profile **create/edit modals** — grid layout, quick presets, wildcard + multi-fee
+  scopes with live preview, cashier-restricted mode; `discount_profiles_modern` is now
+  portal-aware (admin/cashier).
+* **Cashier daily-fee receipt** (itemised, auto-print), **student receipts viewer** with
+  year/term filters (+ `receipt_by_payment` route).
+* **Student termly bill** — modal + printable bill (arrears + approved discounts), ported
+  from an unroutable snippet into `Admin.php`.
+* **Financial statement report** — monthly billed vs collected, variance/outstanding cards,
+  collections by payment method, date-range navigation.
+* **SMS debtor-reminder wizard** (3 steps): compose with `{name}/{class}/{amount}/{school}`
+  placeholders + debtor selection → personalised preview → batch send via
+  `Sms_model::send_sms_batch_personalized` with audit log (`003_create_sms_send_log.sql`)
+  and an "SMS Debtors" button on the receivables report.
+* **Vehicle module print/report pages**: drivers, vehicles, expenditure, trucks loading,
+  all-trucks sales (per-truck aggregation), fuel usage assessment.
+* **Teacher portal**: bulk cumulative reports (one sheet per student), student payment
+  history table.
+* **One-time sync tool UI** (+ results), **bank checkout** (parents), **public invoice
+  expired** page, **404 page**, **sync test harness**, **bulk receipts print**.
+* Stale method-collection "snippet" files quarantined to `application/snippets/`.
+
 ## 3. Applying migrations
 
 Run against your database (e.g. `mysql -u user -p schoolmanager < file`):
@@ -81,6 +123,8 @@ Run against your database (e.g. `mysql -u user -p schoolmanager < file`):
      type name; INT coercion used to destroy it)
    * adds `daily_fee_rates.section_id` (code already writes it)
    * adds a lookup index on `student_discount_assignments`
+2. `application/migrations/003_create_sms_send_log.sql` — audit table for the SMS
+   debtor-reminder wizard (required before using "SMS Debtors" on the receivables report)
 
 ## 4. Connecting this repo to GitHub
 
