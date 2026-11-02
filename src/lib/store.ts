@@ -25,7 +25,7 @@ export type ModuleId =
   | "reports" | "exams" | "branches" | "ai" | "association" | "settings"
   | "daily" | "transport" | "sms" | "payroll" | "inventory" | "finance" | "classes"
   | "library" | "rbac" | "cashier" | "conductor" | "staffhub" | "portal" | "campus"
-  | "boarding";
+  | "boarding" | "curriculum";
 
 /** Deep-link target within a module (iedupro nested navigation):
  *  tab — a named tab inside the module (e.g. daily → rates / recon)

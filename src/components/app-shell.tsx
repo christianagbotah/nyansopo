@@ -22,6 +22,7 @@ import { Admissions } from "@/components/modules/admissions";
 import { Fees } from "@/components/modules/fees";
 import { Attendance } from "@/components/modules/attendance";
 import { Gradebook } from "@/components/modules/gradebook";
+import { Curriculum } from "@/components/modules/curriculum";
 import { Classes } from "@/components/modules/classes";
 import { Reports } from "@/components/modules/reports";
 import { BranchConsole } from "@/components/modules/branch-console";
@@ -47,7 +48,7 @@ import {
   LayoutDashboard, Users, Banknote, CalendarCheck, ClipboardList, GraduationCap, ArrowLeftRight, Building2,
   BrainCircuit, Settings as SettingsIcon, Landmark, Menu, CloudOff, Cloud, RefreshCcw, LogOut, Moon, Sun,
   Download, ChevronDown, ChevronRight, School, MessageSquareText, UtensilsCrossed, Bus, Smartphone, Calculator, Package, PieChart, LayoutList,
-  BookOpen, ShieldCheck, Receipt, Route, UserRound, Home, Backpack, Laptop, BedDouble,
+  BookOpen, ShieldCheck, Receipt, Route, UserRound, Home, Backpack, Laptop, BedDouble, NotebookPen,
 } from "lucide-react";
 
 type NavLeaf = { id: string; label: string; icon?: any; target?: NavTarget };
@@ -73,6 +74,7 @@ const SCHOOL_NAV: NavItem[] = [
   { id: "attendance", label: "Attendance", icon: CalendarCheck, section: "Academic" },
   { id: "classes", label: "Classes & Timetable", icon: LayoutList, section: "Academic" },
   { id: "gradebook", label: "Gradebook", icon: ClipboardList, section: "Academic" },
+  { id: "curriculum", label: "Curriculum & Notes", icon: NotebookPen, section: "Academic" },
   { id: "reports", label: "Exams & Reports", icon: GraduationCap, section: "Academic" },
   { id: "exams", label: "Online Exams", icon: Laptop, section: "Academic" },
   { id: "library", label: "Library", icon: BookOpen, section: "Academic" },
@@ -315,6 +317,15 @@ export function AppShell() {
       { id: "boarding-reports", label: "Occupancy reports", target: { tab: "reports" } },
     ];
 
+    // curriculum (iEduPro STUDENTS section: lesson notes, syllabus, study material)
+    const curriculumChildren: NavChild[] = [
+      { id: "curriculum-notes", label: "Lesson notes", target: { tab: "notes" } },
+      { id: "curriculum-templates", label: "Note templates", target: { tab: "templates" } },
+      { id: "curriculum-syllabus", label: "Scheme of learning", target: { tab: "syllabus" } },
+      { id: "curriculum-materials", label: "Study material", target: { tab: "materials" } },
+      { id: "curriculum-completion", label: "Completion dashboard", target: { tab: "completion" } },
+    ];
+
     // permission-gated school modules
     for (const item of SCHOOL_NAV) {
       if (item.id === "branches") continue;
@@ -325,6 +336,7 @@ export function AppShell() {
       if (item.id === "daily") enriched.children = dailyChildren;
       if (item.id === "fees") enriched.children = feesChildren;
       if (item.id === "boarding") enriched.children = boardingChildren;
+      if (item.id === "curriculum") enriched.children = curriculumChildren;
       items.push(enriched);
     }
     // proprietor branch console
@@ -532,6 +544,7 @@ export function AppShell() {
              module === "attendance" && show("attendance") ? <Attendance /> :
              module === "classes" && show("classes") ? <Classes /> :
              module === "gradebook" && show("gradebook") ? <Gradebook /> :
+             module === "curriculum" && show("curriculum") ? <Curriculum /> :
              module === "reports" && show("reports") ? <Reports /> :
              module === "exams" && show("exams") ? <OnlineExams /> :
              module === "library" && show("library") ? <LibraryPortal /> :

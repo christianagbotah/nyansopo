@@ -365,25 +365,41 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const wk = Number(weekNumber);
     if (!Number.isInteger(wk) || wk < WEEK_MIN || wk > WEEK_MAX) return NextResponse.json({ error: `Week must be between ${WEEK_MIN} and ${WEEK_MAX}` }, { status: 400 });
     if (!topic || !topic.trim()) return NextResponse.json({ error: "Topic is required" }, { status: 400 });
-    if (!classroomId || !subjectId || !termId) return NextResponse.json({ error: "Class, subject and term are required" }, { status: 400 });
-    const cls = await db.classroom.findUnique({ where: { id: classroomId } });
-    if (!cls || cls.schoolId !== schoolId) return NextResponse.json({ error: "Class not found" }, { status: 404 });
+    if (!id && (!classroomId || !subjectId || !termId)) return NextResponse.json({ error: "Class, subject and term are required" }, { status: 400 });
+    if (classroomId) {
+      const cls = await db.classroom.findUnique({ where: { id: classroomId } });
+      if (!cls || cls.schoolId !== schoolId) return NextResponse.json({ error: "Class not found" }, { status: 404 });
+    }
     try {
-      const saved = await db.syllabusTopic.upsert({
-        where: id
-          ? { id }
-          : { classroomId_subjectId_termId_weekNumber_topic: { classroomId, subjectId, termId, weekNumber, topic: topic.trim() } },
-        update: {
-          topic: topic.trim(), strand: strand ?? null, subStrand: subStrand ?? null,
-          contentStandard: contentStandard ?? null, indicator: indicator ?? null,
-          ...(typeof completed === "boolean" ? { completed, completedAt: completed ? new Date() : null } : {}),
-        },
-        create: {
-          schoolId, classroomId, subjectId, termId, weekNumber: wk, topic: topic.trim(),
-          strand: strand ?? null, subStrand: subStrand ?? null, contentStandard: contentStandard ?? null,
-          indicator: indicator ?? null, completed: completed === true, completedAt: completed === true ? new Date() : null,
-        },
-      });
+      let saved;
+      if (id) {
+        // toggle / edit an existing topic — plain update (create branch would
+        // need termId which the toggle payload deliberately omits)
+        const existing = await db.syllabusTopic.findUnique({ where: { id } });
+        if (!existing || existing.schoolId !== schoolId) return NextResponse.json({ error: "Topic not found" }, { status: 404 });
+        saved = await db.syllabusTopic.update({
+          where: { id },
+          data: {
+            topic: topic.trim(), strand: strand ?? null, subStrand: subStrand ?? null,
+            contentStandard: contentStandard ?? null, indicator: indicator ?? null,
+            ...(typeof completed === "boolean" ? { completed, completedAt: completed ? new Date() : null } : {}),
+          },
+        });
+      } else {
+        saved = await db.syllabusTopic.upsert({
+          where: { classroomId_subjectId_termId_weekNumber_topic: { classroomId, subjectId, termId, weekNumber, topic: topic.trim() } },
+          update: {
+            topic: topic.trim(), strand: strand ?? null, subStrand: subStrand ?? null,
+            contentStandard: contentStandard ?? null, indicator: indicator ?? null,
+            ...(typeof completed === "boolean" ? { completed, completedAt: completed ? new Date() : null } : {}),
+          },
+          create: {
+            schoolId, classroomId, subjectId, termId, weekNumber: wk, topic: topic.trim(),
+            strand: strand ?? null, subStrand: subStrand ?? null, contentStandard: contentStandard ?? null,
+            indicator: indicator ?? null, completed: completed === true, completedAt: completed === true ? new Date() : null,
+          },
+        });
+      }
       return NextResponse.json({ topic: saved });
     } catch (e: any) {
       if (String(e?.code) === "P2002") return NextResponse.json({ error: "That topic already exists for this class, subject and week" }, { status: 409 });

@@ -13,7 +13,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ModuleHeader, LoadingBlock, EmptyState } from "@/components/ui-helpers";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { ClipboardList, Plus, Save, Trash2, CloudOff, PencilLine, Sigma, CalendarRange, ShieldCheck } from "lucide-react";
+import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell } from "recharts";
+import { ClipboardList, Plus, Save, Trash2, CloudOff, PencilLine, Sigma, CalendarRange, ShieldCheck, BarChart3, TrendingUp } from "lucide-react";
 
 type GBData = {
   classrooms: { id: string; name: string }[];
@@ -47,12 +48,14 @@ export function Gradebook() {
   const [editing, setEditing] = useState<string | null>(null); // assessment id being edited
   const [grid, setGrid] = useState<Record<string, Record<string, string>>>({});
   const [busy, setBusy] = useState(false);
+  const [analyticsStudent, setAnalyticsStudent] = useState<string>("");
 
   /* iEduPro nested nav: preselect the Portfolio tab on deep link */
   const [appliedTarget, setAppliedTarget] = useState<any>(null);
   if (navTarget !== appliedTarget) {
     setAppliedTarget(navTarget);
     if (navTarget?.tab === "portfolio") setTab("portfolio");
+    if (navTarget?.tab === "analytics") setTab("analytics");
     if (navTarget?.classroomId && !classId) setClassId(navTarget.classroomId);
   }
 
@@ -83,6 +86,42 @@ export function Gradebook() {
     }
     return Object.entries(bySubject).map(([subject, v]) => ({ subject, pct: v.max ? Math.round((v.got / v.max) * 100) : 0 }));
   }, [data, classId]);
+
+  /* ── assessment-graph analytics (iEduPro assessment_graph parity) ── */
+  const learnerAverages = useMemo(() => {
+    if (!data || !classId) return [];
+    return (data.students ?? []).map((s) => {
+      let got = 0, max = 0;
+      for (const a of data.assessments ?? []) {
+        const v = a.marks[s.id];
+        if (v !== null && v !== undefined) { got += v; max += a.maxScore; }
+      }
+      return { id: s.id, name: s.name, pct: max ? Math.round((got / max) * 100) : null, marked: max > 0 };
+    }).filter((s) => s.marked).sort((a, b) => (b.pct ?? 0) - (a.pct ?? 0));
+  }, [data, classId]);
+
+  const distribution = useMemo(() => {
+    const bands = ["0–20", "21–40", "41–50", "51–60", "61–70", "71–80", "81–90", "91–100"];
+    const counts = new Array(bands.length).fill(0);
+    for (const l of learnerAverages) {
+      const p = l.pct ?? 0;
+      const idx = p <= 20 ? 0 : p <= 40 ? 1 : p <= 50 ? 2 : p <= 60 ? 3 : p <= 70 ? 4 : p <= 80 ? 5 : p <= 90 ? 6 : 7;
+      counts[idx]++;
+    }
+    return bands.map((band, i) => ({ band, learners: counts[i] }));
+  }, [learnerAverages]);
+
+  const trend = useMemo(() => {
+    if (!data || !analyticsStudent) return [];
+    const sorted = [...(data.assessments ?? [])].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    return sorted
+      .map((a) => {
+        const v = a.marks[analyticsStudent];
+        if (v === null || v === undefined) return null;
+        return { date: new Date(a.date).toLocaleDateString("en-GB", { day: "2-digit", month: "short" }), label: a.title, subject: a.subject, pct: Math.round((v / a.maxScore) * 100) };
+      })
+      .filter(Boolean) as { date: string; label: string; subject: string; pct: number }[];
+  }, [data, analyticsStudent]);
 
   async function saveMarks(assessmentId: string) {
     if (!currentSchoolId || !data) return;
@@ -138,7 +177,101 @@ export function Gradebook() {
         <TabsList className="flex-wrap h-auto">
           <TabsTrigger value="assessments">Assessments</TabsTrigger>
           <TabsTrigger value="portfolio" className="gap-1.5"><CalendarRange className="size-4" /> Portfolio (weekly SBA)</TabsTrigger>
+          <TabsTrigger value="analytics" className="gap-1.5"><BarChart3 className="size-4" /> Analytics</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="analytics" className="mt-4">
+          {!gbReady || learnerAverages.length === 0 ? (
+            <Card><CardContent><EmptyState icon={<BarChart3 className="size-5" />} title={classId ? "No marks to analyse yet" : "Pick a class to see assessment graphs"} hint="Charts appear once assessments carry marks." /></CardContent></Card>
+          ) : (
+            <div className="space-y-4">
+              <div className="grid lg:grid-cols-2 gap-4">
+                <Card>
+                  <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><BarChart3 className="size-4" /> Subject averages — {data.classroom?.name}</CardTitle></CardHeader>
+                  <CardContent className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={subjectAverages} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                        <XAxis dataKey="subject" tick={{ fontSize: 10 }} stroke="#888" interval={0} angle={-18} textAnchor="end" height={46} />
+                        <YAxis tick={{ fontSize: 11 }} stroke="#888" domain={[0, 100]} unit="%" />
+                        <Tooltip formatter={(v: any) => [`${v}%`, "Average"]} contentStyle={{ borderRadius: 10 }} />
+                        <Bar dataKey="pct" radius={[4, 4, 0, 0]}>
+                          {subjectAverages.map((s) => (
+                            <Cell key={s.subject} fill={s.pct >= 65 ? "#059669" : s.pct >= 50 ? "#d97706" : "#dc2626"} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardHeader className="pb-2"><CardTitle className="text-base">Class distribution</CardTitle></CardHeader>
+                  <CardContent className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={distribution} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                        <XAxis dataKey="band" tick={{ fontSize: 10 }} stroke="#888" interval={0} />
+                        <YAxis tick={{ fontSize: 11 }} stroke="#888" allowDecimals={false} />
+                        <Tooltip formatter={(v: any) => [v, "Learners"]} contentStyle={{ borderRadius: 10 }} />
+                        <Bar dataKey="learners" fill="#7c3aed" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </CardContent>
+                </Card>
+              </div>
+
+              <Card>
+                <CardHeader className="pb-2 flex-row flex-wrap items-center justify-between gap-2 space-y-0">
+                  <CardTitle className="text-base flex items-center gap-2"><TrendingUp className="size-4" /> Learner trend</CardTitle>
+                  <Select value={analyticsStudent || learnerAverages[0]?.id || ""} onValueChange={setAnalyticsStudent}>
+                    <SelectTrigger className="w-64"><SelectValue placeholder="Choose learner" /></SelectTrigger>
+                    <SelectContent>{(data.students ?? []).map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
+                  </Select>
+                </CardHeader>
+                <CardContent className="h-64">
+                  {trend.length === 0 ? (
+                    <div className="h-full grid place-items-center text-sm text-muted-foreground">No marked assessments for this learner yet.</div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={trend} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                        <XAxis dataKey="date" tick={{ fontSize: 10 }} stroke="#888" />
+                        <YAxis tick={{ fontSize: 11 }} stroke="#888" domain={[0, 100]} unit="%" />
+                        <Tooltip formatter={(v: any) => [`${v}%`, "Score"]} labelFormatter={(_, p: any) => `${p?.[0]?.payload?.label ?? ""} · ${p?.[0]?.payload?.subject ?? ""}`} contentStyle={{ borderRadius: 10 }} />
+                        <Line type="monotone" dataKey="pct" stroke="#0f6b47" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  )}
+                </CardContent>
+              </Card>
+
+              <div className="grid lg:grid-cols-2 gap-4">
+                <Card>
+                  <CardHeader className="pb-2"><CardTitle className="text-base">Top performers</CardTitle></CardHeader>
+                  <CardContent className="space-y-1.5">
+                    {learnerAverages.slice(0, 5).map((l, i) => (
+                      <div key={l.id} className="flex items-center justify-between text-sm">
+                        <span className="flex items-center gap-2"><span className="text-muted-foreground tabular-nums w-4">{i + 1}</span>{l.name}</span>
+                        <Badge className={cn("tabular-nums", (l.pct ?? 0) >= 65 ? "bg-emerald-600" : (l.pct ?? 0) >= 50 ? "bg-amber-600" : "bg-destructive")}>{l.pct}%</Badge>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardHeader className="pb-2"><CardTitle className="text-base">Needs support</CardTitle></CardHeader>
+                  <CardContent className="space-y-1.5">
+                    {[...learnerAverages].reverse().slice(0, 5).map((l, i) => (
+                      <div key={l.id} className="flex items-center justify-between text-sm">
+                        <span className="flex items-center gap-2"><span className="text-muted-foreground tabular-nums w-4">{i + 1}</span>{l.name}</span>
+                        <Badge className={cn("tabular-nums", (l.pct ?? 0) >= 65 ? "bg-emerald-600" : (l.pct ?? 0) >= 50 ? "bg-amber-600" : "bg-destructive")}>{l.pct}%</Badge>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+          )}
+        </TabsContent>
 
         <TabsContent value="assessments" className="mt-4">
           {!gbReady ? (
