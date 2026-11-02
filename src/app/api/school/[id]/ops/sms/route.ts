@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
 import { sendSms, sendAutomated, renderTemplate } from "@/lib/sms";
+import { gatewayConfigStatus } from "@/lib/sms-gateway";
 
 // ── GET /api/school/[id]/ops/sms — settings, templates, history, audiences ──
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -40,6 +41,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 
   return NextResponse.json({
+    gateway: gatewayConfigStatus(),
     setting: setting ? { provider: setting.provider, senderId: setting.senderId, credits: setting.credits, autoFeeReminders: setting.autoFeeReminders, autoAbsenceAlerts: setting.autoAbsenceAlerts, autoPaymentReceipts: setting.autoPaymentReceipts, autoLessonNoteAlerts: setting.autoLessonNoteAlerts } : null,
     templates: templates.map((t) => ({ id: t.id, name: t.name, category: t.category, body: t.body, isDefault: t.isDefault })),
     messages: messages.map((m) => ({ id: m.id, recipientName: m.recipientName, recipientPhone: m.recipientPhone, body: m.body, category: m.category, status: m.status, sentByName: m.sentByName, sentAt: m.sentAt, errorReason: m.errorReason })),

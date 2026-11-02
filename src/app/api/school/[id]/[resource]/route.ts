@@ -779,14 +779,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       }
       if (action === "update-preferences") {
         // branding uploads + default receipt style + per-term "days opened"
-        // (CI3 system_settings_modern parity, stored as SchoolSetting JSON rows)
+        // (CI3 system_settings_modern parity). Branding images are stored as
+        // binary MediaAssets; the setting value keeps only the short
+        // /api/media/{id} URL (legacy data-URL values still render).
         const { logoUrl, signatureUrl, receiptStyle, daysOpened } = body as {
           logoUrl?: string | null; signatureUrl?: string | null; receiptStyle?: string; daysOpened?: Record<string, number>;
         };
         const entries: [string, string][] = [];
-        const saneImage = (v: any) => (typeof v === "string" && v.startsWith("data:image/") && v.length < 700_000 ? v : null);
-        entries.push(["branding.logoUrl", JSON.stringify(saneImage(logoUrl))]);
-        entries.push(["branding.signatureUrl", JSON.stringify(saneImage(signatureUrl))]);
+        // valid data-URL → media asset; explicit null clears; anything else keeps the stored value
+        const saneImage = (v: any) => (v === null ? "null" : typeof v === "string" && v.startsWith("data:image/") && v.length < 700_000 ? "upload" : null);
+        const logoKind = saneImage(logoUrl);
+        if (logoKind) entries.push(["branding.logoUrl", logoKind === "null" ? JSON.stringify(null) : JSON.stringify(await storeMedia({ db, schoolId, kind: "LOGO", dataUrl: logoUrl }))]);
+        const sigKind = saneImage(signatureUrl);
+        if (sigKind) entries.push(["branding.signatureUrl", sigKind === "null" ? JSON.stringify(null) : JSON.stringify(await storeMedia({ db, schoolId, kind: "SIGNATURE", dataUrl: signatureUrl }))]);
         if (receiptStyle != null) {
           if (!["A5", "FORMAL", "MODERN", "THERMAL"].includes(receiptStyle)) return NextResponse.json({ error: "Unknown receipt style" }, { status: 400 });
           entries.push(["receipts.style", JSON.stringify(receiptStyle)]);

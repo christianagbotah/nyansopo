@@ -1,9 +1,12 @@
 import { PrismaClient } from "@prisma/client";
+import { toGhanaIntl, arkeselSend, termiiSend, type GatewaySendResult } from "@/lib/sms-gateway";
 
 // ── SMS sending helper (gateway-agnostic) ───────────────────
-// In SIMULATED mode (demo / offline-first demo deployments) messages are
-// recorded with realistic statuses and credits are debited. To go live,
-// set provider to ARKESEL or TERMII and wire the provider call below.
+// SIMULATED (default) records messages with realistic statuses for demo /
+// offline-first deployments. ARKESEL / TERMII perform live delivery using
+// deployment env credentials (SMS_ARKESEL_API_KEY / SMS_TERMII_API_KEY).
+// Credits are debited only when a message is actually accepted by the
+// gateway (or valid in SIMULATED mode).
 
 export type SmsSendArgs = {
   db: PrismaClient;
@@ -18,18 +21,47 @@ export type SmsSendArgs = {
 
 const GHANA_PHONE_OK = (p: string) => /^\+?233\d{9}$|^0\d{9}$/.test(p.replace(/[\s-]/g, ""));
 
+/** Provider dispatch — one attempt, outcome logged. Throws never. */
+async function dispatch(
+  provider: string,
+  args: { senderId: string; recipientPhone: string; body: string },
+): Promise<GatewaySendResult> {
+  if (provider === "ARKESEL") {
+    const apiKey = process.env.SMS_ARKESEL_API_KEY;
+    if (!apiKey) return { ok: false, error: "ARKESEL API key not configured (set SMS_ARKESEL_API_KEY on the server)" };
+    const intl = toGhanaIntl(args.recipientPhone);
+    if (!intl) return { ok: false, error: "Invalid Ghana number format" };
+    return arkeselSend({ apiKey, senderId: args.senderId, message: args.body, recipient: intl });
+  }
+  if (provider === "TERMII") {
+    const apiKey = process.env.SMS_TERMII_API_KEY;
+    if (!apiKey) return { ok: false, error: "TERMII API key not configured (set SMS_TERMII_API_KEY on the server)" };
+    const intl = toGhanaIntl(args.recipientPhone);
+    if (!intl) return { ok: false, error: "Invalid Ghana number format" };
+    return termiiSend({ apiKey, senderId: args.senderId, message: args.body, recipient: intl });
+  }
+  // SIMULATED — a Ghana-format number "delivers"; anything else fails
+  return { ok: GHANA_PHONE_OK(args.recipientPhone), error: "Invalid Ghana number format" };
+}
+
 export async function sendSms({ db, schoolId, studentId, recipientName, recipientPhone, body, category, sentByName }: SmsSendArgs) {
   const setting = await db.smsSetting.findUnique({ where: { schoolId } });
   if (!setting || setting.credits <= 0) {
     return await db.smsMessage.create({
-      data: { schoolId, studentId: studentId ?? null, recipientName, recipientPhone, body, category, status: "FAILED", creditsUsed: 0, sentByName: sentByName ?? null, errorReason: "No SMS credits — top up in Settings." },
+      data: { schoolId, studentId: studentId ?? null, recipientName, recipientPhone, body, category, status: "FAILED", creditsUsed: 0, sentByName: sentByName ?? null, errorReason: "No SMS credits — top up in Settings.", provider: setting?.provider ?? "SIMULATED" },
     });
   }
-  // provider dispatch (SIMULATED here; ARKESEL/TERMII hook-in point)
-  const ok = setting.provider === "SIMULATED" ? GHANA_PHONE_OK(recipientPhone) : true;
-  await db.smsSetting.update({ where: { schoolId }, data: { credits: { decrement: 1 } } });
+  const provider = ["ARKESEL", "TERMII"].includes(setting.provider) ? setting.provider : "SIMULATED";
+  const result = await dispatch(provider, { senderId: setting.senderId, recipientPhone, body });
+  // debit only on success — a failed/config-missing attempt must stay free
+  if (result.ok) await db.smsSetting.update({ where: { schoolId }, data: { credits: { decrement: 1 } } });
   return await db.smsMessage.create({
-    data: { schoolId, studentId: studentId ?? null, recipientName, recipientPhone, body, category, status: ok ? "SENT" : "FAILED", creditsUsed: ok ? 1 : 0, sentByName: sentByName ?? null, errorReason: ok ? null : "Invalid Ghana number format" },
+    data: {
+      schoolId, studentId: studentId ?? null, recipientName, recipientPhone, body, category,
+      status: result.ok ? "SENT" : "FAILED", creditsUsed: result.ok ? 1 : 0,
+      sentByName: sentByName ?? null, errorReason: result.ok ? null : result.error ?? "Send failed",
+      provider, providerRef: result.ok ? (result.ref ?? null) : null,
+    },
   });
 }
 

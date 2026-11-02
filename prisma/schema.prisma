@@ -167,6 +167,7 @@ model School {
   crecheRatingScales  CrecheRatingScale[]
   crecheRatings       CrecheRating[]
   schoolSettings      SchoolSetting[]
+  mediaAssets         MediaAsset[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1054,6 +1055,26 @@ model SmsMessage {
   sentByName     String?
   sentAt         DateTime @default(now())
   errorReason    String?
+  provider       String? // gateway that carried the message (SIMULATED | ARKESEL | TERMII)
+  providerRef    String? // gateway message id, for delivery follow-up
+}
+
+// ─────────────────────────────────────────────────────────────
+// MEDIA ASSETS — blob storage for portraits & branding uploads.
+// Binary bytes live here (fetched only via /api/media/[id] with lazy
+// loading + immutable caching) instead of bloating Student/SchoolSetting
+// rows with base64 data-URLs. Swap to S3 later by changing storeMedia
+// + the GET route only.
+// ─────────────────────────────────────────────────────────────
+model MediaAsset {
+  id        String   @id @default(cuid())
+  schoolId  String
+  school    School   @relation(fields: [schoolId], references: [id])
+  kind      String // PORTRAIT | LOGO | SIGNATURE
+  mimeType  String // image/png | image/jpeg | image/webp
+  sizeBytes Int
+  data      Bytes
+  createdAt DateTime @default(now())
 }
 
 // ─────────────────────────────────────────────────────────────

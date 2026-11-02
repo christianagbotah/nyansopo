@@ -4,6 +4,7 @@ import { opsAuth } from "@/lib/ops-auth";
 import { sendSms } from "@/lib/sms";
 import { invoicePaymentReceipt } from "@/lib/receipt-payload";
 import { nextInvoiceNo, nextReceiptNo, nextStudentIndex } from "@/lib/codes";
+import { storeMedia } from "@/lib/media";
 
 // ═══════════════════════════════════════════════════════════════
 // BULK CSV ADMISSION (CI3 parity) — template / validate / import
@@ -349,8 +350,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       if (b.status !== "AVAILABLE" || b.studentId) return NextResponse.json({ error: `Bed ${b.code} was just taken — pick another` }, { status: 409 });
       bedTarget = { id: b.id, code: b.code, dormName: b.dormitory.name, houseName: b.dormitory.house.name };
     }
-    // portrait comes in as a client-resized data-URL — sanity-bound it
-    const photo = typeof photoUrl === "string" && photoUrl.startsWith("data:image/") && photoUrl.length < 700_000 ? photoUrl : null;
+    // portrait arrives as a client-resized data-URL — validate + store as a
+    // binary MediaAsset; the student row keeps only the short /api/media URL
+    // (junk input degrades to no photo, as before)
+    const photo = typeof photoUrl === "string" && photoUrl.startsWith("data:image/") && photoUrl.length < 700_000
+      ? await storeMedia({ db, schoolId, kind: "PORTRAIT", dataUrl: photoUrl })
+      : null;
 
     // ── student + national index (sync-safe atomic counter) ──
     const nyansapoIndex = await nextStudentIndex(new Date().getFullYear());
