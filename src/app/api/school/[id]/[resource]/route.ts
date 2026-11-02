@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getUser, canOperateSchool } from "@/lib/session";
+import { canAny } from "@/lib/rbac";
 import { gradeFor } from "@/lib/grading";
 import { sendSms, sendAutomated } from "@/lib/sms";
 import { invoicePaymentReceipt } from "@/lib/receipt-payload";
@@ -114,6 +115,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     }
 
     case "fees": {
+      // defense in depth: the fee ledger is money-side — classroom roles (teachers)
+      // never see it even if the request is hand-crafted
+      if (!canAny(user.permissions, ["fees.view", "discounts.manage"]))
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       const year = await db.academicYear.findFirst({ where: { schoolId, isCurrent: true }, include: { terms: { include: { academicYear: true } } } });
       const allYears = await db.academicYear.findMany({ where: { schoolId }, include: { terms: true } });
       const termId = q("termId") ?? year?.terms.find((t) => t.isCurrent)?.id;
