@@ -78,3 +78,8 @@ server.log
 # legacy sqlite backup
 /db/legacy-sqlite-backup.db
 scripts/verify-out.txt
+
+# embedded postgres runtime state
+scripts/pg-data/
+scripts/pg/sockets/
+scripts/pg/postgres.log
