@@ -31,6 +31,7 @@ const ENDPOINTS = (schoolId: string) => ({
   "reports aging": `/api/school/${schoolId}/ops/reports?tab=aging`,
   "rbac": `/api/school/${schoolId}/ops/rbac`,
   "portal staff": `/api/school/${schoolId}/ops/portal?view=staff`,
+  "curriculum": `/api/school/${schoolId}/ops/curriculum`,
 });
 
 // modules teachers may NOT open (money side / admin only) — expect 403, not 500
