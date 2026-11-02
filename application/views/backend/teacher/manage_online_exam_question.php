@@ -15,23 +15,6 @@
             <a href="<?php echo site_url('teacher/online_exam_questions_print_view/'.$online_exam_id.'/answers');?>" class="btn btn-white pull-right" id="questions_print_with_answers">
                 <i class="entypo-print"></i> &nbsp; <?php echo get_phrase('print_with_answers');?>
             </a>
-            <a href="<?php echo site_url('teacher/online_exam_questio<?php
-    $online_exam_details = $this->db->get_where('online_exam', array('online_exam_id' => $online_exam_id))->row_array();
-    $added_question_info = $this->db->get_where('question_bank', array('online_exam_id' => $online_exam_id))->result_array();
-?>
-<hr>
-<div class="row">
-    <div class="col-md-6">
-        <h4><i class="entypo-docs"></i>&nbsp; <?php echo get_phrase('question_paper');?></h4>
-    </div>
-    <div class="col-md-6">
-        <button type="button" class="btn btn-info pull-right" id="questions_print">
-            <i class="entypo-print"></i> &nbsp;<?php echo get_phrase('print');?>
-        </button>
-        <div id="print_options">
-            <a href="<?php echo site_url('teacher/online_exam_questions_print_view/'.$online_exam_id.'/answers');?>" class="btn btn-white pull-right" id="questions_print_with_answers">
-                <i class="entypo-print"></i> &nbsp; <?php echo get_phrase('print_with_answers');?>
-            </a>
             <a href="<?php echo site_url('teacher/online_exam_questions_print_view/'.$online_exam_id.'/no_answers');?>" class="btn btn-white pull-right" id="questions_print_without_answers">
                 <i class="entypo-print"></i> &nbsp; <?php echo get_phrase('print_without_answers');?>
             </a>

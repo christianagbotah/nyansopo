@@ -23,31 +23,6 @@
                     else if ($i == 7)
                         $m = 'july';
                     else if ($i == 8)
-             <hr />
-<?php echo form_open(base_url() . 'index.php/student/attendance_report_selector/'.$student_id); ?>
-<div class="row">
-
-    <div class="col-md-offset-2 col-md-2">
-         <div class="form-group">
-            <label class="control-label" style="margin-bottom: 5px;"><?php echo get_phrase('month'); ?></label>
-            <select name="month" class="form-control select2">
-                <?php
-                for ($i = 1; $i <= 12; $i++):
-                    if ($i == 1)
-                        $m = 'january';
-                    else if ($i == 2)
-                        $m = 'february';
-                    else if ($i == 3)
-                        $m = 'march';
-                    else if ($i == 4)
-                        $m = 'april';
-                    else if ($i == 5)
-                        $m = 'may';
-                    else if ($i == 6)
-                        $m = 'june';
-                    else if ($i == 7)
-                        $m = 'july';
-                    else if ($i == 8)
                         $m = 'august';
                     else if ($i == 9)
                         $m = 'september';

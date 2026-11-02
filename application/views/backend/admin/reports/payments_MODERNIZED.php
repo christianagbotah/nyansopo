@@ -798,9 +798,9 @@ function Popup(data) {
     var mywindow = window.open('', '', '');
     mywindow.document.write('<!doctype html><html><head><title>Students Payments Report</title>');
     
-    mywindow.document.write('<link rel="stylesheet" type="text/css" href="<?php echo base_url(\'assets/css/neon-forms.css\');?>" />');
-    mywindow.document.write('<link rel="stylesheet" type="text/css" href="<?php echo base_url(\'assets/css/neon-core.css\');?>" />');
-    mywindow.document.write('<link rel="stylesheet" type="text/css" href="<?php echo base_url(\'assets/css/bootstrap.css\');?>" />');
+    mywindow.document.write('<link rel="stylesheet" type="text/css" href="<?php echo base_url('assets/css/neon-forms.css');?>" />');
+    mywindow.document.write('<link rel="stylesheet" type="text/css" href="<?php echo base_url('assets/css/neon-core.css');?>" />');
+    mywindow.document.write('<link rel="stylesheet" type="text/css" href="<?php echo base_url('assets/css/bootstrap.css');?>" />');
 
     // Add inline print styles
     mywindow.document.write('<style type="text/css">');
@@ -826,7 +826,7 @@ function Popup(data) {
 }
 
 function dashboard() {
-    location.href = '<?php echo site_url(\'admin/dashboard\'); ?>';
+    location.href = '<?php echo site_url('admin/dashboard'); ?>';
 }
 </script>
 </body>

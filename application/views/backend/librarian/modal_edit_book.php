@@ -20,28 +20,6 @@ $edit_data		=	$this->db->get_where('book' , array('book_id' => $param2) )->resul
                     <label class="col-sm-3 control-label"><?php echo get_phrase('book_status');?></label>
                     <div class="col-sm-5">
                         <h4 style="background-color: <?php echo $bcolor;?>; color: <?php echo $color;?>; padding: 3px; text-align: center;"><?php echo $row['status']; ?></h4>
-       <?php 
-$edit_data		=	$this->db->get_where('book' , array('book_id' => $param2) )->result_array();
-
-?>
-
-<div class="tab-pane box active" id="edit" style="padding: 5px">
-    <div class="box-content">
-        <?php foreach($edit_data as $row):
-            if($row['status'] == 'Available') {
-            $bcolor = 'green';
-            $color = 'white';
-        }else{
-            $bcolor = 'red';
-            $color = 'yellow';
-        }
-
-        ?>
-        <?php echo form_open(site_url('librarian/book/do_update/'.$row['book_id']) , array('class' => 'form-horizontal form-groups-bordered validate','target'=>'_top','enctype'=>'multipart/form-data'));?>
-                <div class="form-group">
-                    <label class="col-sm-3 control-label"><?php echo get_phrase('book_status');?></label>
-                    <div class="col-sm-5">
-                        <h4 style="background-color: <?php echo $bcolor;?>; color: <?php echo $color;?>; padding: 3px; text-align: center;"><?php echo $row['status']; ?></h4>
                     </div>
                 </div>
                 <div class="form-group">

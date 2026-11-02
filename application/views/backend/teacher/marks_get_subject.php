@@ -27,35 +27,6 @@
 		?>
 		<div class="col-md-3">
 			<div class="form-group">
-			<label class="control-label" style="margin-bottom: 5p
-<div class="col-md-2">
-	<div class="form-group">
-	<label class="control-label" style="margin-bottom: 5px;"><?php echo get_phrase('section');?></label>
-		<select name="section_id" id="section_id" class="form-control select2">
-			<?php 
-				$sections = $this->db->get_where('section' , array(
-					'class_id' => $class_id 
-				))->result_array();
-				foreach($sections as $row):
-			?>
-			<option value="<?php echo $row['section_id'];?>"><?php echo $row['name'];?></option>
-			<?php endforeach;?>
-		</select>
-	</div>
-</div>
-
-<?php
-	$account_type       =	$this->session->userdata('login_type');
-	$class_name = $this->crud_model->get_class_name($class_id);
-	//let's get the teacher's id and compare to see if he is just a subject teacher or a class teacher
-	$t_id = $this->db->get_where('class', array('class_id' => $class_id))->row()->teacher_id;
-
-	if($account_type == 'teacher') {
-
-		if($class_name == 'JHSS') {
-		?>
-		<div class="col-md-3">
-			<div class="form-group">
 			<label class="control-label" style="margin-bottom: 5px;"><?php echo get_phrase('subject');?></label>
 				<select name="subject_id" id="subject_id" class="form-control select2">
 					<?php 

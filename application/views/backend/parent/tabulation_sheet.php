@@ -1,25 +1,3 @@
-
-<hr />
-<div class="row">
-	<div class="col-md-12">
-		<?php echo form_open(site_url('admin/tabulation_sheet'));?>
-			<div class="col-md-2">
-				<div class="form-group">
-					<label class="control-label"><?php echo get_phrase('class');?></label>
-					<select name="class_id" class="form-control select2" id="class_id" onchange="showTermSem($(this).val())">
-                        <option value=""><?php echo get_phrase('select_a_class');?></option>
-                        <?php 
-
-                        $classes = $this->db->get('class')->result_array();
-                        foreach($classes as $row):
-                        ?>
-
-                        <?php
-
-
-                            //add section A or B if the class has more than one section
-                            $section_name = $this->db->get_where('section', array('class_id' => $row['class_id']))->row()->name;
-                            $class_has_more_sections = $this->db->get_where('class', array('name' => $row['name'], 'name_numeric' => $row['n
 <hr />
 <div class="row">
 	<div class="col-md-12">

@@ -15,23 +15,6 @@
                           <?php for ($i = 1; $i <= 3; $i++): ?>
                               <option value="<?php echo $i; ?>"
                                 <?php if ($un_term == $i) {echo 'selected';}?>>
-                                  <?p<div class="container">
-    <div class="row">
-         <?php echo form_open(site_url('parents/subject_teacher/search'), array('class' => 'form-horizontal form-group-bordered', 'id' => 'subject_teacher_form')); ?>
-            <div class="col-sm-4">
-              <div class="form-group">
-                
-              </div>
-            </div>
-            <div class="col-sm-3">
-            <div class="form-group">
-                <label  class="control-label col-sm-6"><?php echo get_phrase('term'); ?></label>
-                  <div class="col-sm-6">
-                      <select name="term" class="form-control select2" id="term" onchange="submitForm()">
-                          <option value="" disabled="true"><?php echo get_phrase('term'); ?></option>
-                          <?php for ($i = 1; $i <= 3; $i++): ?>
-                              <option value="<?php echo $i; ?>"
-                                <?php if ($un_term == $i) {echo 'selected';}?>>
                                   <?php echo $i; ?>
                               </option>
                           <?php endfor;?>

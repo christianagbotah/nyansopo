@@ -16,24 +16,6 @@
 				<option value="<?php echo $section['section_id'];?>"
 					<?php if($section['section_id'] == $section_id) echo 'selected';?>>
 						<?php echo $section['name'];?>
-					</o<?php
-	$running_year = $this->db->get_where('settings', array('type' => 'running_year'))->row()->description;
-	$running_term = $this->db->get_where('settings', array('type' => 'running_term'))->row()->description;
-	$query = $this->db->get_where('section' , array('class_id' => $class_id));
-	if($query->num_rows() > 0): 
-		$section_id = $this->db->get_where('class_routine' , array('class_routine_id' => $class_routine_id, 'year' => $running_year, 'term' => $running_term))->row()->section_id;
-		$sections   = $query->result_array();
-?>
-	
-	<div class="form-group">
-		<label class="col-sm-3 control-label"><?php echo get_phrase('section');?></label>
-		<div class="col-sm-5">
-			<select name="section_id" class="form-control select2">
-				<option value=""><?php echo get_phrase('select_section');?></option>
-				<?php foreach($sections as $section):?>
-				<option value="<?php echo $section['section_id'];?>"
-					<?php if($section['section_id'] == $section_id) echo 'selected';?>>
-						<?php echo $section['name'];?>
 					</option>
 				<?php endforeach;?>
 			</select>
