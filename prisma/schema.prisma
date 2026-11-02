@@ -157,6 +157,10 @@ model School {
   portfolioEntries    PortfolioEntry[]
   dailyFeeAudits      DailyFeeAudit[]
   handoverReports     HandoverReport[]
+  lessonNoteTemplates LessonNoteTemplate[]
+  lessonNotes         LessonNote[]
+  studyMaterials      StudyMaterial[]
+  syllabusTopics      SyllabusTopic[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -187,6 +191,8 @@ model Term {
   assessments        Assessment[]
   attendanceSessions AttendanceSession[]
   reportCards        ReportCard[]
+  lessonNotes        LessonNote[]
+  syllabusTopics     SyllabusTopic[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -210,6 +216,10 @@ model Classroom {
   dailyServiceRates  DailyServiceRate[]
   onlineExams        OnlineExam[]
   questionPapers     QuestionPaper[]
+  lessonNoteTemplates LessonNoteTemplate[]
+  lessonNotes        LessonNote[]
+  studyMaterials     StudyMaterial[]
+  syllabusTopics     SyllabusTopic[]
 }
 
 model Subject {
@@ -222,6 +232,10 @@ model Subject {
   isCore         Boolean         @default(true)
   assessments    Assessment[]
   timetableSlots TimetableSlot[]
+  lessonNoteTemplates LessonNoteTemplate[]
+  lessonNotes    LessonNote[]
+  studyMaterials StudyMaterial[]
+  syllabusTopics SyllabusTopic[]
 }
 
 model Staff {
@@ -256,6 +270,8 @@ model Staff {
   timetableSlots  TimetableSlot[]
   users            User[]         @relation("UserStaff")
   housesMastered   BoardingHouse[] @relation("HouseMaster")
+  lessonNotes      LessonNote[]
+  studyMaterials   StudyMaterial[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1463,4 +1479,113 @@ model HandoverReport {
   totalCents    Int      @default(0)
   cashCents     Int      @default(0)
   createdAt     DateTime @default(now())
+}
+
+// ─────────────────────────────────────────────────────────────
+// CURRICULUM & LESSON NOTES (iEduPro lesson-note lifecycle parity:
+// templates → teacher weekly notes → HOD/admin review → endorse /
+// request revision → progress & compliance; plus study material
+// sharing and the week-by-week scheme of learning)
+// ─────────────────────────────────────────────────────────────
+model LessonNoteTemplate {
+  id              String     @id @default(cuid())
+  schoolId        String
+  school          School     @relation(fields: [schoolId], references: [id])
+  subjectId       String?
+  subject         Subject?   @relation(fields: [subjectId], references: [id])
+  classroomId     String? // null = any class studying the subject
+  classroom       Classroom? @relation(fields: [classroomId], references: [id])
+  name            String
+  strand          String?
+  subStrand       String?
+  contentStandard String?
+  description     String?
+  objectives      String     @default("")
+  activities      String     @default("")
+  content         String     @default("")
+  createdAt       DateTime   @default(now())
+}
+
+model LessonNote {
+  id              String    @id @default(cuid())
+  schoolId        String
+  school          School    @relation(fields: [schoolId], references: [id])
+  staffId         String
+  staff           Staff     @relation(fields: [staffId], references: [id])
+  classroomId     String
+  classroom       Classroom @relation(fields: [classroomId], references: [id])
+  subjectId       String
+  subject         Subject   @relation(fields: [subjectId], references: [id])
+  termId          String
+  term            Term      @relation(fields: [termId], references: [id])
+  templateId      String? // seeded from a LessonNoteTemplate
+  title           String
+  description     String?
+  weekNumber      Int // 1..15 within the term
+  lessonDate      DateTime
+  objectives      String    @default("")
+  activities      String    @default("")
+  content         String    @default("")
+  status          String    @default("PENDING") // DRAFT | PENDING | ENDORSED | REVISION_REQUIRED
+  feedback        String? // reviewer comment accompanying a revision request
+  version         Int       @default(1)
+  sourceNoteId    String? // copied from a previous note
+  submittedAt     DateTime?
+  reviewedAt      DateTime?
+  reviewedByName  String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  reviews         LessonNoteReview[]
+
+  @@unique([staffId, classroomId, subjectId, termId, weekNumber])
+}
+
+model LessonNoteReview {
+  id        String     @id @default(cuid())
+  noteId    String
+  note      LessonNote @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  action    String // CREATE | UPDATE | SUBMIT | ENDORSE | REQUEST_REVISION | RESUBMIT
+  actorName String
+  comment   String?
+  createdAt DateTime   @default(now())
+}
+
+model StudyMaterial {
+  id            String     @id @default(cuid())
+  schoolId      String
+  school        School     @relation(fields: [schoolId], references: [id])
+  classroomId   String
+  classroom     Classroom  @relation(fields: [classroomId], references: [id])
+  subjectId     String?
+  subject       Subject?   @relation(fields: [subjectId], references: [id])
+  title         String
+  description   String?
+  linkUrl       String? // external resource / shared-drive link
+  body          String? // inline notes & instructions
+  authorStaffId String
+  author        Staff      @relation(fields: [authorStaffId], references: [id])
+  createdAt     DateTime   @default(now())
+}
+
+model SyllabusTopic {
+  id              String    @id @default(cuid())
+  schoolId        String
+  school          School    @relation(fields: [schoolId], references: [id])
+  classroomId     String
+  classroom       Classroom @relation(fields: [classroomId], references: [id])
+  subjectId       String
+  subject         Subject   @relation(fields: [subjectId], references: [id])
+  termId          String
+  term            Term      @relation(fields: [termId], references: [id])
+  weekNumber      Int // 1..15 — week of the term this topic is taught
+  strand          String?
+  subStrand       String?
+  contentStandard String?
+  indicator       String?
+  topic           String
+  completed       Boolean   @default(false)
+  completedAt     DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@unique([classroomId, subjectId, termId, weekNumber, topic])
 }
