@@ -461,13 +461,29 @@ if(isset($_GET['msg'])) {
             <hr>
                 <div class="bg-gray-100 md:h-40 p-6 mb-16 md:mb-0 h-fit md:h-auto">
                 
-                    <!-- <div class="form-group row" id="search_row">
-                        <div class="col-lg-9 col-md-9 col-sm-7"></div>
-                        <div class="col-lg-3 col-md-3 col-sm-5">
-                            <input type="search" class="form-control bg-gray-50 border border-gray-300 text-gray-500 rounded-lg focus:ring-primary-600 focus:border-primary-600 block w-full h-16 p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white text-xl dark:focus:ring-primary-500 dark:focus:border-primary-500" name="student_search" id="student_search" placeholder="Search Student..." style="height: 35px">
+                    <?php
+                    $class_sections = $this->db->order_by('name', 'ASC')->get_where('section', array('class_id' => $class_id))->result_array();
+                    ?>
+                    <div class="form-group row" id="search_row" style="background: white; padding: 12px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 12px;">
+                        <div class="col-lg-4 col-md-4 col-sm-6" style="padding-left: 0; padding-right: 8px;">
+                            <div class="input-group" style="width: 100%;">
+                                <span class="input-group-addon" style="background: #f9fafb; border: 1px solid #d1d5db; border-right: 0; border-radius: 8px 0 0 8px;"><i class="fa fa-search text-gray-400"></i></span>
+                                <input type="search" class="form-control" name="student_search" id="student_search" placeholder="<?php echo get_phrase('search_student_by_name_or_code'); ?>..." style="height: 38px; border-left: 0; box-shadow: none;">
+                            </div>
                         </div>
-                        
-                    </div> -->
+                        <div class="col-lg-3 col-md-3 col-sm-6" style="padding-left: 0; padding-right: 8px;">
+                            <select id="section_filter" class="form-control" style="height: 38px; border-radius: 0 8px 8px 0; border: 1px solid #d1d5db;">
+                                <option value=""><?php echo get_phrase('all_sections'); ?></option>
+                                <?php foreach ($class_sections as $sec): ?>
+                                    <option value="<?php echo $sec['section_id']; ?>"><?php echo $sec['name']; ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="col-lg-5 col-md-5 col-sm-12" style="padding-left: 0; display: flex; align-items: center; justify-content: flex-end;">
+                            <span class="text-gray-500" style="font-size: 13px;"><i class="fa fa-filter"></i> <span id="student_filter_count">…</span> <?php echo get_phrase('students_shown'); ?></span>
+                            <button type="button" class="btn btn-default" style="margin-left: 10px; height: 38px;" onclick="resetStudentFilters()"><i class="fa fa-undo"></i> <?php echo get_phrase('reset'); ?></button>
+                        </div>
+                    </div>
 
                     <div class="flex flex-col md:flex-row gap-4 justify-around divide-y-4 md:divide-x-4 divide-gray-50">
                         <div class="flex justify-between"><span class="text-gray-500 text-2xl font-semibold">TOTAL MALES:</span> <span class="font-bold text-3xl" id="total_males"><span class="text-sm text-gray-400">Updating...</span></span></div>
@@ -603,7 +619,7 @@ if(isset($_GET['msg'])) {
                                 $account_status .= $as_btn.' <i class="fa fa-chevron-down"></i>';
                                 $account_status .= '</button></div>';
                                 ?>
-                        <tr class="border-b dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700">
+                        <tr class="border-b dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700" data-section="<?php echo $row['section_id']; ?>" data-search-text="<?php echo strtolower($student_info->name . ' ' . $student_info->student_code . ' ' . $student_info->student_id); ?>">
                           <td class="px-4 py-3">
                             <input type="checkbox" class="checkbox" onclick="boxChecked()" name="students_sel[]" value="<?= $row['student_id']; ?>"></td>
                             <td class="px-4 py-3 font-semibold"><?php echo $serial_number++; ?></td>
@@ -817,13 +833,33 @@ if(isset($_GET['msg'])) {
 
     });
 
-    //to filter the students
-    $("#student_search").on("keyup", function() {
-      var value = $(this).val().toLowerCase();
-      $(".datatable tbody tr").filter(function() {
-        $(this).toggle($(this).text().toLowerCase().indexOf(value) > -1)
-      });
-    });
+    // Combined client-side filter: search text + section
+    function applyStudentFilters() {
+        var value = $('#student_search').val().toLowerCase();
+        var section = $('#section_filter').val();
+        var visible = 0;
+        $(".datatable tbody tr").each(function() {
+            var $row = $(this);
+            var matches_text = !value || ($row.attr('data-search-text') || $row.text().toLowerCase()).indexOf(value) > -1;
+            var matches_section = !section || $row.attr('data-section') == section;
+            var show = matches_text && matches_section;
+            $row.toggle(show);
+            if (show) visible++;
+        });
+        $('#student_filter_count').text(visible);
+    }
+
+    $('#student_search').on('keyup', applyStudentFilters);
+    $('#section_filter').on('change', applyStudentFilters);
+
+    // Initialize the visible-student counter once the table has rendered
+    $('#student_filter_count').text($('.datatable tbody tr').length);
+
+    function resetStudentFilters() {
+        $('#student_search').val('');
+        $('#section_filter').val('');
+        applyStudentFilters();
+    }
 
     $('#c_print').click(function(event) {
         var exam_id = $('#exam_id').val();

@@ -46,3 +46,14 @@ $lang['from_date'] = 'From Date';
 $lang['to_date'] = 'To Date';
 $lang['reset'] = 'Reset';
 $lang['mobile_money'] = 'Mobile Money';
+
+/* Student list filters */
+$lang['search_student_by_name_or_code'] = 'Search student by name or code';
+$lang['all_sections'] = 'All Sections';
+$lang['students_shown'] = 'students shown';
+
+/* Teacher list filters */
+$lang['all_genders'] = 'All Genders';
+$lang['all_statuses'] = 'All Statuses';
+$lang['all_designations'] = 'All Designations';
+$lang['all_my_classes'] = 'All My Classes';

@@ -77,7 +77,7 @@ $transport_enabled = is_fee_module_enabled('transport');
             <div class="form-group">
                 <label class="form-label"><i class="fa fa-users"></i> <?php echo get_phrase('class'); ?></label>
 <select class="form-control" name="class_id" id="class_filter">
-                <option value=""><?php echo get_phrase('select_class'); ?></option>
+                <option value=""><?php echo get_phrase('all_my_classes'); ?></option>
                 <?php
                 $teacher_id = $this->session->userdata('teacher_id');
                 $classes = $this->crud_model->get_classes();
@@ -197,7 +197,7 @@ function loadPayments() {
     var end_date = $('#end_date').val();
     var class_id = $('#class_filter').val();
     
-    if(!start_date || !end_date || !class_id) {
+    if(!start_date || !end_date) {
         showAjaxModal_alert('<?php echo get_phrase('please_select_all_fields'); ?>', 'error');
         return;
     }

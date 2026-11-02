@@ -113,12 +113,14 @@ class Ajaxdataload_model extends CI_Model {
 
         /*----------------------------- TEACHERS -------------------------------*/
 
-        function all_teachers_count() {
+        function all_teachers_count($filters = array()) {
+                $this->_apply_teacher_filters($filters);
                 $query = $this->db->get('teacher');
                 return $query->num_rows();
         }
 
-        function all_teachers($limit, $start, $col, $dir) {
+        function all_teachers($limit, $start, $col, $dir, $filters = array()) {
+                $this->_apply_teacher_filters($filters);
                 $query = $this
                         ->db
                         ->limit($limit, $start)
@@ -133,14 +135,37 @@ class Ajaxdataload_model extends CI_Model {
 
         }
 
-        function teacher_search($limit, $start, $search, $col, $dir) {
+        /*
+         * Optional teacher list filters: gender (Male/Female),
+         * status (active|blocked via block_limit), designation (free text).
+         */
+        private function _apply_teacher_filters($filters = array()) {
+                if (!empty($filters['gender'])) {
+                        $this->db->where('sex', $filters['gender']);
+                }
+                if (!empty($filters['status'])) {
+                        if ($filters['status'] === 'blocked') {
+                                $this->db->where('block_limit', 3);
+                        } else {
+                                $this->db->where('block_limit !=', 3);
+                        }
+                }
+                if (!empty($filters['designation'])) {
+                        $this->db->where('designation', $filters['designation']);
+                }
+        }
+
+        function teacher_search($limit, $start, $search, $col, $dir, $filters = array()) {
+                $this->_apply_teacher_filters($filters);
+                $this->db->group_start();
+                $this->db->like('teacher_id', $search);
+                $this->db->or_like('name', $search);
+                $this->db->or_like('email', $search);
+                $this->db->or_like('phone', $search);
+                $this->db->or_like('teacher_code', $search);
+                $this->db->group_end();
                 $query = $this
                         ->db
-                        ->like('teacher_id', $search)
-                        ->or_like('name', $search)
-                        ->or_like('email', $search)
-                        ->or_like('phone', $search)
-                        ->or_like('teacher_code', $search)
                         ->limit($limit, $start)
                         ->order_by($col, $dir)
                         ->get('teacher');
@@ -153,15 +178,16 @@ class Ajaxdataload_model extends CI_Model {
 
         }
 
-        function teacher_search_count($search) {
-                $query = $this
-                        ->db
-                        ->like('teacher_id', $search)
-                        ->or_like('name', $search)
-                        ->or_like('email', $search)
-                        ->or_like('phone', $search)
-                        ->or_like('teacher_code', $search)
-                        ->get('teacher');
+        function teacher_search_count($search, $filters = array()) {
+                $this->_apply_teacher_filters($filters);
+                $this->db->group_start();
+                $this->db->like('teacher_id', $search);
+                $this->db->or_like('name', $search);
+                $this->db->or_like('email', $search);
+                $this->db->or_like('phone', $search);
+                $this->db->or_like('teacher_code', $search);
+                $this->db->group_end();
+                $query = $this->db->get('teacher');
 
                 return $query->num_rows();
         }

@@ -5422,7 +5422,14 @@ class Admin extends MY_Controller {
 		$order = $columns[$this->input->post('order')[0]['column']];
 		$dir = $this->input->post('order')[0]['dir'];
 
-		$totalData = $this->ajaxload->all_teachers_count();
+		// Optional teacher list filters
+		$filters = array(
+			'gender' => $this->input->post('gender'),
+			'status' => $this->input->post('status'),
+			'designation' => $this->input->post('designation'),
+		);
+
+		$totalData = $this->ajaxload->all_teachers_count($filters);
 		$totalFiltered = $totalData;
 
 		// Initialize gender counters before the loop
@@ -5431,11 +5438,11 @@ class Admin extends MY_Controller {
 		$grandTotalGender = 0;
 
 		if (empty($this->input->post('search')['value'])) {
-			$teachers = $this->ajaxload->all_teachers($limit, $start, $order, $dir);
+			$teachers = $this->ajaxload->all_teachers($limit, $start, $order, $dir, $filters);
 		} else {
 			$search = $this->input->post('search')['value'];
-			$teachers = $this->ajaxload->teacher_search($limit, $start, $search, $order, $dir);
-			$totalFiltered = $this->ajaxload->teacher_search_count($search);
+			$teachers = $this->ajaxload->teacher_search($limit, $start, $search, $order, $dir, $filters);
+			$totalFiltered = $this->ajaxload->teacher_search_count($search, $filters);
 		}
 
 		$data = array();

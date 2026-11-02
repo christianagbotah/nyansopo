@@ -272,6 +272,44 @@
                         </div>
                     </div>
 
+                    <?php
+                    // Distinct designations for the filter dropdown
+                    $designations = $this->db->select('designation')->distinct()
+                        ->where('designation IS NOT NULL')->where('designation !=', '')
+                        ->order_by('designation', 'ASC')->get('teacher')->result_array();
+                    ?>
+                    <div class="row" style="margin-bottom: 12px; background: white; padding: 12px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+                        <div class="col-md-3 col-sm-6" style="padding-left: 0;">
+                            <label class="text-xs font-semibold text-gray-600"><i class="fa fa-venus-mars"></i> <?php echo get_phrase('gender'); ?></label>
+                            <select id="tch_gender" class="form-control">
+                                <option value=""><?php echo get_phrase('all_genders'); ?></option>
+                                <option value="Male"><?php echo get_phrase('male'); ?></option>
+                                <option value="Female"><?php echo get_phrase('female'); ?></option>
+                            </select>
+                        </div>
+                        <div class="col-md-3 col-sm-6" style="padding-left: 0;">
+                            <label class="text-xs font-semibold text-gray-600"><i class="fa fa-toggle-on"></i> <?php echo get_phrase('status'); ?></label>
+                            <select id="tch_status" class="form-control">
+                                <option value=""><?php echo get_phrase('all_statuses'); ?></option>
+                                <option value="active"><?php echo get_phrase('active'); ?></option>
+                                <option value="blocked"><?php echo get_phrase('blocked'); ?></option>
+                            </select>
+                        </div>
+                        <div class="col-md-3 col-sm-6" style="padding-left: 0;">
+                            <label class="text-xs font-semibold text-gray-600"><i class="fa fa-id-badge"></i> <?php echo get_phrase('designation'); ?></label>
+                            <select id="tch_designation" class="form-control">
+                                <option value=""><?php echo get_phrase('all_designations'); ?></option>
+                                <?php foreach ($designations as $d): ?>
+                                    <option value="<?php echo htmlspecialchars($d['designation']); ?>"><?php echo htmlspecialchars($d['designation']); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="col-md-3 col-sm-6" style="padding-left: 0; display: flex; align-items: flex-end; gap: 8px;">
+                            <button type="button" class="btn btn-success" style="flex: 1;" onclick="applyTeacherFilters()"><i class="fa fa-search"></i> <?php echo get_phrase('apply_filters'); ?></button>
+                            <button type="button" class="btn btn-default" onclick="resetTeacherFilters()"><i class="fa fa-undo"></i> <?php echo get_phrase('reset'); ?></button>
+                        </div>
+                    </div>
+
                     <caption></caption>
                     <table class="table table-hover table-striped table-active w-full text-xl text-left rtl:text-right text-gray-500 dark:text-gray-600 datatable" id="teachers">
                       <thead class="text-lg font-bold text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400">
@@ -304,7 +342,7 @@
 <script type="text/javascript">
 
 
-	jQuery(document).ready(function($) {
+        jQuery(document).ready(function($) {
         $('#preloader2').css('display', 'none');
         $('#submit_button').attr('disabled', 'disabled');
         $('#import_csv').attr('disabled', 'disabled');
@@ -319,13 +357,18 @@
 
 
         $.fn.dataTable.ext.errMode = 'throw';
-        let allTeachers = $('#teachers').DataTable({
+        window.allTeachers = $('#teachers').DataTable({
             "processing": true,
             "serverSide": true,
             "ajax":{
                 "url": "<?php echo site_url('admin/get_teachers') ?>",
                 "dataType": "json",
                 "type": "POST",
+                "data": function (d) {
+                    d.gender = $('#tch_gender').val();
+                    d.status = $('#tch_status').val();
+                    d.designation = $('#tch_designation').val();
+                }
             },
             "columns": [
                 { "data": "photo" },
@@ -361,10 +404,21 @@
                 toastr.error('Closed!');
                 location.reload();
             });
-	});
+        });
 
     function teacher_edit_modal(teacher_id) {
         showAjaxModal('<?php echo site_url('modal/popup/modal_teacher_edit/');?>' + teacher_id);
+    }
+
+    function applyTeacherFilters() {
+        allTeachers.ajax.reload();
+    }
+
+    function resetTeacherFilters() {
+        $('#tch_gender').val('');
+        $('#tch_status').val('');
+        $('#tch_designation').val('');
+        applyTeacherFilters();
     }
 
     function teacher_delete_confirm(teacher_id) {

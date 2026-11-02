@@ -3148,8 +3148,31 @@ class Teacher extends CI_Controller
         $this->db->join('student s', 's.student_id = t.student_id');
         $this->db->join('enroll e', 'e.student_id = t.student_id AND e.year = "' . $running_year . '" AND e.term = ' . $running_term);
         $this->db->where('t.payment_date >=', $start_timestamp);
-        $this->db->where('t.payment_date <=', $end_timestamp);
-        $this->db->where('e.class_id', $class_id);
+        $this->db->where('t.payment_date <=', $end_timestamp + 86399);
+        
+        if (!empty($class_id)) {
+            $this->db->where('e.class_id', $class_id);
+        } else {
+            // Empty class = report across ALL classes this teacher is
+            // associated with (class-teacher of the class or teaches a subject in it)
+            $teacher_id = $this->session->userdata('teacher_id');
+            $my_class_ids = array();
+            
+            $ct = $this->db->select('class_id')->where('teacher_id', $teacher_id)->get('class')->result_array();
+            foreach ($ct as $r) { $my_class_ids[] = $r['class_id']; }
+            
+            $st = $this->db->select('class_id')
+                ->where(array('teacher_id' => $teacher_id, 'year' => $running_year, 'term' => $running_term))
+                ->get('subject')->result_array();
+            foreach ($st as $r) { $my_class_ids[] = $r['class_id']; }
+            
+            $my_class_ids = array_unique($my_class_ids);
+            if (empty($my_class_ids)) {
+                echo json_encode(['status' => 'success', 'data' => array()]);
+                return;
+            }
+            $this->db->where_in('e.class_id', $my_class_ids);
+        }
         $this->db->where('(t.feeding_amount > 0 OR t.breakfast_amount > 0 OR t.classes_amount > 0 OR t.water_amount > 0 OR t.transport_amount > 0)');
         $this->db->group_by('t.student_id');
         $this->db->order_by('s.name', 'ASC');
