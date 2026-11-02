@@ -474,7 +474,7 @@ function PayDialog({ invoice, onOpenChange, onDone }: { invoice: any; onOpenChan
             {!online && " · offline, will queue & sync"}
           </DialogDescription>
         </DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label>Amount (GH₵) *</Label>
             <Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
@@ -488,7 +488,7 @@ function PayDialog({ invoice, onOpenChange, onDone }: { invoice: any; onOpenChan
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-1.5 col-span-2">
+          <div className="space-y-1.5 sm:col-span-2">
             <Label>MoMo / transaction reference</Label>
             <Input placeholder="e.g. MP2401.5533.77 GCASH" value={reference} onChange={(e) => setReference(e.target.value)} />
           </div>
@@ -755,8 +755,8 @@ function DiscountCatalogDialog({ discount, onOpenChange, onDone }: { discount: D
           <DialogTitle>{discount === "new" ? "New discount" : "Edit discount"}</DialogTitle>
           <DialogDescription>Percentage or fixed amount, on termly invoices or daily services.</DialogDescription>
         </DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5 col-span-2"><Label>Name *</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Sibling discount (2+ learners)" /></div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5 sm:col-span-2"><Label>Name *</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Sibling discount (2+ learners)" /></div>
           <div className="space-y-1.5">
             <Label>Type</Label>
             <Select value={type} onValueChange={setType}>
@@ -785,7 +785,7 @@ function DiscountCatalogDialog({ discount, onOpenChange, onDone }: { discount: D
               </div>
             </div>
           )}
-          <div className="space-y-1.5 col-span-2"><Label>Notes</Label><Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Policy or eligibility note" /></div>
+          <div className="space-y-1.5 sm:col-span-2"><Label>Notes</Label><Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Policy or eligibility note" /></div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
@@ -919,7 +919,7 @@ function InvoiceDiscountDialog({ invoice, catalog, onOpenChange, onDone }: {
             </Select>
           </div>
           {discountId === "ADHOC" && (
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label>Type</Label>
                 <Select value={type} onValueChange={setType}>
@@ -1166,7 +1166,7 @@ function RequestModificationDialog({ open, receipts, invoices, onOpenChange, onD
           <DialogDescription>Corrections need administrator approval before any money record changes — nothing moves until they decide.</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Target</Label>
               <Select value={targetType} onValueChange={(v: any) => { setTargetType(v); setSelected(""); setCode(""); }}>
@@ -1214,7 +1214,7 @@ function RequestModificationDialog({ open, receipts, invoices, onOpenChange, onD
 
           {requestType === "EDIT" && (
             targetType === "PAYMENT" ? (
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label>Corrected amount (GH₵)</Label>
                   <Input type="number" step="0.01" value={newAmount} onChange={(e) => setNewAmount(e.target.value)} placeholder={chosen ? (chosen.amount / 100).toFixed(2) : "0.00"} />

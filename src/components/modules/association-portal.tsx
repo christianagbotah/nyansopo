@@ -334,7 +334,7 @@ function ValidateDialog({ target, onOpenChange, onDone }: { target: any | null; 
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>NaSIA license</Label>
               <Select value={nasia} onValueChange={setNasia}>
@@ -353,7 +353,7 @@ function ValidateDialog({ target, onOpenChange, onDone }: { target: any | null; 
                 </SelectContent>
               </Select>
             </div>
-            <div className="text-xs text-muted-foreground col-span-2">Current registration: {target?.nasiaRegNo ?? "—"}</div>
+            <div className="text-xs text-muted-foreground sm:col-span-2">Current registration: {target?.nasiaRegNo ?? "—"}</div>
           </div>
         )}
         <DialogFooter>

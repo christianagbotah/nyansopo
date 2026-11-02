@@ -159,7 +159,7 @@ export function Inventory() {
               </CardHeader>
               <CardContent className="max-h-[520px] overflow-y-auto nice-scroll">
                 <div className="grid sm:grid-cols-2 gap-2">
-                  {sellable.length === 0 && <div className="col-span-2"><EmptyState icon={<Package className="size-5" />} title="No sellable items" hint="Set a selling price on an item first — internal-only items can't be sold." /></div>}
+                  {sellable.length === 0 && <div className="sm:col-span-2"><EmptyState icon={<Package className="size-5" />} title="No sellable items" hint="Set a selling price on an item first — internal-only items can't be sold." /></div>}
                   {sellable.map((i) => {
                     const inCart = cart[i.id] ?? 0;
                     const out = i.stockQty - inCart <= 0;
@@ -610,8 +610,8 @@ function ItemDialog({ item, onOpenChange, onDone }: { item: Item | "new" | null;
           <DialogTitle>{item === "new" ? "New inventory item" : "Edit item"}</DialogTitle>
           <DialogDescription>Set a reorder level to get low-stock warnings.</DialogDescription>
         </DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5 col-span-2"><Label>Name *</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Exercise books (40 leaves)" /></div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5 sm:col-span-2"><Label>Name *</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Exercise books (40 leaves)" /></div>
           <div className="space-y-1.5"><Label>SKU</Label><Input value={sku} onChange={(e) => setSku(e.target.value)} placeholder="BK-101" /></div>
           <div className="space-y-1.5">
             <Label>Category</Label>
@@ -624,9 +624,9 @@ function ItemDialog({ item, onOpenChange, onDone }: { item: Item | "new" | null;
           <div className="space-y-1.5"><Label>Unit cost (GH₵) *</Label><Input type="number" step="0.5" value={unitCost} onChange={(e) => setUnitCost(e.target.value)} /></div>
           <div className="space-y-1.5"><Label>Sell price (GH₵)</Label><Input type="number" step="0.5" value={sellPrice} onChange={(e) => setSellPrice(e.target.value)} placeholder="blank = internal use" /></div>
           <div className="space-y-1.5"><Label>Reorder level</Label><Input type="number" value={reorderLevel} onChange={(e) => setReorderLevel(e.target.value)} /></div>
-          <div className="space-y-1.5 col-span-2"><Label>Location</Label><Input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Store room A" /></div>
+          <div className="space-y-1.5 sm:col-span-2"><Label>Location</Label><Input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Store room A" /></div>
           {item === "new" && (
-            <div className="space-y-1.5 col-span-2"><Label>Opening stock qty</Label><Input type="number" value={initialQty} onChange={(e) => setInitialQty(e.target.value)} placeholder="0" /></div>
+            <div className="space-y-1.5 sm:col-span-2"><Label>Opening stock qty</Label><Input type="number" value={initialQty} onChange={(e) => setInitialQty(e.target.value)} placeholder="0" /></div>
           )}
         </div>
         <DialogFooter>
@@ -693,7 +693,7 @@ function MovementDialog({ ctx, students, suppliers, onOpenChange, onDone }: { ct
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Quantity ({ctx?.item.unit}) *</Label>
               <Input type="number" value={qty} onChange={(e) => setQty(e.target.value)} placeholder={isIn ? "50" : "2"} />
@@ -807,11 +807,11 @@ function SupplierDialog({ supplier, onOpenChange, onDone }: { supplier: Supplier
     <Dialog open={!!supplier} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader><DialogTitle>{supplier === "new" ? "New supplier" : "Edit supplier"}</DialogTitle></DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5 col-span-2"><Label>Name *</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Adom Bookshop & Stationery" /></div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5 sm:col-span-2"><Label>Name *</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Adom Bookshop & Stationery" /></div>
           <div className="space-y-1.5"><Label>Phone</Label><Input value={phone} onChange={(e) => setPhone(e.target.value)} /></div>
           <div className="space-y-1.5"><Label>Email</Label><Input value={email} onChange={(e) => setEmail(e.target.value)} /></div>
-          <div className="space-y-1.5 col-span-2"><Label>What they supply</Label><Input value={itemsSupplied} onChange={(e) => setItemsSupplied(e.target.value)} placeholder="Books, stationery" /></div>
+          <div className="space-y-1.5 sm:col-span-2"><Label>What they supply</Label><Input value={itemsSupplied} onChange={(e) => setItemsSupplied(e.target.value)} placeholder="Books, stationery" /></div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
@@ -910,7 +910,7 @@ function PoDialog({ open, items, suppliers, onOpenChange, onDone }: { open: bool
           <DialogTitle>Raise a purchase order</DialogTitle>
           <DialogDescription>Restock from a supplier — receiving the order updates stock and unit costs.</DialogDescription>
         </DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label>Supplier</Label>
             <Select value={supplierId} onValueChange={setSupplierId}>

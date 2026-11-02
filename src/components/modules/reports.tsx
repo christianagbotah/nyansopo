@@ -722,8 +722,8 @@ function PaperDialog({ paper, classrooms, onOpenChange, onDone }: { paper: Paper
     <Dialog open={!!paper} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[92vh] overflow-y-auto nice-scroll">
         <DialogHeader><DialogTitle>{isNew ? "New question paper" : `Edit — ${paper ? paper.title : ""}`}</DialogTitle></DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5 col-span-2"><Label>Title *</Label><Input placeholder="e.g. Mathematics — End of Term 1 Paper" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5 sm:col-span-2"><Label>Title *</Label><Input placeholder="e.g. Mathematics — End of Term 1 Paper" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></div>
           <div className="space-y-1.5">
             <Label>Class *</Label>
             <Select value={form.classroomId} onValueChange={(v) => setForm({ ...form, classroomId: v })}>
@@ -732,8 +732,8 @@ function PaperDialog({ paper, classrooms, onOpenChange, onDone }: { paper: Paper
             </Select>
           </div>
           <div className="space-y-1.5"><Label>Exam name</Label><Input placeholder="e.g. End of Term 1 Examination 2026/27" value={form.examName} onChange={(e) => setForm({ ...form, examName: e.target.value })} /></div>
-          <div className="space-y-1.5 col-span-2"><Label>Author</Label><Input placeholder="Teacher setting the paper" value={form.authorName} onChange={(e) => setForm({ ...form, authorName: e.target.value })} /></div>
-          <div className="space-y-1.5 col-span-2">
+          <div className="space-y-1.5 sm:col-span-2"><Label>Author</Label><Input placeholder="Teacher setting the paper" value={form.authorName} onChange={(e) => setForm({ ...form, authorName: e.target.value })} /></div>
+          <div className="space-y-1.5 sm:col-span-2">
             <div className="flex items-center justify-between">
               <Label>Body (HTML)</Label>
               <Button size="sm" variant={preview ? "default" : "outline"} className="h-6 text-[11px] gap-1" onClick={() => setPreview(!preview)}><Eye className="size-3" /> {preview ? "Editing" : "Preview"}</Button>

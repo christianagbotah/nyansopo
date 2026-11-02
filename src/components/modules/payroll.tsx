@@ -488,8 +488,8 @@ function StaffDialog({ staff, onOpenChange, onDone }: { staff: StaffRow | null; 
           <DialogTitle>Staff record — {staff?.staffCode ?? staff?.fullName}</DialogTitle>
           <DialogDescription>{staff?.position ?? staff?.title ?? staff?.role}</DialogDescription>
         </DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5 col-span-2">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5 sm:col-span-2">
             <Label>Full name</Label>
             <Input value={f.fullName} onChange={(e) => setF({ ...f, fullName: e.target.value })} />
           </div>
@@ -525,8 +525,8 @@ function StaffDialog({ staff, onOpenChange, onDone }: { staff: StaffRow | null; 
             <Label>Email</Label>
             <Input type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} />
           </div>
-          <Separator className="col-span-2 my-1" />
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold col-span-2">Payroll</div>
+          <Separator className="sm:col-span-2 my-1" />
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold sm:col-span-2">Payroll</div>
           <div className="space-y-1.5">
             <Label>Basic salary (GH₵/month)</Label>
             <Input type="number" value={f.salary} onChange={(e) => setF({ ...f, salary: e.target.value })} placeholder="1600" />
@@ -541,8 +541,8 @@ function StaffDialog({ staff, onOpenChange, onDone }: { staff: StaffRow | null; 
               </SelectContent>
             </Select>
           </div>
-          <Separator className="col-span-2 my-1" />
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold col-span-2">Ghana statutory & payout</div>
+          <Separator className="sm:col-span-2 my-1" />
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold sm:col-span-2">Ghana statutory & payout</div>
           <div className="space-y-1.5">
             <Label>SSNIT number</Label>
             <Input value={f.ssnit} onChange={(e) => setF({ ...f, ssnit: e.target.value })} placeholder="C0123456789" />
@@ -615,8 +615,8 @@ function NewStaffDialog({ open, onOpenChange, onDone }: { open: boolean; onOpenC
           <DialogTitle className="flex items-center gap-2"><Users className="size-4" /> Add staff member</DialogTitle>
           <DialogDescription>Teachers, non-teaching staff and administrators — staff codes are auto-assigned (TCR / NTS / ADM).</DialogDescription>
         </DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5 col-span-2">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5 sm:col-span-2">
             <Label>Full name *</Label>
             <Input value={f.fullName} onChange={(e) => setF({ ...f, fullName: e.target.value })} placeholder="Madam Akosua Dede" />
           </div>

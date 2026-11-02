@@ -513,7 +513,7 @@ function EnrolDialog({ open, onOpenChange, classrooms, onDone }: { open: boolean
           <DialogTitle>Enrol a new learner</DialogTitle>
           <DialogDescription>They will be registered on the national Nyansapo Index and billed for the current term.</DialogDescription>
         </DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5"><Label>First name *</Label><Input value={form.firstName} onChange={(e) => setForm({ ...form, firstName: e.target.value })} /></div>
           <div className="space-y-1.5"><Label>Surname *</Label><Input value={form.lastName} onChange={(e) => setForm({ ...form, lastName: e.target.value })} /></div>
           <div className="space-y-1.5">
@@ -534,7 +534,7 @@ function EnrolDialog({ open, onOpenChange, classrooms, onDone }: { open: boolean
               <SelectContent><SelectItem value="Parent">Parent</SelectItem><SelectItem value="Father">Father</SelectItem><SelectItem value="Mother">Mother</SelectItem><SelectItem value="Guardian">Guardian</SelectItem></SelectContent>
             </Select>
           </div>
-          <div className="space-y-1.5 col-span-2">
+          <div className="space-y-1.5 sm:col-span-2">
             <Label>Class *</Label>
             <Select value={form.classroomId} onValueChange={(v) => setForm({ ...form, classroomId: v })}>
               <SelectTrigger><SelectValue placeholder="Select class" /></SelectTrigger>
@@ -677,7 +677,7 @@ function PromotionWizard({ open, onOpenChange, rows, classrooms, onDone }: { ope
           <DialogTitle className="flex items-center gap-2"><ArrowUpRight className="size-4" /> Promotion</DialogTitle>
           <DialogDescription>Move a cohort up to the next class — or graduate the finalists to alumni (iEduPro student_promotion).</DialogDescription>
         </DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label>From class</Label>
             <Select value={fromId} onValueChange={(v) => { setFromId(v); setPicked(new Set()); }}>

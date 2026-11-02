@@ -11,7 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { ModuleHeader, LoadingBlock, StatusBadge, SeverityBadge, EmptyState } from "@/components/ui-helpers";
+import { ModuleHeader, LoadingBlock, StatusBadge, SeverityBadge, EmptyState, FormGrid, FormField } from "@/components/ui-helpers";
 import { AdmissionWizard } from "@/components/modules/admission-wizard";
 import { fmtCedi, fmtDate, fmtDateTime, FLAG_LABELS } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
@@ -384,23 +384,29 @@ function InquiryDialog({ open, onOpenChange, onDone, onLookup }: { open: boolean
           <DialogTitle>New admission inquiry</DialogTitle>
           <DialogDescription>Nyansapo automatically checks the national registry (by guardian MoMo & name) the moment you save.</DialogDescription>
         </DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5"><Label>Applicant name *</Label><Input value={form.studentName} onChange={(e) => setForm({ ...form, studentName: e.target.value })} placeholder="e.g. Ama Mensah" /></div>
-          <div className="space-y-1.5">
-            <Label>Class applied for *</Label>
+        <FormGrid cols={2}>
+          <FormField label="Applicant name" required>
+            <Input value={form.studentName} onChange={(e) => setForm({ ...form, studentName: e.target.value })} placeholder="e.g. Ama Mensah" />
+          </FormField>
+          <FormField label="Class applied for" required>
             <Input value={form.classAppliedFor} onChange={(e) => setForm({ ...form, classAppliedFor: e.target.value })} placeholder="e.g. Basic 5" />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Gender</Label>
+          </FormField>
+          <FormField label="Gender">
             <Select value={form.gender} onValueChange={(v) => setForm({ ...form, gender: v })}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent><SelectItem value="M">Boy</SelectItem><SelectItem value="F">Girl</SelectItem></SelectContent>
             </Select>
-          </div>
-          <div className="space-y-1.5"><Label>Date of birth</Label><Input type="date" value={form.dateOfBirth} onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })} /></div>
-          <div className="space-y-1.5"><Label>Guardian name</Label><Input value={form.guardianName} onChange={(e) => setForm({ ...form, guardianName: e.target.value })} /></div>
-          <div className="space-y-1.5"><Label>Guardian MoMo *</Label><Input value={form.guardianPhone} onChange={(e) => setForm({ ...form, guardianPhone: e.target.value })} placeholder="024 000 0000" /></div>
-        </div>
+          </FormField>
+          <FormField label="Date of birth">
+            <Input type="date" value={form.dateOfBirth} onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })} />
+          </FormField>
+          <FormField label="Guardian name">
+            <Input value={form.guardianName} onChange={(e) => setForm({ ...form, guardianName: e.target.value })} />
+          </FormField>
+          <FormField label="Guardian MoMo" required hint="Used for the automatic registry check">
+            <Input value={form.guardianPhone} onChange={(e) => setForm({ ...form, guardianPhone: e.target.value })} placeholder="024 000 0000" />
+          </FormField>
+        </FormGrid>
         {result?.match && (
           <div className={`rounded-lg border p-3 text-sm ${result.status === "FLAGGED" ? "border-red-300 bg-red-50 dark:bg-red-950/40" : "border-emerald-300 bg-emerald-50 dark:bg-emerald-950/40"}`}>
             <b>{result.match.name}</b> ({result.match.nyansapoIndex})

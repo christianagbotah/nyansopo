@@ -284,16 +284,16 @@ function UserDialog({ open, onOpenChange, mode, user, staff, schoolId, onSaved }
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5"><Label>Full name</Label><Input value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Lawrencia Ahwireng" /></div>
             <div className="space-y-1.5"><Label>Phone</Label><Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+233 24 …" /></div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5"><Label>Email</Label><Input value={email} onChange={(e) => setEmail(e.target.value)} disabled={mode === "edit"} placeholder="cashier@nyansapo.gh" /></div>
             {mode === "create" && <div className="space-y-1.5"><Label>Password</Label><Input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="default: nyansapo" /></div>}
             {mode === "edit" && <div className="space-y-1.5"><Label>Display title</Label><Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Front-desk cashier" /></div>}
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Role</Label>
               <Select value={role} onValueChange={setRole} disabled={mode === "edit"}>

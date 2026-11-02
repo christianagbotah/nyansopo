@@ -466,7 +466,7 @@ function AddAssessmentDialog({ open, onOpenChange, classId, subjects, onDone }: 
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader><DialogTitle>New assessment</DialogTitle><DialogDescription>Class exercise, homework, project, quiz or exam.</DialogDescription></DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label>Subject</Label>
             <Select value={form.subjectId} onValueChange={(v) => setForm({ ...form, subjectId: v })}>
@@ -481,7 +481,7 @@ function AddAssessmentDialog({ open, onOpenChange, classId, subjects, onDone }: 
               <SelectContent>{Object.entries(TYPE_LABELS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
             </Select>
           </div>
-          <div className="space-y-1.5 col-span-2"><Label>Title</Label><Input placeholder="e.g. Class Exercise 3 — Fractions" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></div>
+          <div className="space-y-1.5 sm:col-span-2"><Label>Title</Label><Input placeholder="e.g. Class Exercise 3 — Fractions" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></div>
           <div className="space-y-1.5"><Label>Max score</Label><Input type="number" value={form.maxScore} onChange={(e) => setForm({ ...form, maxScore: e.target.value })} /></div>
           <div className="space-y-1.5"><Label>Date</Label><Input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></div>
         </div>

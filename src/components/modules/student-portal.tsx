@@ -414,7 +414,7 @@ function BookRequestDialog({ open, onOpenChange, catalogue, studentId, schoolId,
             </Select>
             {book && <p className="text-[11px] text-muted-foreground">{book.author ?? "—"} · {book.category}</p>}
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Issue date</Label>
               <Input type="date" value={startAt} onChange={(e) => setStartAt(e.target.value)} />

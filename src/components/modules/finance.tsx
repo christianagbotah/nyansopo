@@ -596,15 +596,15 @@ function ExpenditureTab({ data, onRefresh }: { data: FinanceData; onRefresh: () 
             <DialogTitle>Record an expense</DialogTitle>
             <DialogDescription>Keep the bursar&apos;s book digital — feeds straight into the net position and expenditure analytics.</DialogDescription>
           </DialogHeader>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5 col-span-2">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5 sm:col-span-2">
               <Label>Category</Label>
               <Select value={category} onValueChange={setCategory}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>{EXPENSE_CATEGORIES.map((c) => <SelectItem key={c.key} value={c.key}>{c.label}</SelectItem>)}</SelectContent>
               </Select>
             </div>
-            <div className="space-y-1.5 col-span-2"><Label>Description *</Label><Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="e.g. ECG postpaid — September" /></div>
+            <div className="space-y-1.5 sm:col-span-2"><Label>Description *</Label><Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="e.g. ECG postpaid — September" /></div>
             <div className="space-y-1.5"><Label>Amount (GH₵) *</Label><Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} /></div>
             <div className="space-y-1.5">
               <Label>Paid via</Label>

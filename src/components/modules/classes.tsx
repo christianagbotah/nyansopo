@@ -289,8 +289,8 @@ export function Classes() {
       <Dialog open={classFormOpen} onOpenChange={(o) => { setClassFormOpen(o); if (!o) setEditClass(null); }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader><DialogTitle>{editClass?.id ? "Edit class" : "New class"}</DialogTitle></DialogHeader>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5 col-span-2">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5 sm:col-span-2">
               <Label>Class name *</Label>
               <Input value={editClass?.name ?? ""} placeholder="Basic 4 Gold"
                 onChange={(e) => setEditClass({ ...editClass, name: e.target.value })} />
@@ -305,12 +305,12 @@ export function Classes() {
               <Input type="number" min={1} value={editClass?.capacity ?? 30}
                 onChange={(e) => setEditClass({ ...editClass, capacity: Number(e.target.value) })} />
             </div>
-            <div className="space-y-1.5 col-span-2">
+            <div className="space-y-1.5 sm:col-span-2">
               <Label>Stage label</Label>
               <Input value={editClass?.stageLabel ?? ""} placeholder="Primary (SBC) · Cambridge Lower Secondary"
                 onChange={(e) => setEditClass({ ...editClass, stageLabel: e.target.value })} />
             </div>
-            <div className="space-y-1.5 col-span-2">
+            <div className="space-y-1.5 sm:col-span-2">
               <Label>Class teacher (form master)</Label>
               <Select value={editClass?.classTeacherId ?? ""} onValueChange={(v) => setEditClass({ ...editClass, classTeacherId: v === "none" ? "" : v })}>
                 <SelectTrigger><SelectValue placeholder="Not assigned" /></SelectTrigger>
@@ -340,8 +340,8 @@ export function Classes() {
             </DialogTitle>
           </DialogHeader>
           {slotForm && (
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5 col-span-2">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5 sm:col-span-2">
                 <Label>Subject *</Label>
                 <Select value={slotForm.subjectId || undefined}
                   onValueChange={(v) => setSlotForm({
@@ -359,7 +359,7 @@ export function Classes() {
                     onChange={(e) => setSlotForm({ ...slotForm, subjectName: e.target.value })} />
                 )}
               </div>
-              <div className="space-y-1.5 col-span-2">
+              <div className="space-y-1.5 sm:col-span-2">
                 <Label>Subject teacher</Label>
                 <Select value={slotForm.staffId || undefined} onValueChange={(v) => setSlotForm({ ...slotForm, staffId: v === "none" ? "" : v })}>
                   <SelectTrigger><SelectValue placeholder="Not assigned" /></SelectTrigger>

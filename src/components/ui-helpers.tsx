@@ -4,6 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { STATUS_COLORS } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -164,4 +165,36 @@ export function downloadCsv(filename: string, header: string[], rows: (string | 
   const a = document.createElement("a");
   a.href = url; a.download = filename; a.click();
   URL.revokeObjectURL(url);
+}
+
+// ── Form grid toolkit ─────────────────────────────────────────
+// Consistent dialog forms: one column on phones, two from sm, three on
+// desktop — fields carry a label, optional hint and optional column span.
+
+export function FormGrid({ children, className, cols = 3 }: { children: ReactNode; className?: string; cols?: 2 | 3 }) {
+  return (
+    <div className={cn(
+      "grid gap-3 sm:grid-cols-2",
+      cols === 3 ? "lg:grid-cols-3" : "",
+      className,
+    )}>{children}</div>
+  );
+}
+
+export function FormField({ label, required, hint, span, children }: {
+  label: string; required?: boolean; hint?: string; span?: 1 | 2 | 3; children: ReactNode;
+}) {
+  return (
+    <div className={cn(
+      "space-y-1.5",
+      span === 2 && "sm:col-span-2",
+      span === 3 && "sm:col-span-2 lg:col-span-3",
+    )}>
+      <Label className="text-xs font-medium">
+        {label}{required && <span className="text-destructive ml-0.5">*</span>}
+      </Label>
+      {children}
+      {hint && <p className="text-[11px] leading-snug text-muted-foreground">{hint}</p>}
+    </div>
+  );
 }

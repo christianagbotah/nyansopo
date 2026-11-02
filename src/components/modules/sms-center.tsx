@@ -455,7 +455,7 @@ function TemplateDialog({ template, onOpenChange, onDone }: { template: Template
           <DialogDescription>Use placeholders that fill per learner: {"{student} {class} {balance} {amount} {date} {school}"}</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5"><Label>Name *</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Fee reminder" /></div>
             <div className="space-y-1.5">
               <Label>Category</Label>
@@ -595,7 +595,7 @@ function AutomationDialog({ rule, onOpenChange, onDone }: { rule: Automation | "
         </DialogHeader>
         <div className="space-y-3">
           <div className="space-y-1.5"><Label>Rule name</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Fee reminder — 3 days before due" /></div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Trigger</Label>
               <Select value={trigger} onValueChange={setTrigger}>

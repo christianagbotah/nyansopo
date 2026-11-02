@@ -660,7 +660,7 @@ function CollectDialog({ student, date, online, onOpenChange, onDone }: { studen
             {!online && " · offline — will queue & sync"}
           </DialogDescription>
         </DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label>Amount (GH₵) *</Label>
             <Input type="number" step="0.01" max={payFrom === "COUNTER" ? undefined : (walletCap / 100).toFixed(2)} value={amount} onChange={(e) => setAmount(e.target.value)} />
@@ -712,12 +712,12 @@ function CollectDialog({ student, date, online, onOpenChange, onDone }: { studen
               )}
             </div>
           )}
-          <div className="space-y-1.5 col-span-2">
+          <div className="space-y-1.5 sm:col-span-2">
             <Label>MoMo / reference</Label>
             <Input placeholder="e.g. MP2401.5533.77" value={reference} onChange={(e) => setReference(e.target.value)} />
           </div>
           {transportSvc && (
-            <div className="space-y-1.5 col-span-2">
+            <div className="space-y-1.5 sm:col-span-2">
               <Label>Transport usage today</Label>
               <Select value={usage} onValueChange={setUsage}>
                 <SelectTrigger><SelectValue placeholder={student?.transportFare ? "Both ways — 2× one-way fare" : "No route assigned"} /></SelectTrigger>
@@ -739,7 +739,7 @@ function CollectDialog({ student, date, online, onOpenChange, onDone }: { studen
               </p>
             </div>
           )}
-          <label className="col-span-2 flex items-center gap-2 text-sm rounded-lg border p-2.5 cursor-pointer hover:bg-secondary/40">
+          <label className="sm:col-span-2 flex items-center gap-2 text-sm rounded-lg border p-2.5 cursor-pointer hover:bg-secondary/40">
             <input type="checkbox" checked={markPresent} onChange={(e) => setMarkPresent(e.target.checked)} className="accent-primary" />
             <UserCheck className="size-4 text-primary" />
             <span>Mark present in class register</span>
@@ -825,8 +825,8 @@ function ServiceDialog({ service, onOpenChange, onDone }: { service: Service | "
           <DialogTitle>{service === "new" ? "New daily service" : "Edit service"}</DialogTitle>
           <DialogDescription>e.g. Lunch GH₵8 every school day, or Sachet Water GH₵1 on Wednesdays only.</DialogDescription>
         </DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5 col-span-2">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5 sm:col-span-2">
             <Label>Name *</Label>
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Lunch (canteen)" />
           </div>
@@ -845,7 +845,7 @@ function ServiceDialog({ service, onOpenChange, onDone }: { service: Service | "
             <Label>Price (GH₵) *</Label>
             <Input type="number" step="0.5" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="8.00" />
           </div>
-          <div className="space-y-1.5 col-span-2">
+          <div className="space-y-1.5 sm:col-span-2">
             <Label>Charging pattern</Label>
             <Select value={chargeMode} onValueChange={setChargeMode}>
               <SelectTrigger><SelectValue /></SelectTrigger>
@@ -855,7 +855,7 @@ function ServiceDialog({ service, onOpenChange, onDone }: { service: Service | "
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-1.5 col-span-2">
+          <div className="space-y-1.5 sm:col-span-2">
             <Label>Days it runs {chargeMode === "WEEKLY" && <span className="text-muted-foreground font-normal">(pick one day)</span>}</Label>
             <div className="flex gap-1.5 flex-wrap">
               {DAY_LABELS.slice(1, 6).map((d, i) => (
@@ -1015,7 +1015,7 @@ function TopUpDialog({ students, initialStudent, open, onOpenChange, onDone }: {
               </label>
             ))}
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Wallet</Label>
               <Select value={wallet} onValueChange={(v: any) => setWallet(v)}>
@@ -1129,7 +1129,7 @@ function DailySettingsDialog({ open, data, onOpenChange, onDone }: {
             </Select>
           </div>
           {permMode === "SELECTIVE" && (
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label>Classes</Label>
                 <div className="border rounded-lg max-h-40 overflow-y-auto nice-scroll">

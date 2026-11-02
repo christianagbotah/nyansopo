@@ -235,15 +235,15 @@ function RouteDialog({ route, onOpenChange, onDone }: { route: Route | "new" | n
           <DialogTitle>{route === "new" ? "New bus route" : "Edit route"}</DialogTitle>
           <DialogDescription>A route carries its vehicle, driver, stops and the termly fare billed to riders.</DialogDescription>
         </DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5 col-span-2"><Label>Route name *</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Adenta Loop" /></div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5 sm:col-span-2"><Label>Route name *</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Adenta Loop" /></div>
           <div className="space-y-1.5"><Label>Vehicle reg</Label><Input value={vehicleReg} onChange={(e) => setVehicleReg(e.target.value)} placeholder="GR 4521-21" /></div>
           <div className="space-y-1.5"><Label>Vehicle model</Label><Input value={vehicleModel} onChange={(e) => setVehicleModel(e.target.value)} placeholder="Toyota Hiace" /></div>
           <div className="space-y-1.5"><Label>Driver *</Label><Input value={driverName} onChange={(e) => setDriverName(e.target.value)} placeholder="Kwesi Anane" /></div>
           <div className="space-y-1.5"><Label>Driver phone</Label><Input value={driverPhone} onChange={(e) => setDriverPhone(e.target.value)} placeholder="+233 24 551 7708" /></div>
           <div className="space-y-1.5"><Label>Capacity (seats)</Label><Input type="number" value={capacity} onChange={(e) => setCapacity(e.target.value)} /></div>
           <div className="space-y-1.5"><Label>Fare per term (GH₵) *</Label><Input type="number" value={fare} onChange={(e) => setFare(e.target.value)} placeholder="450" /></div>
-          <div className="space-y-1.5 col-span-2"><Label>Stops (comma-separated)</Label><Input value={stops} onChange={(e) => setStops(e.target.value)} placeholder="Adenta Market, Community 25, Frafraha Junction" /></div>
+          <div className="space-y-1.5 sm:col-span-2"><Label>Stops (comma-separated)</Label><Input value={stops} onChange={(e) => setStops(e.target.value)} placeholder="Adenta Market, Community 25, Frafraha Junction" /></div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
@@ -300,7 +300,7 @@ function AssignDialog({ route, unassigned, onOpenChange, onDone }: { route: Rout
             ))}
             {list.length === 0 && <div className="p-3 text-sm text-muted-foreground text-center">All learners are already on a route.</div>}
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Pickup stop</Label>
               <StopPicker value={pickupStop} onChange={setPickupStop} options={route?.stops ?? []} placeholder="Choose stop" />
@@ -368,11 +368,11 @@ function TripDialog({ route, onOpenChange, onDone }: { route: Route | null; onOp
           <DialogTitle>Log trip — {route?.name}</DialogTitle>
           <DialogDescription>Boarding counts keep parents and the association confident in the service.</DialogDescription>
         </DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5"><Label>Date</Label><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
           <div className="space-y-1.5"><Label>Onboard (AM)</Label><Input type="number" value={morning} onChange={(e) => setMorning(e.target.value)} placeholder={String(route?.riders.length ?? 0)} /></div>
           <div className="space-y-1.5"><Label>Onboard (PM)</Label><Input type="number" value={evening} onChange={(e) => setEvening(e.target.value)} placeholder={String(route?.riders.length ?? 0)} /></div>
-          <div className="space-y-1.5 col-span-2"><Label>Notes</Label><Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. Light traffic, 10 mins late" /></div>
+          <div className="space-y-1.5 sm:col-span-2"><Label>Notes</Label><Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. Light traffic, 10 mins late" /></div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
@@ -415,7 +415,7 @@ function FareDialog({ ctx, termLabel, onOpenChange, onDone }: { ctx: { rider: Ri
             {ctx && ctx.rider.farePaid > 0 && <> · already paid <b className="text-emerald-600">{fmtCedi(ctx.rider.farePaid)}</b></>}
           </DialogDescription>
         </DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid gap-3 sm:grid-cols-2">
           <div className="rounded-lg bg-primary/10 p-3 text-center">
             <div className="text-[10px] uppercase tracking-wider text-primary/80">Collecting now</div>
             <div className="text-2xl font-bold text-primary tabular-nums">{fmtCedi(outstanding)}</div>
@@ -429,7 +429,7 @@ function FareDialog({ ctx, termLabel, onOpenChange, onDone }: { ctx: { rider: Ri
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-1.5 col-span-2">
+          <div className="space-y-1.5 sm:col-span-2">
             <Label>MoMo / reference</Label>
             <Input placeholder="e.g. MP2401.5533.77" value={reference} onChange={(e) => setReference(e.target.value)} />
           </div>

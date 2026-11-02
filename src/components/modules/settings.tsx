@@ -82,11 +82,11 @@ export function Settings() {
                   <div className="rounded-lg border p-3"><div className="text-xs text-muted-foreground">Zone</div><div className="font-semibold">{s.associationNode?.name}</div></div>
                 </div>
                 <div className="space-y-1.5"><Label>Motto</Label><Input value={form.motto} onChange={(e) => setForm({ ...form, motto: e.target.value })} /></div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-3 sm:grid-cols-2">
                   <div className="space-y-1.5"><Label>Phone</Label><Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
                   <div className="space-y-1.5"><Label>Email</Label><Input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-3 sm:grid-cols-2">
                   <div className="space-y-1.5">
                     <Label>NaSIA status</Label>
                     <Select value={form.nasiaStatus} onValueChange={(v) => setForm({ ...form, nasiaStatus: v })}>
@@ -258,14 +258,14 @@ function AddClassDialog({ open, onOpenChange, onDone }: { open: boolean; onOpenC
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader><DialogTitle>Add a class</DialogTitle></DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5 col-span-2"><Label>Class name</Label><Input placeholder="e.g. Basic 6 — Emerald" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5 sm:col-span-2"><Label>Class name</Label><Input placeholder="e.g. Basic 6 — Emerald" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
           <div className="space-y-1.5">
             <Label>Grade level</Label>
             <Input value={form.grade} onChange={(e) => setForm({ ...form, grade: e.target.value })} placeholder="B6 / Year 6 / MYP 2" />
           </div>
           <div className="space-y-1.5"><Label>Capacity</Label><Input type="number" value={form.capacity} onChange={(e) => setForm({ ...form, capacity: e.target.value })} /></div>
-          <div className="space-y-1.5 col-span-2">
+          <div className="space-y-1.5 sm:col-span-2">
             <Label>Stage</Label>
             <Select value={form.stage} onValueChange={(v) => setForm({ ...form, stage: v })}>
               <SelectTrigger><SelectValue /></SelectTrigger>
@@ -573,7 +573,7 @@ function RawGradeDialog({ grade, onOpenChange, onDone }: { grade: RawGradeRow | 
     <Dialog open={!!grade} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader><DialogTitle>{isNew ? "Add WAEC grade" : `Edit grade ${grade ? grade.gradePoint : ""}`}</DialogTitle></DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5"><Label>Grade point *</Label><Input placeholder="e.g. C6" value={form.gradePoint} onChange={(e) => setForm({ ...form, gradePoint: e.target.value.toUpperCase().slice(0, 8) })} /></div>
           <div className="space-y-1.5">
             <Label>Remark name *</Label>
@@ -587,7 +587,7 @@ function RawGradeDialog({ grade, onOpenChange, onDone }: { grade: RawGradeRow | 
           <div className="space-y-1.5"><Label>Mark from (%)</Label><Input type="number" value={form.markFrom} onChange={(e) => setForm({ ...form, markFrom: e.target.value })} /></div>
           <div className="space-y-1.5"><Label>Mark up to (%)</Label><Input type="number" value={form.markUpto} onChange={(e) => setForm({ ...form, markUpto: e.target.value })} /></div>
           <div className="space-y-1.5"><Label>Grade numeric (BECE weight)</Label><Input type="number" value={form.gradePointNumeric} onChange={(e) => setForm({ ...form, gradePointNumeric: e.target.value })} /></div>
-          <div className="space-y-1.5 col-span-2"><Label>Comment</Label><Input placeholder="Shown with the grade" value={form.comment} onChange={(e) => setForm({ ...form, comment: e.target.value })} /></div>
+          <div className="space-y-1.5 sm:col-span-2"><Label>Comment</Label><Input placeholder="Shown with the grade" value={form.comment} onChange={(e) => setForm({ ...form, comment: e.target.value })} /></div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>

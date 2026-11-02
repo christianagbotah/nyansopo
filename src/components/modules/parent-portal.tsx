@@ -177,7 +177,7 @@ export function ParentPortal() {
           {child.wallet && (child.wallet.prepaid > 0 || child.wallet.transport > 0) && (
             <Card>
               <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><Wallet className="size-4" /> Prepaid wallets</CardTitle></CardHeader>
-              <CardContent className="grid grid-cols-2 gap-3">
+              <CardContent className="grid gap-3 sm:grid-cols-2">
                 <div className="rounded-lg border p-3"><div className="text-xs text-muted-foreground">Tuck / meals wallet</div><div className="text-xl font-bold tabular-nums">{fmtCedi(child.wallet.prepaid)}</div></div>
                 <div className="rounded-lg border p-3"><div className="text-xs text-muted-foreground">Transport wallet</div><div className="text-xl font-bold tabular-nums">{fmtCedi(child.wallet.transport)}</div></div>
               </CardContent>
@@ -524,7 +524,7 @@ function BookRequestDialog({ open, onOpenChange, catalogue, studentId, studentNa
             </Select>
             {book && <p className="text-[11px] text-muted-foreground">{book.author ?? "—"} · {book.category}</p>}
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Issue date</Label>
               <Input type="date" value={startAt} onChange={(e) => setStartAt(e.target.value)} />

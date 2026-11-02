@@ -636,9 +636,9 @@ function HouseDialog({ target, staff, learners, onOpenChange, onDone }: {
           <DialogTitle>{row ? "Edit boarding house" : "New boarding house"}</DialogTitle>
           <DialogDescription>A house groups dormitories under a house master, prefect and termly boarding fee.</DialogDescription>
         </DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5 col-span-2"><Label>House name *</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Agyei House" /></div>
-          <div className="space-y-1.5 col-span-2"><Label>Description</Label><Textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional notes — wing, character, tradition…" /></div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5 sm:col-span-2"><Label>House name *</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Agyei House" /></div>
+          <div className="space-y-1.5 sm:col-span-2"><Label>Description</Label><Textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional notes — wing, character, tradition…" /></div>
           <div className="space-y-1.5">
             <Label>House master</Label>
             <Select value={houseMasterId} onValueChange={setHouseMasterId}>
@@ -663,7 +663,7 @@ function HouseDialog({ target, staff, learners, onOpenChange, onDone }: {
           <div className="space-y-1.5"><Label>Year established</Label><Input value={year} onChange={(e) => setYear(e.target.value)} placeholder="e.g. 2012" /></div>
           <div className="space-y-1.5"><Label>GPS code</Label><Input value={gps} onChange={(e) => setGps(e.target.value)} placeholder="e.g. GH-545-231" /></div>
           <div className="space-y-1.5"><Label>Termly boarding fee (GH₵)</Label><Input type="number" min={0} step="0.01" value={fee} onChange={(e) => setFee(e.target.value)} placeholder="e.g. 450" /></div>
-          <div className="space-y-1.5 col-span-2">
+          <div className="space-y-1.5 sm:col-span-2">
             <Label>Status</Label>
             <Select value={status} onValueChange={setStatus}>
               <SelectTrigger><SelectValue /></SelectTrigger>
@@ -735,8 +735,8 @@ function DormDialog({ target, houses, learners, onOpenChange, onDone }: {
           <DialogTitle>{row ? "Edit dormitory" : "New dormitory"}</DialogTitle>
           <DialogDescription>A dormitory belongs to a house and holds the beds your boarders sleep in.</DialogDescription>
         </DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5 col-span-2">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5 sm:col-span-2">
             <Label>Boarding house *</Label>
             <Select value={houseId || undefined} onValueChange={setHouseId}>
               <SelectTrigger><SelectValue placeholder="Choose a house" /></SelectTrigger>
@@ -745,7 +745,7 @@ function DormDialog({ target, houses, learners, onOpenChange, onDone }: {
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-1.5 col-span-2"><Label>Dormitory name *</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Agyei Block A" /></div>
+          <div className="space-y-1.5 sm:col-span-2"><Label>Dormitory name *</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Agyei Block A" /></div>
           <div className="space-y-1.5">
             <Label>Type</Label>
             <Select value={type} onValueChange={setType}>
@@ -769,8 +769,8 @@ function DormDialog({ target, houses, learners, onOpenChange, onDone }: {
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-1.5 col-span-2"><Label>Description</Label><Textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional notes" /></div>
-          <div className="space-y-1.5 col-span-2">
+          <div className="space-y-1.5 sm:col-span-2"><Label>Description</Label><Textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional notes" /></div>
+          <div className="space-y-1.5 sm:col-span-2">
             <Label>Status</Label>
             <Select value={status} onValueChange={setStatus}>
               <SelectTrigger><SelectValue /></SelectTrigger>
@@ -839,7 +839,7 @@ function BedDialog({ target, dorms, onOpenChange, onDone }: {
             Occupied by <b>{row.studentName}</b> — release the boarder before changing status or dormitory.
           </div>
         )}
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5"><Label>Bed code *</Label><Input value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="e.g. AGA-007" className="font-mono" /></div>
           <div className="space-y-1.5">
             <Label>Bed type</Label>
@@ -851,7 +851,7 @@ function BedDialog({ target, dorms, onOpenChange, onDone }: {
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-1.5 col-span-2">
+          <div className="space-y-1.5 sm:col-span-2">
             <Label>Dormitory *</Label>
             <Select value={dormitoryId || undefined} onValueChange={setDormitoryId} disabled={!!row?.studentId}>
               <SelectTrigger><SelectValue placeholder="Choose a dormitory" /></SelectTrigger>
@@ -861,7 +861,7 @@ function BedDialog({ target, dorms, onOpenChange, onDone }: {
             </Select>
           </div>
           {row && (
-            <div className="space-y-1.5 col-span-2">
+            <div className="space-y-1.5 sm:col-span-2">
               <Label>Status</Label>
               <Select value={status} onValueChange={setStatus} disabled={!!row.studentId}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
@@ -927,8 +927,8 @@ function BulkBedDialog({ open, dorms, onOpenChange, onDone }: {
           <DialogTitle className="flex items-center gap-2"><Layers className="size-4 text-primary" /> Bulk add beds</DialogTitle>
           <DialogDescription>Generates codes <span className="font-mono">PREFIX-001</span> … <span className="font-mono">PREFIX-{String(Math.min(n, 100)).padStart(3, "0")}</span> in one dormitory (existing codes are skipped).</DialogDescription>
         </DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5 col-span-2">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5 sm:col-span-2">
             <Label>Dormitory *</Label>
             <Select value={dormitoryId || undefined} onValueChange={setDormitoryId}>
               <SelectTrigger><SelectValue placeholder="Choose a dormitory" /></SelectTrigger>
@@ -939,7 +939,7 @@ function BulkBedDialog({ open, dorms, onOpenChange, onDone }: {
           </div>
           <div className="space-y-1.5"><Label>Code prefix *</Label><Input value={prefix} onChange={(e) => setPrefix(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))} placeholder="e.g. AGA" className="font-mono" /></div>
           <div className="space-y-1.5"><Label>How many beds (1–100)</Label><Input type="number" min={1} max={100} value={count} onChange={(e) => { setCount(e.target.value); setConfirmed(false); }} /></div>
-          <div className="space-y-1.5 col-span-2">
+          <div className="space-y-1.5 sm:col-span-2">
             <Label>Bed type</Label>
             <Select value={bedType} onValueChange={setBedType}>
               <SelectTrigger><SelectValue /></SelectTrigger>
@@ -950,7 +950,7 @@ function BulkBedDialog({ open, dorms, onOpenChange, onDone }: {
             </Select>
           </div>
           {needsConfirm && (
-            <div className="col-span-2 rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950 dark:border-amber-800 px-3 py-2.5 space-y-2">
+            <div className="sm:col-span-2 rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950 dark:border-amber-800 px-3 py-2.5 space-y-2">
               <p className="text-sm text-amber-800 dark:text-amber-200">
                 You are about to create <b>{n} beds</b> at once. Are you sure?
               </p>
