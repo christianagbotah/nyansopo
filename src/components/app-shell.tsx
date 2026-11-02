@@ -18,6 +18,7 @@ import { toast } from "@/hooks/use-toast";
 import { flushQueue } from "@/lib/api";
 import { NotificationBell } from "@/components/notification-bell";
 import { CommandPalette } from "@/components/command-palette";
+import { MetroMenu, MetroEdgeTrigger } from "@/components/metro-menu";
 import { Dashboard } from "@/components/modules/dashboard";
 import { Students } from "@/components/modules/students";
 import { Admissions } from "@/components/modules/admissions";
@@ -50,7 +51,7 @@ import {
   LayoutDashboard, Users, Banknote, CalendarCheck, ClipboardList, GraduationCap, ArrowLeftRight, Building2,
   BrainCircuit, Settings as SettingsIcon, Landmark, Menu, CloudOff, Cloud, RefreshCcw, LogOut, Moon, Sun,
   Download, ChevronDown, ChevronRight, School, MessageSquareText, UtensilsCrossed, Bus, Smartphone, Calculator, Package, PieChart, LayoutList,
-  BookOpen, ShieldCheck, Receipt, Route, UserRound, Home, Backpack, Laptop, BedDouble, NotebookPen, Search,
+  BookOpen, ShieldCheck, Receipt, Route, UserRound, Home, Backpack, Laptop, BedDouble, NotebookPen, Search, LayoutGrid,
 } from "lucide-react";
 
 type NavLeaf = { id: string; label: string; icon?: any; target?: NavTarget };
@@ -236,6 +237,7 @@ export function AppShell() {
   const [installEvent, setInstallEvent] = useState<any>(null);
   const [navOpen, setNavOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [metroOpen, setMetroOpen] = useState(false);
   /* iEduPro nested navigation: class directory for the level bands
      (Students → level → class; Classes → level → class timetable). Loaded
      from the settings resource of the active school. */
@@ -483,6 +485,17 @@ export function AppShell() {
               <kbd className="hidden md:inline-flex items-center gap-0.5 rounded border bg-muted px-1 font-sans text-[10px] font-medium text-muted-foreground">⌘K</kbd>
             </Button>
 
+            {/* Metro Start screen (iEduPro metro_menu parity) */}
+            <Button
+              size="sm" variant="outline"
+              className="gap-1.5 h-8 px-2.5"
+              title="Start menu — all modules (Esc to close)"
+              onClick={() => setMetroOpen(true)}
+            >
+              <LayoutGrid className="size-4" />
+              <span className="hidden sm:inline text-xs font-medium">Start</span>
+            </Button>
+
             {/* AI quick open */}
             {canAny(session?.permissions, ["ai.use"]) && (
               <Button size="sm" variant="ghost" className="size-8 p-0" title="AI Assistant" onClick={() => setModule("ai")}>
@@ -600,6 +613,21 @@ export function AppShell() {
         onToggleTheme={toggleTheme}
         theme={theme}
       />
+
+      {/* Metro Start screen (iEduPro metro_menu parity) — colorful tile grid of
+          every module the session may open, with live search. Conditionally
+          mounted so each open starts fresh. */}
+      {metroOpen && (
+        <MetroMenu
+          items={navItems}
+          current={module}
+          onSelect={(id, t) => setModule(id as ModuleId, t)}
+          open={metroOpen}
+          onOpenChange={setMetroOpen}
+        />
+      )}
+      {/* floating edge launcher (CI3's pinned Start trigger) */}
+      {!metroOpen && navItems.length > 1 && <MetroEdgeTrigger onClick={() => setMetroOpen(true)} />}
     </div>
   );
 }

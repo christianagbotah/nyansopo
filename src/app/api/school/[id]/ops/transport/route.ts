@@ -13,7 +13,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   const routes = await db.transportRoute.findMany({
     where: { schoolId },
-    include: { assignments: { where: { active: true }, include: { student: { include: { enrollments: { where: { status: "ACTIVE" }, take: 1, include: { classroom: true } } } } } } },
+    include: { assignments: { where: { active: true }, include: { student: { include: { enrollments: { where: { status: "ACTIVE" }, take: 1, include: { classroom: true } } } } } }, stopRecords: { orderBy: { sortOrder: "asc" } } },
     orderBy: { name: "asc" },
   });
 
@@ -54,23 +54,37 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   return NextResponse.json({
     termLabel: currentTerm ? `${currentTerm.name} · ${year!.name}` : "current term",
-    routes: routes.map((r) => ({
+    routes: routes.map((r) => {
+      // stops as structured objects (iEduPro transport_stops): each pickup point
+      // may carry its own one-way fare — learners on the same route (or class!)
+      // pay different fares depending on where they board
+      const stopList = r.stopRecords.length
+        ? r.stopRecords.map((s) => ({ name: s.name, fareCents: s.fareCents }))
+        : r.stops.split(",").map((s) => s.trim()).filter(Boolean).map((name) => ({ name, fareCents: null as number | null }));
+      return {
       id: r.id, name: r.name, vehicleReg: r.vehicleReg, vehicleModel: r.vehicleModel,
       driverName: r.driverName, driverPhone: r.driverPhone, capacity: r.capacity,
-      fare: r.farePerTermCents, farePerTrip: r.farePerTripCents, stops: r.stops.split(",").map((s) => s.trim()), active: r.active,
-      riders: r.assignments.map((a) => ({
+      fare: r.farePerTermCents, farePerTrip: r.farePerTripCents, stops: stopList.map((s) => s.name), stopRecords: stopList, active: r.active,
+      riders: r.assignments.map((a) => {
+        // resolved one-way fare for this rider: stop fare → route fare (iEduPro §resolve)
+        const stopName = a.pickupStop ?? a.dropStop;
+        const stop = stopName ? r.stopRecords.find((s) => s.name.trim().toLowerCase() === stopName.trim().toLowerCase() && s.fareCents != null) : undefined;
+        return {
         id: a.id, studentId: a.studentId, student: `${a.student.firstName} ${a.student.lastName}`,
         classroom: a.student.enrollments[0]?.classroom?.name ?? null,
         pickupStop: a.pickupStop, dropStop: a.dropStop, fareOverride: a.fareOverrideCents,
+        onewayFare: stop?.fareCents ?? r.farePerTripCents ?? 0, stopFare: stop?.fareCents ?? null,
         guardianPhone: a.student.guardianPhone,
         farePaid: paidByStudent[a.studentId] ?? 0,
         boardings: boardingByAssignment[a.id] ?? [],
-      })),
+        };
+      }),
       utilisation: Math.round((r.assignments.length / Math.max(1, r.capacity)) * 100),
       fareRevenue: r.assignments.reduce((s, a) => s + (a.fareOverrideCents ?? r.farePerTermCents), 0),
       fareCollected: r.assignments.reduce((s, a) => s + Math.min(paidByStudent[a.studentId] ?? 0, a.fareOverrideCents ?? r.farePerTermCents), 0),
       trips: (tripByRoute[r.id] ?? []).slice(0, 10).map((t) => ({ id: t.id, date: t.date, morning: t.morningCount, evening: t.eveningCount, notes: t.notes, recordedByName: t.recordedByName })),
-    })),
+      };
+    }),
     unassigned: unassigned.map((e) => ({ id: e.studentId, name: `${e.student.firstName} ${e.student.lastName}`, classroom: e.classroom.name, guardianPhone: e.student.guardianPhone })),
     summary: {
       routes: routes.length,
@@ -95,14 +109,26 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!auth.ok) return auth.res;
 
   if (action === "save-route") {
-    const { id, name, vehicleReg, vehicleModel, driverName, driverPhone, capacity, farePerTermCents, stops } = body;
+    const { id, name, vehicleReg, vehicleModel, driverName, driverPhone, capacity, farePerTermCents, farePerTripCents, stops, stopRecords } = body;
     if (!name || !driverName) return NextResponse.json({ error: "Route name and driver are required" }, { status: 400 });
+    // stops arrive either as plain names (legacy string/array) or structured
+    // records [{ name, fareCents }] — per-stop one-way fares (iEduPro
+    // transport_stops.fare_from_stop: the pickup point sets the fare)
+    const parsedStops: { name: string; fareCents: number | null }[] = Array.isArray(stopRecords) && stopRecords.length
+      ? stopRecords.map((s: any) => ({ name: String(s?.name ?? "").trim(), fareCents: s?.fareCents == null || s.fareCents === "" ? null : Math.max(0, Math.round(Number(s.fareCents))) })).filter((s: any) => s.name)
+      : (Array.isArray(stops) ? stops : String(stops ?? "").split(",")).map((s: any) => ({ name: String(s).trim(), fareCents: null })).filter((s) => s.name);
     const data = {
       name, vehicleReg: vehicleReg ?? "", vehicleModel: vehicleModel ?? null, driverName, driverPhone: driverPhone ?? "",
       capacity: Number(capacity) || 15, farePerTermCents: Number(farePerTermCents) || 0,
-      stops: Array.isArray(stops) ? stops.join(", ") : (stops ?? ""),
+      farePerTripCents: Math.max(0, Math.round(Number(farePerTripCents) || 0)),
+      stops: parsedStops.map((s) => s.name).join(", "),
     };
     const route = id ? await db.transportRoute.update({ where: { id }, data }) : await db.transportRoute.create({ data: { ...data, schoolId } });
+    // sync the structured stop records (replace-all keeps sortOrder canonical)
+    await db.transportStop.deleteMany({ where: { routeId: route.id } });
+    for (const [i, s] of parsedStops.entries()) {
+      await db.transportStop.create({ data: { routeId: route.id, name: s.name, fareCents: s.fareCents, sortOrder: i } });
+    }
     return NextResponse.json({ route });
   }
 

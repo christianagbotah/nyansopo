@@ -200,3 +200,17 @@
 
 @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 .pulse-dot { animation: pulse-dot 1.6s ease-in-out infinite; }
+
+/* ── Metro Start screen (iEduPro metro_menu parity) ── */
+.metro-start-bg {
+  background:
+    radial-gradient(1200px 600px at 85% -10%, rgba(0, 120, 212, 0.35), transparent 60%),
+    radial-gradient(900px 500px at -10% 110%, rgba(92, 45, 145, 0.30), transparent 60%),
+    radial-gradient(700px 400px at 50% 120%, rgba(0, 178, 148, 0.18), transparent 60%),
+    #10162b;
+}
+@keyframes metro-tile-in {
+  from { opacity: 0; transform: scale(0.7); }
+  to { opacity: 1; transform: scale(1); }
+}
+.metro-tile { animation: metro-tile-in 0.45s cubic-bezier(0.2, 0.8, 0.3, 1) both; }

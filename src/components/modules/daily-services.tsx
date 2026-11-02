@@ -14,7 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatCard, ModuleHeader, LoadingBlock, EmptyState, FilterBar, FilterSelect, FilterSearch } from "@/components/ui-helpers";
 import { fmtCedi, fmtDate, fmtDateTime, PAYMENT_LABELS } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
-import { UtensilsCrossed, Wallet, CalendarPlus, Plus, TrendingUp, Search, Droplets, BookOpenCheck, Coffee, HandCoins, CheckCircle2, Printer, Percent, Bus, Settings2, CircleDollarSign, ArrowDownToLine, History, BadgeCheck, UserCheck, Landmark, ScrollText } from "lucide-react";
+import { UtensilsCrossed, Wallet, CalendarPlus, Plus, TrendingUp, Search, Droplets, BookOpenCheck, Coffee, HandCoins, CheckCircle2, Printer, Percent, Bus, Settings2, CircleDollarSign, ArrowDownToLine, History, BadgeCheck, UserCheck, Landmark, ScrollText, Layers } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ReceiptDocument } from "@/components/receipts";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -26,16 +26,23 @@ type Service = {
   today: { billed: number; collected: number; count: number; owedCount: number };
 };
 type LedgerRow = { studentId: string; student: string; classroom: string | null; guardianPhone: string; owed: number; items: Record<string, number>; oldest: string };
+type PosItem = {
+  serviceId: string; name: string; category: string; price: number;
+  arrears: number; balance: number;
+  today: { amount: number; status: string; usage: string | null } | null;
+  weekly: boolean; weeklyBilledThisWeek: boolean; weekdays: string;
+};
 type PosStudent = {
   id: string; name: string; classroom: string; classroomId: string; guardianPhone: string;
   balance: number;
   services: { id: string; name: string; category: string; price: number }[];
+  items: PosItem[];
   wallet: { prepaidCents: number; transportCents: number };
   todayTransport: { id: string; amount: number; status: string; usage: string | null } | null;
   today: { charged: number; owed: number } | null;
   transportFare: { oneway: number; routeName: string; stopName: string | null; routeId: string } | null;
 };
-type WalletTxnRow = { id: string; student: string; wallet: string; kind: string; amount: number; balanceAfter: number; note: string | null; byName: string | null; at: string };
+type WalletTxnRow = { id: string; student: string; wallet: string; item?: string | null; kind: string; amount: number; balanceAfter: number; note: string | null; byName: string | null; at: string };
 type DailySettings = { collectionMode: "CLASSROOM" | "CASHIER" | "HYBRID"; teacherPerms: { mode: "ALL" | "NONE" | "SELECTIVE"; classroomIds: string[]; serviceIds: string[] }; classrooms: { id: string; name: string }[] };
 type Reconciliation = {
   billed: number; collected: number; waived: number; outstanding: number; counter: number; walletPays: number; variance: number; txns: number;
@@ -66,7 +73,7 @@ type DailyData = {
   ledger: LedgerRow[];
   posStudents: PosStudent[];
   posPayments: { id: string; receiptNo: string; amount: number; method: string; paidAt: string; student: string }[];
-  wallets: { studentId: string; student: string; classroom: string; prepaid: number; transport: number; arrears: number }[];
+  wallets: { studentId: string; student: string; classroom: string; prepaid: number; transport: number; arrears: number; items?: { serviceId: string; name: string; category: string; balance: number; arrears: number }[] }[];
   walletTxns: WalletTxnRow[];
   settings: DailySettings;
   reconciliation: Reconciliation;
@@ -76,6 +83,16 @@ type DailyData = {
 const MODE_LABELS: Record<string, string> = { CLASSROOM: "Classroom only", CASHIER: "Cashier only", HYBRID: "Hybrid (classroom + counter)" };
 
 const CAT_ICON: Record<string, any> = { MEAL: Coffee, DRINK: Droplets, CLASS: BookOpenCheck, CARE: HandCoins, TRANSPORT: Bus, OTHER: UtensilsCrossed };
+// colorful category chips (iEduPro metro-style tiles: each fee type reads at a glance)
+const CAT_STYLE: Record<string, string> = {
+  MEAL: "bg-orange-500/15 text-orange-700 dark:text-orange-300 border-orange-500/30",
+  DRINK: "bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border-cyan-500/30",
+  CLASS: "bg-violet-500/15 text-violet-700 dark:text-violet-300 border-violet-500/30",
+  CARE: "bg-pink-500/15 text-pink-700 dark:text-pink-300 border-pink-500/30",
+  TRANSPORT: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30",
+  OTHER: "bg-slate-500/15 text-slate-700 dark:text-slate-300 border-slate-500/30",
+};
+const catStyle = (c: string) => CAT_STYLE[c] ?? CAT_STYLE.OTHER;
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const weekdayLabel = (wd: string) => wd.split(",").map((n) => DAY_LABELS[Number(n)]).join(" · ");
 
@@ -262,8 +279,22 @@ export function DailyServices() {
                     <div key={s.id} className="rounded-lg border p-3 flex flex-wrap items-center justify-between gap-2 hover:bg-secondary/30 transition-colors">
                       <div className="min-w-0">
                         <div className="font-medium text-sm truncate">{s.name} <span className="text-muted-foreground font-normal">· {s.classroom}</span></div>
-                        <div className="text-[11px] text-muted-foreground">
-                          {s.services.map((x) => x.name.replace(" (optional)", "").replace(" (canteen)", "").replace(" (remedial)", "")).join(" · ") || "—"}
+                        {/* colorful per-item chips (metro style): each fee item reads at a glance,
+                            red border when that item is in arrears, emerald chip when it holds credit */}
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {s.items.map((x) => {
+                            const Icon = CAT_ICON[x.category] ?? UtensilsCrossed;
+                            return (
+                              <span key={x.serviceId} title={`${x.name} — rate ${fmtCedi(x.price)}${x.weekly ? "/week" : "/day"} · arrears ${fmtCedi(x.arrears)}${x.balance ? ` · balance ${fmtCedi(x.balance)}` : ""}`}
+                                className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${x.arrears > 0 ? "border-destructive/40 text-destructive" : x.balance > 0 ? "border-emerald-500/40 text-emerald-700 dark:text-emerald-300" : catStyle(x.category)}`}>
+                                <Icon className="size-2.5" />{x.name.replace(" (optional)", "").replace(" (canteen)", "").replace(" (remedial)", "")}
+                                {x.weekly && <span className="opacity-60">·wk</span>}
+                                {x.arrears > 0 && <b>{fmtCedi(x.arrears, { compact: true })}</b>}
+                                {x.arrears === 0 && x.balance > 0 && <b>{fmtCedi(x.balance, { compact: true })}</b>}
+                              </span>
+                            );
+                          })}
+                          {s.items.length === 0 && <span className="text-[11px] text-muted-foreground">no items enrolled</span>}
                         </div>
                         {(s.wallet.prepaidCents > 0 || s.wallet.transportCents > 0) && (
                           <div className="flex gap-1 mt-1">
@@ -315,9 +346,10 @@ export function DailyServices() {
 
         {/* ── WALLETS (iedupro §1: prepaid + transport wallets, top-ups, audit log) ── */}
         <TabsContent value="wallets">
-          <div className="grid grid-cols-3 gap-3 mb-4">
-            <StatCard icon={<CircleDollarSign className="size-4" />} label="Prepaid wallets" value={fmtCedi(data.wallets.reduce((a, w) => a + w.prepaid, 0), { compact: true })} tone="primary" sub={`${data.wallets.filter((w) => w.prepaid > 0).length} learners holding credit`} />
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+            <StatCard icon={<CircleDollarSign className="size-4" />} label="General prepaid" value={fmtCedi(data.wallets.reduce((a, w) => a + w.prepaid, 0), { compact: true })} tone="primary" sub={`${data.wallets.filter((w) => w.prepaid > 0).length} learners holding credit`} />
             <StatCard icon={<Bus className="size-4" />} label="Transport wallets" value={fmtCedi(data.wallets.reduce((a, w) => a + w.transport, 0), { compact: true })} tone="gold" sub={`${data.wallets.filter((w) => w.transport > 0).length} learners holding credit`} />
+            <StatCard icon={<Layers className="size-4" />} label="Per-item balances" value={fmtCedi(data.wallets.reduce((a, w) => a + (w.items ?? []).reduce((x, i) => x + i.balance, 0), 0), { compact: true })} sub={`${data.wallets.filter((w) => (w.items ?? []).some((i) => i.balance > 0)).length} learners with item credit`} />
             <StatCard icon={<Percent className="size-4" />} label="Arrears balance" value={fmtCedi(data.wallets.reduce((a, w) => a + w.arrears, 0), { compact: true })} tone={data.wallets.some((w) => w.arrears > 0) ? "danger" : "default"} sub="derived from unpaid charges" />
           </div>
           <div className="space-y-3">
@@ -357,7 +389,25 @@ export function DailyServices() {
                         const ps = data.posStudents.find((p) => p.id === w.studentId) ?? null;
                         return (
                           <tr key={w.studentId} className="border-b last:border-0 hover:bg-secondary/30">
-                            <td className="px-3 py-2.5"><div className="font-medium">{w.student}</div></td>
+                            <td className="px-3 py-2.5">
+                              <div className="font-medium">{w.student}</div>
+                              {/* per-item prepaid balances + arrears (iEduPro daily_fee_wallet) */}
+                              {!!w.items?.length && (
+                                <div className="flex flex-wrap gap-1 mt-1">
+                                  {w.items.map((i) => {
+                                    const Icon = CAT_ICON[i.category] ?? UtensilsCrossed;
+                                    return (
+                                      <span key={i.serviceId} title={`${i.name} — balance ${fmtCedi(i.balance)} · arrears ${fmtCedi(i.arrears)}`}
+                                        className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${i.arrears > 0 && i.balance === 0 ? "border-destructive/40 text-destructive" : catStyle(i.category)}`}>
+                                        <Icon className="size-2.5" />{i.name}
+                                        {i.balance > 0 && <b className="text-emerald-600 dark:text-emerald-400">{fmtCedi(i.balance, { compact: true })}</b>}
+                                        {i.arrears > 0 && <b className="text-destructive">−{fmtCedi(i.arrears, { compact: true })}</b>}
+                                      </span>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </td>
                             <td className="px-3 py-2.5 hidden md:table-cell text-muted-foreground">{w.classroom}</td>
                             <td className="px-3 py-2.5 text-right tabular-nums">{w.prepaid > 0 ? fmtCedi(w.prepaid) : <span className="text-muted-foreground">—</span>}</td>
                             <td className="px-3 py-2.5 text-right tabular-nums">{w.transport > 0 ? fmtCedi(w.transport) : <span className="text-muted-foreground">—</span>}</td>
@@ -468,15 +518,23 @@ export function DailyServices() {
               return (
                 <Card key={s.id} className={s.active ? "" : "opacity-60"}>
                   <CardHeader className="pb-2 flex-row items-center justify-between space-y-0">
-                    <CardTitle className="text-sm flex items-center gap-2"><Icon className="size-4 text-primary" /> {s.name}</CardTitle>
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <span className={`size-7 rounded-lg grid place-items-center ${catStyle(s.category)}`}><Icon className="size-3.5" /></span>
+                      {s.name}
+                      {s.chargeMode === "WEEKLY" && <Badge variant="outline" className="text-[9px] px-1.5 h-4 text-cyan-700 dark:text-cyan-300 border-cyan-500/40">weekly</Badge>}
+                    </CardTitle>
                     <div className="flex items-center gap-1.5">
                       {!s.active && <Badge variant="outline">paused</Badge>}
-                      <Badge variant="secondary">{fmtCedi(s.price)}</Badge>
+                      {s.category === "TRANSPORT"
+                        ? <Badge variant="secondary" title="Transport fare follows the bus route and pickup stop">per route</Badge>
+                        : <Badge variant="secondary">{fmtCedi(s.price)}{s.chargeMode === "WEEKLY" ? "/wk" : "/day"}</Badge>}
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-3">
                     <div className="text-xs text-muted-foreground">
-                      {s.chargeMode === "WEEKLY" ? `Weekly — ${weekdayLabel(s.weekdays)}` : `Daily — ${weekdayLabel(s.weekdays)}`} · {s.enrolled} learners enrolled
+                      {s.category === "TRANSPORT"
+                        ? <>Fare follows the bus <b>route &amp; pickup stop</b> — manage fares in Transportation · {s.enrolled} riders</>
+                        : <>{s.chargeMode === "WEEKLY" ? `Weekly — ${weekdayLabel(s.weekdays)} (billed once, first run day)` : `Daily — ${weekdayLabel(s.weekdays)}`} · {s.enrolled} learners enrolled</>}
                     </div>
                     <div className="space-y-1">
                       <div className="flex justify-between text-xs"><span className="text-muted-foreground">Month collection</span><span className="tabular-nums">{rate}%</span></div>
@@ -592,51 +650,53 @@ export function DailyServices() {
 
 function CollectDialog({ student, date, online, onOpenChange, onDone }: { student: PosStudent | null; date: string; online: boolean; onOpenChange: (o: boolean) => void; onDone: (receipt: any) => void }) {
   const { currentSchoolId } = useStore();
-  const [amount, setAmount] = useState("");
+  const [amounts, setAmounts] = useState<Record<string, string>>({}); // serviceId → GH₵ being paid for that item
   const [method, setMethod] = useState("MOMO_MTN");
   const [reference, setReference] = useState("");
   const [paidOn, setPaidOn] = useState(date);
-  const [payFrom, setPayFrom] = useState<"COUNTER" | "PREPAID" | "TRANSPORT">("COUNTER");
   const [tendered, setTendered] = useState("");
   const [usage, setUsage] = useState<string>("");
   const [markPresent, setMarkPresent] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const transportSvc = student?.services.find((x) => x.category === "TRANSPORT");
+  const transportItem = student?.items.find((x) => x.category === "TRANSPORT");
 
   useEffect(() => {
     if (student) {
-      setAmount((student.balance / 100).toFixed(2));
+      // per-item defaults: settle that item's arrears (the iEduPro payment form
+      // pre-fills each fee type with what the learner owes on it)
+      const pre: Record<string, string> = {};
+      student.items.forEach((i) => { if (i.arrears > 0) pre[i.serviceId] = (i.arrears / 100).toFixed(2); });
+      setAmounts(pre);
       setReference("");
       setPaidOn(date);
-      setPayFrom("COUNTER");
       setTendered("");
       setMarkPresent(false);
       setUsage("");
     }
   }, [student, date]);
 
-  const cents = Math.round(parseFloat(amount || "0") * 100);
-  const walletCap = payFrom === "PREPAID" ? (student?.wallet.prepaidCents ?? 0) : payFrom === "TRANSPORT" ? (student?.wallet.transportCents ?? 0) : Infinity;
-  const capped = Math.min(cents, walletCap);
-  const change = Math.max(0, Math.round(parseFloat(tendered || "0") * 100) - cents);
+  const itemCents = (id: string) => Math.round(parseFloat(amounts[id] || "0") * 100);
+  const totalCents = student ? student.items.reduce((s, i) => s + itemCents(i.serviceId), 0) : 0;
+  const totalOwed = student?.balance ?? 0;
+  const change = Math.max(0, Math.round(parseFloat(tendered || "0") * 100) - totalCents);
+  const fmt = (c: number) => `GH₵${(c / 100).toFixed(2)}`;
 
   async function submit() {
     if (!student || !currentSchoolId) return;
-    if (!cents || cents <= 0) { toast({ title: "Enter a valid amount" }); return; }
-    if (payFrom !== "COUNTER" && cents > walletCap) { toast({ title: "Wallet too small", description: `Balance is ${fmtCedi(walletCap)} — lower the amount.` }); return; }
+    const items = student.items.filter((i) => itemCents(i.serviceId) > 0).map((i) => ({ serviceId: i.serviceId, amountCents: itemCents(i.serviceId) }));
+    if (!items.length) { toast({ title: "Enter an amount for at least one item" }); return; }
     setBusy(true);
     try {
       const payload = {
-        action: "pos-collect", studentId: student.id, amountCents: cents,
-        method: payFrom === "COUNTER" ? method : undefined,
-        payFrom, reference: reference || undefined, paidAt: paidOn,
+        action: "pos-collect", studentId: student.id, items,
+        method, reference: reference || undefined, paidAt: paidOn,
         transportUsage: usage || undefined, markPresent, date: paidOn,
       };
       const res = await apiPostQueueable<any>(
         `/api/school/${currentSchoolId}/ops/daily`, "payment", payload,
-        `Daily services ${fmtCedi(cents)} — ${student.name}`,
-        (p, clientId) => ({ ...p, category: "DAILY", schoolId: currentSchoolId, studentId: student.id, amountCents: cents, method: payFrom === "COUNTER" ? method : payFrom === "PREPAID" ? "WALLET" : "TRANSPORT_WALLET", paidAt: paidOn, clientId })
+        `Daily services ${fmt(totalCents)} — ${student.name}`,
+        (p, clientId) => ({ ...p, category: "DAILY", schoolId: currentSchoolId, studentId: student.id, amountCents: totalCents, method, paidAt: paidOn, clientId })
       );
       if (res.queued) {
         toast({ title: "Queued offline", description: "Receipt will be issued when you reconnect." });
@@ -650,73 +710,96 @@ function CollectDialog({ student, date, online, onOpenChange, onDone }: { studen
 
   return (
     <Dialog open={!!student} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-w-lg max-h-[92vh] overflow-y-auto nice-scroll">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><Wallet className="size-4" /> Collect daily payment — {student?.name}</DialogTitle>
           <DialogDescription>
             {student?.classroom} · outstanding <b className="text-destructive">{student ? fmtCedi(student.balance) : ""}</b>
-            {student && student.wallet.prepaidCents > 0 && <> · prepaid <b>{fmtCedi(student.wallet.prepaidCents)}</b></>}
+            {student && student.wallet.prepaidCents > 0 && <> · general wallet <b>{fmtCedi(student.wallet.prepaidCents)}</b></>}
             {student && student.wallet.transportCents > 0 && <> · transport wallet <b>{fmtCedi(student.wallet.transportCents)}</b></>}
             {!online && " · offline — will queue & sync"}
           </DialogDescription>
         </DialogHeader>
+
+        {/* ── per-item entry (iEduPro §apply_payment): one card per fee item with
+            its own prepaid balance + arrears, and the amount being paid for it ── */}
+        <div className="space-y-2">
+          {student?.items.map((i) => {
+            const Icon = CAT_ICON[i.category] ?? UtensilsCrossed;
+            const paid = itemCents(i.serviceId);
+            const excess = Math.max(0, paid - i.arrears);
+            return (
+              <div key={i.serviceId} className={`rounded-xl border p-2.5 ${i.arrears > 0 ? "border-destructive/30" : "border-border"} ${paid > 0 ? "ring-1 ring-primary/40" : ""}`}>
+                <div className="flex items-center gap-2.5">
+                  <div className={`size-9 rounded-lg grid place-items-center shrink-0 ${catStyle(i.category)}`}><Icon className="size-4.5" /></div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium truncate flex items-center gap-1.5">
+                      {i.name}
+                      {i.weekly && <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 gap-0.5 text-cyan-700 dark:text-cyan-300 border-cyan-500/40"><Droplets className="size-2.5" /> weekly</Badge>}
+                    </div>
+                    <div className="text-[11px] text-muted-foreground flex flex-wrap items-center gap-x-2">
+                      <span>rate {fmtCedi(i.price)}{i.weekly ? "/wk" : "/day"}</span>
+                      <span className={i.arrears > 0 ? "text-destructive font-medium" : ""}>arrears {fmtCedi(i.arrears)}</span>
+                      {i.balance > 0 && <span className="text-emerald-600 dark:text-emerald-400 font-medium">balance {fmtCedi(i.balance)}</span>}
+                    </div>
+                  </div>
+                  <Input
+                    type="number" step="0.5" min="0" placeholder="0.00"
+                    className="w-24 text-right tabular-nums font-medium"
+                    value={amounts[i.serviceId] ?? ""}
+                    onChange={(e) => setAmounts({ ...amounts, [i.serviceId]: e.target.value })}
+                  />
+                </div>
+                <div className="flex items-center justify-between mt-1.5 text-[11px] pl-11.5">
+                  <span className="text-muted-foreground">
+                    {i.weekly && (i.weeklyBilledThisWeek
+                      ? <span className="text-emerald-600 dark:text-emerald-400 font-medium">billed this week — no further charge until next week</span>
+                      : <>bills {weekdayLabel(i.weekdays)} — once per week</>)}
+                    {!i.weekly && i.today && <>today {fmtCedi(i.today.amount)} · {i.today.status.toLowerCase()}{i.today.usage ? ` · ${i.today.usage.toLowerCase()}` : ""}</>}
+                    {i.category === "TRANSPORT" && student?.transportFare && <>route <b>{student.transportFare.routeName}</b> · one-way {fmtCedi(student.transportFare.oneway)}</>}
+                  </span>
+                  {excess > 0 && <span className="text-primary font-medium">+{fmtCedi(excess)} → item balance (advance)</span>}
+                </div>
+              </div>
+            );
+          })}
+          {student && student.items.length === 0 && (
+            <div className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">
+              No daily-service items enrolled — enrol the learner under Services &amp; enrolment first.
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between rounded-xl bg-secondary/60 px-3 py-2 text-sm">
+          <span className="font-medium">Total</span>
+          <span className="tabular-nums font-bold text-base">{fmtCedi(totalCents)}</span>
+        </div>
+
         <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label>Amount (GH₵) *</Label>
-            <Input type="number" step="0.01" max={payFrom === "COUNTER" ? undefined : (walletCap / 100).toFixed(2)} value={amount} onChange={(e) => setAmount(e.target.value)} />
-            {payFrom !== "COUNTER" && capped < cents && (
-              <p className="text-[11px] text-destructive">Wallet balance is {fmtCedi(walletCap)} — amount will be capped.</p>
-            )}
-          </div>
           <div className="space-y-1.5">
             <Label>Payment date</Label>
             <Input type="date" value={paidOn} onChange={(e) => setPaidOn(e.target.value)} />
           </div>
           <div className="space-y-1.5">
-            <Label>Pay from</Label>
-            <Select value={payFrom} onValueChange={(v: any) => setPayFrom(v)}>
+            <Label>Method</Label>
+            <Select value={method} onValueChange={setMethod}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="COUNTER">Counter — cash / MoMo</SelectItem>
-                {student && student.wallet.prepaidCents > 0 && <SelectItem value="PREPAID">Prepaid wallet ({fmtCedi(student.wallet.prepaidCents)})</SelectItem>}
-                {student && student.wallet.transportCents > 0 && <SelectItem value="TRANSPORT">Transport wallet ({fmtCedi(student.wallet.transportCents)})</SelectItem>}
+                {Object.entries(PAYMENT_LABELS).filter(([k]) => k !== "WALLET" && k !== "TRANSPORT_WALLET").map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
-          {payFrom === "COUNTER" ? (
-            <div className="space-y-1.5">
-              <Label>Method</Label>
-              <Select value={method} onValueChange={setMethod}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {Object.entries(PAYMENT_LABELS).filter(([k]) => k !== "WALLET" && k !== "TRANSPORT_WALLET").map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-          ) : (
-            <div className="space-y-1.5">
-              <Label>Tendered (GH₵)</Label>
-              <Input type="number" step="0.5" value={tendered} onChange={(e) => setTendered(e.target.value)} placeholder="0.00" disabled />
-              <p className="text-[11px] text-muted-foreground">Wallet payments deduct directly — no tender needed.</p>
-            </div>
-          )}
-          {payFrom === "COUNTER" && (
-            <div className="space-y-1.5">
-              <Label>Tendered (GH₵)</Label>
-              <Input type="number" step="0.5" value={tendered} onChange={(e) => setTendered(e.target.value)} placeholder="e.g. 20.00" />
-              {tendered && change >= 0 && (
-                <p className="text-[11px]">Change: <b className="text-emerald-600">{fmtCedi(change)}</b></p>
-              )}
-              {tendered && change < 0 && (
-                <p className="text-[11px] text-destructive">Short by {fmtCedi(-change)}</p>
-              )}
-            </div>
-          )}
-          <div className="space-y-1.5 sm:col-span-2">
+          <div className="space-y-1.5">
+            <Label>Tendered (GH₵)</Label>
+            <Input type="number" step="0.5" value={tendered} onChange={(e) => setTendered(e.target.value)} placeholder="e.g. 20.00" />
+            {tendered && change >= 0 && <p className="text-[11px]">Change: <b className="text-emerald-600">{fmtCedi(change)}</b></p>}
+            {tendered && change < 0 && <p className="text-[11px] text-destructive">Short by {fmtCedi(-change)}</p>}
+          </div>
+          <div className="space-y-1.5">
             <Label>MoMo / reference</Label>
             <Input placeholder="e.g. MP2401.5533.77" value={reference} onChange={(e) => setReference(e.target.value)} />
           </div>
-          {transportSvc && (
+          {transportItem && (
             <div className="space-y-1.5 sm:col-span-2">
               <Label>Transport usage today</Label>
               <Select value={usage} onValueChange={setUsage}>
@@ -745,10 +828,12 @@ function CollectDialog({ student, date, online, onOpenChange, onDone }: { studen
             <span>Mark present in class register</span>
           </label>
         </div>
-        <p className="text-xs text-muted-foreground">Charges settle oldest-first. A receipt SMS goes to {student?.guardianPhone} automatically.</p>
+        <p className="text-xs text-muted-foreground">
+          Each item settles its own arrears oldest-first; amounts above an item's arrears are kept as prepaid credit for that item. A receipt SMS goes to {student?.guardianPhone} automatically.
+        </p>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={submit} disabled={busy} className="gap-1.5">{busy ? "Recording…" : <><ReceiptIcon /> Record payment</>}</Button>
+          <Button onClick={submit} disabled={busy || totalCents <= 0} className="gap-1.5">{busy ? "Recording…" : <><ReceiptIcon /> Record payment</>}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -952,17 +1037,23 @@ function TopUpDialog({ students, initialStudent, open, onOpenChange, onDone }: {
   const [note, setNote] = useState("");
   const [asAdjust, setAsAdjust] = useState(false);
   const [search, setSearch] = useState("");
+  const [itemId, setItemId] = useState(""); // per-item balance (iEduPro daily_fee_wallet)
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (open) {
       setStudentId(initialStudent?.id ?? "");
-      setWallet("PREPAID"); setAmount(""); setNote(""); setAsAdjust(false); setSearch("");
+      setWallet("PREPAID"); setAmount(""); setNote(""); setAsAdjust(false); setSearch(""); setItemId("");
     }
   }, [open, initialStudent]);
 
   const picked = students.find((s) => s.id === studentId) ?? null;
-  const currentBal = picked ? (wallet === "PREPAID" ? picked.wallet.prepaidCents : picked.wallet.transportCents) : 0;
+  const currentBal = picked
+    ? itemId
+      ? picked.items.find((i) => i.serviceId === itemId)?.balance ?? 0
+      : wallet === "PREPAID" ? picked.wallet.prepaidCents : picked.wallet.transportCents
+    : 0;
+  const pickedItem = itemId ? picked?.items.find((i) => i.serviceId === itemId) ?? null : null;
 
   const list = useMemo(() => {
     const q = search.toLowerCase();
@@ -973,15 +1064,16 @@ function TopUpDialog({ students, initialStudent, open, onOpenChange, onDone }: {
     if (!currentSchoolId || !studentId) { toast({ title: "Pick a learner first" }); return; }
     const cents = Math.round(parseFloat(amount || "0") * 100);
     if (!cents || cents < 0) { toast({ title: "Enter a valid amount" }); return; }
-    if (asAdjust && wallet === "PREPAID" ? !picked?.wallet : false) { toast({ title: "No wallet to adjust" }); return; }
     setBusy(true);
     try {
       await apiPost(`/api/school/${currentSchoolId}/ops/daily`, {
         action: asAdjust ? "wallet-adjust" : "wallet-topup",
         studentId, wallet, amountCents: cents, note: note || undefined,
+        serviceId: itemId || undefined, // per-item balance when an item is picked
       });
+      const label = pickedItem ? `${pickedItem.name} balance` : wallet === "PREPAID" ? "Prepaid wallet" : "Transport wallet";
       toast({
-        title: asAdjust ? "Wallet corrected" : `${wallet === "PREPAID" ? "Prepaid" : "Transport"} wallet topped up`,
+        title: asAdjust ? "Balance corrected" : `${label} topped up`,
         description: asAdjust ? `${picked?.name} → ${fmtCedi(cents)}` : `${picked?.name} +${fmtCedi(cents)}`,
       });
       onDone();
@@ -994,7 +1086,7 @@ function TopUpDialog({ students, initialStudent, open, onOpenChange, onDone }: {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><ArrowDownToLine className="size-4" /> {asAdjust ? "Correct wallet balance" : "Top up a wallet"}</DialogTitle>
           <DialogDescription>
-            Prepaid wallets pay for any daily service; transport wallets are reserved for bus fare.
+            Prepaid wallets pay for any daily service; transport wallets are reserved for bus fare; per-item balances (iEduPro daily-fee wallet) hold prepaid credit for one fee item — its charges auto-deduct from it.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
@@ -1018,18 +1110,37 @@ function TopUpDialog({ students, initialStudent, open, onOpenChange, onDone }: {
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Wallet</Label>
-              <Select value={wallet} onValueChange={(v: any) => setWallet(v)}>
+              <Select value={itemId ? "ITEM" : wallet} onValueChange={(v: any) => { if (v === "ITEM") { setItemId(picked?.items[0]?.serviceId ?? ""); } else { setItemId(""); setWallet(v); } }}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="PREPAID">Prepaid — any daily service</SelectItem>
                   <SelectItem value="TRANSPORT">Transport — bus fare only</SelectItem>
+                  {!!picked?.items.length && <SelectItem value="ITEM">Fee item — per-item balance</SelectItem>}
                 </SelectContent>
               </Select>
             </div>
+            {!!itemId && (
+              <div className="space-y-1.5">
+                <Label>Fee item</Label>
+                <Select value={itemId} onValueChange={setItemId}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {picked?.items.map((i) => (
+                      <SelectItem key={i.serviceId} value={i.serviceId}>{i.name} — balance {fmtCedi(i.balance)}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="space-y-1.5">
               <Label>{asAdjust ? "New balance (GH₵)" : "Amount (GH₵)"}</Label>
               <Input type="number" step="0.5" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={asAdjust ? "0.00" : "e.g. 20.00"} />
-              {picked && !asAdjust && <p className="text-[11px] text-muted-foreground">Current {wallet === "PREPAID" ? "prepaid" : "transport"} balance: {fmtCedi(currentBal)}</p>}
+              {picked && !asAdjust && (
+                <p className="text-[11px] text-muted-foreground">
+                  Current {pickedItem ? `${pickedItem.name} balance` : wallet === "PREPAID" ? "prepaid" : "transport"} balance: {fmtCedi(currentBal)}
+                  {pickedItem && " — day charges for this item auto-deduct from it"}
+                </p>
+              )}
             </div>
           </div>
           <div className="space-y-1.5">
@@ -1215,6 +1326,15 @@ function RatesTab({ data, onSaved }: { data: DailyData; onSaved: () => void }) {
               </button>
             ))}
           </div>
+          {svc.category === "TRANSPORT" ? (
+            <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4 text-sm">
+              <div className="font-medium flex items-center gap-2"><Bus className="size-4 text-emerald-600" /> Transport fare is route-based — not class-based</div>
+              <p className="text-muted-foreground text-xs mt-1 leading-relaxed">
+                Learners in the same class can pay different transport fares depending on their pickup points. Set each stop&apos;s one-way fare
+                (and the route default) under <b>Transportation → Routes</b>; the counter charges 1× one-way per direction, 2× for both ways.
+              </p>
+            </div>
+          ) : (
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {data.settings.classrooms.map((c) => {
               const override = rateByClass.get(c.id);
@@ -1242,6 +1362,7 @@ function RatesTab({ data, onSaved }: { data: DailyData; onSaved: () => void }) {
               );
             })}
           </div>
+          )}
           <p className="text-xs text-muted-foreground mt-3">
             A learner's effective rate resolves <b>student override → class rate → standard</b> — the same order iEduPro uses for its per-class fee rates. Transport follows the bus route's one-way fare instead (set it in the Transportation module).
           </p>

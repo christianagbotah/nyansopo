@@ -96,3 +96,20 @@ MSISDN normalisation, provider message refs, debit-only-on-success); the
 SMS Centre shows which gateways have keys configured. Remaining for
 rollout: set `SMS_ARKESEL_API_KEY` / `SMS_TERMII_API_KEY` in the
 deployment environment.
+
+**Closed by wave 4** (`agent-ctx/12-daily-fee-rates.md`, CI3
+`Daily_fee_model` / `daily_fee_wallet` / `transport_stops` parity):
+transport fare is **route-based, never class-based** — each pickup stop
+carries its own one-way fare (stop fare → route default; 1× per
+direction, 2× both ways), managed in Transportation → Routes, and the
+class-rate matrix rejects TRANSPORT items. Daily-fee collection is now
+per-item: the POS collect dialog shows one card per fee item with that
+item's arrears + prepaid balance and the amount being paid for it;
+excess lands back on the item as advance (payment_type
+arrears/current/advance/mixed). Per-item prepaid balances
+(`ServiceBalance`) auto-deduct at charge generation (CI3 `apply_charge`).
+Weekly services (sachet water, GH₵5/wk in the seed) bill once per ISO
+week — once paid, no further billing until the following week.
+`scripts/upgrade-daily-rates.ts` migrates existing installs. A CI3-style
+Metro Start screen (colorful grouped tiles + search, header Start button
++ floating edge trigger) now mirrors the permission-gated navigation.

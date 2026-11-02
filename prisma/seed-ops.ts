@@ -94,7 +94,7 @@ async function main() {
     if (code === "GEA") return [
       { name: "Lunch (canteen)", category: "MEAL", price: 8, mode: "DAILY", weekdays: "1,2,3,4,5" },
       { name: "Breakfast (optional)", category: "MEAL", price: 5, mode: "DAILY", weekdays: "1,2,3,4,5" },
-      { name: "Sachet Water", category: "DRINK", price: 1, mode: "WEEKLY", weekdays: "3" },
+      { name: "Sachet Water", category: "DRINK", price: 5, mode: "WEEKLY", weekdays: "3" },
       { name: "Extra Classes (remedial)", category: "CLASS", price: 3, mode: "DAILY", weekdays: "2,4" },
     ];
     if (code === "GKA") return [
@@ -189,28 +189,36 @@ async function main() {
 
   // ── 4. TRANSPORT ───────────────────────────────────────────
   console.log("🚌 Transportation…");
-  type RouteDef = { schoolCode: string; name: string; reg: string; model: string; driver: { name: string; phone: string }; cap: number; fare: number; stops: string[] };
+  // stops carry their own one-way fares (iEduPro transport_stops.fare_from_stop):
+  // learners on the same route — or in the same class — pay by pickup point
+  type StopDef = { name: string; fare?: number };
+  type RouteDef = { schoolCode: string; name: string; reg: string; model: string; driver: { name: string; phone: string }; cap: number; fare: number; farePerTrip?: number; stops: StopDef[] };
   const routeDefs: RouteDef[] = [
-    { schoolCode: "GEA", name: "Adenta Loop", reg: "GR 4521-21", model: "Toyota Hiace", driver: driverPool[0], cap: 15, fare: 450, stops: ["Adenta Market", "Community 25", "Frafraha Junction", "Ogbojo"] },
-    { schoolCode: "GEA", name: "Madina–Atomic", reg: "GR 3902-19", model: "Nissan Urvan", driver: driverPool[1], cap: 18, fare: 380, stops: ["Madina Market", "Zongo Junction", "Atomic Roundabout", "Legon Hall"] },
-    { schoolCode: "GEA", name: "Ashaley Botwe Express", reg: "GR 7714-20", model: "Toyota Coaster", driver: driverPool[2], cap: 24, fare: 320, stops: ["Ashaley Botwe", "Sakora Junction", "Adjiriganor"] },
-    { schoolCode: "GKA", name: "Adenta North Loop", reg: "GR 2205-22", model: "Toyota Hiace", driver: { name: "Owusu Asabere", phone: "+233 55 220 8890" }, cap: 15, fare: 400, stops: ["Kweiman", "Adenta SSNIT", "Amrahia"] },
-    { schoolCode: "GKA", name: "Oyarifa Line", reg: "GR 6610-18", model: "Nissan Urvan", driver: { name: "Kwaku Duah", phone: "+233 24 668 1043" }, cap: 16, fare: 430, stops: ["Oyarifa Station", "Ahyiresu", "Kweiman"] },
-    { schoolCode: "SGI", name: "Cantonments–Labone", reg: "GR 1188-23", model: "Toyota Coaster (AC)", driver: { name: "Nii Ampah", phone: "+233 20 111 7766" }, cap: 20, fare: 950, stops: ["Cantonments City", "Labone Secondary", "Kpeshie"] },
+    { schoolCode: "GEA", name: "Adenta Loop", reg: "GR 4521-21", model: "Toyota Hiace", driver: driverPool[0], cap: 15, fare: 450, farePerTrip: 8, stops: [{ name: "Adenta Market", fare: 6 }, { name: "Community 25", fare: 8 }, { name: "Frafraha Junction", fare: 9 }, { name: "Ogbojo", fare: 10 }] },
+    { schoolCode: "GEA", name: "Madina–Atomic", reg: "GR 3902-19", model: "Nissan Urvan", driver: driverPool[1], cap: 18, fare: 380, farePerTrip: 7, stops: [{ name: "Madina Market", fare: 5 }, { name: "Zongo Junction", fare: 6 }, { name: "Atomic Roundabout", fare: 7 }, { name: "Legon Hall", fare: 9 }] },
+    { schoolCode: "GEA", name: "Ashaley Botwe Express", reg: "GR 7714-20", model: "Toyota Coaster", driver: driverPool[2], cap: 24, fare: 320, farePerTrip: 6, stops: [{ name: "Ashaley Botwe", fare: 4 }, { name: "Sakora Junction", fare: 5 }, { name: "Adjiriganor", fare: 6 }] },
+    { schoolCode: "GKA", name: "Adenta North Loop", reg: "GR 2205-22", model: "Toyota Hiace", driver: { name: "Owusu Asabere", phone: "+233 55 220 8890" }, cap: 15, fare: 400, farePerTrip: 7, stops: [{ name: "Kweiman", fare: 5 }, { name: "Adenta SSNIT", fare: 6 }, { name: "Amrahia", fare: 8 }] },
+    { schoolCode: "GKA", name: "Oyarifa Line", reg: "GR 6610-18", model: "Nissan Urvan", driver: { name: "Kwaku Duah", phone: "+233 24 668 1043" }, cap: 16, fare: 430, farePerTrip: 8, stops: [{ name: "Oyarifa Station", fare: 7 }, { name: "Ahyiresu", fare: 8 }, { name: "Kweiman", fare: 10 }] },
+    { schoolCode: "SGI", name: "Cantonments–Labone", reg: "GR 1188-23", model: "Toyota Coaster (AC)", driver: { name: "Nii Ampah", phone: "+233 20 111 7766" }, cap: 20, fare: 950, farePerTrip: 18, stops: [{ name: "Cantonments City", fare: 15 }, { name: "Labone Secondary", fare: 17 }, { name: "Kpeshie", fare: 20 }] },
   ];
   const tripDays = lastSchoolDays(12, today);
   for (const rd of routeDefs) {
     const school = byCode[rd.schoolCode];
+    const stopNames = rd.stops.map((s) => s.name);
     const route = await db.transportRoute.create({
-      data: { schoolId: school.id, name: rd.name, vehicleReg: rd.reg, vehicleModel: rd.model, driverName: rd.driver.name, driverPhone: rd.driver.phone, capacity: rd.cap, farePerTermCents: C(rd.fare), stops: rd.stops.join(", ") },
+      data: { schoolId: school.id, name: rd.name, vehicleReg: rd.reg, vehicleModel: rd.model, driverName: rd.driver.name, driverPhone: rd.driver.phone, capacity: rd.cap, farePerTermCents: C(rd.fare), farePerTripCents: C(rd.farePerTrip ?? 6), stops: stopNames.join(", ") },
     });
+    // per-stop fare records (replace route default when the stop sets its own)
+    for (const [i, s] of rd.stops.entries()) {
+      await db.transportStop.create({ data: { routeId: route.id, name: s.name, fareCents: s.fare != null ? C(s.fare) : null, sortOrder: i } });
+    }
     // assign learners on this route
     const enrolled = await db.enrollment.findMany({ where: { schoolId: school.id, status: "ACTIVE" }, select: { studentId: true }, take: 400 });
     const n = Math.min(rd.cap - int(1, 4), 22);
     const shuffled = enrolled.slice().sort(() => rnd() - 0.5).slice(0, n);
     for (const e of shuffled) {
       await db.transportAssignment.create({
-        data: { routeId: route.id, studentId: e.studentId, pickupStop: pick(rd.stops), dropStop: pick(rd.stops), fareOverrideCents: rnd() < 0.15 ? Math.round(C(rd.fare) * 0.6) : null },
+        data: { routeId: route.id, studentId: e.studentId, pickupStop: pick(stopNames), dropStop: pick(stopNames), fareOverrideCents: rnd() < 0.15 ? Math.round(C(rd.fare) * 0.6) : null },
       });
     }
     for (const day of tripDays) {

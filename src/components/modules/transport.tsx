@@ -16,11 +16,12 @@ import { toast } from "@/hooks/use-toast";
 import { Bus, Plus, Phone, MapPin, UserPlus, ClipboardCheck, Banknote, Users, Pencil, Trash2, ArrowRight, HandCoins, CheckCircle2, Printer } from "lucide-react";
 import { ReceiptDocument } from "@/components/receipts";
 
-type Rider = { id: string; studentId: string; student: string; classroom: string | null; pickupStop: string | null; dropStop: string | null; fareOverride: number | null; guardianPhone: string; farePaid: number };
+type Rider = { id: string; studentId: string; student: string; classroom: string | null; pickupStop: string | null; dropStop: string | null; fareOverride: number | null; onewayFare?: number; stopFare?: number | null; guardianPhone: string; farePaid: number };
 type Trip = { id: string; date: string; morning: number | null; evening: number | null; notes: string | null; recordedByName: string | null };
+type StopRec = { name: string; fareCents: number | null };
 type Route = {
   id: string; name: string; vehicleReg: string; vehicleModel: string | null; driverName: string; driverPhone: string;
-  capacity: number; fare: number; stops: string[]; active: boolean; riders: Rider[]; utilisation: number; fareRevenue: number; fareCollected: number; trips: Trip[];
+  capacity: number; fare: number; farePerTrip?: number; stops: string[]; stopRecords?: StopRec[]; active: boolean; riders: Rider[]; utilisation: number; fareRevenue: number; fareCollected: number; trips: Trip[];
 };
 type TransportData = {
   termLabel: string;
@@ -103,7 +104,11 @@ export function Transportation() {
                 <Progress value={r.utilisation} className="h-1.5" />
               </div>
               <div className="flex flex-wrap gap-1">
-                {r.stops.map((s) => <Badge key={s} variant="outline" className="text-[10px] gap-1 font-normal"><MapPin className="size-2.5" />{s}</Badge>)}
+                {(r.stopRecords ?? r.stops.map((name) => ({ name, fareCents: null as number | null }))).map((s) => (
+                  <Badge key={s.name} variant="outline" className="text-[10px] gap-1 font-normal" title={s.fareCents != null ? `${s.name} — one-way fare ${fmtCedi(s.fareCents)}` : s.fareCents === null && r.farePerTrip ? `${s.name} — route fare ${fmtCedi(r.farePerTrip)}` : s.name}>
+                    <MapPin className="size-2.5" />{s.name}{s.fareCents != null && <b className="text-primary"> {fmtCedi(s.fareCents, { compact: true })}</b>}
+                  </Badge>
+                ))}
               </div>
               <div>
                 <div className="flex items-center justify-between mb-1.5">
@@ -121,6 +126,7 @@ export function Transportation() {
                         <span className="text-xs text-muted-foreground"> · {x.classroom ?? "—"}</span>
                         <div className="text-[10px] text-muted-foreground flex items-center gap-1">
                           <MapPin className="size-2.5" />{x.pickupStop ?? "—"} <ArrowRight className="size-2.5" /> {x.dropStop ?? x.pickupStop ?? "—"}
+                          {x.onewayFare != null && x.onewayFare > 0 && <span className="text-primary font-medium">· {fmtCedi(x.onewayFare, { compact: true })}/trip{x.stopFare != null ? " (stop fare)" : ""}</span>}
                         </div>
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
@@ -199,29 +205,36 @@ function RouteDialog({ route, onOpenChange, onDone }: { route: Route | "new" | n
   const [driverPhone, setDriverPhone] = useState("");
   const [capacity, setCapacity] = useState("15");
   const [fare, setFare] = useState("");
-  const [stops, setStops] = useState("");
+  const [farePerTrip, setFarePerTrip] = useState("");
+  const [stops, setStops] = useState<{ name: string; fare: string }[]>([{ name: "", fare: "" }]);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (route && route !== "new") {
       setName(route.name); setVehicleReg(route.vehicleReg); setVehicleModel(route.vehicleModel ?? "");
       setDriverName(route.driverName); setDriverPhone(route.driverPhone);
-      setCapacity(String(route.capacity)); setFare((route.fare / 100).toFixed(0)); setStops(route.stops.join(", "));
+      setCapacity(String(route.capacity)); setFare((route.fare / 100).toFixed(0)); setFarePerTrip(route.farePerTrip ? (route.farePerTrip / 100).toFixed(2) : "");
+      const recs = route.stopRecords ?? route.stops.map((s) => ({ name: s, fareCents: null as number | null }));
+      setStops(recs.length ? recs.map((s) => ({ name: s.name, fare: s.fareCents != null ? (s.fareCents / 100).toFixed(2) : "" })) : [{ name: "", fare: "" }]);
     } else if (route === "new") {
-      setName(""); setVehicleReg(""); setVehicleModel(""); setDriverName(""); setDriverPhone(""); setCapacity("15"); setFare(""); setStops("");
+      setName(""); setVehicleReg(""); setVehicleModel(""); setDriverName(""); setDriverPhone(""); setCapacity("15"); setFare(""); setFarePerTrip(""); setStops([{ name: "", fare: "" }]);
     }
   }, [route]);
+
+  const setStop = (i: number, key: "name" | "fare", v: string) => setStops(stops.map((s, j) => (i === j ? { ...s, [key]: v } : s)));
 
   async function submit() {
     if (!name || !driverName || !fare) { toast({ title: "Route name, driver and fare are required" }); return; }
     setBusy(true);
     try {
+      const stopRecords = stops.filter((s) => s.name.trim()).map((s) => ({ name: s.name.trim(), fareCents: s.fare === "" ? null : Math.round(parseFloat(s.fare) * 100) }));
       await apiPost(`/api/school/${currentSchoolId}/ops/transport`, {
         action: "save-route",
         id: route && route !== "new" ? route.id : undefined,
         name, vehicleReg, vehicleModel, driverName, driverPhone,
         capacity: Number(capacity), farePerTermCents: Math.round(parseFloat(fare) * 100),
-        stops: stops.split(",").map((s) => s.trim()).filter(Boolean),
+        farePerTripCents: farePerTrip === "" ? 0 : Math.round(parseFloat(farePerTrip) * 100),
+        stopRecords, stops: stopRecords.map((s) => s.name),
       });
       toast({ title: route === "new" ? "Route created" : "Route updated" });
       onDone();
@@ -230,10 +243,12 @@ function RouteDialog({ route, onOpenChange, onDone }: { route: Route | "new" | n
 
   return (
     <Dialog open={!!route} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto nice-scroll">
         <DialogHeader>
           <DialogTitle>{route === "new" ? "New bus route" : "Edit route"}</DialogTitle>
-          <DialogDescription>A route carries its vehicle, driver, stops and the termly fare billed to riders.</DialogDescription>
+          <DialogDescription>
+            A route carries its vehicle, driver and stops. Transport fare is <b>route-based, never class-based</b> — each pickup stop may carry its own one-way fare, so learners on the same route pay according to where they board.
+          </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5 sm:col-span-2"><Label>Route name *</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Adenta Loop" /></div>
@@ -243,7 +258,30 @@ function RouteDialog({ route, onOpenChange, onDone }: { route: Route | "new" | n
           <div className="space-y-1.5"><Label>Driver phone</Label><Input value={driverPhone} onChange={(e) => setDriverPhone(e.target.value)} placeholder="+233 24 551 7708" /></div>
           <div className="space-y-1.5"><Label>Capacity (seats)</Label><Input type="number" value={capacity} onChange={(e) => setCapacity(e.target.value)} /></div>
           <div className="space-y-1.5"><Label>Fare per term (GH₵) *</Label><Input type="number" value={fare} onChange={(e) => setFare(e.target.value)} placeholder="450" /></div>
-          <div className="space-y-1.5 sm:col-span-2"><Label>Stops (comma-separated)</Label><Input value={stops} onChange={(e) => setStops(e.target.value)} placeholder="Adenta Market, Community 25, Frafraha Junction" /></div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label>Default one-way fare (GH₵) — used when a stop has no fare of its own</Label>
+            <Input type="number" step="0.5" value={farePerTrip} onChange={(e) => setFarePerTrip(e.target.value)} placeholder="e.g. 8.00 — both ways 16.00" />
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <div className="flex items-center justify-between">
+              <Label>Pickup stops & fares</Label>
+              <Button type="button" size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={() => setStops([...stops, { name: "", fare: "" }])}><Plus className="size-3" /> Add stop</Button>
+            </div>
+            <div className="grid grid-cols-[1fr_110px_32px] gap-2 items-center">
+              <span className="text-[11px] text-muted-foreground -mb-1">Stop name</span>
+              <span className="text-[11px] text-muted-foreground -mb-1">One-way fare (GH₵)</span>
+              <span />
+              {stops.map((s, i) => (
+                <div key={i} className="contents">
+                  <Input value={s.name} onChange={(e) => setStop(i, "name", e.target.value)} placeholder={i === 0 ? "Adenta Market" : "Stop name"} />
+                  <Input type="number" step="0.5" value={s.fare} onChange={(e) => setStop(i, "fare", e.target.value)} placeholder="route default" />
+                  <Button type="button" size="sm" variant="ghost" className="size-8 p-0 text-muted-foreground hover:text-destructive" disabled={stops.length === 1}
+                    onClick={() => setStops(stops.filter((_, j) => j !== i))}><Trash2 className="size-3.5" /></Button>
+                </div>
+              ))}
+            </div>
+            <p className="text-[11px] text-muted-foreground">Leave a fare blank to use the route default. Morning or afternoon rides charge 1× the one-way fare; both ways 2×.</p>
+          </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
@@ -310,6 +348,22 @@ function AssignDialog({ route, unassigned, onOpenChange, onDone }: { route: Rout
               <StopPicker value={dropStop} onChange={setDropStop} options={route?.stops ?? []} placeholder="Same as pickup" />
             </div>
           </div>
+          {(() => {
+            // live fare preview: the pickup point sets the one-way fare (stop fare → route default)
+            const rec = route?.stopRecords?.find((s) => s.name === (pickupStop || dropStop));
+            const stopFare = rec?.fareCents ?? null;
+            const oneway = stopFare ?? route?.farePerTrip ?? 0;
+            if (!oneway) return null;
+            return (
+              <div className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-xs flex items-center gap-2">
+                <MapPin className="size-3.5 text-primary shrink-0" />
+                <span>
+                  One-way fare <b className="text-primary">{fmtCedi(oneway)}</b>{stopFare != null ? ` from ${pickupStop || dropStop} (stop fare)` : " (route default)"}
+                  {" "}· both ways <b>{fmtCedi(oneway * 2)}</b>
+                </span>
+              </div>
+            );
+          })()}
           <div className="space-y-1.5">
             <Label>Fare override (GH₵/term) — optional</Label>
             <Input type="number" value={fareOverride} onChange={(e) => setFareOverride(e.target.value)} placeholder={`Standard ${route ? fmtCedi(route.fare) : ""}`} />

@@ -12,11 +12,19 @@ import type { DailyCharge } from "@prisma/client";
 
 /** Apply a POS payment to a learner's daily ledger: oldest OWED charges first (FIFO).
  *  `onlyCategory` restricts settlement to one service category — used when paying
- *  from the transport wallet, which may only clear transport-fare charges. */
-export async function settleDailyCharges(db: PrismaClient, paymentId: string, studentId: string, amountCents: number, onlyCategory?: string) {
+ *  from the transport wallet, which may only clear transport-fare charges.
+ *  `serviceId` restricts settlement to ONE fee item — the per-item payment entry
+ *  (iEduPro §apply_payment: each item's amount clears that item's arrears FIFO,
+ *  any excess is returned to the caller to hold as item advance). */
+export async function settleDailyCharges(db: PrismaClient, paymentId: string, studentId: string, amountCents: number, onlyCategory?: string, serviceId?: string) {
   let remaining = amountCents;
   let owed: DailyCharge[];
-  if (onlyCategory) {
+  if (serviceId) {
+    owed = await db.dailyCharge.findMany({
+      where: { studentId, status: "OWED", serviceId },
+      orderBy: { date: "asc" },
+    });
+  } else if (onlyCategory) {
     const catCharges = await db.dailyCharge.findMany({
       where: { studentId, status: "OWED", service: { category: onlyCategory } },
       orderBy: { date: "asc" },
@@ -44,6 +52,64 @@ export async function settleDailyCharges(db: PrismaClient, paymentId: string, st
     }
   }
   return amountCents - remaining; // actually applied
+}
+
+// ── Per-item prepaid balances (iEduPro daily_fee_wallet parity) ──
+//  Each fee item carries its own prepaid credit. Charges AUTO-DEDUCT from it
+//  at generation time (CI3 apply_charge: balance → 0, remainder to arrears);
+//  excess counter payments land back on it as advance (CI3 apply_payment).
+export async function itemBalanceCents(db: PrismaClient, studentId: string, serviceId: string): Promise<number> {
+  const b = await db.serviceBalance.findUnique({ where: { studentId_serviceId: { studentId, serviceId } } });
+  return b?.prepaidCents ?? 0;
+}
+
+/** Credit a learner's per-item balance (top-up or payment advance). Writes the
+ *  WalletTxn trail. Returns the new balance. */
+export async function creditItemBalance(db: PrismaClient, opts: {
+  schoolId: string; studentId: string; serviceId: string; amountCents: number;
+  kind?: "TOPUP" | "ADJUST"; note?: string | null; byName?: string;
+}): Promise<number> {
+  const b = await db.serviceBalance.upsert({
+    where: { studentId_serviceId: { studentId: opts.studentId, serviceId: opts.serviceId } },
+    update: { prepaidCents: { increment: opts.amountCents } },
+    create: { schoolId: opts.schoolId, studentId: opts.studentId, serviceId: opts.serviceId, prepaidCents: opts.amountCents },
+  });
+  await db.walletTxn.create({
+    data: {
+      schoolId: opts.schoolId, studentId: opts.studentId, wallet: "ITEM", kind: opts.kind ?? "TOPUP",
+      amountCents: opts.amountCents, balanceAfter: b.prepaidCents, note: opts.note ?? null,
+      byName: opts.byName ?? null, serviceId: opts.serviceId,
+    },
+  });
+  return b.prepaidCents;
+}
+
+/** Auto-deduct a fresh charge from the learner's per-item prepaid balance
+ *  (CI3 apply_charge parity): settles the charge fully or partially from the
+ *  item balance, leaving the remainder owed. Writes the WalletTxn PAY trail.
+ *  Returns the amount covered by the balance. */
+export async function autoDeductFromItemBalance(db: PrismaClient, charge: { id: string; serviceId: string; studentId: string; schoolId: string; amountCents: number; date: Date }, opts?: { byName?: string }): Promise<number> {
+  const bal = await itemBalanceCents(db, charge.studentId, charge.serviceId);
+  if (bal <= 0) return 0;
+  const covered = Math.min(bal, charge.amountCents);
+  if (covered >= charge.amountCents) {
+    await db.dailyCharge.update({ where: { id: charge.id }, data: { status: "PAID" } });
+  } else {
+    // partial: paid part keeps the charge row, the remainder re-arms as OWED
+    await db.dailyCharge.update({ where: { id: charge.id }, data: { status: "PAID", amountCents: covered } });
+    await db.dailyCharge.create({
+      data: { serviceId: charge.serviceId, studentId: charge.studentId, schoolId: charge.schoolId, date: charge.date, amountCents: charge.amountCents - covered, status: "OWED", usage: null },
+    });
+  }
+  await db.serviceBalance.update({ where: { studentId_serviceId: { studentId: charge.studentId, serviceId: charge.serviceId } }, data: { prepaidCents: { decrement: covered } } });
+  await db.walletTxn.create({
+    data: {
+      schoolId: charge.schoolId, studentId: charge.studentId, wallet: "ITEM", kind: "PAY",
+      amountCents: -covered, balanceAfter: bal - covered, note: "auto-deduct from item balance",
+      byName: opts?.byName ?? null, serviceId: charge.serviceId,
+    },
+  });
+  return covered;
 }
 
 /** Effective price for a learner on a service: enrolment override → classroom
@@ -233,17 +299,20 @@ export async function generateDayCharges(
       if (amount <= 0) { skipped++; continue; }
       const charge = await db.dailyCharge.create({ data: { serviceId: svc.id, studentId: en.studentId, schoolId, date: day, amountCents: amount } });
       created++;
+      // iEduPro apply_charge parity: auto-deduct from the item's prepaid balance
+      // (balance → 0, remainder stays owed as arrears)
+      const covered = await autoDeductFromItemBalance(db, charge, { byName: opts?.performedByName });
       // iEduPro daily_fee_audit_log: a CHARGE row per successful daily charge creation
       const arrearsBefore = arrearsByStudent.get(en.studentId) ?? 0;
-      arrearsByStudent.set(en.studentId, arrearsBefore + amount);
+      arrearsByStudent.set(en.studentId, arrearsBefore + (covered >= amount ? 0 : amount - covered));
       const walletTotal = walletByStudent.get(en.studentId) ?? 0;
       await logDailyFeeAudit(db, {
         schoolId, studentId: en.studentId, actionType: "CHARGE", serviceCode: svc.name, amountCents: amount,
         balanceBeforeCents: walletTotal, balanceAfterCents: walletTotal,
-        arrearsBeforeCents: arrearsBefore, arrearsAfterCents: arrearsBefore + amount,
+        arrearsBeforeCents: arrearsBefore, arrearsAfterCents: arrearsBefore + (covered >= amount ? 0 : amount - covered),
         performedByName: opts?.performedByName, performedByRole: opts?.performedByRole,
         reference: charge.id,
-        notes: `day charge · ${svc.name} · ${day.toISOString().slice(0, 10)}`,
+        notes: `day charge · ${svc.name} · ${day.toISOString().slice(0, 10)}${covered > 0 ? ` · GH₵${(covered / 100).toFixed(2)} auto-deducted from item balance` : ""}`,
       });
       if (svc.chargeMode === "WEEKLY") weeklySeen.add(`${svc.id}:${en.studentId}`);
     }
@@ -309,15 +378,21 @@ export async function applyTransportUsage(
         status: usage === "NOT_USING" ? "WAIVED" : "OWED",
       },
     });
+    // iEduPro apply_charge parity: settle from the transport item's prepaid balance
+    let covered = 0;
     if (createdCharge.status === "OWED" && amount > 0) {
+      covered = await autoDeductFromItemBalance(db, createdCharge, { byName: opts?.performedByName });
+    }
+    if (amount > 0) {
       // iEduPro daily_fee_audit_log: the direction pick materialised the day's fare
+      const owedAfter = amount - covered; // what actually landed in arrears
       const arrearsAfter = await arrearsTotalCents(db, studentId);
       await logDailyFeeAudit(db, {
         schoolId, studentId, actionType: "CHARGE", serviceCode: svc.name, amountCents: amount,
-        arrearsBeforeCents: arrearsAfter - amount, arrearsAfterCents: arrearsAfter,
+        arrearsBeforeCents: arrearsAfter - owedAfter, arrearsAfterCents: arrearsAfter,
         performedByName: opts?.performedByName, performedByRole: opts?.performedByRole,
         reference: createdCharge.id,
-        notes: `transport fare · ${usage.toLowerCase()} · ${dStart.toISOString().slice(0, 10)}`,
+        notes: `transport fare · ${usage.toLowerCase()} · ${dStart.toISOString().slice(0, 10)}${covered > 0 ? ` · GH₵${(covered / 100).toFixed(2)} auto-deducted from item balance` : ""}`,
       });
     }
     return createdCharge;

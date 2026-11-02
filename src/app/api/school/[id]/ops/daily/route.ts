@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
-import { generateDayCharges, settleDailyCharges, effectivePrice, applyTransportUsage, parseTeacherPerms, DEFAULT_TEACHER_PERMS, collectionAllowed, TRANSPORT_USAGES, logDailyFeeAudit, arrearsTotalCents, type CollectionMode, type TeacherPerms, type TransportUsage } from "@/lib/daily-billing";
+import { generateDayCharges, settleDailyCharges, effectivePrice, applyTransportUsage, parseTeacherPerms, DEFAULT_TEACHER_PERMS, collectionAllowed, TRANSPORT_USAGES, logDailyFeeAudit, arrearsTotalCents, creditItemBalance, itemBalanceCents, type CollectionMode, type TeacherPerms, type TransportUsage } from "@/lib/daily-billing";
 import { sendAutomated } from "@/lib/sms";
 import { dailyServicesReceipt } from "@/lib/receipt-payload";
 import { nextReceiptNo } from "@/lib/codes";
 import { PAYMENT_LABELS } from "@/lib/format";
+
+const fmtMoney = (cents: number) => `GH₵${(cents / 100).toFixed(2)}`;
 
 // ── GET /api/school/[id]/ops/daily — services, ledger, POS, wallets, settings ──
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -84,12 +86,15 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   });
   // WEEKLY services (e.g. sachet water on Wednesdays) aggregate across the whole ISO week
   const weeklyServiceIds = services.filter((s) => s.chargeMode === "WEEKLY").map((s) => s.id);
-  if (weeklyServiceIds.length) {
-    const wk = new Date(dayStart);
-    const dow = (wk.getDay() + 6) % 7; // Monday = 0
-    wk.setDate(wk.getDate() - dow); wk.setHours(0, 0, 0, 0); // week start (Mon)
-    const wkEnd = new Date(wk); wkEnd.setDate(wkEnd.getDate() + 7);
-    const weekCharges = await db.dailyCharge.findMany({ where: { schoolId, serviceId: { in: weeklyServiceIds }, date: { gte: wk, lt: wkEnd } } });
+  const weekStart = (() => { const wk = new Date(dayStart); const dow = (wk.getDay() + 6) % 7; wk.setDate(wk.getDate() - dow); return wk; })();
+  const weekEnd = new Date(weekStart); weekEnd.setDate(weekStart.getDate() + 7);
+  const weekCharges = weeklyServiceIds.length
+    ? await db.dailyCharge.findMany({ where: { schoolId, serviceId: { in: weeklyServiceIds }, date: { gte: weekStart, lt: weekEnd } }, select: { studentId: true, serviceId: true, amountCents: true, status: true } })
+    : [];
+  // per-learner × weekly-service: already billed this week? (iEduPro: once the child
+  // pays within the week, no further billing until the following week)
+  const weekBilled = new Set(weekCharges.map((c) => `${c.studentId}:${c.serviceId}`));
+  {
     const weekByService: Record<string, { billed: number; collected: number; count: number; owedCount: number }> = {};
     weekCharges.forEach((c) => {
       const e = (weekByService[c.serviceId] ??= { billed: 0, collected: 0, count: 0, owedCount: 0 });
@@ -145,6 +150,17 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     };
   });
 
+  // ── per-item state for every learner (iEduPro daily_fee_wallet parity) ──
+  //  each fee item carries its own prepaid balance + arrears; the POS collect
+  //  dialog renders one row per item with the amount being paid per item
+  const itemBalRows = await db.serviceBalance.findMany({ where: { schoolId } });
+  const itemBal = new Map<string, number>(); // `${studentId}:${serviceId}` → prepaid cents
+  itemBalRows.forEach((b) => itemBal.set(`${b.studentId}:${b.serviceId}`, b.prepaidCents));
+  const itemOwed = new Map<string, number>(); // per-item arrears (sum of OWED charges)
+  ledgerCharges.forEach((c) => itemOwed.set(`${c.studentId}:${c.serviceId}`, (itemOwed.get(`${c.studentId}:${c.serviceId}`) ?? 0) + c.amountCents));
+  const itemToday = new Map<string, { amount: number; status: string; usage: string | null }>();
+  todayCharges.forEach((c) => itemToday.set(`${c.studentId}:${c.serviceId}`, { amount: c.amountCents, status: c.status, usage: c.usage }));
+
   const posStudents = studentRows.map((r) => ({
     id: r.student.id,
     name: `${r.student.firstName} ${r.student.lastName}`,
@@ -152,6 +168,18 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     classroomId: r.classroomId,
     guardianPhone: r.student.guardianPhone,
     services: r.student.serviceEnrollments.map((se) => ({ id: se.serviceId, name: se.service.name, category: se.service.category, price: effectivePrice(se.service, se, classRateFor(se.serviceId, r.classroomId)) })),
+    items: r.student.serviceEnrollments.map((se) => ({
+      serviceId: se.serviceId,
+      name: se.service.name,
+      category: se.service.category,
+      price: effectivePrice(se.service, se, classRateFor(se.serviceId, r.classroomId)),
+      arrears: itemOwed.get(`${r.student.id}:${se.serviceId}`) ?? 0,
+      balance: itemBal.get(`${r.student.id}:${se.serviceId}`) ?? 0,
+      today: itemToday.get(`${r.student.id}:${se.serviceId}`) ?? null,
+      weekly: se.service.chargeMode === "WEEKLY",
+      weeklyBilledThisWeek: se.service.chargeMode === "WEEKLY" && weekBilled.has(`${r.student.id}:${se.serviceId}`),
+      weekdays: se.service.weekdays,
+    })),
     balance: (ledger[r.student.id]?.owed ?? 0),
     wallet: walletByStudent[r.student.id] ?? { prepaidCents: 0, transportCents: 0 },
     todayTransport: transportByStudent[r.student.id] ?? null,
@@ -240,9 +268,15 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     posStudents,
     posPayments: posPayments.map((p) => ({ id: p.id, receiptNo: p.receiptNo, amount: p.amountCents, method: p.method, paidAt: p.paidAt, student: p.student ? `${p.student.firstName} ${p.student.lastName}` : "—" })),
     wallets: posStudents
-      .filter((s) => s.wallet.prepaidCents > 0 || s.wallet.transportCents > 0 || s.balance > 0)
-      .map((s) => ({ studentId: s.id, student: s.name, classroom: s.classroom, prepaid: s.wallet.prepaidCents, transport: s.wallet.transportCents, arrears: s.balance })),
-    walletTxns: walletTxns.map((t) => ({ id: t.id, student: `${t.student.firstName} ${t.student.lastName}`, wallet: t.wallet, kind: t.kind, amount: Math.abs(t.amountCents), balanceAfter: t.balanceAfter, note: t.note, byName: t.byName, at: t.at })),
+      .filter((s) => s.wallet.prepaidCents > 0 || s.wallet.transportCents > 0 || s.balance > 0 || s.items.some((i: any) => i.balance > 0))
+      .map((s) => ({
+        studentId: s.id, student: s.name, classroom: s.classroom,
+        prepaid: s.wallet.prepaidCents, transport: s.wallet.transportCents, arrears: s.balance,
+        // per-item prepaid + arrears (iEduPro daily_fee_wallet parity)
+        items: (s.items as any[]).filter((i) => i.balance > 0 || i.arrears > 0)
+          .map((i) => ({ serviceId: i.serviceId, name: i.name, category: i.category, balance: i.balance, arrears: i.arrears })),
+      })),
+    walletTxns: walletTxns.map((t) => ({ id: t.id, student: `${t.student.firstName} ${t.student.lastName}`, wallet: t.wallet, item: t.serviceId ? services.find((s) => s.id === t.serviceId)?.name ?? null : null, kind: t.kind, amount: Math.abs(t.amountCents), balanceAfter: t.balanceAfter, note: t.note, byName: t.byName, at: t.at })),
     // ── daily reconciliation (iedupro daily_fee_reconciliation): charges raised vs
     //    settled at the counter vs wallet deductions, with the collector breakdown
     //    for the handover report ──
@@ -297,12 +331,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   // ── per-classroom rate matrix (iedupro daily_fee_rates: rates are set per
-  //    class-section per fee type). upsert one rate; clear removes the override. ──
+  //    class-section per fee type). upsert one rate; clear removes the override.
+  //    TRANSPORT is the exception — fares follow the bus ROUTE (per pickup stop,
+  //    iEduPro enroll.transport_id → transport.route_fare), never the class. ──
   if (action === "rate-save") {
     const { serviceId, classroomId, priceCents } = body;
     if (!serviceId || !classroomId) return NextResponse.json({ error: "serviceId and classroomId required" }, { status: 400 });
     const svc = await db.dailyService.findUnique({ where: { id: serviceId } });
     if (!svc || svc.schoolId !== schoolId) return NextResponse.json({ error: "Service not found" }, { status: 404 });
+    if (svc.category === "TRANSPORT")
+      return NextResponse.json({ error: "Transport fare is not class-based — it follows the bus route and pickup stop. Manage fares in Transportation → Routes." }, { status: 400 });
     const cls = await db.classroom.findUnique({ where: { id: classroomId } });
     if (!cls || cls.schoolId !== schoolId) return NextResponse.json({ error: "Classroom not found" }, { status: 404 });
     const price = Math.max(0, Math.round(Number(priceCents) || 0));
@@ -366,13 +404,28 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   if (action === "wallet-topup") {
-    const { studentId, wallet, amountCents, note } = body;
+    const { studentId, wallet, amountCents, note, serviceId } = body;
     if (!studentId) return NextResponse.json({ error: "studentId required" }, { status: 400 });
-    if (wallet !== "PREPAID" && wallet !== "TRANSPORT") return NextResponse.json({ error: "wallet must be PREPAID or TRANSPORT" }, { status: 400 });
     const amt = Math.round(Number(amountCents));
     if (!amt || amt <= 0) return NextResponse.json({ error: "Enter a top-up amount above zero" }, { status: 400 });
     const student = await db.student.findUnique({ where: { id: studentId } });
     if (!student) return NextResponse.json({ error: "Learner not found" }, { status: 404 });
+
+    // ── per-item top-up (iEduPro daily_fee_wallet: each fee item holds its own
+    //    prepaid credit — top up Lunch, Water, Transport fare, … separately) ──
+    if (serviceId) {
+      const svc = await db.dailyService.findUnique({ where: { id: serviceId } });
+      if (!svc || svc.schoolId !== schoolId) return NextResponse.json({ error: "Service not found" }, { status: 404 });
+      const balance = await creditItemBalance(db, { schoolId, studentId, serviceId, amountCents: amt, kind: "TOPUP", note: note ?? null, byName: user.fullName });
+      await logDailyFeeAudit(db, {
+        schoolId, studentId, actionType: "TOPUP", serviceCode: svc.name, amountCents: amt,
+        performedByName: user.fullName, performedByRole: user.role,
+        notes: `Item balance top-up — ${svc.name}${note ? ` — ${note}` : ""}`,
+      });
+      return NextResponse.json({ service: { id: svc.id, name: svc.name }, balance, wallet: "ITEM" });
+    }
+
+    if (wallet !== "PREPAID" && wallet !== "TRANSPORT") return NextResponse.json({ error: "wallet must be PREPAID or TRANSPORT" }, { status: 400 });
     const existing = await db.studentWallet.findUnique({ where: { studentId } });
     const w = existing
       ? await db.studentWallet.update({
@@ -400,8 +453,31 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   if (action === "wallet-adjust") {
     // correction: set a wallet to an exact balance (audit-trailed)
-    const { studentId, wallet, amountCents, note } = body;
+    const { studentId, wallet, amountCents, note, serviceId } = body;
     if (!studentId) return NextResponse.json({ error: "studentId required" }, { status: 400 });
+
+    // ── per-item balance correction ──
+    if (serviceId) {
+      const svc = await db.dailyService.findUnique({ where: { id: serviceId } });
+      if (!svc || svc.schoolId !== schoolId) return NextResponse.json({ error: "Service not found" }, { status: 404 });
+      const target = Math.max(0, Math.round(Number(amountCents) || 0));
+      const before = await itemBalanceCents(db, studentId, serviceId);
+      await db.serviceBalance.upsert({
+        where: { studentId_serviceId: { studentId, serviceId } },
+        update: { prepaidCents: target },
+        create: { schoolId, studentId, serviceId, prepaidCents: target },
+      });
+      await db.walletTxn.create({
+        data: { schoolId, studentId, wallet: "ITEM", kind: "ADJUST", amountCents: target - before, balanceAfter: target, note: note ?? "balance correction", byName: user.fullName, serviceId },
+      });
+      await logDailyFeeAudit(db, {
+        schoolId, studentId, actionType: "ADJUSTMENT", serviceCode: svc.name, amountCents: target - before,
+        performedByName: user.fullName, performedByRole: user.role,
+        notes: `Item balance set to GH₵${(target / 100).toFixed(2)} — ${svc.name} — ${note ?? "balance correction"}`,
+      });
+      return NextResponse.json({ service: { id: svc.id, name: svc.name }, balance: target, wallet: "ITEM" });
+    }
+
     if (wallet !== "PREPAID" && wallet !== "TRANSPORT") return NextResponse.json({ error: "wallet must be PREPAID or TRANSPORT" }, { status: 400 });
     const target = Math.max(0, Math.round(Number(amountCents) || 0));
     const w0 = await db.studentWallet.findUnique({ where: { studentId } });
@@ -427,7 +503,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   if (action === "pos-collect") {
-    const { studentId, amountCents, method, reference, payFrom, paidAt, transportUsage, markPresent } = body;
+    const { studentId, amountCents, items, method, reference, payFrom, paidAt, transportUsage, markPresent } = body;
     const student = await db.student.findUnique({ where: { id: studentId } });
     if (!student) return NextResponse.json({ error: "Learner not found" }, { status: 404 });
 
@@ -440,6 +516,102 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         return NextResponse.json({ error: "This learner has no active route assignment — transport fare follows the bus route." }, { status: 400 });
     }
 
+    // ── per-item payment entry (iEduPro §apply_payment) ───────────────────
+    //  each fee item carries the amount being paid for it; the item's arrears
+    //  settle FIFO and any EXCESS lands on that item's prepaid balance as
+    //  advance (payment_type: arrears | current | advance | mixed).
+    if (Array.isArray(items) && items.length) {
+      const parsed = (items as { serviceId?: string; amountCents?: number }[])
+        .map((i) => ({ serviceId: String(i.serviceId ?? ""), amountCents: Math.max(0, Math.round(Number(i.amountCents) || 0)) }))
+        .filter((i) => i.serviceId && i.amountCents > 0);
+      if (!parsed.length) return NextResponse.json({ error: "Enter an amount for at least one fee item" }, { status: 400 });
+      const svcRows = await db.dailyService.findMany({ where: { schoolId, id: { in: parsed.map((i) => i.serviceId) } } });
+      if (svcRows.length !== parsed.length) return NextResponse.json({ error: "One of the fee items does not belong to this school" }, { status: 400 });
+      const total = parsed.reduce((s, i) => s + i.amountCents, 0);
+
+      // collection policy (iedupro §1): mode + teacher permission matrix
+      const settingRows = await db.opsSetting.findMany({ where: { schoolId, key: { in: ["DAILY_COLLECTION_MODE", "DAILY_TEACHER_PERMS"] } } });
+      const mode = ((settingRows.find((r) => r.key === "DAILY_COLLECTION_MODE")?.value ?? "HYBRID") as CollectionMode);
+      const perms = parseTeacherPerms(settingRows.find((r) => r.key === "DAILY_TEACHER_PERMS")?.value);
+      const en = await db.enrollment.findFirst({ where: { studentId, status: "ACTIVE", schoolId } });
+      const gate = collectionAllowed(user.role, mode, perms, {
+        classroomId: en?.classroomId ?? null,
+        serviceIds: parsed.map((i) => i.serviceId),
+      });
+      if (!gate.ok) return NextResponse.json({ error: gate.reason ?? "Not permitted" }, { status: 403 });
+
+      const owedAgg0 = await db.dailyCharge.aggregate({ where: { studentId, status: "OWED" }, _sum: { amountCents: true } });
+      const owedBefore = owedAgg0._sum.amountCents ?? 0;
+      const payMethod = method ?? "CASH";
+      const payment = await db.payment.create({
+        data: {
+          receiptNo: await nextReceiptNo(), studentId, category: "DAILY", schoolId,
+          amountCents: total, method: payMethod, reference: reference ?? null,
+          receivedByName: user.fullName,
+          paidAt: paidAt ? new Date(paidAt) : new Date(),
+        },
+      });
+
+      const breakdown: { name: string; paid: number; advance: number }[] = [];
+      let settledTotal = 0, advanceTotal = 0;
+      for (const it of parsed) {
+        const svc = svcRows.find((s) => s.id === it.serviceId)!;
+        const applied = await settleDailyCharges(db, payment.id, studentId, it.amountCents, undefined, it.serviceId);
+        const excess = it.amountCents - applied;
+        if (excess > 0) await creditItemBalance(db, { schoolId, studentId, serviceId: it.serviceId, amountCents: excess, kind: "TOPUP", note: `advance — ${payment.receiptNo}`, byName: user.fullName });
+        settledTotal += applied; advanceTotal += excess;
+        breakdown.push({ name: svc.name, paid: applied, advance: excess });
+      }
+      const paymentType = advanceTotal === 0 ? "arrears" : settledTotal === 0 ? "advance" : "mixed"; // iEduPro daily_fee_transactions.payment_type
+
+      const arrearsAfterAgg = await db.dailyCharge.aggregate({ where: { studentId, status: "OWED" }, _sum: { amountCents: true } });
+      await logDailyFeeAudit(db, {
+        schoolId, studentId, actionType: "PAYMENT",
+        serviceCode: breakdown.length === 1 ? breakdown[0].name : "MULTIPLE",
+        amountCents: total,
+        arrearsBeforeCents: owedBefore, arrearsAfterCents: arrearsAfterAgg._sum.amountCents ?? 0,
+        performedByName: user.fullName, performedByRole: user.role,
+        reference: payment.receiptNo,
+        notes: `${PAYMENT_LABELS[payMethod] ?? payMethod} · ${paymentType} · ${breakdown.map((b) => `${b.name} ${fmtMoney(b.paid)}${b.advance ? ` (+${fmtMoney(b.advance)} advance)` : ""}`).join(", ")}${reference ? ` · ref ${reference}` : ""}`,
+      });
+
+      // mark present (same as the legacy path)
+      let present: string | null = null;
+      if (markPresent) {
+        const d = new Date(body.date ?? new Date().toISOString().slice(0, 10));
+        const dStart = new Date(d); dStart.setHours(0, 0, 0, 0);
+        const dEnd = new Date(d); dEnd.setHours(23, 59, 59, 999);
+        if (!en) present = "no-class";
+        else {
+          const session = await db.attendanceSession.findFirst({ where: { classroomId: en.classroomId, date: { gte: dStart, lte: dEnd } }, include: { records: { where: { studentId } } } });
+          if (!session) present = "no-session";
+          else if (session.records.length) {
+            if (session.records[0].status !== "PRESENT") {
+              await db.attendanceRecord.update({ where: { id: session.records[0].id }, data: { status: "PRESENT" } });
+              present = "updated";
+            } else present = "already";
+          } else {
+            await db.attendanceRecord.create({ data: { sessionId: session.id, studentId, status: "PRESENT" } });
+            present = "marked";
+          }
+        }
+      }
+
+      // auto receipt SMS
+      const setting = await db.smsSetting.findUnique({ where: { schoolId } });
+      if (setting?.autoPaymentReceipts) {
+        await sendAutomated({
+          db, schoolId, trigger: "PAYMENT_RECEIVED",
+          defaultBody: `We have received GH₵${(total / 100).toFixed(2)} for ${student.firstName} (${payment.receiptNo}) towards daily services. Thank you.`,
+          vars: { student: student.firstName, amount: `GH₵${(total / 100).toFixed(2)}`, receipt: payment.receiptNo, date: new Date().toLocaleDateString("en-GB") },
+          studentId, recipientName: student.guardianName, recipientPhone: student.guardianPhone, sentByName: user.fullName,
+        });
+      }
+      const receipt = await dailyServicesReceipt(db, payment.id);
+      return NextResponse.json({ payment: { ...payment, applied: settledTotal, advance: advanceTotal, paymentType, breakdown }, student: `${student.firstName} ${student.lastName}`, receipt, present });
+    }
+
+    // ── legacy single-amount path (offline queue + quick pay) ──────────────
     const owed = await db.dailyCharge.aggregate({ where: { studentId, status: "OWED" }, _sum: { amountCents: true } });
     const owedCents = owed._sum.amountCents ?? 0;
     if (owedCents <= 0) return NextResponse.json({ error: "No outstanding daily balance" }, { status: 400 });

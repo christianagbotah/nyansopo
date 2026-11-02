@@ -125,7 +125,27 @@ async function main() {
         bus++;
       }
     }
-    console.log(`✅ ${code}: ${topups} prepaid wallets · ${bus} transport wallets`);
+    // ── per-item prepaid balances (iEduPro daily_fee_wallet parity): prepaid
+    //    credit tied to ONE fee item — its day charges auto-deduct from it ──
+    const svcRows = await db.dailyService.findMany({ where: { schoolId, active: true }, orderBy: { name: "asc" } });
+    const mealSvc = svcRows.find((s) => s.category === "MEAL");
+    const drinkSvc = svcRows.find((s) => s.category === "DRINK");
+    const itemNames = ["Weekly lunch advance — grandma", "Item credit for lunch", "Water card top-up", "Feeding balance carried from last term"];
+    let items = 0;
+    for (let i = 0; i < students.length; i++) {
+      const st = students[i];
+      const svc = i % 7 === 0 ? drinkSvc : i % 4 === 0 ? mealSvc : null;
+      if (!svc) continue;
+      const amt = C(5 + ((i * 13) % 25)); // GH₵5–30 spread
+      await db.serviceBalance.upsert({
+        where: { studentId_serviceId: { studentId: st.studentId, serviceId: svc.id } },
+        update: { prepaidCents: { increment: amt } },
+        create: { schoolId, studentId: st.studentId, serviceId: svc.id, prepaidCents: amt },
+      });
+      await db.walletTxn.create({ data: { schoolId, studentId: st.studentId, wallet: "ITEM", kind: "TOPUP", amountCents: amt, balanceAfter: amt, note: pick(itemNames, i), byName: "Madam Grace Mensah", serviceId: svc.id } });
+      items++;
+    }
+    console.log(`✅ ${code}: ${topups} prepaid wallets · ${bus} transport wallets · ${items} per-item balances`);
   }
 
   console.log("🎉 Daily-ext seed done.");

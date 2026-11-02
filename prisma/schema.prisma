@@ -168,6 +168,7 @@ model School {
   crecheRatings       CrecheRating[]
   schoolSettings      SchoolSetting[]
   mediaAssets         MediaAsset[]
+  serviceBalances     ServiceBalance[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -343,6 +344,7 @@ model Student {
   serviceEnrollments   DailyServiceEnrollment[]
   wallet               StudentWallet?
   walletTxns           WalletTxn[]
+  serviceBalances      ServiceBalance[]
   dailyCharges         DailyCharge[]
   transportAssignments TransportAssignment[]
   smsMessages          SmsMessage[]
@@ -810,6 +812,7 @@ model DailyService {
   enrollments DailyServiceEnrollment[]
   charges     DailyCharge[]
   classRates  DailyServiceRate[]
+  balances    ServiceBalance[]
 }
 
 // ── Per-classroom rate overrides (iedupro daily_fee_rates: rates are set per
@@ -879,15 +882,35 @@ model WalletTxn {
   school       School   @relation(fields: [schoolId], references: [id])
   studentId    String
   student      Student  @relation(fields: [studentId], references: [id])
-  wallet       String // PREPAID | TRANSPORT
+  wallet       String // GENERAL | PREPAID | TRANSPORT | ITEM (per-service balance; see serviceId)
   kind         String // TOPUP | PAY | ADJUST
   amountCents  Int // signed: + credit, − debit
   balanceAfter Int
   note         String?
   byName       String?
+  serviceId    String? // set when wallet = ITEM — the daily-service item the txn moved
   at           DateTime @default(now())
 
   @@index([schoolId, studentId])
+}
+
+// Per-item prepaid balances (iEduPro daily_fee_wallet parity — each fee item
+// carries its own prepaid credit; charges auto-deduct from it, excess payments
+// land back on it as advance). The general StudentWallet.prepaidCents remains
+// a flexible any-item credit line.
+model ServiceBalance {
+  id           String        @id @default(cuid())
+  schoolId     String
+  school       School        @relation(fields: [schoolId], references: [id])
+  studentId    String
+  student      Student       @relation(fields: [studentId], references: [id])
+  serviceId    String
+  service      DailyService  @relation(fields: [serviceId], references: [id])
+  prepaidCents Int           @default(0)
+  updatedAt    DateTime      @default(now()) @updatedAt
+
+  @@unique([studentId, serviceId])
+  @@index([schoolId])
 }
 
 // ─────────────────────────────────────────────────────────────
