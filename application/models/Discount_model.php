@@ -245,13 +245,20 @@ class Discount_model extends MY_Model {
             $rule_class = ($rule['class_id'] !== null && $rule['class_id'] !== '')
                 ? (string)$rule['class_id'] : null;
             
-            // Score by specificity - highest wins
-            $score = 0;
-            if ($rule_class !== null && (string)$class_id === $rule_class) $score += 2;
-            if ($fee_type !== null && $rule_fee !== null) {
-                if (strtolower($rule_fee) === strtolower($fee_type)) $score += 1;
-                else continue; // Rule targets a different fee type - skip
+            // A rule matches when its class scope covers the student's class AND
+            // its fee scope covers the fee being priced.
+            $class_matches = ($rule_class === null) || ((string)$class_id === $rule_class);
+            $fee_matches = ($rule_fee === null)
+                || ($fee_type !== null && strtolower($rule_fee) === strtolower($fee_type));
+            
+            if (!$class_matches || !$fee_matches) {
+                continue; // Rule does not apply to this class/fee combination
             }
+            
+            // Score by specificity - highest wins (0 = global rule, still a match)
+            $score = 0;
+            if ($rule_class !== null) $score += 2;
+            if ($rule_fee !== null && $fee_type !== null) $score += 1;
             
             if ($score > $best_score) {
                 $best_score = $score;
@@ -259,7 +266,7 @@ class Discount_model extends MY_Model {
             }
         }
         
-        return ($best !== null && $best_score > 0) ? (float)$best['discount_value'] : null;
+        return ($best !== null) ? (float)$best['discount_value'] : null;
     }
 
     /**
