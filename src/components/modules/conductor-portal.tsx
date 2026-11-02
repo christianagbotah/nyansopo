@@ -146,7 +146,7 @@ export function ConductorPortal() {
             <Tile icon={<Wallet className="size-4" />} label="Fares settled today" value={fmtCedi(faresPaidToday, { compact: true })} sub={`of ${fmtCedi(faresDueToday, { compact: true })} marked${faresOwingToday > 0 ? ` · ${fmtCedi(faresOwingToday, { compact: true })} owing` : " — all settled"}`} />
           </div>
 
-          <div className="grid lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {/* manifest */}
             <Card className="lg:col-span-2">
               <CardHeader className="pb-2">

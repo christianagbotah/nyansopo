@@ -297,34 +297,54 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         return NextResponse.json({ receipts: payloads });
       }
       if (action === "record-payment") {
-        const { invoiceId, amountCents, method, reference, offline, clientId } = body;
+        const { invoiceId, amountCents, method, reference, bankName, chequeNo, offline, clientId } = body;
         if (clientId) {
           const existing = await db.payment.findFirst({ where: { reference: `SYNC:${clientId}` } });
           if (existing) return NextResponse.json({ payment: existing, duplicate: true });
         }
         const inv = await db.invoice.findUnique({ where: { id: invoiceId }, include: { student: true } });
         if (!inv) return NextResponse.json({ error: "Invoice not found" }, { status: 404 });
-        const amt = Math.max(0, Math.min(Number(amountCents), inv.totalCents - inv.discountCents - inv.paidCents));
-        if (amt <= 0) return NextResponse.json({ error: "Amount exceeds balance or is invalid" }, { status: 400 });
+        // CI3 prepaid credits: the amount received may EXCEED the balance —
+        // min(amount, balance) settles the invoice, the excess is banked as the
+        // learner's credit (StudentCredit kind CREDIT, receipt-linked) and is
+        // auto-applied to future bills / convertible to the daily wallet.
+        const requested = Math.round(Number(amountCents) || 0);
+        if (requested <= 0) return NextResponse.json({ error: "Amount is invalid" }, { status: 400 });
+        const invBalance = Math.max(0, inv.totalCents - inv.discountCents - inv.paidCents);
+        const amt = Math.min(requested, invBalance);
+        const excess = requested - amt;
         const payment = await db.payment.create({
           data: {
-            receiptNo: await nextReceiptNo(), invoiceId, studentId: inv.studentId, schoolId, amountCents: amt,
+            receiptNo: await nextReceiptNo(), invoiceId, studentId: inv.studentId, schoolId, amountCents: requested,
             method: method ?? "CASH", reference: clientId ? `SYNC:${clientId}` : reference ?? null,
+            bankName: bankName ?? null, chequeNo: chequeNo ?? null,
             receivedByName: user.fullName, paidAt: new Date(body.paidAt ?? Date.now()),
             offlineQueued: !!offline, syncedAt: offline ? new Date() : null,
           },
         });
         const paid = inv.paidCents + amt;
         await db.invoice.update({ where: { id: invoiceId }, data: { paidCents: paid, status: paid >= inv.totalCents - inv.discountCents ? "PAID" : "PARTIAL" } });
+        // bank the overpayment as prepaid credit (running balance = Σ signed rows)
+        if (excess > 0) {
+          const agg = await db.studentCredit.aggregate({ where: { schoolId, studentId: inv.studentId }, _sum: { amountCents: true } });
+          const creditBal = agg._sum.amountCents ?? 0;
+          await db.studentCredit.create({
+            data: {
+              schoolId, studentId: inv.studentId, kind: "CREDIT", amountCents: excess,
+              balanceAfter: creditBal + excess, sourcePaymentId: payment.id,
+              note: `Overpayment on ${inv.invoiceNo} — carried forward to future bills`, byName: user.fullName,
+            },
+          });
+        }
         // auto receipt SMS to the guardian
         const smsSetting = await db.smsSetting.findUnique({ where: { schoolId } });
         if (smsSetting?.autoPaymentReceipts) {
           const balanceAfter = inv.totalCents - inv.discountCents - paid;
           await sendAutomated({
             db, schoolId, trigger: "PAYMENT_RECEIVED",
-            defaultBody: `We have received GH₵${(amt / 100).toFixed(2)} for ${inv.student.firstName} (${payment.receiptNo}). Balance: GH₵${(Math.max(0, balanceAfter) / 100).toFixed(2)}. Thank you.`,
+            defaultBody: `We have received GH₵${(requested / 100).toFixed(2)} for ${inv.student.firstName} (${payment.receiptNo}). Balance: GH₵${(Math.max(0, balanceAfter) / 100).toFixed(2)}${excess > 0 ? `. Credit: GH₵${(excess / 100).toFixed(2)}` : ""}. Thank you.`,
             vars: {
-              student: inv.student.firstName, amount: `GH₵${(amt / 100).toFixed(2)}`,
+              student: inv.student.firstName, amount: `GH₵${(requested / 100).toFixed(2)}`,
               balance: `GH₵${(Math.max(0, balanceAfter) / 100).toFixed(2)}`, receipt: payment.receiptNo,
               date: new Date().toLocaleDateString("en-GB"),
             },
@@ -332,7 +352,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           });
         }
         const receipt = await invoicePaymentReceipt(db, payment.id);
-        return NextResponse.json({ payment: { ...payment, student: `${inv.student.firstName} ${inv.student.lastName}` }, receipt });
+        return NextResponse.json({
+          payment: { ...payment, student: `${inv.student.firstName} ${inv.student.lastName}` },
+          receipt: excess > 0 ? { ...receipt, creditCreated: excess } : receipt,
+          creditCreated: excess > 0 ? excess : undefined,
+        });
       }
       if (action === "generate-invoices") {
         const { classroomId } = body;
@@ -345,6 +369,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         const have = new Set(existing.map((e) => e.studentId));
         let created = 0;
         let discounted = 0;
+        let creditsApplied = 0;
         // active invoice-scope discount applications: auto-apply catalog discounts
         // AND approved profile assignments (iedupro parity — profiles carry
         // per-class rule overrides resolved at billing time)
@@ -367,6 +392,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           for (const it of fs.items.filter((i) => !i.isOptional)) await db.invoiceItem.create({ data: { invoiceId: inv.id, name: it.name, amountCents: it.amountCents } });
           // apply discounts: percentages stack (floor at 100%), fixed amounts subtract
           const apps = appByStudent[e.studentId] ?? [];
+          let discountTotal = 0;
           if (apps.length) {
             let pct = 0, fixed = 0;
             const names: string[] = [];
@@ -383,7 +409,23 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             const amount = Math.min(fs.totalCents, Math.round((fs.totalCents * Math.min(100, pct)) / 100) + Math.min(fs.totalCents, fixed));
             if (amount > 0) {
               await db.invoice.update({ where: { id: inv.id }, data: { discountCents: amount, discountReason: names.join(" + ") } });
+              discountTotal = amount;
               discounted++;
+            }
+          }
+          // CI3 prepaid credit: auto-apply the learner's credit balance to the
+          // fresh bill (up to the amount due) — ledger row kind APPLY, invoice paidCents
+          const creditAgg = await db.studentCredit.aggregate({ where: { schoolId, studentId: e.studentId }, _sum: { amountCents: true } });
+          const creditBal = creditAgg._sum.amountCents ?? 0;
+          if (creditBal > 0) {
+            const due = inv.totalCents - discountTotal;
+            const applied = Math.min(creditBal, due);
+            if (applied > 0) {
+              await db.studentCredit.create({
+                data: { schoolId, studentId: e.studentId, kind: "APPLY", amountCents: -applied, balanceAfter: creditBal - applied, invoiceId: inv.id, note: `Auto-applied to ${inv.invoiceNo} at billing`, byName: user.fullName },
+              });
+              await db.invoice.update({ where: { id: inv.id }, data: { paidCents: applied, status: applied >= due ? "PAID" : "PARTIAL" } });
+              creditsApplied++;
             }
           }
           created++;
@@ -402,7 +444,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             });
           }
         }
-        return NextResponse.json({ created, discounted });
+        return NextResponse.json({ created, discounted, creditsApplied });
       }
       if (action === "flag-defaulter") {
         const { studentId, amountCents, description, type = "FEE_ARREARS", severity = "HIGH" } = body;

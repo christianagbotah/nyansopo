@@ -650,6 +650,13 @@ async function main() {
   // ops modules: daily services, transport, SMS, payroll, inventory, discounts
   const { seedOps } = await import("./seed-ops");
   await seedOps();
+  // parity extensions: student credits, extended attendance statuses, crèche/early-years
+  const { seedCredits } = await import("./seed-credits");
+  await seedCredits();
+  const { seedAttendanceExtra } = await import("./seed-attendance-extra");
+  await seedAttendanceExtra();
+  const { seedCreche } = await import("./seed-creche");
+  await seedCreche();
 }
 
 main().catch((e) => { console.error(e); process.exit(1); }).finally(() => db.$disconnect());

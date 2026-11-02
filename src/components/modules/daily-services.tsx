@@ -241,7 +241,7 @@ export function DailyServices() {
               );
             })}
           </div>
-          <div className="grid lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             <Card className="lg:col-span-2">
               <CardHeader className="pb-3 flex-row items-center justify-between space-y-0 flex-wrap gap-2">
                 <CardTitle className="text-base">Collect a payment</CardTitle>
@@ -328,7 +328,7 @@ export function DailyServices() {
                 { value: "all", label: "All" }, { value: "prepaid", label: "Has prepaid" }, { value: "transport", label: "Has transport" }, { value: "arrears", label: "In arrears" },
               ]} />
             </FilterBar>
-            <div className="grid lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             <Card className="lg:col-span-2">
               <CardHeader className="pb-3 flex-row items-center justify-between space-y-0">
                 <CardTitle className="text-base">Learner wallets</CardTitle>
@@ -461,7 +461,7 @@ export function DailyServices() {
           <div className="flex justify-end mb-3">
             <Button size="sm" className="gap-1.5" onClick={() => setSvcDialog("new")}><Plus className="size-4" /> New service</Button>
           </div>
-          <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {data.services.map((s) => {
               const Icon = CAT_ICON[s.category] ?? UtensilsCrossed;
               const rate = s.month.billed ? Math.round((s.month.collected / s.month.billed) * 100) : 0;

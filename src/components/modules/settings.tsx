@@ -15,8 +15,9 @@ import { ModuleHeader, LoadingBlock, StatusBadge, StatCard, EmptyState } from "@
 import { SCALES_TABLE } from "@/lib/grading-scale";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { Settings as SettingsIcon, GraduationCap, BookOpen, Users, CalendarRange, Plus, Save, MessageSquareQuote, Sparkles, Trash2, Award, Pencil } from "lucide-react";
+import { Settings as SettingsIcon, GraduationCap, BookOpen, Users, CalendarRange, Plus, Save, MessageSquareQuote, Sparkles, Trash2, Award, Pencil, Baby, Sigma, PencilLine, ChevronDown, ChevronRight } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 
 export function Settings() {
   const { currentSchoolId, navTarget } = useStore();
@@ -66,12 +67,14 @@ export function Settings() {
           <TabsTrigger value="calendar">Calendar</TabsTrigger>
           <TabsTrigger value="staff">Staff ({data.staff.length})</TabsTrigger>
           <TabsTrigger value="grading">Grading scale</TabsTrigger>
+          <TabsTrigger value="earlyyears" className="gap-1.5"><Baby className="size-4" /> Early years</TabsTrigger>
+          <TabsTrigger value="sba" className="gap-1.5"><Sigma className="size-4" /> SBA marks config</TabsTrigger>
           <TabsTrigger value="waec" className="gap-1.5"><Award className="size-4" /> WAEC grading</TabsTrigger>
           <TabsTrigger value="reportlib">Report library ({(data.remarkTemplates?.length ?? 0) + (data.conductItems?.length ?? 0)})</TabsTrigger>
         </TabsList>
 
         <TabsContent value="profile">
-          <div className="grid lg:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <Card>
               <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><SettingsIcon className="size-4" /> School profile</CardTitle></CardHeader>
               <CardContent className="space-y-3">
@@ -112,7 +115,7 @@ export function Settings() {
                 <div className="space-y-1.5">
                   <Label>Curriculum</Label>
                   <Select value={form.curriculum} onValueChange={(v) => setForm({ ...form, curriculum: v })}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="w-full"><SelectValue>{form.curriculum === "GES" ? "GES — NaCCA (SBC + CCP)" : form.curriculum === "CAIE" ? "Cambridge — CAIE" : form.curriculum === "IB" ? "IB World School" : form.curriculum}</SelectValue></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="GES">GES — NaCCA Standards-Based & Common Core (BECE)</SelectItem>
                       <SelectItem value="CAIE">Cambridge — CAIE (Primary → IGCSE → A-Level)</SelectItem>
@@ -228,6 +231,14 @@ export function Settings() {
           <WaecGradingTab />
         </TabsContent>
 
+        <TabsContent value="earlyyears">
+          <EarlyYearsTab />
+        </TabsContent>
+
+        <TabsContent value="sba">
+          <SbaConfigTab />
+        </TabsContent>
+
         <TabsContent value="reportlib">
           <ReportLibraryTab data={data} onChanged={load} />
         </TabsContent>
@@ -320,7 +331,7 @@ function ReportLibraryTab({ data, onChanged }: { data: any; onChanged: () => voi
   }
 
   return (
-    <div className="grid lg:grid-cols-2 gap-4 items-start">
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
       {/* remark templates */}
       <Card>
         <CardHeader className="pb-3 flex-row items-center justify-between space-y-0 flex-wrap gap-2">
@@ -595,5 +606,310 @@ function RawGradeDialog({ grade, onOpenChange, onDone }: { grade: RawGradeRow | 
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   EARLY YEARS (CRÈCHE / KG) — NaCCA developmental-domain setup:
+   the proficiency rating scale (code → label) and the domains with
+   their observable skills, rated per learner in the Gradebook.      */
+type CrecheScaleRow = { id: string; code: string; label: string; sortOrder: number };
+type CrecheSkillRow = { id: string; domainId: string; name: string; sortOrder: number };
+type CrecheDomainRow = { id: string; name: string; sortOrder: number; active: boolean; skills: CrecheSkillRow[] };
+
+function EarlyYearsTab() {
+  const { currentSchoolId } = useStore();
+  const [data, setData] = useState<{ scale: CrecheScaleRow[]; domains: CrecheDomainRow[] } | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [openDomain, setOpenDomain] = useState<string | null>(null);
+  // scale draft row (new / editing)
+  const [scaleDraft, setScaleDraft] = useState<{ id?: string; code: string; label: string; sortOrder: string }>({ code: "", label: "", sortOrder: "" });
+  // domain draft
+  const [domainDraft, setDomainDraft] = useState<{ id?: string; name: string; sortOrder: string; active: boolean } | null>(null);
+  // skill drafts per domain
+  const [skillDrafts, setSkillDrafts] = useState<Record<string, { id?: string; name: string; sortOrder: string }>>({});
+  const [editSkill, setEditSkill] = useState<{ domainId: string; skill: CrecheSkillRow } | null>(null);
+
+  const load = () => {
+    if (!currentSchoolId) return;
+    apiGet<{ scale: CrecheScaleRow[]; domains: CrecheDomainRow[] }>(`/api/school/${currentSchoolId}/ops/academics?action=creche-setup`)
+      .then(setData)
+      .catch((e) => toast({ title: "Load failed", description: e.message, variant: "destructive" }));
+  };
+  useEffect(load, [currentSchoolId]);
+
+  async function act(payload: Record<string, unknown>, key: string, okMsg: string) {
+    if (!currentSchoolId) return false;
+    setBusy(key);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/academics`, payload);
+      toast({ title: okMsg });
+      load();
+      return true;
+    } catch (e: any) {
+      toast({ title: "Failed", description: e.message, variant: "destructive" });
+      return false;
+    } finally { setBusy(null); }
+  }
+
+  if (!data) return <LoadingBlock label="Loading early-years setup…" />;
+
+  const activeDomains = data.domains.filter((d) => d.active).length;
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+      {/* ── rating scale ── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2"><Baby className="size-4" /> Proficiency rating scale ({data.scale.length})</CardTitle>
+          <p className="text-xs text-muted-foreground mt-1">
+            Codes the KG / crèche teachers pick for every skill — e.g. <b>EX</b> Excellent … <b>NA</b> Needs Attention (NaCCA early-years convention). Seeded on first load.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="rounded-xl border max-h-72 overflow-y-auto nice-scroll divide-y">
+            {data.scale.length === 0 && <div className="p-4 text-center text-sm text-muted-foreground">No codes yet — add the scale below.</div>}
+            {data.scale.map((s) => (
+              <div key={s.id} className="p-2.5 flex items-center gap-2.5">
+                <Badge className="min-w-10 justify-center font-semibold">{s.code}</Badge>
+                <Input
+                  className="h-8 flex-1 text-sm"
+                  defaultValue={s.label}
+                  onBlur={(e) => e.target.value.trim() !== s.label && act({ action: "creche-scale-save", id: s.id, code: s.code, label: e.target.value, sortOrder: s.sortOrder }, s.id, `${s.code} label updated`)}
+                  aria-label={`Label for ${s.code}`}
+                />
+                <Input
+                  type="number" className="h-8 w-16 text-sm tabular-nums" defaultValue={s.sortOrder}
+                  onBlur={(e) => Number(e.target.value) !== s.sortOrder && act({ action: "creche-scale-save", id: s.id, code: s.code, label: s.label, sortOrder: Number(e.target.value) || 0 }, s.id, `${s.code} order updated`)}
+                  aria-label={`Sort order for ${s.code}`}
+                />
+                <Button size="sm" variant="ghost" className="size-8 p-0 text-destructive" disabled={busy === s.id} onClick={() => act({ action: "creche-scale-delete", id: s.id }, s.id, `${s.code} removed`)} aria-label={`Delete ${s.code}`}><Trash2 className="size-4" /></Button>
+              </div>
+            ))}
+          </div>
+          {/* add form */}
+          <div className="rounded-xl border bg-secondary/30 p-3 flex flex-wrap gap-2">
+            <Input className="h-8 w-20 font-semibold uppercase" placeholder="Code" value={scaleDraft.code} onChange={(e) => setScaleDraft({ ...scaleDraft, code: e.target.value.toUpperCase().slice(0, 8) })} aria-label="New rating code" />
+            <Input className="h-8 flex-1 min-w-36" placeholder="Label (e.g. Emerging)" value={scaleDraft.label} onChange={(e) => setScaleDraft({ ...scaleDraft, label: e.target.value })} aria-label="New rating label" />
+            <Input className="h-8 w-16 tabular-nums" type="number" placeholder="Order" value={scaleDraft.sortOrder} onChange={(e) => setScaleDraft({ ...scaleDraft, sortOrder: e.target.value })} aria-label="Sort order" />
+            <Button size="sm" className="h-8 gap-1.5" disabled={!scaleDraft.code.trim() || !scaleDraft.label.trim() || busy === "scale-add"}
+              onClick={async () => { const ok = await act({ action: "creche-scale-save", ...scaleDraft, sortOrder: Number(scaleDraft.sortOrder) || 0 }, "scale-add", `${scaleDraft.code} added to the scale`); if (ok) setScaleDraft({ code: "", label: "", sortOrder: "" }); }}>
+              <Plus className="size-3.5" /> Add
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── domains & skills ── */}
+      <Card>
+        <CardHeader className="pb-3 flex-row flex-wrap items-center justify-between gap-2 space-y-0">
+          <div>
+            <CardTitle className="text-base">Developmental domains ({activeDomains} active)</CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">NaCCA early-years domains, each with its observable skills / indicators. Expand a domain to manage its skills.</p>
+          </div>
+          <Button size="sm" className="gap-1.5" onClick={() => setDomainDraft({ name: "", sortOrder: String(data.domains.length + 1), active: true })}><Plus className="size-4" /> Add domain</Button>
+        </CardHeader>
+        <CardContent className="space-y-2.5">
+          {data.domains.length === 0 && <div className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">No domains yet — add the five NaCCA domains or reload to auto-seed defaults.</div>}
+          {data.domains.map((d) => {
+            const open = openDomain === d.id;
+            const draft = skillDrafts[d.id] ?? { name: "", sortOrder: "" };
+            return (
+              <div key={d.id} className="rounded-xl border">
+                <div className="flex flex-wrap items-center gap-2 p-2.5">
+                  <button className="flex items-center gap-1.5 flex-1 min-w-40 text-left" onClick={() => setOpenDomain(open ? null : d.id)} aria-expanded={open}>
+                    {open ? <ChevronDown className="size-4 text-muted-foreground" /> : <ChevronRight className="size-4 text-muted-foreground" />}
+                    <span className="font-medium text-sm">{d.name}</span>
+                    <Badge variant="secondary" className="text-[10px]">{d.skills.length} skills</Badge>
+                    {!d.active && <Badge variant="outline" className="text-[10px] text-muted-foreground">inactive</Badge>}
+                  </button>
+                  <Checkbox
+                    id={`dom-active-${d.id}`} checked={d.active}
+                    onCheckedChange={(v) => act({ action: "creche-domain-save", id: d.id, name: d.name, sortOrder: d.sortOrder, active: v === true }, d.id, v ? `${d.name} activated` : `${d.name} deactivated (hidden from rating & reports)`)}
+                  />
+                  <Label htmlFor={`dom-active-${d.id}`} className="text-xs text-muted-foreground font-normal cursor-pointer">active</Label>
+                  <Button size="sm" variant="ghost" className="h-7 px-2 text-[11px] gap-1" onClick={() => setDomainDraft({ id: d.id, name: d.name, sortOrder: String(d.sortOrder), active: d.active })}><Pencil className="size-3" /> Rename</Button>
+                  <Button size="sm" variant="ghost" className="size-7 p-0 text-destructive" disabled={busy === d.id} onClick={() => act({ action: "creche-domain-delete", id: d.id }, d.id, `${d.name} deleted with its ${d.skills.length} skills`)} aria-label={`Delete ${d.name}`}><Trash2 className="size-3.5" /></Button>
+                </div>
+                {open && (
+                  <div className="border-t px-2.5 py-2 space-y-1.5">
+                    {d.skills.map((sk) => (
+                      <div key={sk.id} className="flex items-center gap-2 group">
+                        <span className="text-[11px] text-muted-foreground tabular-nums w-6 text-right">{sk.sortOrder}</span>
+                        {editSkill?.skill.id === sk.id ? (
+                          <>
+                            <Input className="h-8 flex-1 text-sm" value={editSkill.skill.name} onChange={(e) => setEditSkill({ domainId: d.id, skill: { ...sk, name: e.target.value } })} aria-label="Skill name" autoFocus />
+                            <Input className="h-8 w-14 text-sm tabular-nums" type="number" value={editSkill.skill.sortOrder} onChange={(e) => setEditSkill({ domainId: d.id, skill: { ...sk, sortOrder: Number(e.target.value) || 0 } })} aria-label="Skill order" />
+                            <Button size="sm" className="h-8 gap-1" disabled={busy === sk.id} onClick={async () => { const ok = await act({ action: "creche-skill-save", id: sk.id, domainId: d.id, name: editSkill.skill.name, sortOrder: editSkill.skill.sortOrder }, sk.id, "Skill updated"); if (ok) setEditSkill(null); }}><Save className="size-3.5" /> Save</Button>
+                            <Button size="sm" variant="ghost" className="h-8" onClick={() => setEditSkill(null)}>Cancel</Button>
+                          </>
+                        ) : (
+                          <>
+                            <span className="flex-1 text-sm">{sk.name}</span>
+                            <Button size="sm" variant="ghost" className="h-7 size-7 p-0 opacity-0 group-hover:opacity-100" onClick={() => setEditSkill({ domainId: d.id, skill: sk })} aria-label={`Edit ${sk.name}`}><PencilLine className="size-3.5" /></Button>
+                            <Button size="sm" variant="ghost" className="h-7 size-7 p-0 text-destructive opacity-0 group-hover:opacity-100" disabled={busy === sk.id} onClick={() => act({ action: "creche-skill-delete", id: sk.id }, sk.id, "Skill removed")} aria-label={`Delete ${sk.name}`}><Trash2 className="size-3.5" /></Button>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                    {d.skills.length === 0 && <p className="text-xs text-muted-foreground px-1">No skills yet for this domain.</p>}
+                    <div className="flex gap-2 pt-1">
+                      <Input className="h-8 flex-1 text-sm" placeholder="New skill / indicator (e.g. Shares toys with peers)" value={draft.name} onChange={(e) => setSkillDrafts({ ...skillDrafts, [d.id]: { ...draft, name: e.target.value } })} aria-label={`New skill for ${d.name}`} />
+                      <Input className="h-8 w-16 text-sm tabular-nums" type="number" placeholder="Order" value={draft.sortOrder} onChange={(e) => setSkillDrafts({ ...skillDrafts, [d.id]: { ...draft, sortOrder: e.target.value } })} aria-label="New skill order" />
+                      <Button size="sm" className="h-8 gap-1.5" disabled={!draft.name.trim() || busy === `skill-add-${d.id}`}
+                        onClick={async () => { const ok = await act({ action: "creche-skill-save", domainId: d.id, name: draft.name, sortOrder: Number(draft.sortOrder) || d.skills.length + 1 }, `skill-add-${d.id}`, "Skill added"); if (ok) setSkillDrafts({ ...skillDrafts, [d.id]: { name: "", sortOrder: "" } }); }}>
+                        <Plus className="size-3.5" /> Add skill
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </CardContent>
+      </Card>
+
+      {/* domain rename / add dialog */}
+      <Dialog open={!!domainDraft} onOpenChange={(o) => !o && setDomainDraft(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>{domainDraft?.id ? "Rename domain" : "Add developmental domain"}</DialogTitle></DialogHeader>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5 sm:col-span-2"><Label>Domain name *</Label><Input placeholder="e.g. Communication & Language" value={domainDraft?.name ?? ""} onChange={(e) => setDomainDraft(domainDraft ? { ...domainDraft, name: e.target.value } : null)} /></div>
+            <div className="space-y-1.5"><Label>Sort order</Label><Input type="number" value={domainDraft?.sortOrder ?? ""} onChange={(e) => setDomainDraft(domainDraft ? { ...domainDraft, sortOrder: e.target.value } : null)} /></div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDomainDraft(null)}>Cancel</Button>
+            <Button disabled={!domainDraft?.name.trim() || busy === "domain-save"} onClick={async () => {
+              if (!domainDraft) return;
+              const ok = await act({ action: "creche-domain-save", id: domainDraft.id, name: domainDraft.name, sortOrder: Number(domainDraft.sortOrder) || 0, active: domainDraft.active }, "domain-save", domainDraft.id ? "Domain updated" : "Domain added");
+              if (ok) setDomainDraft(null);
+            }}>{busy === "domain-save" ? "Saving…" : domainDraft?.id ? "Save domain" : "Add domain"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   ASSESSMENT & SBA CONFIG — the four SBA column maxes (sub-total
+   warns when ≠ 60), class-score weight % and the portfolio
+   auto-fill weight % (system_settings parity, SchoolSetting KV).  */
+function SbaConfigTab() {
+  const { currentSchoolId } = useStore();
+  const [cfg, setCfg] = useState<Record<string, number> | null>(null);
+  const [form, setForm] = useState({ classTestMax: "", groupWorkMax: "", test2Max: "", projectMax: "", classScoreWeightPct: "", portfolioAutoFillPct: "" });
+  const [busy, setBusy] = useState(false);
+  const [acknowledged, setAcknowledged] = useState(false);
+
+  const load = () => {
+    if (!currentSchoolId) return;
+    apiGet<{ config: Record<string, number> }>(`/api/school/${currentSchoolId}/ops/academics?action=sba-config`)
+      .then((d) => {
+        const c = d.config;
+        setCfg(c);
+        setForm({
+          classTestMax: String(c["sba.classTestMax"] ?? ""), groupWorkMax: String(c["sba.groupWorkMax"] ?? ""),
+          test2Max: String(c["sba.test2Max"] ?? ""), projectMax: String(c["sba.projectMax"] ?? ""),
+          classScoreWeightPct: String(c["sba.classScoreWeightPct"] ?? ""), portfolioAutoFillPct: String(c["sba.portfolioAutoFillPct"] ?? ""),
+        });
+      })
+      .catch((e) => toast({ title: "Load failed", description: e.message, variant: "destructive" }));
+  };
+  useEffect(load, [currentSchoolId]);
+
+  const subtotal = Number(form.classTestMax || 0) + Number(form.groupWorkMax || 0) + Number(form.test2Max || 0) + Number(form.projectMax || 0);
+  const misaligned = subtotal !== 60;
+  const warn = misaligned && !acknowledged;
+
+  async function save() {
+    if (!currentSchoolId) return;
+    setBusy(true);
+    try {
+      const res = await apiPost<{ config: Record<string, number> }>(`/api/school/${currentSchoolId}/ops/academics`, {
+        action: "sba-config",
+        classTestMax: Number(form.classTestMax), groupWorkMax: Number(form.groupWorkMax),
+        test2Max: Number(form.test2Max), projectMax: Number(form.projectMax),
+        classScoreWeightPct: Number(form.classScoreWeightPct), portfolioAutoFillPct: Number(form.portfolioAutoFillPct),
+      });
+      setCfg(res.config);
+      setAcknowledged(false);
+      toast({ title: "SBA configuration saved", description: `Sub-total ${subtotal} · class score ${form.classScoreWeightPct}% · exam ${100 - Number(form.classScoreWeightPct || 0)}%.` });
+    } catch (e: any) {
+      toast({ title: "Save failed", description: e.message, variant: "destructive" });
+    } finally { setBusy(false); }
+  }
+
+  if (!cfg) return <LoadingBlock label="Loading SBA configuration…" />;
+
+  const maxFields: { key: keyof typeof form; label: string; hint: string }[] = [
+    { key: "classTestMax", label: "Class Test", hint: "usually 20" },
+    { key: "groupWorkMax", label: "Group Work", hint: "usually 10" },
+    { key: "test2Max", label: "Test 2", hint: "usually 20" },
+    { key: "projectMax", label: "Project", hint: "usually 10" },
+  ];
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2"><Sigma className="size-4" /> SBA column maxima</CardTitle>
+          <p className="text-xs text-muted-foreground mt-1">
+            The four fixed School-Based Assessment columns on the SBA sheet (Gradebook → SBA sheet). GES convention sums to <b>60</b> — the class score carries the rest of the term weight.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            {maxFields.map((f) => (
+              <div key={f.key} className="space-y-1.5">
+                <Label>{f.label} <span className="text-muted-foreground font-normal">(max)</span></Label>
+                <Input type="number" min={0} max={100} value={form[f.key]} onChange={(e) => setForm({ ...form, [f.key]: e.target.value })} placeholder={f.hint} />
+              </div>
+            ))}
+          </div>
+          <div className={`rounded-xl border p-3 flex flex-wrap items-center justify-between gap-2 ${misaligned ? "border-amber-400 bg-amber-50/60 dark:bg-amber-950/20" : "border-emerald-400/60 bg-emerald-50/50 dark:bg-emerald-950/20"}`}>
+            <div className="text-sm">
+              <span className="text-muted-foreground">SBA sub-total (out of):</span> <b className="tabular-nums text-base">{subtotal}</b>
+              {!misaligned && <span className="text-emerald-700 dark:text-emerald-400 text-xs ml-2">✓ matches the GES 60-mark convention</span>}
+            </div>
+            {misaligned && (
+              <label className="flex items-center gap-2 text-xs text-amber-700 dark:text-amber-400">
+                <Checkbox checked={acknowledged} onCheckedChange={(v) => setAcknowledged(v === true)} />
+                Proceed with a non-standard sub-total
+              </label>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Term weighting &amp; portfolio auto-fill</CardTitle>
+          <p className="text-xs text-muted-foreground mt-1">
+            Class score = SBA sub-total × weight ÷ actual max (capped at the weight). Exam score = raw exam × (100 − weight) ÷ 100.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Class score weight %</Label>
+              <Input type="number" min={0} max={99} value={form.classScoreWeightPct} onChange={(e) => setForm({ ...form, classScoreWeightPct: e.target.value })} placeholder="50" />
+              <p className="text-[11px] text-muted-foreground">GES legacy is 50 (class 50 / exam 50); enter 30 for the 30/70 convention.</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Portfolio auto-fill weight %</Label>
+              <Input type="number" min={0} max={100} value={form.portfolioAutoFillPct} onChange={(e) => setForm({ ...form, portfolioAutoFillPct: e.target.value })} placeholder="30" />
+              <p className="text-[11px] text-muted-foreground">Auto-filled class test = portfolio term average % × this weight ÷ 100, clamped to the Class Test max.</p>
+            </div>
+          </div>
+          <div className="rounded-xl border bg-secondary/40 p-3 text-sm space-y-1.5">
+            <div className="flex justify-between"><span className="text-muted-foreground">Effective split</span><b>Class {form.classScoreWeightPct || 0}% · Exam {100 - Number(form.classScoreWeightPct || 0)}%</b></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">Auto-fill ceiling (Class Test)</span><b className="tabular-nums">min({form.classTestMax || 0}, avg% × {form.portfolioAutoFillPct || 0}%)</b></div>
+          </div>
+          <Button className="gap-1.5" onClick={save} disabled={busy || !!warn}><Save className="size-4" /> {busy ? "Saving…" : "Save configuration"}</Button>
+          {warn && <p className="text-xs text-amber-700 dark:text-amber-400">Tick “Proceed with a non-standard sub-total” above to save a sub-total other than 60.</p>}
+        </CardContent>
+      </Card>
+    </div>
   );
 }

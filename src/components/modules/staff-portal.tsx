@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { UserRound, Receipt, Megaphone, Clock, BadgeCheck, CalendarDays, Wallet, TrendingDown } from "lucide-react";
+import { UserRound, Receipt, Megaphone, Clock, BadgeCheck, CalendarDays, Wallet, TrendingDown, School } from "lucide-react";
 
 type Allowance = { name: string; amountCents: number };
 type Payslip = {
@@ -31,21 +31,28 @@ type StaffData = {
   announcements: { id: string; title: string; body: string; postedByName: string; postedAt: string; priority: string }[];
 };
 
+type MyClass = { classroomId: string; name: string; learners: number; presentToday: number; absentToday: number; registerTaken?: boolean };
+
 const DAYS = ["", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 const fmtTime = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 const EMPLOYMENT_LABEL: Record<string, string> = { FULL_TIME: "Full-time", PART_TIME: "Part-time", CONTRACT: "Contract", CASUAL: "Casual" };
 
 export function StaffPortal() {
-  const { currentSchoolId } = useStore();
+  const { currentSchoolId, setModule } = useStore();
   const [data, setData] = useState<StaffData | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [payslip, setPayslip] = useState<Payslip | null>(null);
+  const [myClasses, setMyClasses] = useState<MyClass[] | null>(null);
 
   useEffect(() => {
     if (!currentSchoolId) return;
     apiGet<StaffData>(`/api/school/${currentSchoolId}/ops/portal?view=staff`)
       .then(setData)
       .catch((e) => setErr(e.message));
+    // class-teacher grid data (dashboard KPI parity) — empty for non-class-teachers
+    apiGet<{ myClasses?: MyClass[] }>(`/api/school/${currentSchoolId}/ops/overview`)
+      .then((o) => setMyClasses(o.myClasses ?? []))
+      .catch(() => setMyClasses([]));
   }, [currentSchoolId]);
 
   if (err) return <div className="text-destructive text-sm">{err}</div>;
@@ -116,6 +123,29 @@ export function StaffPortal() {
                 {!me.classrooms.length && !me.subjects.length && <EmptyState title="No classroom duties" hint="Your assignments will be listed here." />}
               </CardContent>
             </Card>
+            {/* My classes (class-teacher grid) — learners + today's register, deep-links to the register */}
+            {myClasses && myClasses.length > 0 && (
+              <Card>
+                <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><School className="size-4" /> My classes</CardTitle></CardHeader>
+                <CardContent className="space-y-2">
+                  {myClasses.map((c) => (
+                    <button key={c.classroomId} onClick={() => setModule("attendance", { classroomId: c.classroomId })}
+                      className="w-full text-left rounded-lg border p-3 hover:bg-secondary/40 transition-colors">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-semibold leading-tight">{c.name}</span>
+                        <Badge variant="secondary" className="tabular-nums shrink-0">{c.learners} learners</Badge>
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-1">
+                        {c.registerTaken ? `${c.presentToday} present · ${c.absentToday} absent today` : "Register not taken today"}
+                      </div>
+                      <div className="mt-1.5 flex items-center gap-1 text-[11px] font-medium text-primary">
+                        <CalendarDays className="size-3" /> Take today&rsquo;s register
+                      </div>
+                    </button>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
             <Card className="bg-secondary/30">
               <CardContent className="pt-4 text-xs text-muted-foreground leading-relaxed">
                 <b className="text-foreground text-sm">Data privacy</b>
@@ -165,7 +195,7 @@ export function StaffPortal() {
           <TabsContent value="routine" className="mt-3">
             <Card>
               <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><CalendarDays className="size-4" /> My weekly routine</CardTitle></CardHeader>
-              <CardContent className="grid md:grid-cols-5 gap-2">
+              <CardContent className="grid grid-cols-1 md:grid-cols-5 gap-2">
                 {[1, 2, 3, 4, 5].map((d) => {
                   const slots = me.timetable.filter((t) => t.day === d).sort((a, b) => a.start - b.start);
                   return (

@@ -2,15 +2,92 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
 
-/* ── GET /api/school/[id]/ops/finance — income dashboard, expenditure, aging ──
+/* ── GET /api/school/[id]/ops/finance — income dashboard, expenditure, aging,
+   student credit wallets (prepaid credits from overpayment — CI3 parity) ──
    iedupro parity: Income & Revenue analytics, AR aging, expenditure dashboard. */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: schoolId } = await params;
+  const url = new URL(req.url);
+  const q = (k: string) => url.searchParams.get(k) ?? undefined;
+  const action = q("action");
+
+  // ── student credit wallets ──
+  if (action === "credits" || action === "credit-history") {
+    // fees-side gate: the Credits tab lives in the Fees module (fees.view),
+    // the finance dashboard keeps its own finance.view — any-of.
+    const auth = await opsAuth(req, schoolId, "GET", { perms: ["fees.view", "finance.view"] });
+    if (!auth.ok) return auth.res;
+
+    if (action === "credits") {
+      const grouped = await db.studentCredit.groupBy({
+        by: ["studentId"],
+        where: { schoolId },
+        _sum: { amountCents: true },
+        _count: { _all: true },
+        _max: { at: true },
+      });
+      const ids = grouped.map((g) => g.studentId);
+      const students = ids.length
+        ? await db.student.findMany({ where: { id: { in: ids } }, include: { enrollments: { where: { status: "ACTIVE" }, take: 1, include: { classroom: true } } } })
+        : [];
+      const byId = new Map(students.map((s) => [s.id, s]));
+      const rows = grouped
+        .map((g) => {
+          const s = byId.get(g.studentId);
+          return {
+            studentId: g.studentId,
+            name: s ? `${s.firstName} ${s.lastName}` : "Unknown learner",
+            classroom: s?.enrollments[0]?.classroom?.name ?? null,
+            balanceCents: g._sum.amountCents ?? 0,
+            records: g._count._all,
+            lastAt: g._max.at?.toISOString() ?? null,
+          };
+        })
+        .sort((a, b) => b.balanceCents - a.balanceCents || a.name.localeCompare(b.name));
+
+      // stats: created = credits entering from outside (overpayment/manual/refund-in
+      // + positive corrections); applied = credits consumed on school bills
+      // (invoice auto/manual apply + daily-wallet conversion). Transfers are
+      // internal moves and excluded from both sides of the ratio.
+      const ledger = await db.studentCredit.findMany({ where: { schoolId }, select: { kind: true, amountCents: true } });
+      const createdCents = ledger.filter((l) => l.amountCents > 0 && (l.kind === "CREDIT" || l.kind === "ADJUST")).reduce((s, l) => s + l.amountCents, 0);
+      const appliedCents = ledger.filter((l) => l.amountCents < 0 && (l.kind === "APPLY" || l.kind === "DAILY_WALLET")).reduce((s, l) => s - l.amountCents, 0);
+      const stats = {
+        activeCents: rows.reduce((s, r) => s + Math.max(0, r.balanceCents), 0),
+        studentsWithCredits: rows.filter((r) => r.balanceCents > 0).length,
+        appliedCents,
+        createdCents,
+        utilizationPct: createdCents ? Math.round((appliedCents / createdCents) * 100) : 0,
+      };
+
+      // roster for the add-credit / transfer picker (every active learner)
+      const enrolled = await db.enrollment.findMany({ where: { schoolId, status: "ACTIVE" }, include: { student: true, classroom: true } });
+      const roster = enrolled
+        .map((e) => ({ id: e.studentId, name: `${e.student.firstName} ${e.student.lastName}`, classroom: e.classroom.name }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      return NextResponse.json({ rows, stats, students: roster });
+    }
+
+    // action === "credit-history"
+    const studentId = q("studentId");
+    if (!studentId) return NextResponse.json({ error: "studentId required" }, { status: 400 });
+    const student = await db.student.findUnique({ where: { id: studentId } });
+    if (!student) return NextResponse.json({ error: "Learner not found" }, { status: 404 });
+    const ledger = await db.studentCredit.findMany({ where: { schoolId, studentId }, orderBy: { at: "asc" } });
+    // StudentCredit.invoiceId is a raw column (no Prisma relation) — resolve numbers in a second query
+    const invIds = [...new Set(ledger.map((r) => r.invoiceId).filter((x): x is string => !!x))];
+    const invoices = invIds.length ? await db.invoice.findMany({ where: { id: { in: invIds } }, select: { id: true, invoiceNo: true } }) : [];
+    const invNoById = new Map(invoices.map((i) => [i.id, i.invoiceNo]));
+    return NextResponse.json({
+      student: { name: `${student.firstName} ${student.lastName}` },
+      balanceCents: ledger.length ? ledger[ledger.length - 1].balanceAfter : 0,
+      rows: ledger.map((r) => ({ id: r.id, at: r.at.toISOString(), kind: r.kind, amountCents: r.amountCents, balanceAfter: r.balanceAfter, note: r.note, byName: r.byName, invoiceNo: r.invoiceId ? invNoById.get(r.invoiceId) ?? null : null })),
+    });
+  }
+
   const auth = await opsAuth(req, schoolId, "GET", { perms: ["finance.view"] });
   if (!auth.ok) return auth.res;
 
-  const url = new URL(req.url);
-  const q = (k: string) => url.searchParams.get(k) ?? undefined;
   const yearId = q("yearId");
 
   const year = yearId
@@ -113,9 +190,82 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const { id: schoolId } = await params;
   const body = await req.json().catch(() => ({}));
   const action: string = body.action;
-  const auth = await opsAuth(req, schoolId, "POST", { perms: action === "save-expense" || action === "delete-expense" ? ["finance.manage"] : action === "cashier-report" ? ["cashier.reports"] : action === "terminal-bills" ? ["fees.view", "cashier.reports", "daily.view"] : ["fees.view"] });
+  const auth = await opsAuth(req, schoolId, "POST", { perms: action === "save-expense" || action === "delete-expense" ? ["finance.manage"] : action === "cashier-report" ? ["cashier.reports"] : action === "terminal-bills" ? ["fees.view", "cashier.reports", "daily.view"] : action.startsWith("credit-") ? ["fees.manage", "fees.collect"] : ["fees.view"] });
   if (!auth.ok) return auth.res;
   const user = auth.user;
+
+  // ── student credit wallets: manual credit / adjustment (CI3 parity) ──
+  if (action === "credit-create" || action === "credit-adjust") {
+    const { studentId, amountCents, note } = body;
+    if (!studentId) return NextResponse.json({ error: "studentId required" }, { status: 400 });
+    const amt = Math.round(Number(amountCents) || 0);
+    if (!amt) return NextResponse.json({ error: "Enter a non-zero amount" }, { status: 400 });
+    if (action === "credit-create" && amt <= 0) return NextResponse.json({ error: "A manual credit must be a positive amount" }, { status: 400 });
+    if (action === "credit-adjust" && !note) return NextResponse.json({ error: "A note is required for credit adjustments (audit trail)" }, { status: 400 });
+    const student = await db.student.findUnique({ where: { id: studentId } });
+    if (!student) return NextResponse.json({ error: "Learner not found" }, { status: 404 });
+    const bal = await creditBalance(schoolId, studentId);
+    const after = bal + amt;
+    if (after < 0) return NextResponse.json({ error: `Adjustment refused — it would overdraw the credit. Current balance is GH₵${(bal / 100).toFixed(2)}` }, { status: 400 });
+    const row = await db.studentCredit.create({
+      data: {
+        schoolId, studentId,
+        kind: action === "credit-create" ? "CREDIT" : "ADJUST",
+        amountCents: amt, balanceAfter: after,
+        note: note ?? (action === "credit-create" ? "Manual credit" : "Balance adjustment"),
+        byName: user.fullName,
+      },
+    });
+    return NextResponse.json({ credit: row, balanceCents: after });
+  }
+
+  // ── transfer a credit balance to another learner (sibling/family moves) ──
+  if (action === "credit-transfer") {
+    const { fromStudentId, toStudentId, amountCents, note } = body;
+    const amt = Math.round(Number(amountCents) || 0);
+    if (!fromStudentId || !toStudentId) return NextResponse.json({ error: "fromStudentId and toStudentId are required" }, { status: 400 });
+    if (fromStudentId === toStudentId) return NextResponse.json({ error: "Choose two different learners" }, { status: 400 });
+    if (!amt || amt <= 0) return NextResponse.json({ error: "Enter a transfer amount above zero" }, { status: 400 });
+    const [from, to] = await Promise.all([
+      db.student.findUnique({ where: { id: fromStudentId } }),
+      db.student.findUnique({ where: { id: toStudentId } }),
+    ]);
+    if (!from || !to) return NextResponse.json({ error: "Learner not found" }, { status: 404 });
+    const balFrom = await creditBalance(schoolId, fromStudentId);
+    if (balFrom < amt) return NextResponse.json({ error: `Insufficient credit — ${from.firstName}'s balance is GH₵${(balFrom / 100).toFixed(2)}` }, { status: 400 });
+    const balTo = await creditBalance(schoolId, toStudentId);
+    const [out, inn] = await db.$transaction([
+      db.studentCredit.create({ data: { schoolId, studentId: fromStudentId, kind: "TRANSFER_OUT", amountCents: -amt, balanceAfter: balFrom - amt, note: note ?? null, byName: user.fullName } }),
+      db.studentCredit.create({ data: { schoolId, studentId: toStudentId, kind: "TRANSFER_IN", amountCents: amt, balanceAfter: balTo + amt, note: note ?? null, byName: user.fullName } }),
+    ]);
+    return NextResponse.json({ out, in: inn });
+  }
+
+  // ── convert credit → daily-services prepaid wallet ──
+  if (action === "credit-to-daily") {
+    const { studentId, amountCents, note } = body;
+    if (!studentId) return NextResponse.json({ error: "studentId required" }, { status: 400 });
+    const amt = Math.round(Number(amountCents) || 0);
+    if (!amt || amt <= 0) return NextResponse.json({ error: "Enter an amount above zero" }, { status: 400 });
+    const student = await db.student.findUnique({ where: { id: studentId } });
+    if (!student) return NextResponse.json({ error: "Learner not found" }, { status: 404 });
+    const bal = await creditBalance(schoolId, studentId);
+    if (bal < amt) return NextResponse.json({ error: `Insufficient credit — balance is GH₵${(bal / 100).toFixed(2)}` }, { status: 400 });
+    const existing = await db.studentWallet.findUnique({ where: { studentId } });
+    const result = await db.$transaction(async (tx) => {
+      const credit = await tx.studentCredit.create({
+        data: { schoolId, studentId, kind: "DAILY_WALLET", amountCents: -amt, balanceAfter: bal - amt, note: note ?? "Converted to the daily-services prepaid wallet", byName: user.fullName },
+      });
+      const w = existing
+        ? await tx.studentWallet.update({ where: { studentId }, data: { prepaidCents: { increment: amt } } })
+        : await tx.studentWallet.create({ data: { schoolId, studentId, prepaidCents: amt } });
+      const txn = await tx.walletTxn.create({
+        data: { schoolId, studentId, wallet: "PREPAID", kind: "TOPUP", amountCents: amt, balanceAfter: w.prepaidCents, note: note ?? "Converted from fee credit", byName: user.fullName },
+      });
+      return { credit, wallet: w, txn };
+    });
+    return NextResponse.json(result);
+  }
 
   // ── student ledger: full statement of invoices (debits) & payments (credits) ──
   if (action === "ledger") {
@@ -194,6 +344,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const routeByStudent: Record<string, { route: string; fare: number }> = {};
     assignments.forEach((a) => (routeByStudent[a.studentId] = { route: a.route.name, fare: a.fareOverrideCents ?? a.route.farePerTermCents }));
 
+    // prepaid credit balances (invoice-scope) offset the total due on the slip
+    const creditAgg = await db.studentCredit.groupBy({ by: ["studentId"], where: { schoolId }, _sum: { amountCents: true } });
+    const creditByStudent: Record<string, number> = {};
+    creditAgg.forEach((c) => (creditByStudent[c.studentId] = c._sum.amountCents ?? 0));
+
     const bills = invoices.map((i) => {
       const bal = i.totalCents - i.discountCents - i.paidCents;
       const daily = feeCategory === "INVOICE" ? 0 : (dailyByStudent[i.studentId] ?? 0);
@@ -209,6 +364,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         balance: feeCategory === "DAILY" ? 0 : bal,
         dailyArrears: daily,
         transport: t ?? null,
+        credit: Math.max(0, creditByStudent[i.studentId] ?? 0),
       };
     });
     return NextResponse.json({ termLabel: `${term.name} · ${year.name}`, bills });
@@ -318,4 +474,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   return NextResponse.json({ error: "Unknown action" }, { status: 400 });
+}
+
+/* Credit balance for a learner = Σ signed StudentCredit.amountCents (one query).
+ * Enforced everywhere: transfers / adjustments / daily-wallet conversions can
+ * never take the balance below zero. */
+async function creditBalance(schoolId: string, studentId: string): Promise<number> {
+  const agg = await db.studentCredit.aggregate({ where: { schoolId, studentId }, _sum: { amountCents: true } });
+  return agg._sum.amountCents ?? 0;
 }

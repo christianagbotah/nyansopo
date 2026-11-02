@@ -16,6 +16,28 @@ async function loadRates(schoolId: string): Promise<StatutoryRates> {
   };
 }
 
+/* ── staff codes (iEduPro add-teacher parity): prefix per category + 5-digit
+   zero-padded sequence from the max existing numeric suffix + 1, unique per
+   school. Legacy seeded codes with non-numeric suffixes are skipped by the scan. ── */
+const STAFF_CODE_PREFIX: Record<string, string> = { TEACHING: "TCR", NON_TEACHING: "NTS", ADMINISTRATION: "ADM" };
+
+async function nextStaffCode(schoolId: string, category: string): Promise<string> {
+  const prefix = STAFF_CODE_PREFIX[category] ?? "TCR";
+  const rows = await db.staff.findMany({ where: { schoolId, staffCode: { startsWith: `${prefix}-` } }, select: { staffCode: true } });
+  let max = 0;
+  for (const r of rows) {
+    const n = parseInt((r.staffCode ?? "").slice(prefix.length + 1), 10);
+    if (Number.isFinite(n) && n > max) max = n;
+  }
+  return `${prefix}-${String(max + 1).padStart(5, "0")}`;
+}
+
+/** case-insensitive staff-code clash check within one school (codes are unique per school) */
+async function staffCodeTaken(schoolId: string, code: string): Promise<boolean> {
+  const clash = await db.staff.findFirst({ where: { schoolId, staffCode: { equals: code, mode: "insensitive" } } });
+  return !!clash;
+}
+
 // ── GET /api/school/[id]/ops/payroll — staff setup, runs, payslips, statutory rates ──
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: schoolId } = await params;
@@ -24,6 +46,19 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   const url = new URL(req.url);
   const runId = url.searchParams.get("runId") ?? undefined;
+
+  /* staff-code helpers (NewStaffDialog Generate button + live availability check) */
+  const action = url.searchParams.get("action");
+  if (action === "next-staff-code") {
+    const category = url.searchParams.get("category") ?? "TEACHING";
+    return NextResponse.json({ category, code: await nextStaffCode(schoolId, category) });
+  }
+  if (action === "check-staff-code") {
+    const code = (url.searchParams.get("code") ?? "").trim();
+    const category = url.searchParams.get("category") ?? "TEACHING";
+    if (!code) return NextResponse.json({ code, category, taken: false });
+    return NextResponse.json({ code, category, taken: await staffCodeTaken(schoolId, code) });
+  }
 
   const [school, rates] = await Promise.all([db.school.findUnique({ where: { id: schoolId } }), loadRates(schoolId)]);
   const staff = await db.staff.findMany({ where: { schoolId }, orderBy: [{ active: "desc" }, { fullName: "asc" }] });
@@ -52,9 +87,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       id: s.id, fullName: s.fullName, role: s.role, title: s.title, phone: s.phone, email: s.email,
       category: s.category, position: s.position, qualification: s.qualification,
       department: s.department, staffCode: s.staffCode, tier2Provider: s.tier2Provider,
-      accountNumber: s.accountNumber, bankName: s.bankName, tin: s.tin,
+      tier2MemberId: s.tier2MemberId, accountNumber: s.accountNumber, bankName: s.bankName, tin: s.tin,
       salary: s.salaryCents, employmentType: s.employmentType, ssnitNumber: s.ssnitNumber,
       momoNumber: s.momoNumber, hiredAt: s.hiredAt, active: s.active,
+      sex: s.sex, birthday: s.birthday, ghanaCardId: s.ghanaCardId, address: s.address, subjects: s.subjects,
     })),
     runs: runs.map((r) => ({
       id: r.id, period: r.period, status: r.status, payslipCount: r._count.payslips,
@@ -88,7 +124,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (action === "save-staff") {
     const { staffId, salaryCents, employmentType, ssnitNumber, momoNumber, active,
             fullName, role, title, phone, email, category, position, qualification, department,
-            tier2Provider, accountNumber, bankName, tin } = body;
+            tier2Provider, tier2MemberId, accountNumber, bankName, tin,
+            subjects, sex, birthday, ghanaCardId, address, hiredAt } = body;
     const st = await db.staff.findUnique({ where: { id: staffId } });
     if (!st || st.schoolId !== schoolId) return NextResponse.json({ error: "Staff not found" }, { status: 404 });
     const updated = await db.staff.update({
@@ -109,20 +146,55 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         ...(qualification !== undefined ? { qualification: qualification || null } : {}),
         ...(department !== undefined ? { department: department || null } : {}),
         ...(tier2Provider !== undefined ? { tier2Provider: tier2Provider || null } : {}),
+        ...(tier2MemberId !== undefined ? { tier2MemberId: tier2MemberId || null } : {}),
         ...(accountNumber !== undefined ? { accountNumber: accountNumber || null } : {}),
         ...(bankName !== undefined ? { bankName: bankName || null } : {}),
         ...(tin !== undefined ? { tin: tin || null } : {}),
+        ...(subjects !== undefined ? { subjects: subjects || null } : {}),
+        ...(sex !== undefined ? { sex: sex || null } : {}),
+        ...(birthday !== undefined ? { birthday: birthday ? new Date(birthday) : null } : {}),
+        ...(ghanaCardId !== undefined ? { ghanaCardId: ghanaCardId || null } : {}),
+        ...(address !== undefined ? { address: address || null } : {}),
+        ...(hiredAt !== undefined ? { hiredAt: hiredAt ? new Date(hiredAt) : null } : {}),
       },
     });
     return NextResponse.json({ staff: updated });
   }
 
   if (action === "create-staff") {
-    const { fullName, role, category, position, phone, email, salaryCents, employmentType, ssnitNumber, momoNumber, qualification, department, tier2Provider, accountNumber, bankName } = body;
+    const { fullName, role, category, position, phone, email, salaryCents, employmentType, ssnitNumber, momoNumber,
+            qualification, department, tier2Provider, tier2MemberId, accountNumber, bankName, tin,
+            subjects, sex, birthday, ghanaCardId, address, hiredAt, staffCode, createLogin } = body;
     if (!fullName?.trim()) return NextResponse.json({ error: "Full name is required" }, { status: 400 });
+    if (!phone?.trim()) return NextResponse.json({ error: "Phone is required" }, { status: 400 });
+    if (!email?.trim()) return NextResponse.json({ error: "Email is required" }, { status: 400 });
     const cat = category ?? (role === "HEADTEACHER" || role === "BURSAR" ? "ADMINISTRATION" : "TEACHING");
-    const prefix = cat === "NON_TEACHING" ? "NTS" : cat === "ADMINISTRATION" ? "ADM" : "TCR";
-    const seq = (await db.staff.count({ where: { schoolId } })) + 1;
+
+    // staff code: supplied (validated for uniqueness) or generated from the max existing suffix + 1
+    const suppliedCode = typeof staffCode === "string" && staffCode.trim() ? staffCode.trim() : null;
+    let code: string;
+    if (suppliedCode) {
+      if (await staffCodeTaken(schoolId, suppliedCode)) {
+        return NextResponse.json({ error: `Staff code ${suppliedCode} is already in use at this school` }, { status: 409 });
+      }
+      code = suppliedCode;
+    } else {
+      code = await nextStaffCode(schoolId, cat);
+    }
+
+    // optional linked login (UserStaff relation): validated before the staff row is written
+    const LOGIN_ROLES = ["TEACHER", "NON_TEACHING", "LIBRARIAN", "CASHIER", "BUS_CONDUCTOR", "ACCOUNTANT", "SCHOOL_ADMIN"];
+    const wantLogin = !!createLogin;
+    const loginEmail = String(email ?? "").trim().toLowerCase();
+    const loginRole = wantLogin && LOGIN_ROLES.includes(createLogin?.role) ? createLogin.role : "TEACHER";
+    if (wantLogin) {
+      if (!createLogin?.password || String(createLogin.password).length < 8) {
+        return NextResponse.json({ error: "Login password must be at least 8 characters" }, { status: 400 });
+      }
+      const emailTaken = await db.user.findUnique({ where: { email: loginEmail } });
+      if (emailTaken) return NextResponse.json({ error: "That email already has a login" }, { status: 409 });
+    }
+
     const created = await db.staff.create({
       data: {
         schoolId,
@@ -135,18 +207,43 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         position: position || null,
         qualification: qualification || null,
         department: department || null,
-        staffCode: `${prefix}-${String(seq).padStart(5, "0")}`,
+        subjects: subjects || null,
+        staffCode: code,
         salaryCents: Number(salaryCents) || 0,
         employmentType: employmentType ?? "FULL_TIME",
         ssnitNumber: ssnitNumber || null,
         momoNumber: momoNumber || null,
+        tin: tin || null,
         tier2Provider: tier2Provider || null,
+        tier2MemberId: tier2MemberId || null,
         accountNumber: accountNumber || null,
         bankName: bankName || null,
-        hiredAt: new Date(),
+        ghanaCardId: ghanaCardId || null,
+        address: address || null,
+        sex: sex || null,
+        birthday: birthday ? new Date(birthday) : null,
+        hiredAt: hiredAt ? new Date(hiredAt) : new Date(),
       },
     });
-    return NextResponse.json({ staff: created });
+
+    // linked login — email + password + role + schoolId + staffId (UserStaff relation)
+    let login: { id: string; email: string; role: string } | null = null;
+    if (wantLogin) {
+      const u = await db.user.create({
+        data: {
+          email: loginEmail,
+          password: String(createLogin.password),
+          fullName: created.fullName,
+          phone: phone || null,
+          role: loginRole,
+          title: position || null,
+          schoolId,
+          staffId: created.id,
+        },
+      });
+      login = { id: u.id, email: u.email, role: u.role };
+    }
+    return NextResponse.json({ staff: created, login });
   }
 
   if (action === "create-run") {

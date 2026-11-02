@@ -15,22 +15,31 @@ import { ModuleHeader, LoadingBlock, EmptyState } from "@/components/ui-helpers"
 import { fmtDateShort, initials, avatarColor, fmtCedi } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { CalendarCheck, ChevronLeft, ChevronRight, CloudOff, Save, Users, ScanLine, LogIn, LogOut, Ban, CircleCheck, CircleAlert, OctagonX, Undo2 } from "lucide-react";
+import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { CalendarCheck, ChevronLeft, ChevronRight, CloudOff, Save, Users, ScanLine, LogIn, LogOut, Ban, CircleCheck, CircleAlert, OctagonX, Undo2, BarChart3, CalendarDays, CheckCheck, UserX, Download, Printer, ChevronDown, ChevronUp } from "lucide-react";
 
 type AttData = {
   classrooms: { id: string; name: string; grade: string; stage?: string }[];
   session: { id: string; takenByName: string } | null;
-  students: { id: string; name: string; rollNo: number | null; status: string | null }[];
+  students: { id: string; name: string; rollNo: number | null; status: string | null; markedOffline?: boolean; excusedReason?: string | null }[];
   termId: string;
 };
 
+/* iEduPro attendance statuses — SICK kept for backwards compat (legacy sick-bay
+   marks); SICK_HOME / SICK_CLINIC / BUSY / EXCUSED are the CI3 register set. */
 const STATUSES = [
-  { key: "PRESENT", label: "Present", cls: "bg-emerald-600 text-white" },
-  { key: "LATE", label: "Late", cls: "bg-amber-500 text-white" },
-  { key: "ABSENT", label: "Absent", cls: "bg-red-600 text-white" },
-  { key: "SICK", label: "Sick bay", cls: "bg-orange-400 text-white" },
-  { key: "EXCUSED", label: "Excused", cls: "bg-gray-400 text-white" },
+  { key: "PRESENT", label: "Present", cls: "bg-emerald-600 text-white", letter: "P" },
+  { key: "LATE", label: "Late", cls: "bg-amber-500 text-white", letter: "L" },
+  { key: "ABSENT", label: "Absent", cls: "bg-red-600 text-white", letter: "A" },
+  { key: "SICK", label: "Sick", cls: "bg-orange-400 text-white", letter: "S" },
+  { key: "SICK_HOME", label: "Sick @ home", cls: "bg-orange-600 text-white", letter: "SH" },
+  { key: "SICK_CLINIC", label: "Sick @ clinic", cls: "bg-orange-800 text-white", letter: "SC" },
+  { key: "BUSY", label: "Busy", cls: "bg-violet-500 text-white", letter: "B" },
+  { key: "EXCUSED", label: "Excused", cls: "bg-gray-400 text-white", letter: "E" },
 ];
+const STATUS_BY_KEY: Record<string, (typeof STATUSES)[number]> = Object.fromEntries(STATUSES.map((s) => [s.key, s]));
+
+const OPS = "/ops/attendance"; // attendance ops endpoint (register save + analytics + monthly)
 
 export function Attendance() {
   const { currentSchoolId, online, navTarget } = useStore();
@@ -39,27 +48,35 @@ export function Attendance() {
   const [classId, setClassId] = useState<string | null>(null);
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [marks, setMarks] = useState<Record<string, string>>({});
+  const [reasons, setReasons] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
 
   /* iEduPro nested nav: preselect the Scanner tab when arriving from a
-     Attendance → Scanner deep link (state adjusted during render) */
+     Attendance → Scanner deep link, and preselect the classroom when a deep
+     link (dashboard "My classes", nav class bands) carries one
+     (state adjusted during render) */
   const [appliedTarget, setAppliedTarget] = useState<any>(null);
   if (navTarget !== appliedTarget) {
     setAppliedTarget(navTarget);
     if (navTarget?.tab === "scanner") setTab("scanner");
+    if (navTarget?.classroomId) {
+      setClassId(navTarget.classroomId);
+      setTab("register");
+    }
   }
 
   const load = () => {
     if (!currentSchoolId) return;
-    apiGet<AttData>(`/api/school/${currentSchoolId}/attendance?${classId ? `classId=${classId}&` : ""}date=${date}`)
+    apiGet<AttData>(`${OPS_BASE(currentSchoolId)}?action=register&${classId ? `classId=${classId}&` : ""}date=${date}`)
       .then((d) => {
         setData(d);
         if (!classId && d.classrooms.length) return; // first load: wait for class pick
         setMarks(Object.fromEntries(d.students.map((s) => [s.id, s.status ?? "PRESENT"])));
+        setReasons(Object.fromEntries(d.students.map((s) => [s.id, s.excusedReason ?? ""])));
       })
       .catch((e) => toast({ title: "Load failed", description: e.message, variant: "destructive" }));
   };
-  useEffect(() => { load();}, [currentSchoolId, classId, date]);
+  useEffect(() => { load(); }, [currentSchoolId, classId, date]);
 
   const stats = useMemo(() => {
     const vals = Object.values(marks);
@@ -67,7 +84,8 @@ export function Attendance() {
       present: vals.filter((v) => v === "PRESENT").length,
       late: vals.filter((v) => v === "LATE").length,
       absent: vals.filter((v) => v === "ABSENT").length,
-      other: vals.filter((v) => v === "SICK" || v === "EXCUSED").length,
+      sick: vals.filter((v) => v === "SICK" || v === "SICK_HOME" || v === "SICK_CLINIC").length,
+      excused: vals.filter((v) => v === "EXCUSED").length,
       total: vals.length,
     };
   }, [marks]);
@@ -78,26 +96,47 @@ export function Attendance() {
     setDate(d.toISOString().slice(0, 10));
   }
 
+  function markAll(status: string) {
+    setMarks(Object.fromEntries(students.map((s) => [s.id, status])));
+  }
+
   async function save() {
     if (!currentSchoolId || !classId) return;
+    // EXCUSED requires a captured reason — block the save until captured
+    const missing = students.filter((s) => marks[s.id] === "EXCUSED" && !(reasons[s.id] ?? "").trim());
+    if (missing.length) {
+      toast({
+        title: "Excuse reason required",
+        description: `${missing.length} learner${missing.length > 1 ? "s" : ""} marked Excused without a reason: ${missing.slice(0, 3).map((s) => s.name).join(", ")}${missing.length > 3 ? "…" : ""}. Capture why each is excused before saving.`,
+        variant: "destructive",
+      });
+      return;
+    }
     setBusy(true);
     try {
-      const records = (data?.students ?? []).map((s) => ({ studentId: s.id, status: marks[s.id] ?? "PRESENT" }));
-      const payload = { action: "save", classroomId: classId, date, records };
+      const records = students.map((s) => ({
+        studentId: s.id,
+        status: marks[s.id] ?? "PRESENT",
+        ...(marks[s.id] === "EXCUSED" ? { excusedReason: (reasons[s.id] ?? "").trim() } : {}),
+      }));
+      const payload = { action: "save-register", classroomId: classId, date, records };
       const res = await apiPostQueueable<any>(
-        `/api/school/${currentSchoolId}/attendance`, "attendance", payload,
+        `${OPS_BASE(currentSchoolId)}`, "attendance", payload,
         `Attendance ${data?.classrooms.find((c) => c.id === classId)?.name} · ${date}`,
         (p, clientId) => ({ schoolId: currentSchoolId, classroomId: classId, date, records, clientId })
       );
       if (res.queued) toast({ title: "Saved offline", description: "Register stored on this device — will sync automatically." });
-      else toast({ title: "Register saved", description: `${records.length} learners marked for ${new Date(date).toLocaleDateString("en-GB")}.` });
+      else {
+        toast({ title: "Register saved", description: `${records.length} learners marked for ${new Date(date).toLocaleDateString("en-GB")}.` });
+        load(); // refresh the "Taken by" badge + persisted statuses
+      }
     } catch (e: any) {
       toast({ title: "Save failed", description: e.message, variant: "destructive" });
     } finally { setBusy(false); }
   }
 
+  const students: AttData["students"] = data?.students ?? [];
   if (!data) return <LoadingBlock label="Loading register…" />;
-  const students = data.students ?? [];
   const registerReady = !!classId && Array.isArray(data.students) && (data.termId || data.session);
 
   return (
@@ -105,6 +144,8 @@ export function Attendance() {
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="register" className="gap-1.5"><CalendarCheck className="size-4" /> Register</TabsTrigger>
+          <TabsTrigger value="analytics" className="gap-1.5"><BarChart3 className="size-4" /> Analytics</TabsTrigger>
+          <TabsTrigger value="monthly" className="gap-1.5"><CalendarDays className="size-4" /> Monthly</TabsTrigger>
           <TabsTrigger value="scanner" className="gap-1.5"><ScanLine className="size-4" /> Scanner</TabsTrigger>
         </TabsList>
 
@@ -143,32 +184,54 @@ export function Attendance() {
             </Card>
           ) : (
             <>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
                 <Card><CardContent className="pt-5 pb-4"><div className="text-xs text-muted-foreground uppercase">Present</div><div className="text-2xl font-bold text-emerald-600">{stats.present}</div></CardContent></Card>
                 <Card><CardContent className="pt-5 pb-4"><div className="text-xs text-muted-foreground uppercase">Late</div><div className="text-2xl font-bold text-amber-500">{stats.late}</div></CardContent></Card>
                 <Card><CardContent className="pt-5 pb-4"><div className="text-xs text-muted-foreground uppercase">Absent</div><div className="text-2xl font-bold text-destructive">{stats.absent}</div></CardContent></Card>
+                <Card><CardContent className="pt-5 pb-4"><div className="text-xs text-muted-foreground uppercase">Sick</div><div className="text-2xl font-bold text-orange-500">{stats.sick}</div></CardContent></Card>
+                <Card><CardContent className="pt-5 pb-4"><div className="text-xs text-muted-foreground uppercase">Excused</div><div className="text-2xl font-bold text-muted-foreground">{stats.excused}</div></CardContent></Card>
                 <Card><CardContent className="pt-5 pb-4"><div className="text-xs text-muted-foreground uppercase">Rate</div><div className="text-2xl font-bold text-primary">{stats.total ? Math.round(((stats.present + stats.late) / stats.total) * 100) : 0}%</div></CardContent></Card>
               </div>
 
               <Card>
-                <CardHeader className="pb-3 flex-row items-center justify-between space-y-0">
-                  <CardTitle className="text-base">{data.classrooms.find((c) => c.id === classId)?.name} · {new Date(date).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}</CardTitle>              <Button size="sm" className="gap-1.5" onClick={save} disabled={busy}><Save className="size-4" /> {busy ? "Saving…" : online ? "Save register" : "Save offline"}</Button>
+                <CardHeader className="pb-3 flex-row items-center justify-between space-y-0 flex-wrap gap-2">
+                  <CardTitle className="text-base">{data.classrooms.find((c) => c.id === classId)?.name} · {new Date(date).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}</CardTitle>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button size="sm" variant="outline" className="gap-1.5" onClick={() => markAll("PRESENT")} title="Mark every learner Present">
+                      <CheckCheck className="size-4" /> All present
+                    </Button>
+                    <Button size="sm" variant="outline" className="gap-1.5 text-destructive hover:text-destructive" onClick={() => markAll("ABSENT")} title="Mark every learner Absent">
+                      <UserX className="size-4" /> All absent
+                    </Button>
+                    <Button size="sm" className="gap-1.5" onClick={save} disabled={busy}><Save className="size-4" /> {busy ? "Saving…" : online ? "Save register" : "Save offline"}</Button>
+                  </div>
                 </CardHeader>
                 <CardContent className="p-0">
                   <div className="overflow-x-auto nice-scroll max-h-[480px]">
-                    <table className="w-full text-sm">
+                    <table className="w-full text-sm min-w-[760px]">
                       <thead className="sticky top-0 bg-secondary/70 backdrop-blur">
                         <tr className="text-left border-b">
                           <th className="px-3 py-2.5 font-medium w-14">#</th>
                           <th className="px-3 py-2.5 font-medium">Learner</th>
-                          {STATUSES.map((s) => <th key={s.key} className="px-3 py-2.5 font-medium text-center w-24">{s.label}</th>)}
+                          {STATUSES.map((s) => <th key={s.key} className="px-3 py-2.5 font-medium text-center text-xs w-16 whitespace-nowrap">{s.label}</th>)}
                         </tr>
                       </thead>
                       <tbody>
                         {students.map((s, i) => (
                           <tr key={s.id} className="border-b last:border-0">
                             <td className="px-3 py-2 text-muted-foreground">{s.rollNo ?? i + 1}</td>
-                            <td className="px-3 py-2 font-medium">{s.name}</td>
+                            <td className="px-3 py-2 font-medium">
+                              <div>{s.name}</div>
+                              {marks[s.id] === "EXCUSED" && (
+                                <Input
+                                  value={reasons[s.id] ?? ""}
+                                  onChange={(e) => setReasons((r) => ({ ...r, [s.id]: e.target.value }))}
+                                  placeholder="Reason (required)"
+                                  className="h-7 mt-1 w-44 text-xs"
+                                  aria-label={`Excuse reason for ${s.name}`}
+                                />
+                              )}
+                            </td>
                             {STATUSES.map((st) => (
                               <td key={st.key} className="px-3 py-2 text-center">
                                 <button
@@ -190,11 +253,312 @@ export function Attendance() {
           )}
         </TabsContent>
 
+        {/* ── attendance analytics (per-learner aggregates over a date range) ── */}
+        <TabsContent value="analytics" className="mt-4">
+          {currentSchoolId ? <AnalyticsPanel schoolId={currentSchoolId} /> : <EmptyState title="No school selected" />}
+        </TabsContent>
+
+        {/* ── monthly grid (day-by-day register, printable) ── */}
+        <TabsContent value="monthly" className="mt-4">
+          {currentSchoolId ? <MonthlyPanel schoolId={currentSchoolId} /> : <EmptyState title="No school selected" />}
+        </TabsContent>
+
         {/* ── barcode scanner gate console (iEduPro admin/barcode_scanner) ── */}
         <TabsContent value="scanner" className="mt-4">
           {currentSchoolId ? <ScannerPanel schoolId={currentSchoolId} /> : <EmptyState title="No school selected" />}
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+const OPS_BASE = (schoolId: string) => `/api/school/${schoolId}${OPS}`;
+
+// ── Analytics ─────────────────────────────────────────────────
+type AnalyticsRow = {
+  studentId: string; name: string; classroom: string;
+  present: number; absent: number; late: number;
+  sickHome: number; sickClinic: number; sickBay: number; busy: number; excused: number;
+  marked: number; rate: number | null;
+};
+type AnalyticsData = {
+  classrooms: { id: string; name: string }[];
+  range: { from: string; to: string };
+  summary: {
+    sessions: number; marked: number;
+    present: number; presentPct: number;
+    absent: number; absentPct: number;
+    late: number; sick: number; busy: number; excused: number;
+    attendanceRate: number;
+  };
+  rows: AnalyticsRow[];
+  trend: { date: string; rate: number }[];
+};
+
+function RateBadge({ rate }: { rate: number | null }) {
+  if (rate === null) return <Badge variant="secondary">no marks</Badge>;
+  const cls = rate >= 90
+    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+    : rate >= 75
+      ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+      : "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300";
+  return <span className={cn("text-[11px] font-semibold px-2 py-0.5 rounded-full tabular-nums", cls)}>{rate}%</span>;
+}
+
+function AnalyticsPanel({ schoolId }: { schoolId: string }) {
+  const [classId, setClassId] = useState("ALL");
+  const [from, setFrom] = useState(() => new Date(Date.now() - 29 * 864e5).toISOString().slice(0, 10));
+  const [to, setTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const [data, setData] = useState<AnalyticsData | null>(null);
+  const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
+
+  const load = () => {
+    apiGet<AnalyticsData>(`${OPS_BASE(schoolId)}?action=analytics&from=${from}&to=${to}${classId !== "ALL" ? `&classroomId=${classId}` : ""}`)
+      .then(setData)
+      .catch((e) => toast({ title: "Analytics failed to load", description: e.message, variant: "destructive" }));
+  };
+  useEffect(load, [schoolId, from, to, classId]);
+
+  const sorted = useMemo(() => {
+    const rows = [...(data?.rows ?? [])];
+    rows.sort((a, b) => (sortDir === "desc" ? (b.rate ?? -1) - (a.rate ?? -1) : (a.rate ?? 9999) - (b.rate ?? 9999)));
+    return rows;
+  }, [data, sortDir]);
+
+  const exportCsv = () => {
+    if (!sorted.length) return;
+    const header = ["Name", "Class", "Present", "Absent", "Late", "Sick @ home", "Sick @ clinic", "Excused", "Marked", "Attendance rate %"];
+    const lines = sorted.map((r) => [r.name, r.classroom, r.present, r.absent, r.late, r.sickHome, r.sickClinic, r.excused, r.marked, r.rate ?? "—"]);
+    const csv = [header, ...lines].map((l) => l.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    const a = document.createElement("a"); a.href = url; a.download = `attendance-analytics-${from}-to-${to}.csv`; a.click(); URL.revokeObjectURL(url);
+  };
+
+  if (!data) return <LoadingBlock label="Loading analytics…" />;
+  const s = data.summary;
+  const chartData = data.trend.map((t) => ({ ...t, label: new Date(t.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) }));
+
+  return (
+    <div>
+      <ModuleHeader
+        title="Attendance Analytics"
+        description="Attendance aggregates across every register session — per-learner rates, absence mix and the daily trend."
+        actions={
+          <Button size="sm" variant="outline" className="gap-1.5" onClick={exportCsv} disabled={!sorted.length}>
+            <Download className="size-4" /> Export CSV
+          </Button>
+        }
+      />
+
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        <Select value={classId} onValueChange={setClassId}>
+          <SelectTrigger className="w-56"><SelectValue placeholder="All classes" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ALL">All classes</SelectItem>
+            {data.classrooms.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-36" aria-label="From date" />
+        <span className="text-xs text-muted-foreground">to</span>
+        <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-36" aria-label="To date" />
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-3 mb-4">
+        <Card><CardContent className="pt-5 pb-4"><div className="text-xs text-muted-foreground uppercase">Sessions</div><div className="text-2xl font-bold">{s.sessions}</div></CardContent></Card>
+        <Card><CardContent className="pt-5 pb-4"><div className="text-xs text-muted-foreground uppercase">Present</div><div className="text-2xl font-bold text-emerald-600">{s.present}</div><div className="text-[11px] text-muted-foreground">{s.presentPct}% of marks</div></CardContent></Card>
+        <Card><CardContent className="pt-5 pb-4"><div className="text-xs text-muted-foreground uppercase">Absent</div><div className="text-2xl font-bold text-destructive">{s.absent}</div><div className="text-[11px] text-muted-foreground">{s.absentPct}% of marks</div></CardContent></Card>
+        <Card><CardContent className="pt-5 pb-4"><div className="text-xs text-muted-foreground uppercase">Late</div><div className="text-2xl font-bold text-amber-500">{s.late}</div></CardContent></Card>
+        <Card><CardContent className="pt-5 pb-4"><div className="text-xs text-muted-foreground uppercase">Sick (all)</div><div className="text-2xl font-bold text-orange-500">{s.sick}</div><div className="text-[11px] text-muted-foreground">home · clinic · bay</div></CardContent></Card>
+        <Card><CardContent className="pt-5 pb-4"><div className="text-xs text-muted-foreground uppercase">Excused</div><div className="text-2xl font-bold text-muted-foreground">{s.excused}</div></CardContent></Card>
+        <Card><CardContent className="pt-5 pb-4"><div className="text-xs text-muted-foreground uppercase">Attendance rate</div><div className="text-2xl font-bold text-primary">{s.attendanceRate}%</div><div className="text-[11px] text-muted-foreground">present + late</div></CardContent></Card>
+      </div>
+
+      {chartData.length > 1 && (
+        <Card className="mb-4">
+          <CardHeader className="pb-2"><CardTitle className="text-base">Daily trend</CardTitle></CardHeader>
+          <CardContent className="h-44">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={chartData} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="attAnalyticsGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#0e5f3f" stopOpacity={0.35} />
+                    <stop offset="100%" stopColor="#0e5f3f" stopOpacity={0.02} />
+                  </linearGradient>
+                </defs>
+                <XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="#888" />
+                <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} stroke="#888" unit="%" />
+                <Tooltip formatter={(v: any) => [`${v}%`, "Attended"]} contentStyle={{ borderRadius: 10, border: "1px solid #e7ddc8" }} />
+                <Area type="monotone" dataKey="rate" stroke="#0e5f3f" strokeWidth={2.2} fill="url(#attAnalyticsGrad)" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Per-learner attendance · {data.classrooms.find((c) => c.id === classId)?.name ?? "All classes"}</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          {!sorted.length ? (
+            <EmptyState icon={<BarChart3 className="size-5" />} title="No marked learners in this range" hint="Choose a wider date range or take a register first." />
+          ) : (
+            <div className="overflow-x-auto nice-scroll max-h-[520px]">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-secondary/70 backdrop-blur">
+                  <tr className="text-left border-b">
+                    <th className="px-3 py-2.5 font-medium">Learner</th>
+                    <th className="px-3 py-2.5 font-medium hidden sm:table-cell">Class</th>
+                    <th className="px-3 py-2.5 font-medium text-center">Present</th>
+                    <th className="px-3 py-2.5 font-medium text-center">Absent</th>
+                    <th className="px-3 py-2.5 font-medium text-center">Late</th>
+                    <th className="px-3 py-2.5 font-medium text-center">Sick @ home</th>
+                    <th className="px-3 py-2.5 font-medium text-center">Sick @ clinic</th>
+                    <th className="px-3 py-2.5 font-medium text-center">Excused</th>
+                    <th className="px-3 py-2.5 font-medium text-center">
+                      <button
+                        onClick={() => setSortDir((d) => (d === "desc" ? "asc" : "desc"))}
+                        className="inline-flex items-center gap-1 hover:text-foreground"
+                        title="Sort by attendance rate"
+                      >
+                        Attendance rate {sortDir === "desc" ? <ChevronDown className="size-3.5" /> : <ChevronUp className="size-3.5" />}
+                      </button>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sorted.map((r) => (
+                    <tr key={r.studentId} className="border-b last:border-0 hover:bg-secondary/30">
+                      <td className="px-3 py-2 font-medium">{r.name}</td>
+                      <td className="px-3 py-2 text-muted-foreground hidden sm:table-cell">{r.classroom}</td>
+                      <td className="px-3 py-2 text-center tabular-nums">{r.present}</td>
+                      <td className="px-3 py-2 text-center tabular-nums">{r.absent}</td>
+                      <td className="px-3 py-2 text-center tabular-nums">{r.late}</td>
+                      <td className="px-3 py-2 text-center tabular-nums">{r.sickHome}</td>
+                      <td className="px-3 py-2 text-center tabular-nums">{r.sickClinic}</td>
+                      <td className="px-3 py-2 text-center tabular-nums">{r.excused}</td>
+                      <td className="px-3 py-2 text-center"><RateBadge rate={r.rate} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ── Monthly grid ──────────────────────────────────────────────
+type MonthlyData = {
+  classrooms: { id: string; name: string }[];
+  month: string;
+  daysInMonth: number;
+  classroomId: string | null;
+  classroomName: string | null;
+  students: { id: string; name: string; rollNo: number | null; days: Record<string, { status: string; reason?: string }> }[];
+};
+
+function MonthlyPanel({ schoolId }: { schoolId: string }) {
+  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [classId, setClassId] = useState<string | null>(null);
+  const [data, setData] = useState<MonthlyData | null>(null);
+
+  const load = () => {
+    apiGet<MonthlyData>(`${OPS_BASE(schoolId)}?action=monthly&month=${month}${classId ? `&classroomId=${classId}` : ""}`)
+      .then((d) => {
+        setData(d);
+        if (!classId && d.classrooms.length) setClassId(d.classrooms[0].id); // auto-open the first class
+      })
+      .catch((e) => toast({ title: "Monthly grid failed to load", description: e.message, variant: "destructive" }));
+  };
+  useEffect(load, [schoolId, month, classId]);
+
+  if (!data) return <LoadingBlock label="Loading monthly grid…" />;
+  const [y, m] = month.split("-").map(Number);
+  const days = Array.from({ length: data.daysInMonth }, (_, i) => i + 1);
+  const isWeekend = (d: number) => [0, 6].includes(new Date(Date.UTC(y, m - 1, d)).getUTCDay());
+  const monthLabel = new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
+  const markedCount = data.students.reduce((n, s) => n + Object.keys(s.days).length, 0);
+
+  return (
+    <div>
+      <ModuleHeader
+        title="Monthly Attendance Grid"
+        description="The whole month at a glance — one row per learner, one column per day. Print it for the class register folder."
+      />
+
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        <Input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="w-40" aria-label="Month" />
+        <Select value={classId ?? ""} onValueChange={setClassId}>
+          <SelectTrigger className="w-64"><SelectValue placeholder="Select a class" /></SelectTrigger>
+          <SelectContent>{data.classrooms.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
+        </Select>
+        <Button size="sm" variant="outline" className="gap-1.5 ml-auto" onClick={() => window.print()}>
+          <Printer className="size-4" /> Print grid
+        </Button>
+      </div>
+
+      <Card className="print-area">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">{data.classroomName ?? "No class selected"} · {monthLabel}</CardTitle>
+          <div className="text-xs text-muted-foreground font-normal">{data.students.length} learners on roll · {markedCount} day-marks recorded</div>
+        </CardHeader>
+        <CardContent className="p-0">
+          {!data.classroomId || !data.students.length ? (
+            <EmptyState icon={<CalendarDays className="size-5" />} title={data.classroomId ? "No learners on roll" : "Choose a class"} hint={data.classroomId ? undefined : "Select a class above to open its monthly grid."} />
+          ) : (
+            <div className="overflow-auto nice-scroll max-h-[560px]">
+              <table className="w-full text-sm border-separate border-spacing-0">
+                <thead>
+                  <tr className="text-left">
+                    <th className="px-3 py-2.5 font-medium sticky left-0 bg-secondary z-10 min-w-44">Learner</th>
+                    {days.map((d) => (
+                      <th key={d} className={cn("px-1 py-2.5 font-medium text-center text-xs w-8", isWeekend(d) && "text-muted-foreground/60")}>
+                        {d}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.students.map((s) => (
+                    <tr key={s.id} className="hover:bg-secondary/20">
+                      <td className="px-3 py-1.5 font-medium sticky left-0 bg-card z-10 whitespace-nowrap">
+                        <span className="text-muted-foreground mr-1.5 tabular-nums text-xs">{s.rollNo ?? "·"}</span>{s.name}
+                      </td>
+                      {days.map((d) => {
+                        const cell = s.days[String(d)];
+                        if (!cell) return <td key={d} className={cn("px-1 py-1.5 text-center text-muted-foreground/30", isWeekend(d) && "bg-muted/30")}>·</td>;
+                        const st = STATUS_BY_KEY[cell.status] ?? { label: cell.status, cls: "bg-gray-300 text-gray-800", letter: cell.status.slice(0, 2) };
+                        return (
+                          <td key={d} className={cn("px-1 py-1.5 text-center", isWeekend(d) && "bg-muted/30")}>
+                            <span
+                              title={`${d} ${monthLabel}: ${st.label}${cell.reason ? ` — ${cell.reason}` : ""}`}
+                              className={cn("inline-flex min-w-6 justify-center rounded px-1 py-0.5 text-[10px] font-bold", st.cls)}
+                            >
+                              {st.letter}
+                            </span>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 border-t text-xs text-muted-foreground">
+            {STATUSES.map((s) => (
+              <span key={s.key} className="inline-flex items-center gap-1.5">
+                <span className={cn("inline-flex min-w-6 justify-center rounded px-1 py-0.5 text-[10px] font-bold", s.cls)}>{s.letter}</span>
+                {s.label}{s.key === "SICK" && " (legacy)"}
+              </span>
+            ))}
+            <span>· empty cell = not marked</span>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

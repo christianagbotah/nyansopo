@@ -14,7 +14,7 @@ import { StatCard, ModuleHeader, LoadingBlock, StatusBadge, EmptyState, FilterBa
 import { fmtCedi, fmtDate, PAYMENT_LABELS } from "@/lib/format";
 import { canAny } from "@/lib/rbac";
 import { toast } from "@/hooks/use-toast";
-import { Banknote, Receipt, AlertTriangle, CheckCircle2, Plus, Flag, Printer, Wallet, Ticket, Percent, UserPlus, XCircle, ListChecks, Copy as CopyIcon, Eye, Link2, ClipboardList, ShieldCheck, Undo2, PencilLine, Trash2, FileWarning, Ban, Download } from "lucide-react";
+import { Banknote, Receipt, AlertTriangle, CheckCircle2, Plus, Flag, Printer, Wallet, Ticket, Percent, UserPlus, XCircle, ListChecks, Copy as CopyIcon, Eye, Link2, ClipboardList, ShieldCheck, Undo2, PencilLine, Trash2, FileWarning, Ban, Download, History, ArrowRightLeft, PiggyBank, HandCoins } from "lucide-react";
 import { ReceiptDocument, BulkReceiptsDocument, RECEIPT_STYLES, type ReceiptStyle } from "@/components/receipts";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DiscountProfilesTab, DiscountApprovalsTab, type DiscountData } from "@/components/modules/discounts-workspace";
@@ -44,6 +44,19 @@ type ModRequest = {
 };
 type ApprovalsData = { pending: ModRequest[]; recent: ModRequest[] };
 
+/* ── student credit wallets (prepaid credits from overpayment — CI3 parity) ── */
+type CreditRow = { studentId: string; name: string; classroom: string | null; balanceCents: number; records: number; lastAt: string | null };
+type CreditsData = {
+  rows: CreditRow[];
+  stats: { activeCents: number; studentsWithCredits: number; appliedCents: number; createdCents: number; utilizationPct: number };
+  students: { id: string; name: string; classroom: string }[];
+};
+type CreditLedgerRow = { id: string; at: string; kind: string; amountCents: number; balanceAfter: number; note: string | null; byName: string | null; invoiceNo: string | null };
+const CREDIT_KIND_LABELS: Record<string, string> = {
+  CREDIT: "Credit in", APPLY: "Applied to bill", TRANSFER_OUT: "Transfer out", TRANSFER_IN: "Transfer in",
+  DAILY_WALLET: "To daily wallet", ADJUST: "Adjustment",
+};
+
 export function Fees() {
   const { currentSchoolId, online, navTarget, session } = useStore();
   const [data, setData] = useState<FeeData | null>(null);
@@ -55,11 +68,11 @@ export function Fees() {
   const [flagFor, setFlagFor] = useState<FeeData["invoices"][0] | null>(null);
   const [discFor, setDiscFor] = useState<FeeData["invoices"][0] | null>(null);
 
-  /* iEduPro nested nav: open on the deep-linked tab (invoices / receipts / discounts…) */
+  /* iEduPro nested nav: open on the deep-linked tab (invoices / receipts / credits / discounts…) */
   const [appliedTarget, setAppliedTarget] = useState<any>(null);
   if (navTarget !== appliedTarget) {
     setAppliedTarget(navTarget);
-    if (navTarget?.tab && ["invoices", "receipts", "structures", "discounts", "arrears", "approvals"].includes(navTarget.tab)) setTab(navTarget.tab);
+    if (navTarget?.tab && ["invoices", "receipts", "structures", "discounts", "arrears", "credits", "approvals"].includes(navTarget.tab)) setTab(navTarget.tab);
   }
   const canManageApprovals = canAny(session?.permissions, ["approvals.manage"]);
   const canRequestMods = canAny(session?.permissions, ["approvals.request", "approvals.manage"]);
@@ -70,6 +83,8 @@ export function Fees() {
   const [checkedReceipts, setCheckedReceipts] = useState<Set<string>>(new Set());
   const [bulkReceipts, setBulkReceipts] = useState<any[] | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
+  /* credit wallet history — shared by the Credits tab and the PayDialog widget */
+  const [creditHistoryFor, setCreditHistoryFor] = useState<{ studentId: string; name: string } | null>(null);
 
   // invoice + receipt filters (filter-on-demand for busy termly ledgers)
   const [invSearch, setInvSearch] = useState("");
@@ -191,6 +206,7 @@ export function Fees() {
           <TabsTrigger value="structures">Fee structures</TabsTrigger>
           <TabsTrigger value="discounts">Discounts ({discounts?.discounts.length ?? 0})</TabsTrigger>
           <TabsTrigger value="arrears">Arrears chase-list ({overdue.length})</TabsTrigger>
+          <TabsTrigger value="credits">Credits</TabsTrigger>
           <TabsTrigger value="approvals" className="gap-1.5">
             Approvals
             {(approvals?.pending.length ?? 0) > 0 && <span className="inline-flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold">{approvals!.pending.length}</span>}
@@ -328,7 +344,7 @@ export function Fees() {
         </TabsContent>
 
         <TabsContent value="structures">
-          <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {data.structures.map((s) => (
               <Card key={s.id}>
                 <CardHeader className="pb-2 flex-row items-center justify-between space-y-0">
@@ -386,6 +402,10 @@ export function Fees() {
           </Card>
         </TabsContent>
 
+        <TabsContent value="credits">
+          <CreditsTab onHistory={(studentId, name) => setCreditHistoryFor({ studentId, name })} />
+        </TabsContent>
+
         <TabsContent value="approvals">
           <ApprovalsTab
             approvals={approvals}
@@ -402,6 +422,7 @@ export function Fees() {
         invoice={payFor}
         onOpenChange={(o) => !o && setPayFor(null)}
         onDone={(rc) => { setReceipt(rc); setPayFor(null); load(termId ?? undefined); }}
+        onCreditHistory={(studentId, name) => setCreditHistoryFor({ studentId, name })}
       />
       <FlagDialog
         invoice={flagFor}
@@ -427,19 +448,34 @@ export function Fees() {
         onDone={() => { setApplyDialog(null); load(termId ?? undefined); }}
       />
       <ReceiptDialog receipt={receipt} onOpenChange={(o) => !o && setReceipt(null)} />
+      <CreditHistoryDialog target={creditHistoryFor} onOpenChange={(o) => !o && setCreditHistoryFor(null)} />
       {bulkReceipts && <BulkReceiptsDocument receipts={bulkReceipts} onDone={() => { setBulkReceipts(null); setCheckedReceipts(new Set()); }} />}
     </div>
   );
 }
 
-function PayDialog({ invoice, onOpenChange, onDone }: { invoice: any; onOpenChange: (o: boolean) => void; onDone: (receipt: any) => void }) {
+function PayDialog({ invoice, onOpenChange, onDone, onCreditHistory }: {
+  invoice: any;
+  onOpenChange: (o: boolean) => void;
+  onDone: (receipt: any) => void;
+  onCreditHistory?: (studentId: string, name: string) => void;
+}) {
   const { currentSchoolId, online } = useStore();
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState("MOMO_MTN");
   const [reference, setReference] = useState("");
   const [busy, setBusy] = useState(false);
+  const [creditBal, setCreditBal] = useState(0);
 
   useEffect(() => { if (invoice) setAmount((invoice.balance / 100).toFixed(2)); }, [invoice]);
+  // prepaid credit the learner already holds (overpayments banked earlier)
+  useEffect(() => {
+    setCreditBal(0);
+    if (!invoice?.studentId || !currentSchoolId) return;
+    apiGet<{ balanceCents: number }>(`/api/school/${currentSchoolId}/ops/finance?action=credit-history&studentId=${invoice.studentId}`)
+      .then((d) => setCreditBal(d.balanceCents ?? 0))
+      .catch(() => setCreditBal(0));
+  }, [invoice, currentSchoolId]);
 
   async function submit() {
     if (!invoice || !currentSchoolId) return;
@@ -457,6 +493,9 @@ function PayDialog({ invoice, onOpenChange, onDone }: { invoice: any; onOpenChan
         toast({ title: "Queued offline", description: "Receipt will be issued automatically when you reconnect." });
         onDone(null);
       } else {
+        if (res.data?.creditCreated) {
+          toast({ title: "Payment received", description: `Overpayment of ${fmtCedi(res.data.creditCreated)} banked as prepaid credit — it will be applied to future bills.` });
+        }
         onDone(res.data?.receipt ?? res.data?.payment ?? null);
       }
     } catch (e: any) {
@@ -478,6 +517,7 @@ function PayDialog({ invoice, onOpenChange, onDone }: { invoice: any; onOpenChan
           <div className="space-y-1.5">
             <Label>Amount (GH₵) *</Label>
             <Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
+            <p className="text-[11px] text-muted-foreground">Amounts above the balance are banked as prepaid credit.</p>
           </div>
           <div className="space-y-1.5">
             <Label>Method</Label>
@@ -492,6 +532,19 @@ function PayDialog({ invoice, onOpenChange, onDone }: { invoice: any; onOpenChan
             <Label>MoMo / transaction reference</Label>
             <Input placeholder="e.g. MP2401.5533.77 GCASH" value={reference} onChange={(e) => setReference(e.target.value)} />
           </div>
+          {creditBal > 0 && (
+            <div className="sm:col-span-2 rounded-lg border border-emerald-500/50 bg-emerald-50 dark:bg-emerald-950/40 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300 flex flex-wrap items-center justify-between gap-2">
+              <span className="flex items-center gap-1.5 font-medium">
+                <Wallet className="size-3.5" />
+                Prepaid credit available: <b>{fmtCedi(creditBal)}</b> — applied automatically to the next generated bill.
+              </span>
+              {onCreditHistory && invoice && (
+                <button type="button" className="underline underline-offset-2 shrink-0 font-medium" onClick={() => onCreditHistory(invoice.studentId, invoice.student)}>
+                  View history
+                </button>
+              )}
+            </div>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
@@ -638,7 +691,7 @@ function DiscountsTab({ discounts, invoices, onEdit, onApply, onRefresh }: {
         <Button size="sm" className="gap-1.5" onClick={() => onEdit("new")}><Plus className="size-4" /> New discount</Button>
       </div>
 
-      <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {(discounts?.discounts ?? []).map((d) => (
           <Card key={d.id} className={d.active ? "" : "opacity-60"}>
             <CardHeader className="pb-2 flex-row items-center justify-between space-y-0">
@@ -1297,3 +1350,423 @@ function DecideDialog({ target, onOpenChange, busy, onConfirm }: {
 }
 
 function cn(...args: any[]) { return args.filter(Boolean).join(" "); }
+
+/* ── CREDITS TAB (prepaid credit wallets from overpayment — CI3 parity) ─── */
+function CreditsTab({ onHistory }: { onHistory: (studentId: string, name: string) => void }) {
+  const { currentSchoolId } = useStore();
+  const [data, setData] = useState<CreditsData | null>(null);
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [adjustFor, setAdjustFor] = useState<CreditRow | null>(null);
+  const [transferFor, setTransferFor] = useState<CreditRow | null>(null);
+  const [dailyFor, setDailyFor] = useState<CreditRow | null>(null);
+  const [search, setSearch] = useState("");
+
+  const load = () => {
+    if (!currentSchoolId) return;
+    apiGet<CreditsData>(`/api/school/${currentSchoolId}/ops/finance?action=credits`)
+      .then((d) => { setData(d); setLoadedFor(currentSchoolId); })
+      .catch((e) => toast({ title: "Load failed", description: e.message, variant: "destructive" }));
+  };
+  useEffect(() => { load(); }, [currentSchoolId]);
+
+  const rows = (data?.rows ?? []).filter((r) => {
+    if (!search.trim()) return true;
+    return `${r.name} ${r.classroom ?? ""}`.toLowerCase().includes(search.trim().toLowerCase());
+  });
+
+  if (!data || loadedFor !== currentSchoolId) return <Card><CardContent><LoadingBlock label="Loading credit wallets…" /></CardContent></Card>;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-muted-foreground max-w-2xl">
+          Prepaid credit wallets — overpayments banked at the counter are held per learner, auto-applied to the next term&apos;s bill,
+          transferable between siblings, or convertible to the daily-services wallet.
+        </p>
+        <Button size="sm" className="gap-1.5" onClick={() => setAddOpen(true)}><Plus className="size-4" /> Add credit</Button>
+      </div>
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <StatCard icon={<PiggyBank className="size-4" />} label="Active credits" value={fmtCedi(data.stats.activeCents, { compact: true })} tone="primary" sub="held by learners now" />
+        <StatCard icon={<Wallet className="size-4" />} label="Learners with credit" value={data.stats.studentsWithCredits} sub="holding a balance" />
+        <StatCard icon={<CheckCircle2 className="size-4" />} label="Credits applied" value={fmtCedi(data.stats.appliedCents, { compact: true })} tone="gold" sub="to bills & daily wallets" />
+        <StatCard icon={<Percent className="size-4" />} label="Utilization rate" value={`${data.stats.utilizationPct}%`} sub={`of ${fmtCedi(data.stats.createdCents, { compact: true })} created`} />
+      </div>
+
+      <Card>
+        <CardHeader className="pb-3 flex-row items-center justify-between space-y-0 flex-wrap gap-2">
+          <CardTitle className="text-base flex items-center gap-2"><PiggyBank className="size-4 text-primary" /> Credit wallets — {rows.length} learner{rows.length === 1 ? "" : "s"}</CardTitle>
+          <FilterSearch value={search} onChange={setSearch} placeholder="Learner, class…" />
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="overflow-x-auto nice-scroll max-h-[520px]">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-secondary/70 backdrop-blur">
+                <tr className="text-left border-b">
+                  <th className="px-3 py-2.5 font-medium">Learner</th>
+                  <th className="px-3 py-2.5 font-medium hidden md:table-cell">Class</th>
+                  <th className="px-3 py-2.5 font-medium text-right">Credit balance</th>
+                  <th className="px-3 py-2.5 font-medium text-right hidden sm:table-cell">Records</th>
+                  <th className="px-3 py-2.5 font-medium hidden lg:table-cell">Last credit</th>
+                  <th className="px-3 py-2.5 text-right"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.studentId} className="border-b last:border-0 hover:bg-secondary/30">
+                    <td className="px-3 py-2.5 font-medium">{r.name}</td>
+                    <td className="px-3 py-2.5 hidden md:table-cell text-muted-foreground">{r.classroom ?? "—"}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-emerald-600">{fmtCedi(r.balanceCents)}</td>
+                    <td className="px-3 py-2.5 text-right hidden sm:table-cell tabular-nums text-muted-foreground">{r.records}</td>
+                    <td className="px-3 py-2.5 hidden lg:table-cell text-xs text-muted-foreground">{r.lastAt ? fmtDate(r.lastAt) : "—"}</td>
+                    <td className="px-3 py-2.5 text-right">
+                      <div className="flex gap-1 justify-end">
+                        <Button size="sm" variant="ghost" className="h-7 gap-1" title="Credit history" onClick={() => onHistory(r.studentId, r.name)}><History className="size-3.5" /> History</Button>
+                        <Button size="sm" variant="ghost" className="h-7 gap-1" title="Adjust the balance (±)" onClick={() => setAdjustFor(r)}><PencilLine className="size-3.5" /> Adjust</Button>
+                        <Button size="sm" variant="ghost" className="h-7 gap-1" title="Transfer credit to another learner" disabled={r.balanceCents <= 0} onClick={() => setTransferFor(r)}><ArrowRightLeft className="size-3.5" /> Transfer</Button>
+                        <Button size="sm" variant="ghost" className="h-7 gap-1" title="Send credit to the daily-services prepaid wallet" disabled={r.balanceCents <= 0} onClick={() => setDailyFor(r)}><HandCoins className="size-3.5" /> Daily wallet</Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {!rows.length && <tr><td colSpan={6}><EmptyState icon={<PiggyBank className="size-5" />} title="No credit wallets yet" hint="Overpayments at the counter are banked here — or add a manual credit for a learner." /></td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+
+      <AddCreditDialog open={addOpen} students={data.students} onOpenChange={(o) => !o && setAddOpen(false)} onDone={() => { setAddOpen(false); load(); }} />
+      <AdjustCreditDialog row={adjustFor} onOpenChange={(o) => !o && setAdjustFor(null)} onDone={() => { setAdjustFor(null); load(); }} />
+      <TransferCreditDialog row={transferFor} students={data.students} onOpenChange={(o) => !o && setTransferFor(null)} onDone={() => { setTransferFor(null); load(); }} />
+      <ToDailyWalletDialog row={dailyFor} onOpenChange={(o) => !o && setDailyFor(null)} onDone={() => { setDailyFor(null); load(); }} />
+    </div>
+  );
+}
+
+/* credit ledger for one learner — shared by the Credits tab and the PayDialog widget */
+function CreditHistoryDialog({ target, onOpenChange }: { target: { studentId: string; name: string } | null; onOpenChange: (o: boolean) => void }) {
+  const { currentSchoolId } = useStore();
+  const [data, setData] = useState<{ balanceCents: number; rows: CreditLedgerRow[] } | null>(null);
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const key = target?.studentId ?? null;
+
+  useEffect(() => {
+    if (!key || !currentSchoolId) return;
+    apiGet<{ balanceCents: number; rows: CreditLedgerRow[] }>(`/api/school/${currentSchoolId}/ops/finance?action=credit-history&studentId=${key}`)
+      .then((d) => { setData(d); setLoadedFor(key); })
+      .catch((e) => toast({ title: "Load failed", description: e.message, variant: "destructive" }));
+  }, [key, currentSchoolId]);
+  const ready = !!data && loadedFor === key;
+
+  return (
+    <Dialog open={!!target} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><PiggyBank className="size-4 text-primary" /> Credit history — {target?.name}</DialogTitle>
+          <DialogDescription>
+            {ready ? <>Current prepaid credit: <b className="text-emerald-600">{fmtCedi(data!.balanceCents)}</b> · applied automatically to the next generated bill.</> : "Loading…"}
+          </DialogDescription>
+        </DialogHeader>
+        {!ready ? <LoadingBlock label="Loading ledger…" /> : (
+          <div className="overflow-x-auto nice-scroll max-h-[420px]">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-secondary/70 backdrop-blur">
+                <tr className="text-left border-b">
+                  <th className="px-2 py-2 font-medium">Date</th>
+                  <th className="px-2 py-2 font-medium">Kind</th>
+                  <th className="px-2 py-2 font-medium text-right">Amount</th>
+                  <th className="px-2 py-2 font-medium text-right">Balance after</th>
+                  <th className="px-2 py-2 font-medium hidden sm:table-cell">Note</th>
+                  <th className="px-2 py-2 font-medium hidden md:table-cell">By</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.rows.map((r) => (
+                  <tr key={r.id} className="border-b last:border-0 hover:bg-secondary/30">
+                    <td className="px-2 py-2 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(r.at)}</td>
+                    <td className="px-2 py-2">
+                      <Badge variant={r.amountCents >= 0 ? "default" : "secondary"} className="text-[10px]">
+                        {CREDIT_KIND_LABELS[r.kind] ?? r.kind}
+                      </Badge>
+                      {r.invoiceNo && <div className="font-mono text-[10px] text-muted-foreground mt-0.5">{r.invoiceNo}</div>}
+                    </td>
+                    <td className={`px-2 py-2 text-right tabular-nums font-semibold ${r.amountCents >= 0 ? "text-emerald-600" : "text-destructive"}`}>
+                      {r.amountCents >= 0 ? "+" : "−"}{fmtCedi(Math.abs(r.amountCents))}
+                    </td>
+                    <td className="px-2 py-2 text-right tabular-nums">{fmtCedi(r.balanceAfter)}</td>
+                    <td className="px-2 py-2 hidden sm:table-cell text-xs text-muted-foreground max-w-56 truncate" title={r.note ?? undefined}>{r.note ?? "—"}</td>
+                    <td className="px-2 py-2 hidden md:table-cell text-xs text-muted-foreground">{r.byName ?? "—"}</td>
+                  </tr>
+                ))}
+                {!data.rows.length && <tr><td colSpan={6}><EmptyState title="No credit activity yet" /></td></tr>}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* searchable learner picker (shared by add-credit and transfer dialogs) */
+function LearnerPicker({ students, selected, onSelect, exclude }: {
+  students: { id: string; name: string; classroom: string }[];
+  selected: string;
+  onSelect: (id: string) => void;
+  exclude?: string;
+}) {
+  const [search, setSearch] = useState("");
+  const list = students.filter((s) => s.id !== exclude && (!search.trim() || `${s.name} ${s.classroom}`.toLowerCase().includes(search.trim().toLowerCase())));
+  return (
+    <div className="space-y-1.5">
+      <Input placeholder="Search learner…" value={search} onChange={(e) => setSearch(e.target.value)} />
+      <div className="border rounded-lg max-h-44 overflow-y-auto nice-scroll">
+        {list.slice(0, 40).map((s) => (
+          <button key={s.id} type="button" onClick={() => onSelect(s.id)}
+            className={`w-full flex items-center justify-between px-3 py-2 border-b last:border-0 text-sm text-left ${selected === s.id ? "bg-primary text-primary-foreground" : "hover:bg-secondary/50"}`}>
+            <span>{s.name}</span><span className="text-xs opacity-70">{s.classroom}</span>
+          </button>
+        ))}
+        {!list.length && <div className="px-3 py-3 text-xs text-muted-foreground">No learners match.</div>}
+      </div>
+    </div>
+  );
+}
+
+/* manual credit (e.g. bursar banks a deposit before billing) */
+function AddCreditDialog({ open, students, onOpenChange, onDone }: {
+  open: boolean;
+  students: { id: string; name: string; classroom: string }[];
+  onOpenChange: (o: boolean) => void;
+  onDone: () => void;
+}) {
+  const { currentSchoolId } = useStore();
+  const [studentId, setStudentId] = useState("");
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => { if (open) { setStudentId(""); setAmount(""); setNote(""); } }, [open]);
+
+  async function submit() {
+    const cents = Math.round(parseFloat(amount || "0") * 100);
+    if (!studentId) { toast({ title: "Choose a learner" }); return; }
+    if (!cents || cents <= 0) { toast({ title: "Enter a credit amount above zero" }); return; }
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/finance`, { action: "credit-create", studentId, amountCents: cents, note: note || undefined });
+      toast({ title: "Credit added", description: `${fmtCedi(cents)} banked as prepaid credit.` });
+      onDone();
+    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><Plus className="size-4 text-primary" /> Add prepaid credit</DialogTitle>
+          <DialogDescription>Manually bank credit for a learner — applied automatically when their next invoice is generated.</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <LearnerPicker students={students} selected={studentId} onSelect={setStudentId} />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label>Amount (GH₵) *</Label>
+              <Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="e.g. 50.00" />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Note</Label>
+              <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Deposit for next term" />
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={submit} disabled={busy || !studentId}>{busy ? "Saving…" : "Add credit"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ± correction with a mandatory audit note */
+function AdjustCreditDialog({ row, onOpenChange, onDone }: { row: CreditRow | null; onOpenChange: (o: boolean) => void; onDone: () => void }) {
+  const { currentSchoolId } = useStore();
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => { if (row) { setAmount(""); setNote(""); } }, [row]);
+  const cents = Math.round(parseFloat(amount || "0") * 100);
+  const resulting = (row?.balanceCents ?? 0) + cents;
+
+  async function submit() {
+    if (!row) return;
+    if (!cents) { toast({ title: "Enter a non-zero amount (use − to reduce)" }); return; }
+    if (!note.trim()) { toast({ title: "A note is required for adjustments" }); return; }
+    if (resulting < 0) { toast({ title: "Adjustment refused", description: "It would overdraw the credit wallet." }); return; }
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/finance`, { action: "credit-adjust", studentId: row.studentId, amountCents: cents, note: note.trim() });
+      toast({ title: "Credit adjusted", description: `${row.name}'s balance is now ${fmtCedi(resulting)}.` });
+      onDone();
+    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
+  }
+
+  return (
+    <Dialog open={!!row} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><PencilLine className="size-4" /> Adjust credit — {row?.name}</DialogTitle>
+          <DialogDescription>Current balance <b className="text-emerald-600">{row ? fmtCedi(row.balanceCents) : ""}</b>. Use a negative amount to reduce.</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label>Amount (± GH₵) *</Label>
+              <Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="e.g. 5 or -5" />
+              <div className="flex gap-1.5">
+                <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => setAmount((v) => String(parseFloat(v || "0") - 5))}>−5</Button>
+                <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => setAmount("5")}>+5</Button>
+                <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => setAmount((v) => String(parseFloat(v || "0") + 5))}>+5 more</Button>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Resulting balance</Label>
+              <div className={`rounded-lg border px-3 py-2 text-sm font-semibold tabular-nums ${resulting < 0 ? "border-destructive text-destructive" : "border-emerald-500/50 text-emerald-600"}`}>
+                {fmtCedi(resulting)}
+              </div>
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Reason / note *</Label>
+            <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Guardian paid GH₵5 extra at the bank — slip attached" />
+          </div>
+          <p className="text-xs text-muted-foreground">Adjustments are permanent ledger entries (kind ADJUST) with your name attached for the audit trail.</p>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={submit} disabled={busy || !cents || !note.trim() || resulting < 0}>{busy ? "Adjusting…" : "Adjust credit"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* move credit to another learner (siblings / family consolidation) */
+function TransferCreditDialog({ row, students, onOpenChange, onDone }: {
+  row: CreditRow | null;
+  students: { id: string; name: string; classroom: string }[];
+  onOpenChange: (o: boolean) => void;
+  onDone: () => void;
+}) {
+  const { currentSchoolId } = useStore();
+  const [toId, setToId] = useState("");
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => { if (row) { setToId(""); setAmount((row.balanceCents / 100).toFixed(2)); setNote(""); } }, [row]);
+  const cents = Math.round(parseFloat(amount || "0") * 100);
+  const target = students.find((s) => s.id === toId);
+
+  async function submit() {
+    if (!row) return;
+    if (!target) { toast({ title: "Choose the receiving learner" }); return; }
+    if (!cents || cents <= 0) { toast({ title: "Enter a transfer amount above zero" }); return; }
+    if (cents > row.balanceCents) { toast({ title: "Insufficient credit", description: `${row.name} holds ${fmtCedi(row.balanceCents)}.` }); return; }
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/finance`, { action: "credit-transfer", fromStudentId: row.studentId, toStudentId: toId, amountCents: cents, note: note || undefined });
+      toast({ title: "Credit transferred", description: `${fmtCedi(cents)} moved from ${row.name} to ${target.name}.` });
+      onDone();
+    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
+  }
+
+  return (
+    <Dialog open={!!row} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><ArrowRightLeft className="size-4 text-primary" /> Transfer credit — {row?.name}</DialogTitle>
+          <DialogDescription>Available credit <b className="text-emerald-600">{row ? fmtCedi(row.balanceCents) : ""}</b> · moves to another learner&apos;s wallet (two audited ledger rows).</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <LearnerPicker students={students} selected={toId} onSelect={setToId} exclude={row?.studentId} />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label>Amount (GH₵) *</Label>
+              <Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Note</Label>
+              <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Consolidate siblings' credits" />
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={submit} disabled={busy || !toId || !cents || cents <= 0 || cents > (row?.balanceCents ?? 0)}>{busy ? "Transferring…" : "Transfer credit"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* convert credit → daily-services prepaid wallet */
+function ToDailyWalletDialog({ row, onOpenChange, onDone }: { row: CreditRow | null; onOpenChange: (o: boolean) => void; onDone: () => void }) {
+  const { currentSchoolId } = useStore();
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => { if (row) { setAmount((row.balanceCents / 100).toFixed(2)); setNote(""); } }, [row]);
+  const cents = Math.round(parseFloat(amount || "0") * 100);
+
+  async function submit() {
+    if (!row) return;
+    if (!cents || cents <= 0) { toast({ title: "Enter an amount above zero" }); return; }
+    if (cents > row.balanceCents) { toast({ title: "Insufficient credit", description: `${row.name} holds ${fmtCedi(row.balanceCents)}.` }); return; }
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/finance`, { action: "credit-to-daily", studentId: row.studentId, amountCents: cents, note: note || undefined });
+      toast({ title: "Moved to daily wallet", description: `${fmtCedi(cents)} is now prepaid credit for meals, water and other daily services.` });
+      onDone();
+    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
+  }
+
+  return (
+    <Dialog open={!!row} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><HandCoins className="size-4 text-primary" /> Send to daily wallet — {row?.name}</DialogTitle>
+          <DialogDescription>
+            Converts fee credit into daily-services prepaid balance (meals, water, transport extras) — the learner&apos;s card/wallet is topped up immediately.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label>Amount (GH₵) *</Label>
+              <Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
+              <p className="text-[11px] text-muted-foreground">Available credit: {row ? fmtCedi(row.balanceCents) : ""}</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Note</Label>
+              <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Guardian wants it on lunch" />
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">Recorded as a DAILY_WALLET ledger row plus a wallet TOPUP — both audited with your name.</p>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={submit} disabled={busy || !cents || cents <= 0 || cents > (row?.balanceCents ?? 0)}>{busy ? "Converting…" : "Send to daily wallet"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}

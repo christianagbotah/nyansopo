@@ -11,13 +11,14 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { StatCard, ModuleHeader, LoadingBlock, StatusBadge, EmptyState, FilterSearch } from "@/components/ui-helpers";
+import { StatCard, ModuleHeader, LoadingBlock, StatusBadge, EmptyState, FilterSearch, FormGrid, FormField } from "@/components/ui-helpers";
 import { fmtCedi, fmtDate } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
-import { Calculator, Users, Plus, CheckCheck, Banknote, Printer, Pencil, Trash2, ShieldCheck, FileText, AlertTriangle, Settings2, Landmark, GraduationCap, Download } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Calculator, Users, Plus, CheckCheck, Banknote, Printer, Pencil, Trash2, ShieldCheck, FileText, AlertTriangle, Settings2, Landmark, GraduationCap, Download, Wand2 } from "lucide-react";
 import { LogoMark, KenteStrip } from "@/components/brand";
 
-type StaffRow = { id: string; fullName: string; role: string; title: string | null; phone: string | null; email?: string | null; category?: string; position?: string | null; qualification?: string | null; department?: string | null; staffCode?: string | null; tier2Provider?: string | null; accountNumber?: string | null; bankName?: string | null; tin?: string | null; salary: number; employmentType: string; ssnitNumber: string | null; momoNumber: string | null; hiredAt: string | null; active: boolean };
+type StaffRow = { id: string; fullName: string; role: string; title: string | null; phone: string | null; email?: string | null; category?: string; position?: string | null; qualification?: string | null; department?: string | null; staffCode?: string | null; tier2Provider?: string | null; tier2MemberId?: string | null; accountNumber?: string | null; bankName?: string | null; tin?: string | null; salary: number; employmentType: string; ssnitNumber: string | null; momoNumber: string | null; hiredAt: string | null; active: boolean; sex?: string | null; birthday?: string | null; ghanaCardId?: string | null; address?: string | null; subjects?: string | null };
 type Run = { id: string; period: string; status: string; payslipCount: number; gross: number; deductions: number; net: number; employerSsnit: number; approvedByName: string | null; paidAt: string | null };
 type Slip = {
   id: string; staffId: string; staff: string; role: string; title: string | null; ssnitNumber: string | null; momoNumber: string | null;
@@ -258,7 +259,7 @@ export function Payroll() {
 
         {/* ── GHANA MATHS ── */}
         <TabsContent value="ghana">
-          <div className="grid lg:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <Card>
               <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><ShieldCheck className="size-4 text-primary" /> SSNIT pension (Tiers 1 & 2)</CardTitle></CardHeader>
               <CardContent className="space-y-2 text-sm">
@@ -297,7 +298,7 @@ export function Payroll() {
       </Tabs>
 
       <StaffDialog staff={staffDialog} onOpenChange={(o) => !o && setStaffDialog(null)} onDone={() => { setStaffDialog(null); load(runId ?? undefined); }} />
-      <NewStaffDialog open={newStaffOpen} onOpenChange={(o) => !o && setNewStaffOpen(false)} onDone={() => { setNewStaffOpen(false); load(runId ?? undefined); }} />
+      <NewStaffDialog open={newStaffOpen} onOpenChange={(o) => !o && setNewStaffOpen(false)} onDone={() => { setNewStaffOpen(false); load(runId ?? undefined); }} providers={data.providers} />
       <PayslipDialog slip={slipFor} period={run?.period ?? ""} school={data.school} rates={data.rates} onOpenChange={(o) => !o && setSlipFor(null)} />
     </div>
   );
@@ -329,7 +330,7 @@ function StatutorySettings({ rates, providers, onSaved }: { rates: Rates; provid
 
   return (
     <div className="space-y-4">
-      <div className="grid lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
       <Card className="lg:col-span-2">
         <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><Settings2 className="size-4 text-primary" /> Statutory deduction rates (%)</CardTitle></CardHeader>
         <CardContent className="space-y-4">
@@ -442,6 +443,7 @@ function StaffDialog({ staff, onOpenChange, onDone }: { staff: StaffRow | null; 
     fullName: "", salary: "", employmentType: "FULL_TIME", ssnit: "", momo: "",
     phone: "", email: "", position: "", qualification: "", department: "", category: "TEACHING",
     tier2Provider: "", accountNumber: "", bankName: "", tin: "",
+    sex: "", birthday: "", ghanaCard: "", address: "", subjects: "", tier2MemberId: "", hiredAt: "",
   });
   const [busy, setBusy] = useState(false);
 
@@ -458,6 +460,9 @@ function StaffDialog({ staff, onOpenChange, onDone }: { staff: StaffRow | null; 
         category: staff.category ?? (staff.role === "TEACHER" || staff.role === "HEADTEACHER" ? "TEACHING" : "ADMINISTRATION"),
         tier2Provider: staff.tier2Provider ?? "", accountNumber: staff.accountNumber ?? "",
         bankName: staff.bankName ?? "", tin: staff.tin ?? "",
+        sex: staff.sex ?? "", birthday: staff.birthday ? staff.birthday.slice(0, 10) : "",
+        ghanaCard: staff.ghanaCardId ?? "", address: staff.address ?? "", subjects: staff.subjects ?? "",
+        tier2MemberId: staff.tier2MemberId ?? "", hiredAt: staff.hiredAt ? staff.hiredAt.slice(0, 10) : "",
       });
     }
   }, [staff]);
@@ -473,6 +478,8 @@ function StaffDialog({ staff, onOpenChange, onDone }: { staff: StaffRow | null; 
         phone: f.phone, email: f.email, position: f.position, qualification: f.qualification,
         department: f.department, category: f.category, tier2Provider: f.tier2Provider,
         accountNumber: f.accountNumber, bankName: f.bankName, tin: f.tin,
+        sex: f.sex || null, birthday: f.birthday || null, ghanaCardId: f.ghanaCard,
+        address: f.address, subjects: f.subjects, tier2MemberId: f.tier2MemberId, hiredAt: f.hiredAt || null,
       });
       toast({ title: "Staff record saved" });
       onDone();
@@ -525,6 +532,32 @@ function StaffDialog({ staff, onOpenChange, onDone }: { staff: StaffRow | null; 
             <Label>Email</Label>
             <Input type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} />
           </div>
+          <div className="space-y-1.5">
+            <Label>Sex</Label>
+            <Select value={f.sex} onValueChange={(v) => setF({ ...f, sex: v })}>
+              <SelectTrigger><SelectValue placeholder="Choose" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="M">Male</SelectItem>
+                <SelectItem value="F">Female</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Birthday</Label>
+            <Input type="date" value={f.birthday} onChange={(e) => setF({ ...f, birthday: e.target.value })} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Ghana Card</Label>
+            <Input value={f.ghanaCard} onChange={(e) => setF({ ...f, ghanaCard: e.target.value })} placeholder="GHA-123456789-0" className="font-mono" />
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label>Residential address</Label>
+            <Input value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} placeholder="House No. 21, Ogbojo" />
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label>Subjects</Label>
+            <Input value={f.subjects} onChange={(e) => setF({ ...f, subjects: e.target.value })} placeholder="Mathematics, Science" />
+          </div>
           <Separator className="sm:col-span-2 my-1" />
           <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold sm:col-span-2">Payroll</div>
           <div className="space-y-1.5">
@@ -541,6 +574,10 @@ function StaffDialog({ staff, onOpenChange, onDone }: { staff: StaffRow | null; 
               </SelectContent>
             </Select>
           </div>
+          <div className="space-y-1.5">
+            <Label>Hired on</Label>
+            <Input type="date" value={f.hiredAt} onChange={(e) => setF({ ...f, hiredAt: e.target.value })} />
+          </div>
           <Separator className="sm:col-span-2 my-1" />
           <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold sm:col-span-2">Ghana statutory & payout</div>
           <div className="space-y-1.5">
@@ -554,6 +591,10 @@ function StaffDialog({ staff, onOpenChange, onDone }: { staff: StaffRow | null; 
           <div className="space-y-1.5">
             <Label>Tier 2 provider</Label>
             <Input value={f.tier2Provider} onChange={(e) => setF({ ...f, tier2Provider: e.target.value })} placeholder="Petra Trust" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Tier 2 member ID</Label>
+            <Input value={f.tier2MemberId} onChange={(e) => setF({ ...f, tier2MemberId: e.target.value })} placeholder="PT-998877" className="font-mono" />
           </div>
           <div className="space-y-1.5">
             <Label>Bank name</Label>
@@ -577,52 +618,187 @@ function StaffDialog({ staff, onOpenChange, onDone }: { staff: StaffRow | null; 
   );
 }
 
-/* ── NEW STAFF (teacher / non-teaching / admin) ───────────── */
-function NewStaffDialog({ open, onOpenChange, onDone }: { open: boolean; onOpenChange: (o: boolean) => void; onDone: () => void }) {
+/* ── NEW STAFF (teacher / non-teaching / admin) — legacy iEduPro "add teacher" parity.
+   One dialog, grouped fieldsets: identity → contact & government → banking →
+   employment → optional linked login. Staff codes: TCR / NTS / ADM prefix +
+   5-digit zero-padded sequence (max existing suffix + 1, generated on the server),
+   with a live ✓ available / ✗ taken check and a Generate button. ───────────── */
+const LOGIN_ROLE_OPTIONS = ["TEACHER", "NON_TEACHING", "LIBRARIAN", "CASHIER", "BUS_CONDUCTOR", "ACCOUNTANT", "SCHOOL_ADMIN"];
+const NEW_STAFF_POSITIONS = {
+  TEACHING: ["Teacher", "Headteacher", "Deputy Headteacher"],
+  NON_TEACHING: ["Driver", "Cleaner", "Cook", "Security Guard", "Librarian", "IT Technician", "Janitor", "Gardener", "Maintenance Worker", "Kitchen Assistant", "Office Assistant", "Lab Technician", "Receptionist", "Nurse", "Messenger"],
+  ADMINISTRATION: ["Bursar", "Accountant", "Administrator", "Receptionist"],
+} as Record<string, string[]>;
+const ALL_NEW_STAFF_POSITIONS = [...new Set(Object.values(NEW_STAFF_POSITIONS).flat())];
+
+const blankNewStaff = () => ({
+  fullName: "", sex: "", birthday: "", staffCode: "",
+  category: "TEACHING", position: "Teacher", phone: "", email: "",
+  address: "", ghanaCard: "", ssnit: "", tin: "", tier2Provider: "", tier2MemberId: "",
+  bankName: "", accountNumber: "", momo: "",
+  qualification: "", department: "", subjects: "",
+  salary: "", employmentType: "FULL_TIME", hiredAt: "",
+  createLogin: false, loginPassword: "", loginRole: "TEACHER",
+});
+
+function NewStaffDialog({ open, onOpenChange, onDone, providers }: { open: boolean; onOpenChange: (o: boolean) => void; onDone: () => void; providers: ProviderRow[] }) {
   const { currentSchoolId } = useStore();
-  const [f, setF] = useState({
-    fullName: "", category: "TEACHING", position: "Teacher", phone: "", email: "",
-    salary: "", employmentType: "FULL_TIME", ssnit: "", momo: "", qualification: "", department: "",
-  });
+  const [f, setF] = useState(blankNewStaff);
+  const [codeState, setCodeState] = useState<"idle" | "checking" | "ok" | "taken" | "error">("idle");
   const [busy, setBusy] = useState(false);
 
+  /* auto-generation: fetch the next code for the category on open + category change */
+  useEffect(() => {
+    if (!open || !currentSchoolId) return;
+    apiGet<{ code: string }>(`/api/school/${currentSchoolId}/ops/payroll?action=next-staff-code&category=${f.category}`)
+      .then((r) => { if (r.code) setF((p) => ({ ...p, staffCode: r.code })); })
+      .catch(() => null);
+  }, [open, f.category, currentSchoolId]);
+
+  /* live availability check as the user types (debounced; unique per school) */
+  useEffect(() => {
+    const code = f.staffCode.trim();
+    if (!open || !code) return;
+    const t = setTimeout(() => {
+      setCodeState("checking");
+      apiGet<{ taken: boolean }>(`/api/school/${currentSchoolId}/ops/payroll?action=check-staff-code&code=${encodeURIComponent(code)}&category=${f.category}`)
+        .then((r) => setCodeState(r.taken ? "taken" : "ok"))
+        .catch(() => setCodeState("error"));
+    }, 400);
+    return () => clearTimeout(t);
+  }, [f.staffCode, f.category, open, currentSchoolId]);
+
+  async function generate() {
+    if (!currentSchoolId) return;
+    try {
+      const r = await apiGet<{ code: string }>(`/api/school/${currentSchoolId}/ops/payroll?action=next-staff-code&category=${f.category}`);
+      if (r.code) { setF((p) => ({ ...p, staffCode: r.code })); setCodeState("checking"); }
+    } catch (e: any) { toast({ title: "Could not generate a code", description: e.message, variant: "destructive" }); }
+  }
+
+  function setCategory(v: string) {
+    setF((p) => ({
+      ...p, category: v,
+      position: (NEW_STAFF_POSITIONS[v] ?? [])[0] ?? p.position,
+      loginRole: v === "NON_TEACHING" ? "NON_TEACHING" : v === "ADMINISTRATION" ? "SCHOOL_ADMIN" : "TEACHER",
+    }));
+  }
+
   async function submit() {
+    if (!f.fullName.trim()) { toast({ title: "Full name is required", variant: "destructive" }); return; }
+    if (!f.staffCode.trim()) { toast({ title: "Staff code is required", description: "Tap Generate for the next code.", variant: "destructive" }); return; }
+    if (codeState === "taken") { toast({ title: "Staff code already taken", description: `${f.staffCode} is in use at this school — generate a fresh code.`, variant: "destructive" }); return; }
+    if (!f.phone.trim() || !f.email.trim()) { toast({ title: "Phone and email are required", variant: "destructive" }); return; }
+    if (f.createLogin && f.loginPassword.length < 8) { toast({ title: "Login password too short", description: "Use at least 8 characters.", variant: "destructive" }); return; }
     setBusy(true);
     try {
-      await apiPost(`/api/school/${currentSchoolId}/ops/payroll`, {
+      const res = await apiPost<{ login?: { email: string; role: string } | null }>(`/api/school/${currentSchoolId}/ops/payroll`, {
         action: "create-staff",
         fullName: f.fullName, category: f.category, position: f.position,
-        phone: f.phone, email: f.email, qualification: f.qualification, department: f.department,
+        phone: f.phone, email: f.email, qualification: f.qualification, department: f.department, subjects: f.subjects,
+        address: f.address, ghanaCardId: f.ghanaCard, ssnitNumber: f.ssnit, tin: f.tin,
+        tier2Provider: f.tier2Provider, tier2MemberId: f.tier2MemberId,
+        bankName: f.bankName, accountNumber: f.accountNumber, momoNumber: f.momo,
+        sex: f.sex || null, birthday: f.birthday || null, hiredAt: f.hiredAt || null,
+        staffCode: f.staffCode.trim().toUpperCase(),
         salaryCents: Math.round(parseFloat(f.salary || "0") * 100),
-        employmentType: f.employmentType, ssnitNumber: f.ssnit, momoNumber: f.momo,
+        employmentType: f.employmentType,
+        ...(f.createLogin ? { createLogin: { password: f.loginPassword, role: f.loginRole } } : {}),
       });
-      toast({ title: "Staff member added", description: `${f.fullName} — ${f.position}` });
-      setF({ fullName: "", category: "TEACHING", position: "Teacher", phone: "", email: "", salary: "", employmentType: "FULL_TIME", ssnit: "", momo: "", qualification: "", department: "" });
+      toast({ title: "Staff member added", description: `${f.fullName} — ${f.staffCode}${res?.login ? ` · login created (${res.login.role})` : ""}` });
+      setF(blankNewStaff());
+      setCodeState("idle");
       onDone();
     } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
   }
 
-  const POSITIONS = {
-    TEACHING: ["Teacher", "Headteacher", "Deputy Headteacher"],
-    NON_TEACHING: ["Driver", "Cleaner", "Cook", "Security Guard", "Librarian", "IT Technician", "Janitor", "Gardener", "Maintenance Worker", "Kitchen Assistant", "Office Assistant", "Lab Technician", "Receptionist", "Nurse", "Messenger"],
-    ADMINISTRATION: ["Bursar", "Accountant", "Administrator", "Receptionist"],
-  } as Record<string, string[]>;
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[92vh] overflow-y-auto nice-scroll sm:max-w-lg">
+      <DialogContent className="max-h-[92vh] overflow-y-auto nice-scroll sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><Users className="size-4" /> Add staff member</DialogTitle>
-          <DialogDescription>Teachers, non-teaching staff and administrators — staff codes are auto-assigned (TCR / NTS / ADM).</DialogDescription>
+          <DialogDescription>
+            Teachers, non-teaching staff and administrators — identity, contact &amp; government IDs, banking, employment and an optional linked login.
+            Staff codes are auto-generated per category (TCR / NTS / ADM) and checked live. Photo upload is a known gap — not yet available.
+          </DialogDescription>
         </DialogHeader>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1.5 sm:col-span-2">
-            <Label>Full name *</Label>
+
+        <FormGrid cols={2}>
+          {/* ── Identity ── */}
+          <div className="sm:col-span-2 text-[10px] uppercase tracking-wider text-muted-foreground font-semibold pt-1">Identity</div>
+          <FormField label="Full name" required span={2}>
             <Input value={f.fullName} onChange={(e) => setF({ ...f, fullName: e.target.value })} placeholder="Madam Akosua Dede" />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Category *</Label>
-            <Select value={f.category} onValueChange={(v) => setF({ ...f, category: v, position: POSITIONS[v]?.[0] ?? "" })}>
+          </FormField>
+          <FormField label="Sex">
+            <Select value={f.sex} onValueChange={(v) => setF({ ...f, sex: v })}>
+              <SelectTrigger><SelectValue placeholder="Choose" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="M">Male</SelectItem>
+                <SelectItem value="F">Female</SelectItem>
+              </SelectContent>
+            </Select>
+          </FormField>
+          <FormField label="Birthday">
+            <Input type="date" value={f.birthday} onChange={(e) => setF({ ...f, birthday: e.target.value })} />
+          </FormField>
+          <FormField label="Staff code" required span={2} hint="TCR- teaching · NTS- non-teaching · ADM- administration — 5-digit sequence, unique per school.">
+            <div className="flex gap-2">
+              <Input value={f.staffCode} onChange={(e) => { const v = e.target.value.toUpperCase(); setF({ ...f, staffCode: v }); if (!v.trim()) setCodeState("idle"); }} placeholder="TCR-00001" className="font-mono" />
+              <Button type="button" size="sm" variant="outline" className="h-9 shrink-0 gap-1.5" onClick={generate}><Wand2 className="size-3.5" /> Generate</Button>
+            </div>
+            {codeState === "ok" && <span className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">✓ available</span>}
+            {codeState === "taken" && <span className="text-[11px] font-medium text-destructive">✗ already taken at this school</span>}
+            {codeState === "checking" && <span className="text-[11px] text-muted-foreground">Checking…</span>}
+          </FormField>
+
+          {/* ── Contact & government ── */}
+          <div className="sm:col-span-2 mt-2 pt-3 border-t text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Contact &amp; government</div>
+          <FormField label="Phone" required>
+            <Input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} placeholder="024 000 0000" />
+          </FormField>
+          <FormField label="Email" required>
+            <Input type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} placeholder="name@nyansapo.gh" />
+          </FormField>
+          <FormField label="Residential address" span={2}>
+            <Input value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} placeholder="House No. 21, Ogbojo — Adenta" />
+          </FormField>
+          <FormField label="Ghana Card" hint="Format GHA-XXXXXXXXX-X">
+            <Input value={f.ghanaCard} onChange={(e) => setF({ ...f, ghanaCard: e.target.value })} placeholder="GHA-123456789-0" className="font-mono" />
+          </FormField>
+          <FormField label="SSNIT number">
+            <Input value={f.ssnit} onChange={(e) => setF({ ...f, ssnit: e.target.value })} placeholder="C0123456789" />
+          </FormField>
+          <FormField label="TIN">
+            <Input value={f.tin} onChange={(e) => setF({ ...f, tin: e.target.value })} placeholder="C0012345678" />
+          </FormField>
+          <FormField label="Tier 2 provider" hint="Licensed occupational pension manager">
+            <>
+              <Input list="new-staff-tier2-providers" value={f.tier2Provider} onChange={(e) => setF({ ...f, tier2Provider: e.target.value })} placeholder="Petra Trust" />
+              <datalist id="new-staff-tier2-providers">
+                {providers.filter((p) => p.active).map((p) => <option key={p.id} value={p.name} />)}
+              </datalist>
+            </>
+          </FormField>
+          <FormField label="Tier 2 member ID" span={2}>
+            <Input value={f.tier2MemberId} onChange={(e) => setF({ ...f, tier2MemberId: e.target.value })} placeholder="PT-998877" className="font-mono" />
+          </FormField>
+
+          {/* ── Banking ── */}
+          <div className="sm:col-span-2 mt-2 pt-3 border-t text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Banking</div>
+          <FormField label="Bank name">
+            <Input value={f.bankName} onChange={(e) => setF({ ...f, bankName: e.target.value })} placeholder="GCB Bank" />
+          </FormField>
+          <FormField label="Account number">
+            <Input value={f.accountNumber} onChange={(e) => setF({ ...f, accountNumber: e.target.value })} placeholder="1234567890123" className="font-mono" />
+          </FormField>
+          <FormField label="MoMo payout number" span={2}>
+            <Input value={f.momo} onChange={(e) => setF({ ...f, momo: e.target.value })} placeholder="024 000 0000" />
+          </FormField>
+
+          {/* ── Employment ── */}
+          <div className="sm:col-span-2 mt-2 pt-3 border-t text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Employment</div>
+          <FormField label="Category" required>
+            <Select value={f.category} onValueChange={setCategory}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="TEACHING">👨‍🏫 Teaching</SelectItem>
@@ -630,38 +806,25 @@ function NewStaffDialog({ open, onOpenChange, onDone }: { open: boolean; onOpenC
                 <SelectItem value="ADMINISTRATION">🏢 Administration</SelectItem>
               </SelectContent>
             </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Position *</Label>
-            <Select value={f.position} onValueChange={(v) => setF({ ...f, position: v })}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {(POSITIONS[f.category] ?? []).map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Phone</Label>
-            <Input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} placeholder="024 000 0000" />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Email</Label>
-            <Input type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Qualification</Label>
+          </FormField>
+          <FormField label="Position">
+            <>
+              <Input list="new-staff-positions" value={f.position} onChange={(e) => setF({ ...f, position: e.target.value })} placeholder="Teacher / Driver / Cook…" />
+              <datalist id="new-staff-positions">
+                {(NEW_STAFF_POSITIONS[f.category] ?? []).concat(ALL_NEW_STAFF_POSITIONS).map((p) => <option key={p} value={p} />)}
+              </datalist>
+            </>
+          </FormField>
+          <FormField label="Qualification">
             <Input value={f.qualification} onChange={(e) => setF({ ...f, qualification: e.target.value })} placeholder="B.Ed / WASSCE / HND" />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Department</Label>
+          </FormField>
+          <FormField label="Department">
             <Input value={f.department} onChange={(e) => setF({ ...f, department: e.target.value })} placeholder="Kitchen / Transport" />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Basic salary (GH₵/month)</Label>
-            <Input type="number" value={f.salary} onChange={(e) => setF({ ...f, salary: e.target.value })} placeholder="1600" />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Employment type</Label>
+          </FormField>
+          <FormField label="Subjects" span={2} hint="Comma-separated — teaching staff">
+            <Input value={f.subjects} onChange={(e) => setF({ ...f, subjects: e.target.value })} placeholder="Mathematics, Science" />
+          </FormField>
+          <FormField label="Employment type">
             <Select value={f.employmentType} onValueChange={(v) => setF({ ...f, employmentType: v })}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -669,19 +832,42 @@ function NewStaffDialog({ open, onOpenChange, onDone }: { open: boolean; onOpenC
                 <SelectItem value="CONTRACT">Contract</SelectItem><SelectItem value="CASUAL">Casual</SelectItem>
               </SelectContent>
             </Select>
+          </FormField>
+          <FormField label="Basic salary (GH₵/month)">
+            <Input type="number" value={f.salary} onChange={(e) => setF({ ...f, salary: e.target.value })} placeholder="1600" />
+          </FormField>
+          <FormField label="Hired on">
+            <Input type="date" value={f.hiredAt} onChange={(e) => setF({ ...f, hiredAt: e.target.value })} />
+          </FormField>
+
+          {/* ── Login (optional) ── */}
+          <div className="sm:col-span-2 mt-2 pt-3 border-t text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Login (optional)</div>
+          <div className="sm:col-span-2 flex items-start gap-2.5 rounded-lg border p-3">
+            <Checkbox id="new-staff-login" checked={f.createLogin} onCheckedChange={(v) => setF({ ...f, createLogin: !!v })} className="mt-0.5" />
+            <div className="text-sm leading-snug -mt-0.5">
+              <label htmlFor="new-staff-login" className="font-medium cursor-pointer">Create a staff login</label>
+              <p className="text-[11px] text-muted-foreground">Signs in with the email above (required) — linked to this staff record for the self-service portal.</p>
+            </div>
           </div>
-          <div className="space-y-1.5">
-            <Label>SSNIT number</Label>
-            <Input value={f.ssnit} onChange={(e) => setF({ ...f, ssnit: e.target.value })} placeholder="C0123456789" />
-          </div>
-          <div className="space-y-1.5">
-            <Label>MoMo payout number</Label>
-            <Input value={f.momo} onChange={(e) => setF({ ...f, momo: e.target.value })} />
-          </div>
-        </div>
+          {f.createLogin && (
+            <>
+              <FormField label="Login password" required hint="Minimum 8 characters">
+                <Input type="password" autoComplete="new-password" value={f.loginPassword} onChange={(e) => setF({ ...f, loginPassword: e.target.value })} />
+              </FormField>
+              <FormField label="Login role" hint="Defaults from the staff category — TEACHER for teaching staff.">
+                <Select value={f.loginRole} onValueChange={(v) => setF({ ...f, loginRole: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {LOGIN_ROLE_OPTIONS.map((r) => <SelectItem key={r} value={r}>{r === "NON_TEACHING" ? "Non-teaching" : r === "BUS_CONDUCTOR" ? "Bus conductor" : r === "SCHOOL_ADMIN" ? "School admin" : r.charAt(0) + r.slice(1).toLowerCase()}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </FormField>
+            </>
+          )}
+        </FormGrid>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={submit} disabled={busy || !f.fullName.trim()}>{busy ? "Adding…" : "Add staff member"}</Button>
+          <Button onClick={submit} disabled={busy || !f.fullName.trim() || !f.staffCode.trim() || codeState === "taken"}>{busy ? "Adding…" : "Add staff member"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

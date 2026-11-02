@@ -11,8 +11,8 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { ModuleHeader, LoadingBlock, EmptyState, StatusBadge } from "@/components/ui-helpers";
 import { toast } from "@/hooks/use-toast";
 import { fmtDate } from "@/lib/format";
-import { GraduationCap, Sparkles, Printer, Wand2, Send, RefreshCcw, Layers, FileText, Pencil, Save, Plus, Trash2, Eye, BookMarked } from "lucide-react";
-import { ClassicSheet, ModernSheet, CompactSheet, type SheetData } from "@/components/report-sheets";
+import { GraduationCap, Sparkles, Printer, Wand2, Send, RefreshCcw, Layers, FileText, Pencil, Save, Plus, Trash2, Eye, BookMarked, Baby } from "lucide-react";
+import { ClassicSheet, ModernSheet, CompactSheet, CrecheSheet, type SheetData, type CrecheSheetData } from "@/components/report-sheets";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
@@ -28,6 +28,14 @@ function StylePicker({ style, set }: { style: SheetStyle; set: (s: SheetStyle) =
   return <span className="flex gap-1 flex-wrap">{STYLE_BUTTONS.map((b) => (
     <Button key={b.id} size="sm" variant={style === b.id ? "default" : "outline"} className="h-7 text-xs" onClick={() => set(b.id)}>{b.label}</Button>
   ))}</span>;
+}
+
+/** Academic broadsheets vs early-years (crèche) developmental reports. */
+function ReportTypePicker({ value, set }: { value: "academic" | "early"; set: (v: "academic" | "early") => void }) {
+  return <span className="flex gap-1">
+    <Button size="sm" variant={value === "academic" ? "default" : "outline"} className="h-8 text-xs" onClick={() => set("academic")}>Academic</Button>
+    <Button size="sm" variant={value === "early" ? "default" : "outline"} className="h-8 text-xs gap-1.5" onClick={() => set("early")}><Baby className="size-3.5" /> Early-years</Button>
+  </span>;
 }
 
 type RepData = {
@@ -55,6 +63,10 @@ export function Reports() {
   const [editRemarks, setEditRemarks] = useState(false);
   const [draft, setDraft] = useState<{ teacherRemark: string; headRemark: string; conduct: string }>({ teacherRemark: "", headRemark: "", conduct: "" });
   const [tab, setTab] = useState("cards");
+  /* crèche / early-years mode: developmental-domain reports instead of academic broadsheets */
+  const [reportType, setReportType] = useState<"academic" | "early">("academic");
+  const [crecheSheet, setCrecheSheet] = useState<CrecheSheetData | null>(null);
+  const [bulkCreche, setBulkCreche] = useState<{ loading: boolean; sheets: CrecheSheetData[] } | null>(null);
 
   /* iEduPro nested nav: preselect Cumulative / Question Papers tabs on deep link */
   const [appliedTarget, setAppliedTarget] = useState<any>(null);
@@ -79,8 +91,13 @@ export function Reports() {
     if (!currentSchoolId || !classId || !termId) { toast({ title: "Choose a class first" }); return; }
     setBusy("generate");
     try {
-      const res = await apiPost<any>(`/api/school/${currentSchoolId}/reports`, { action: "generate", classroomId: classId, termId });
-      toast({ title: `Report cards generated for ${res.created} learners`, description: "Grades computed with the school's curriculum scale, positions and promotion status." });
+      if (reportType === "early") {
+        const res = await apiPost<any>(`/api/school/${currentSchoolId}/ops/academics`, { action: "creche-report-generate", classroomId: classId, termId });
+        toast({ title: `Early-years reports generated for ${res.created} learners`, description: `One row per developmental domain (${res.domains}) — dominant proficiency rating + narrative remarks.` });
+      } else {
+        const res = await apiPost<any>(`/api/school/${currentSchoolId}/reports`, { action: "generate", classroomId: classId, termId });
+        toast({ title: `Report cards generated for ${res.created} learners`, description: "Grades computed with the school's curriculum scale, positions and promotion status." });
+      }
       load(termId);
     } catch (e: any) {
       toast({ title: "Generation failed", description: e.message, variant: "destructive" });
@@ -111,11 +128,61 @@ export function Reports() {
   }
 
   async function openCard(card: RepData["reportCards"][0]) {
-    setSelected(card); setDetail(null); setEditRemarks(false);
+    setSelected(card); setDetail(null); setEditRemarks(false); setCrecheSheet(null);
     const full = await apiGet<any>(`/api/student/${card.studentId}`);
     const rc = full.reportCards.find((r: any) => r.id === card.id);
     setDetail({ ...card, results: rc?.results ?? [], student: full.student, attendanceSummary: rc?.attendance });
     setDraft({ teacherRemark: card.teacherRemark ?? "", headRemark: card.headRemark ?? "", conduct: card.conduct ?? "" });
+    if (reportType === "early") {
+      const sheets = await buildCrecheSheets([card]);
+      setCrecheSheet(sheets[0] ?? null);
+    }
+  }
+
+  /* Build early-years (crèche) print sheets: per-skill rating codes come from
+     the creche-ratings grid; domain summaries + remarks from the stored card. */
+  async function buildCrecheSheets(cards: RepData["reportCards"]): Promise<CrecheSheetData[]> {
+    if (!currentSchoolId || !data || !termId || !school) return [];
+    const list: RepData["reportCards"] = cards;
+    const termName = data.terms.find((t) => t.id === termId)?.name ?? "";
+    // ratings grids keyed by classroomId (only fetched once per class)
+    const grids = new Map<string, Awaited<ReturnType<typeof apiGet<any>>>>();
+    const out: CrecheSheetData[] = [];
+    for (const rc of list) {
+      const cls = data.classrooms.find((c) => c.name === rc.classroom);
+      if (!cls) continue;
+      let grid = grids.get(cls.id);
+      if (!grid) {
+        grid = await apiGet<any>(`/api/school/${currentSchoolId}/ops/academics?action=creche-ratings&classroomId=${cls.id}&termId=${termId}`).catch(() => null);
+        if (!grid) continue;
+        grids.set(cls.id, grid);
+      }
+      const full = await apiGet<any>(`/api/student/${rc.studentId}`);
+      const stored = full.reportCards.find((r: any) => r.id === rc.id);
+      const domRows = new Map<string, any>((stored?.results ?? []).map((r: any) => [r.subjectName as string, r]));
+      out.push({
+        student: { name: `${full.student.firstName} ${full.student.lastName}`, index: full.student.nyansapoIndex, classroom: rc.classroom },
+        termName,
+        scale: (grid.scale ?? []).map((s: any) => ({ code: s.code, label: s.label })),
+        domains: (grid.domains ?? []).filter((d: any) => d.active).map((d: any) => {
+          const row = domRows.get(d.name);
+          return {
+            domain: d.name,
+            dominant: row?.grade ?? null,
+            label: row?.remark ?? null,
+            ratedCount: row?.position ?? null,
+            skills: (d.skills ?? []).map((sk: any) => ({ skill: sk.name, code: grid.ratings?.[`${rc.studentId}_${sk.id}`] ?? null })),
+          };
+        }),
+        conduct: rc.conduct,
+        attendanceSummary: stored?.attendance ?? rc.attendance,
+        teacherRemark: rc.teacherRemark,
+        headRemark: rc.headRemark,
+        published: rc.published,
+        school,
+      });
+    }
+    return out;
   }
 
   /* save edited remarks / conduct straight onto the report card */
@@ -135,6 +202,17 @@ export function Reports() {
   /* bulk: print the whole class's report sheets in one go */
   async function printAll() {
     if (!currentSchoolId || !classId) { toast({ title: "Choose a class first" }); return; }
+    if (reportType === "early") {
+      setBulkCreche({ loading: true, sheets: [] });
+      try {
+        const sheets = await buildCrecheSheets(filtered);
+        setBulkCreche({ loading: false, sheets });
+      } catch (e: any) {
+        toast({ title: "Bulk print failed", description: e.message, variant: "destructive" });
+        setBulkCreche(null);
+      }
+      return;
+    }
     setBulk({ loading: true, cards: [] });
     try {
       const cards: SheetData[] = [];
@@ -191,7 +269,8 @@ export function Reports() {
 
         {/* ── TERMINAL REPORT CARDS (existing module flow) ── */}
         <TabsContent value="cards" className="mt-4">
-          <div className="flex flex-wrap gap-2 mb-4">
+          <div className="flex flex-wrap gap-2 mb-4 items-center">
+            <ReportTypePicker value={reportType} set={setReportType} />
             <Select value={termId ?? ""} onValueChange={(v) => { setTermId(v); load(v); }}>
               <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
               <SelectContent>{data.terms.map((t) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}</SelectContent>
@@ -201,11 +280,16 @@ export function Reports() {
               <SelectContent>{data.classrooms.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
             </Select>
             <Button size="sm" className="gap-1.5" onClick={generate} disabled={!classId || busy === "generate"}>
-              <RefreshCcw className={cn("size-4", busy === "generate" && "animate-spin")} /> Generate for class
+              <RefreshCcw className={cn("size-4", busy === "generate" && "animate-spin")} /> {reportType === "early" ? "Generate early-years reports" : "Generate for class"}
             </Button>
-            <Button size="sm" variant="outline" className="gap-1.5" onClick={printAll} disabled={!classId || !filtered.length || !!bulk?.loading}>
-              <Layers className="size-4" /> {bulk?.loading ? "Preparing…" : "Print whole class"}
+            <Button size="sm" variant="outline" className="gap-1.5" onClick={printAll} disabled={!classId || !filtered.length || !!bulk?.loading || !!bulkCreche?.loading}>
+              <Layers className="size-4" /> {bulk?.loading || bulkCreche?.loading ? "Preparing…" : "Print whole class"}
             </Button>
+            {reportType === "early" && (
+              <p className="w-full text-xs text-muted-foreground">
+                Early-years mode: reports carry one row per developmental domain (dominant proficiency rating) instead of subject scores — rate the learners first in <b>Gradebook → Crèche ratings</b>.
+              </p>
+            )}
           </div>
 
           {data.reportCards.length === 0 ? (
@@ -276,10 +360,47 @@ export function Reports() {
           <DialogHeader className="no-print">
             <DialogTitle className="flex items-center justify-between gap-3 text-base flex-wrap">
               <span>Report sheet — {selected?.student}</span>
-              <StylePicker style={sheetStyle} set={setSheetStyle} />
+              {reportType === "early" ? <Badge variant="secondary" className="gap-1"><Baby className="size-3.5" /> Early-years progress report</Badge> : <StylePicker style={sheetStyle} set={setSheetStyle} />}
             </DialogTitle>
           </DialogHeader>
-          {!sheetData ? <LoadingBlock label="Preparing report sheet…" /> : (
+          {reportType === "early" ? (
+            !crecheSheet || !detail ? <LoadingBlock label="Preparing early-years report…" /> : (
+              <>
+                <div className="print-area">
+                  <CrecheSheet d={{ ...crecheSheet, teacherRemark: detail.teacherRemark, headRemark: detail.headRemark, conduct: detail.conduct, attendanceSummary: detail.attendanceSummary ?? detail.attendance, published: detail.published }} />
+                </div>
+                {/* remark / conduct editor (no-print) */}
+                <div className="mt-4 no-print rounded-lg border bg-secondary/30 p-3">
+                  <button className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground" onClick={() => setEditRemarks(!editRemarks)}>
+                    <Pencil className="size-3.5" /> {editRemarks ? "Hide remark editor" : "Edit remarks & conduct"}
+                  </button>
+                  {editRemarks && (
+                    <div className="grid sm:grid-cols-3 gap-3 mt-3">
+                      <label className="text-xs space-y-1.5">
+                        <span className="font-medium">Class teacher&apos;s remarks</span>
+                        <Textarea rows={3} value={draft.teacherRemark} onChange={(e) => setDraft({ ...draft, teacherRemark: e.target.value })} placeholder="Narrative for the developmental report" />
+                      </label>
+                      <label className="text-xs space-y-1.5">
+                        <span className="font-medium">Head of school&apos;s remarks</span>
+                        <Textarea rows={3} value={draft.headRemark} onChange={(e) => setDraft({ ...draft, headRemark: e.target.value })} placeholder="Final word on the report" />
+                      </label>
+                      <label className="text-xs space-y-1.5">
+                        <span className="font-medium">Conduct / disposition</span>
+                        <Textarea rows={3} value={draft.conduct} onChange={(e) => setDraft({ ...draft, conduct: e.target.value })} placeholder="e.g. Cheerful, shares readily, curious" />
+                      </label>
+                      <div className="sm:col-span-3 flex justify-end">
+                        <Button size="sm" className="gap-1.5" onClick={saveRemarks} disabled={busy === "remarks"}><Save className="size-3.5" /> {busy === "remarks" ? "Saving…" : "Save to report card"}</Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2 justify-end mt-4 no-print">
+                  <Button size="sm" variant="outline" className="gap-1.5" onClick={() => window.print()}><Printer className="size-4" /> Print</Button>
+                  {!detail.published && <Button size="sm" className="gap-1.5" onClick={() => publish(detail.id)}><Send className="size-4" /> Publish</Button>}
+                </div>
+              </>
+            )
+          ) : !sheetData ? <LoadingBlock label="Preparing report sheet…" /> : (
             <>
               <div className="print-area">
                 {sheetStyle === "classic" ? <ClassicSheet d={sheetData} /> : sheetStyle === "compact" ? <CompactSheet d={sheetData} /> : <ModernSheet d={sheetData} />}
@@ -336,6 +457,26 @@ export function Reports() {
               <div className="print-area space-y-4">
                 <div className="no-print flex justify-end"><Button size="sm" onClick={() => window.print()} className="gap-1.5"><Printer className="size-4" /> Print all {bulk.cards.length}</Button></div>
                 {bulk.cards.map((c, i) => sheetStyle === "classic" ? <ClassicSheet key={i} d={c} /> : sheetStyle === "compact" ? <CompactSheet key={i} d={c} /> : <ModernSheet key={i} d={c} />)}
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* bulk early-years print overlay */}
+      {bulkCreche && (
+        <Dialog open onOpenChange={() => setBulkCreche(null)}>
+          <DialogContent className="max-w-3xl max-h-[92vh] overflow-y-auto nice-scroll">
+            <DialogHeader className="no-print">
+              <DialogTitle className="flex items-center justify-between text-base flex-wrap gap-2">
+                <span className="flex items-center gap-2"><Baby className="size-4" /> Early-years progress reports ({bulkCreche.sheets.length})</span>
+                <Badge variant="secondary">developmental domains</Badge>
+              </DialogTitle>
+            </DialogHeader>
+            {bulkCreche.loading ? <LoadingBlock label="Fetching every learner's developmental report…" /> : (
+              <div className="print-area space-y-4">
+                <div className="no-print flex justify-end"><Button size="sm" onClick={() => window.print()} className="gap-1.5"><Printer className="size-4" /> Print all {bulkCreche.sheets.length}</Button></div>
+                {bulkCreche.sheets.map((c, i) => <CrecheSheet key={i} d={c} />)}
               </div>
             )}
           </DialogContent>

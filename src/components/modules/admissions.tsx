@@ -1,7 +1,7 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
-import { apiGet, apiPost } from "@/lib/api";
+import { apiGet, apiPost, getHeaders } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -15,7 +15,7 @@ import { ModuleHeader, LoadingBlock, StatusBadge, SeverityBadge, EmptyState, For
 import { AdmissionWizard } from "@/components/modules/admission-wizard";
 import { fmtCedi, fmtDate, fmtDateTime, FLAG_LABELS } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
-import { Search, UserPlus, FileSearch, ShieldAlert, ShieldCheck, Inbox, Send, ArrowLeftRight, Phone, Mail, MapPin, School as SchoolIcon, MessageSquare, Ban, CheckCheck, FileDown } from "lucide-react";
+import { Search, UserPlus, FileSearch, ShieldAlert, ShieldCheck, Inbox, Send, ArrowLeftRight, Phone, Mail, MapPin, School as SchoolIcon, MessageSquare, Ban, CheckCheck, FileDown, Upload } from "lucide-react";
 
 export function Admissions() {
   const { currentSchoolId, schools } = useStore();
@@ -77,6 +77,7 @@ export function Admissions() {
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="flex-wrap">
           <TabsTrigger value="admit" className="gap-1.5"><UserPlus className="size-3.5" /> Admit learner</TabsTrigger>
+          <TabsTrigger value="bulk" className="gap-1.5"><Upload className="size-3.5" /> Bulk import</TabsTrigger>
           <TabsTrigger value="inquiries">Inquiries</TabsTrigger>
           <TabsTrigger value="registry">Registry lookup</TabsTrigger>
           <TabsTrigger value="requests">Record requests</TabsTrigger>
@@ -89,6 +90,15 @@ export function Admissions() {
             <AdmissionWizard key={currentSchoolId} schoolId={currentSchoolId} onAdmitted={load} />
           ) : (
             <EmptyState icon={<UserPlus className="size-5" />} title="No school selected" hint="Choose a school to start admitting learners." />
+          )}
+        </TabsContent>
+
+        {/* ── BULK CSV IMPORT ── */}
+        <TabsContent value="bulk" className="mt-4">
+          {currentSchoolId ? (
+            <BulkAdmissions key={currentSchoolId} schoolId={currentSchoolId} onImported={load} />
+          ) : (
+            <EmptyState icon={<Upload className="size-5" />} title="No school selected" hint="Choose a school to bulk-admit learners from a CSV file." />
           )}
         </TabsContent>
 
@@ -165,7 +175,7 @@ export function Admissions() {
                       </div>
                     </div>
 
-                    <div className="grid md:grid-cols-2 gap-4 mt-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
                       <div>
                         <div className="text-xs font-semibold uppercase text-muted-foreground mb-2 flex items-center gap-1.5"><SchoolIcon className="size-3.5" /> School history & contacts</div>
                         <div className="space-y-2">
@@ -228,7 +238,7 @@ export function Admissions() {
 
         {/* ── RECORD REQUESTS ── */}
         <TabsContent value="requests">
-          <div className="grid lg:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <Card>
               <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><Inbox className="size-4" /> Inbox — requests to your school</CardTitle></CardHeader>
               <CardContent className="space-y-3 max-h-[480px] overflow-y-auto nice-scroll">
@@ -291,7 +301,7 @@ export function Admissions() {
 
         {/* ── TRANSFERS ── */}
         <TabsContent value="transfers">
-          <div className="grid lg:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <Card>
               <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><ArrowLeftRight className="size-4" /> Outgoing — learners who left your school</CardTitle></CardHeader>
               <CardContent className="space-y-3">
@@ -513,5 +523,316 @@ function RespondDialog({ request, onOpenChange, onDone }: { request: any | null;
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/* ── Bulk CSV admission (CI3 parity): class → template → upload → validate →
+   confirm guardian reuse → import. Nothing is written until the clerk sees
+   the per-row preview and clicks Import. ── */
+type BulkRowView = {
+  line: number; name: string; ok: boolean;
+  errors: string[]; warnings: string[];
+  guardianMatch?: { name: string; phone: string };
+};
+type BulkImportResult = {
+  created: number; classroom: string;
+  failed: { line: number; name: string; error: string }[];
+  indexes: { line: number; name: string; studentId: string; index: string; rollNo: number }[];
+};
+
+function BulkAdmissions({ schoolId, onImported }: { schoolId: string; onImported: () => void }) {
+  const [classrooms, setClassrooms] = useState<{ id: string; name: string; gradeLevel: string; stageLabel?: string | null; enrolled: number; capacity: number }[] | null>(null);
+  const [classroomId, setClassroomId] = useState("");
+  const [fileName, setFileName] = useState("");
+  const [csvText, setCsvText] = useState("");
+  const [validation, setValidation] = useState<{ rows: BulkRowView[]; validCount: number; invalidCount: number } | null>(null);
+  const [busy, setBusy] = useState<"" | "validating" | "importing">("");
+  const [confirmMatches, setConfirmMatches] = useState<{ line: number; name: string; guardianMatch: { name: string; phone: string } }[] | null>(null);
+  const [result, setResult] = useState<BulkImportResult | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const loadClassrooms = () => {
+    apiGet<any>(`/api/school/${schoolId}/ops/admissions`)
+      .then((d) => setClassrooms(d.classrooms ?? []))
+      .catch(() => setClassrooms([]));
+  };
+  useEffect(loadClassrooms, [schoolId, result]); // re-fetch roll counts after an import
+
+  // raw POST so the 409 guardian-reuse handshake can be handled inline
+  const postBulk = async (body: any): Promise<{ status: number; data: any }> => {
+    const res = await fetch(`/api/school/${schoolId}/ops/admissions`, { method: "POST", headers: getHeaders(), body: JSON.stringify(body) });
+    return { status: res.status, data: await res.json().catch(() => ({})) };
+  };
+
+  async function downloadTemplate() {
+    if (!classroomId) { toast({ title: "Choose a class first" }); return; }
+    try {
+      const res = await fetch(`/api/school/${schoolId}/ops/admissions?action=bulk-template&classroomId=${classroomId}`, { headers: getHeaders() });
+      if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error(b.error ?? `Download failed (${res.status})`); }
+      const slug = (classrooms?.find((c) => c.id === classroomId)?.name ?? "class").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "class";
+      const url = URL.createObjectURL(new Blob([await res.text()], { type: "text/csv" }));
+      const a = document.createElement("a");
+      a.href = url; a.download = `nyansapo-admissions-${slug}.csv`; a.click();
+      URL.revokeObjectURL(url);
+      toast({ title: "Template downloaded", description: "Fill one row per learner — keep the header row and delete the example row before uploading." });
+    } catch (e: any) {
+      toast({ title: "Template download failed", description: e.message, variant: "destructive" });
+    }
+  }
+
+  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!classroomId) {
+      toast({ title: "Choose a class first", description: "Learners in the file are enrolled into the selected class." });
+      e.target.value = "";
+      return;
+    }
+    setFileName(file.name);
+    setResult(null);
+    const text = await file.text();
+    setCsvText(text);
+    await runValidate(text);
+  }
+
+  async function runValidate(text: string) {
+    setBusy("validating");
+    setConfirmMatches(null);
+    try {
+      const { status, data } = await postBulk({ action: "bulk-validate", classroomId, csv: text });
+      if (status === 200) {
+        setValidation(data);
+        toast({
+          title: data.validCount === data.rows.length ? `All ${data.rows.length} rows ready` : `${data.validCount} of ${data.rows.length} rows ready`,
+          description: data.invalidCount ? `${data.invalidCount} row${data.invalidCount === 1 ? "" : "s"} must be fixed before importing.` : "Validation passed — review below and import.",
+          variant: data.invalidCount ? "destructive" : undefined,
+        });
+      } else {
+        setValidation(null);
+        toast({ title: "Could not read the file", description: data.error, variant: "destructive" });
+      }
+    } finally { setBusy(""); }
+  }
+
+  function startImport() {
+    const matches = (validation?.rows ?? []).filter((r) => r.guardianMatch);
+    if (matches.length > 0) setConfirmMatches(matches.map((r) => ({ line: r.line, name: r.name, guardianMatch: r.guardianMatch! })));
+    else runImport(false);
+  }
+
+  async function runImport(confirmGuardianReuse: boolean) {
+    setBusy("importing");
+    try {
+      const { status, data } = await postBulk({ action: "bulk-import", classroomId, csv: csvText, ...(confirmGuardianReuse ? { confirmGuardianReuse: true } : {}) });
+      if (status === 200) {
+        setResult(data);
+        setValidation(null);
+        setConfirmMatches(null);
+        toast({
+          title: `${data.created} learner${data.created === 1 ? "" : "s"} admitted`,
+          description: `Enrolled in ${data.classroom} — roll numbers and Nyansapo indexes assigned.`,
+        });
+        onImported();
+      } else if (status === 409) {
+        setConfirmMatches(data.matches ?? []);
+      } else if (status === 400 && data.rows) {
+        setValidation({ rows: data.rows, validCount: data.validCount, invalidCount: data.invalidCount });
+        toast({ title: "Import blocked", description: data.error, variant: "destructive" });
+      } else {
+        toast({ title: "Import failed", description: data.error ?? `Request failed (${status})`, variant: "destructive" });
+      }
+    } finally { setBusy(""); }
+  }
+
+  function resetAll() {
+    setValidation(null); setResult(null); setCsvText(""); setFileName(""); setConfirmMatches(null);
+    if (fileRef.current) fileRef.current.value = "";
+  }
+
+  if (!classrooms) return <LoadingBlock label="Loading classes…" />;
+
+  const warningCount = validation?.rows.filter((r) => r.warnings.length > 0).length ?? 0;
+  const chosenName = classrooms.find((c) => c.id === classroomId)?.name;
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2"><Upload className="size-4" /> Bulk CSV admission</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          {classrooms.length === 0 ? (
+            <EmptyState icon={<Upload className="size-5" />} title="No classes set up" hint="Create classes first — bulk learners are enrolled into the class you choose." />
+          ) : (
+            <>
+              {/* step 1 — class */}
+              <div className="space-y-1.5">
+                <Label>Step 1 — Class to enrol into *</Label>
+                <Select value={classroomId} onValueChange={(v) => { setClassroomId(v); setValidation(null); setResult(null); }}>
+                  <SelectTrigger className="w-full sm:w-96"><SelectValue placeholder="Choose class" /></SelectTrigger>
+                  <SelectContent>
+                    {classrooms.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>{c.name} — {c.enrolled}/{c.capacity} enrolled</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* step 2 — template */}
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div className="space-y-1">
+                  <Label>Step 2 — Download the CSV template</Label>
+                  <p className="text-xs text-muted-foreground">One row per learner. Required: firstName, lastName, gender, guardianPhone. Keep the header row and delete the example row.</p>
+                </div>
+                <Button variant="outline" size="sm" className="gap-1.5" onClick={downloadTemplate} disabled={!classroomId}>
+                  <FileDown className="size-4" /> Download template
+                </Button>
+              </div>
+
+              {/* step 3 — upload & validate */}
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div className="space-y-1">
+                  <Label>Step 3 — Upload the filled CSV</Label>
+                  <p className="text-xs text-muted-foreground">
+                    {fileName
+                      ? <>Checked <b>{fileName}</b> — re-upload after fixing any errors below.</>
+                      : "Rows are checked against the school register before anything is saved."}
+                  </p>
+                </div>
+                <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden" aria-label="Upload CSV file" onChange={onFile} />
+                <Button variant="outline" size="sm" className="gap-1.5" onClick={() => fileRef.current?.click()} disabled={!classroomId || busy === "importing"}>
+                  {busy === "validating" ? "Checking…" : <><Upload className="size-4" /> {fileName ? "Re-upload CSV" : "Upload CSV"}</>}
+                </Button>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* step 4 — validation preview */}
+      {validation && (
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <CardTitle className="text-base">Step 4 — Review {validation.rows.length} row{validation.rows.length === 1 ? "" : "s"}{chosenName ? ` → ${chosenName}` : ""}</CardTitle>
+              <div className="flex flex-wrap gap-1.5">
+                {validation.validCount > 0
+                  ? <Badge className="bg-emerald-600">{validation.validCount} ready</Badge>
+                  : <Badge variant="secondary">{validation.validCount} ready</Badge>}
+                {warningCount > 0 && <Badge className="bg-amber-500">{warningCount} guardian reuse</Badge>}
+                {validation.invalidCount > 0 && <Badge variant="destructive">{validation.invalidCount} with errors</Badge>}
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="overflow-x-auto rounded-xl border max-h-96 overflow-y-auto nice-scroll">
+              <table className="w-full text-sm min-w-[640px]">
+                <thead className="bg-secondary/50 sticky top-0 z-10">
+                  <tr>
+                    <th scope="col" className="px-3 py-2 text-left font-medium w-14">Line</th>
+                    <th scope="col" className="px-3 py-2 text-left font-medium">Learner</th>
+                    <th scope="col" className="px-3 py-2 text-left font-medium w-24">Status</th>
+                    <th scope="col" className="px-3 py-2 text-left font-medium">Messages</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {validation.rows.map((r) => (
+                    <tr key={r.line} className="border-t align-top">
+                      <td className="px-3 py-2 text-muted-foreground tabular-nums">{r.line}</td>
+                      <td className="px-3 py-2 font-medium whitespace-nowrap">{r.name}</td>
+                      <td className="px-3 py-2">
+                        {!r.ok ? <Badge variant="destructive">Error</Badge>
+                          : r.warnings.length > 0 ? <Badge className="bg-amber-500">Warning</Badge>
+                          : <Badge className="bg-emerald-600">OK</Badge>}
+                      </td>
+                      <td className="px-3 py-2 text-xs space-y-1">
+                        {r.guardianMatch && (
+                          <div className="text-amber-600 dark:text-amber-400">
+                            existing guardian: <b>{r.guardianMatch.name}</b> ({r.guardianMatch.phone}) — their details will be reused
+                          </div>
+                        )}
+                        {r.errors.map((e, i) => <div key={i} className="text-destructive">{e}</div>)}
+                        {r.warnings.filter((w) => !w.startsWith("existing guardian:")).map((w, i) => <div key={i} className="text-amber-600 dark:text-amber-400">{w}</div>)}
+                        {r.ok && r.warnings.length === 0 && <span className="text-muted-foreground">All checks passed</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button className="gap-1.5" onClick={startImport} disabled={busy !== "" || validation.validCount === 0 || validation.invalidCount > 0}>
+                {busy === "importing" ? "Importing…" : <><UserPlus className="size-4" /> Import {validation.validCount} learner{validation.validCount === 1 ? "" : "s"}</>}
+              </Button>
+              <Button variant="outline" onClick={resetAll} disabled={busy !== ""}>Start over</Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* import result */}
+      {result && (
+        <Card className="border-emerald-200 dark:border-emerald-900">
+          <CardContent className="pt-5 space-y-3">
+            <div className="flex items-center gap-2 font-semibold text-emerald-700 dark:text-emerald-400">
+              <CheckCheck className="size-5" />
+              {result.created} learner{result.created === 1 ? "" : "s"} admitted to {result.classroom}
+            </div>
+            <div className="rounded-xl border divide-y max-h-96 overflow-y-auto nice-scroll">
+              {result.indexes.map((s) => (
+                <div key={s.studentId} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm">
+                  <span className="font-medium">{s.name} <span className="text-muted-foreground font-normal">· line {s.line}</span></span>
+                  <span className="flex items-center gap-2">
+                    <Badge variant="secondary" className="font-mono">{s.index}</Badge>
+                    <Badge variant="outline">Roll #{s.rollNo}</Badge>
+                  </span>
+                </div>
+              ))}
+            </div>
+            {result.failed.length > 0 && (
+              <div className="rounded-xl border border-destructive/40 divide-y text-sm">
+                {result.failed.map((f) => (
+                  <div key={f.line} className="px-3 py-2">
+                    <b>Line {f.line} — {f.name}:</b> <span className="text-destructive">{f.error}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div>
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={resetAll}><Upload className="size-4" /> Import another file</Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* guardian reuse confirmation (shown pre-flight or after a 409) */}
+      <Dialog open={!!confirmMatches} onOpenChange={(o) => !o && setConfirmMatches(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reuse existing guardian details?</DialogTitle>
+            <DialogDescription>
+              {confirmMatches?.length} learner{confirmMatches?.length === 1 ? "" : "s"} in this file share{confirmMatches?.length === 1 ? "s" : ""} a guardian phone with a learner already on your roll.
+              The guardian details already on file (name, phones, email, occupation &amp; address) will be reused for {confirmMatches?.length === 1 ? "this learner" : "these learners"} — keeping siblings consistent.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5 max-h-60 overflow-y-auto nice-scroll">
+            {confirmMatches?.map((m) => (
+              <div key={m.line} className="rounded-lg border p-2.5 text-sm">
+                <span className="font-medium">{m.name}</span> <span className="text-muted-foreground">· line {m.line}</span>
+                <div className="text-xs text-muted-foreground mt-0.5">
+                  existing guardian: <b className="text-foreground">{m.guardianMatch.name}</b> ({m.guardianMatch.phone}) — their details will be reused
+                </div>
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmMatches(null)}>Cancel</Button>
+            <Button onClick={() => { setConfirmMatches(null); runImport(true); }} disabled={busy !== ""}>
+              {busy === "importing" ? "Importing…" : "Reuse guardian & import"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }

@@ -62,6 +62,7 @@ type TerminalBill = {
   balance: number;
   dailyArrears: number;
   transport: { route: string; fare: number } | null;
+  credit: number; // prepaid credit balance (overpayment) offsetting the total due
 };
 
 const EXPENSE_CATEGORIES: { key: string; label: string }[] = [
@@ -133,7 +134,7 @@ export function Finance() {
 
         {/* ── INCOME ── */}
         <TabsContent value="income">
-          <div className="grid lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             <Card className="lg:col-span-2">
               <CardHeader className="pb-3"><CardTitle className="text-base">Revenue vs expenditure — {data.yearLabel}</CardTitle></CardHeader>
               <CardContent>
@@ -229,7 +230,7 @@ function LedgerTab({ data, yearId }: { data: FinanceData; yearId: string | null 
   }
 
   return (
-    <div className="grid lg:grid-cols-3 gap-4">
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
       <Card>
         <CardHeader className="pb-3 flex-row items-center justify-between space-y-0">
           <CardTitle className="text-base">Pick a learner</CardTitle>
@@ -399,7 +400,10 @@ function TerminalBillsTab({ data }: { data: FinanceData }) {
 function TerminalBill({ bill }: { bill: TerminalBill }) {
   const net = bill.items.reduce((a, x) => a + x.amount, 0);
   const balance = bill.balance;
-  const totalDue = balance + bill.dailyArrears;
+  // prepaid credit (overpayment) offsets the arrears — never the future bus fare
+  const creditApplied = bill.credit > 0 ? Math.min(bill.credit, balance + bill.dailyArrears) : 0;
+  const totalDue = balance + bill.dailyArrears - creditApplied;
+  const grandTotal = totalDue + (bill.transport?.fare ?? 0);
   return (
     <div className="print-sheet a5-sheet mx-auto bg-card text-card-foreground rounded-xl border shadow-sm overflow-hidden">
       <KenteStrip />
@@ -466,6 +470,12 @@ function TerminalBill({ bill }: { bill: TerminalBill }) {
               <span className="font-bold tabular-nums text-amber-700 dark:text-amber-400">{fmtCedi(bill.dailyArrears)}</span>
             </div>
           )}
+          {creditApplied > 0 && (
+            <div className="flex justify-between rounded-lg bg-emerald-500/10 px-3 py-2">
+              <span className="font-medium">LESS: Prepaid credit applied</span>
+              <span className="font-bold tabular-nums text-emerald-700 dark:text-emerald-400">−{fmtCedi(creditApplied)}</span>
+            </div>
+          )}
           {bill.transport && (
             <div className="flex justify-between rounded-lg bg-secondary/60 px-3 py-2">
               <span className="font-medium">Bus route {bill.transport.route} — next term fare</span>
@@ -474,9 +484,9 @@ function TerminalBill({ bill }: { bill: TerminalBill }) {
           )}
           <div className="flex justify-between rounded-lg bg-primary/10 px-3 py-2.5">
             <span className="font-bold">Total to settle / bring for resumption</span>
-            <span className="font-bold tabular-nums text-primary text-lg">{fmtCedi(totalDue + (bill.transport?.fare ?? 0))}</span>
+            <span className="font-bold tabular-nums text-primary text-lg">{fmtCedi(grandTotal)}</span>
           </div>
-          {totalDue > 0 && <div className="text-[10px] italic text-muted-foreground text-right">{amountInWords(totalDue + (bill.transport?.fare ?? 0))}</div>}
+          {grandTotal > 0 && <div className="text-[10px] italic text-muted-foreground text-right">{amountInWords(grandTotal)}</div>}
         </div>
 
         <div className="grid grid-cols-2 gap-8 pt-5 text-[10px] text-muted-foreground">
@@ -523,7 +533,7 @@ function ExpenditureTab({ data, onRefresh }: { data: FinanceData; onRefresh: () 
   }
 
   return (
-    <div className="grid lg:grid-cols-3 gap-4">
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
       <Card>
         <CardHeader className="pb-3 flex-row items-center justify-between space-y-0">
           <CardTitle className="text-base">Category breakdown</CardTitle>
@@ -727,7 +737,7 @@ function CashierTab() {
         <StatCard icon={<Wallet className="size-4" />} label="Report mode" value={collector === "ALL" ? "All cashiers" : "One cashier"} sub={collector === "ALL" ? "dashboard & summary" : "collections rendering"} />
       </div>
 
-      <div className="grid lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* collections by service */}
         <Card>
           <CardHeader className="pb-3"><CardTitle className="text-base">Collections by service</CardTitle></CardHeader>

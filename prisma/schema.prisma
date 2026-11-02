@@ -161,6 +161,12 @@ model School {
   lessonNotes         LessonNote[]
   studyMaterials      StudyMaterial[]
   syllabusTopics      SyllabusTopic[]
+  studentCredits      StudentCredit[]
+  crecheDomains       CrecheDomain[]
+  crecheSkills        CrecheSkill[]
+  crecheRatingScales  CrecheRatingScale[]
+  crecheRatings       CrecheRating[]
+  schoolSettings      SchoolSetting[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -260,6 +266,11 @@ model Staff {
   ssnitNumber    String?
   tin            String?
   tier2Provider  String? // licensed Tier 2 pension manager (e.g. Petra Trust)
+  tier2MemberId  String? // tier-2 membership number with the provider
+  ghanaCardId    String? // Ghana Card number (GHA-XXXXXXXXX-X)
+  birthday       DateTime?
+  sex            String? // M | F
+  address        String?
   accountNumber  String? // bank / momo account (masked in UI)
   momoNumber     String?
   bankName       String?
@@ -325,6 +336,8 @@ model Student {
   onlineExamAttempts  OnlineExamAttempt[]
   stockIssues          StockMovement[]
   posPayments          Payment[]
+  credits              StudentCredit[]
+  crecheRatings        CrecheRating[]
 }
 
 model Enrollment {
@@ -472,7 +485,8 @@ model AttendanceRecord {
   session       AttendanceSession @relation(fields: [sessionId], references: [id])
   studentId     String
   student       Student           @relation(fields: [studentId], references: [id])
-  status        String            @default("PRESENT") // PRESENT | ABSENT | LATE | SICK | EXCUSED
+  status        String            @default("PRESENT") // PRESENT | ABSENT | LATE | SICK | SICK_HOME | SICK_CLINIC | BUSY | EXCUSED
+  excusedReason String? // why the learner is excused (required when EXCUSED - iEduPro parity)
   markedOffline Boolean           @default(false)
 }
 
@@ -1603,4 +1617,101 @@ model CodeCounter {
   scope     String   @id // e.g. "INV:2026" | "RCP:2026" | "NYIDX:2016"
   next      Int      @default(0) // last allocated sequence number
   updatedAt DateTime @updatedAt
+}
+
+// ─────────────────────────────────────────────────────────────
+// STUDENT CREDITS (invoice-scope prepaid balances from overpayment)
+// iEduPro parity: overpaying an invoice creates credit that is
+// auto-applied to the next bill ("LESS: Prepaid Credit Applied"),
+// transferable between learners and to daily-fee wallets.
+// Ledger design mirrors WalletTxn: signed amounts + balanceAfter.
+// ─────────────────────────────────────────────────────────────
+model StudentCredit {
+  id              String    @id @default(cuid())
+  schoolId        String
+  school          School    @relation(fields: [schoolId], references: [id])
+  studentId       String
+  student         Student   @relation(fields: [studentId], references: [id])
+  kind            String // CREDIT (overpayment/manual/refund-in/transfer-in) | APPLY (to invoice) | TRANSFER_OUT | TRANSFER_IN | DAILY_WALLET | ADJUST
+  amountCents     Int // signed: + adds credit, - consumes it
+  balanceAfter    Int
+  invoiceId       String? // set when kind = APPLY
+  sourcePaymentId String? // receipt that created an OVERPAYMENT credit
+  note            String?
+  byName          String?
+  at              DateTime  @default(now())
+
+  @@index([schoolId, studentId])
+  @@index([invoiceId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// CRECHE / EARLY-YEARS ASSESSMENT (iEduPro parity)
+// GES early-childhood reporting: developmental domains, each with
+// skills rated on a school-defined abbreviation scale (EX/GD/SD/NA),
+// plus ordinary numeric subjects ("no category") for written exams.
+// ─────────────────────────────────────────────────────────────
+model CrecheDomain {
+  id        String         @id @default(cuid())
+  schoolId  String
+  school    School         @relation(fields: [schoolId], references: [id])
+  name      String // e.g. "Communication & Language", "Motor Skills"
+  sortOrder Int            @default(0)
+  active    Boolean        @default(true)
+  skills    CrecheSkill[]
+}
+
+model CrecheSkill {
+  id        String         @id @default(cuid())
+  schoolId  String
+  school    School         @relation(fields: [schoolId], references: [id])
+  domainId  String
+  domain    CrecheDomain   @relation(fields: [domainId], references: [id])
+  name      String // observable skill / indicator
+  sortOrder Int            @default(0)
+  ratings   CrecheRating[]
+}
+
+model CrecheRating {
+  id        String      @id @default(cuid())
+  schoolId  String
+  school    School      @relation(fields: [schoolId], references: [id])
+  studentId String
+  student   Student     @relation(fields: [studentId], references: [id])
+  termId    String
+  skillId   String
+  skill     CrecheSkill @relation(fields: [skillId], references: [id])
+  code      String // scale abbreviation (EX | GD | SD | NA...)
+  byName    String?
+  at        DateTime    @default(now())
+
+  @@unique([studentId, termId, skillId])
+  @@index([schoolId, termId])
+}
+
+model CrecheRatingScale {
+  id        String @id @default(cuid())
+  schoolId  String
+  school    School @relation(fields: [schoolId], references: [id])
+  code      String // EX
+  label     String // Excellent
+  sortOrder Int    @default(0)
+
+  @@unique([schoolId, code])
+}
+
+// ─────────────────────────────────────────────────────────────
+// SCHOOL SETTINGS KV (system_settings_modern parity)
+// Simple typed key-value store for runtime configuration:
+// SBA column maxes, receipt style, code formats, term runtime, etc.
+// Values are stored as JSON strings.
+// ─────────────────────────────────────────────────────────────
+model SchoolSetting {
+  id       String @id @default(cuid())
+  schoolId String
+  school   School @relation(fields: [schoolId], references: [id])
+  key      String // e.g. "sba.classTestMax" | "receipts.style" | "term.daysOpened"
+  value    String // JSON-encoded
+
+  @@unique([schoolId, key])
 }

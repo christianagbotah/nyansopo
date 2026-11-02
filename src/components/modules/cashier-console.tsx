@@ -104,7 +104,7 @@ export function CashierConsole() {
             <Tile icon={<TrendingUp className="size-4" />} label="Invoices vs daily" value={`${fmtCedi(data.split.invoiceCollected, { compact: true })} / ${fmtCedi(data.split.dailyCollected + data.split.transportCollected, { compact: true })}`} sub="term bills vs daily & transport" />
           </div>
 
-          <div className="grid lg:grid-cols-2 gap-4 mb-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
             {/* fee breakdown — collected vs outstanding */}
             <Card>
               <CardHeader className="pb-2">
@@ -162,7 +162,7 @@ export function CashierConsole() {
             </Card>
           </div>
 
-          <div className="grid lg:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {/* collection performance */}
             <Card>
               <CardHeader className="pb-2"><CardTitle className="text-base">Collection performance</CardTitle></CardHeader>
@@ -474,7 +474,7 @@ function SummaryHandoverTab() {
 
       {/* cashier / receiver pickers + saved handovers (screen only) */}
       {summary && (
-        <div className="grid lg:grid-cols-2 gap-4 no-print">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 no-print">
           <Card>
             <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><ClipboardCheck className="size-4 text-primary" /> Handover parties</CardTitle></CardHeader>
             <CardContent className="space-y-3">

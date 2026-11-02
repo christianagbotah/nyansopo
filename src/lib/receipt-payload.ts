@@ -56,6 +56,12 @@ export async function invoicePaymentReceipt(db: PrismaClient, paymentId: string)
   const balance = inv ? Math.max(0, net - inv.paidCents) : 0;
   // arrears watermark: paying a bill that is not from the current term
   const arrears = inv ? !inv.term.isCurrent : false;
+  // overpayment credit created by THIS receipt (re-derived so reprints show it too)
+  const creditRow = await db.studentCredit.findFirst({
+    where: { sourcePaymentId: p.id, kind: "CREDIT" },
+    select: { amountCents: true },
+  });
+  const creditCreated = creditRow ? creditRow.amountCents : undefined;
   return {
     type: "INVOICE_PAYMENT" as const,
     receiptNo: p.receiptNo,
@@ -81,6 +87,7 @@ export async function invoicePaymentReceipt(db: PrismaClient, paymentId: string)
         }
       : undefined,
     amount: p.amountCents,
+    creditCreated,
     school,
     arrears,
   } satisfies ReceiptPayload;

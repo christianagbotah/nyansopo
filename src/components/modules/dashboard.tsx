@@ -7,8 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { StatCard, ModuleHeader, LoadingBlock, SeverityBadge, StatusBadge } from "@/components/ui-helpers";
 import { fmtCedi, fmtDate, PAYMENT_LABELS, FLAG_LABELS, fmtDateShort } from "@/lib/format";
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
-import { Banknote, CalendarCheck, Flag, TrendingUp, Users, AlertTriangle, ArrowLeftRight, Inbox, UtensilsCrossed, Calculator, Package, Smartphone, Bus } from "lucide-react";
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell } from "recharts";
+import { Banknote, CalendarCheck, Flag, TrendingUp, Users, AlertTriangle, ArrowLeftRight, Inbox, UtensilsCrossed, Calculator, Package, Smartphone, Bus, Droplets, BookOpen, Baby } from "lucide-react";
 
 type Dash = {
   school: any; year: { name: string } | null; term: any;
@@ -20,13 +20,32 @@ type Dash = {
   inquiries: any[];
 };
 
+type DailyTodayRow = { service: string; label: string; cents: number; txns: number };
+type ClassroomBand = { classroom: string; m: number; f: number };
+type MyClass = { classroomId: string; name: string; learners: number; presentToday: number; absentToday: number; registerTaken?: boolean };
+
 type OpsOverview = {
   daily: { todayCharged: number; todayCollected: number; todayCount: number; monthCollected: number; outstanding: number };
   payroll: { latest: { period: string; status: string; net: number; employerSsnit: number } | null; currentPeriod: string; needsRun: boolean };
   inventory: { stockValue: number; lowStock: number; lowStockItems: { name: string; qty: number; reorder: number; unit: string }[] };
   sms: { credits: number; sentThisMonth: number; autoReceipts: boolean };
   transport: { routes: number; learners: number; capacity: number; fareRevenue: number };
+  dailyToday: DailyTodayRow[];
+  dailyArrearsCents: number;
+  classroomBands: ClassroomBand[];
+  myClasses: MyClass[];
 };
+
+const SERVICE_ICONS: Record<string, React.ReactNode> = {
+  MEAL: <UtensilsCrossed className="size-4 text-muted-foreground" />,
+  DRINK: <Droplets className="size-4 text-muted-foreground" />,
+  CLASS: <BookOpen className="size-4 text-muted-foreground" />,
+  TRANSPORT: <Bus className="size-4 text-muted-foreground" />,
+  CARE: <Baby className="size-4 text-muted-foreground" />,
+  OTHER: <Package className="size-4 text-muted-foreground" />,
+};
+
+const GENDER_COLORS = { boys: "#0e5f3f", girls: "#c05621" };
 
 export function Dashboard() {
   const { currentSchoolId, setModule, session } = useStore();
@@ -49,6 +68,11 @@ export function Dashboard() {
 
   const { stats } = data;
   const attData = data.attendanceTrend.map((t) => ({ ...t, date: fmtDateShort(t.date) }));
+  const genderData = [
+    { name: "Boys", value: stats.gender.M },
+    { name: "Girls", value: stats.gender.F },
+  ];
+  const bands = ops?.classroomBands ?? [];
 
   return (
     <div>
@@ -84,6 +108,31 @@ export function Dashboard() {
         )}
       </div>
 
+      {/* teacher mode — "my classes" grid: classrooms this teacher class-teaches,
+          with today's register snapshot; deep-links into the register */}
+      {isTeacher && !!ops?.myClasses?.length && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 mt-3">
+          {ops.myClasses.map((c) => (
+            <button key={c.classroomId} onClick={() => setModule("attendance", { classroomId: c.classroomId })}
+              className="text-left rounded-xl border bg-card hover:bg-secondary/40 transition-colors p-4">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-semibold leading-tight">{c.name}</span>
+                <Users className="size-4 text-muted-foreground shrink-0" />
+              </div>
+              <div className="mt-1.5 text-xl font-bold tabular-nums">
+                {c.learners}<span className="text-xs font-normal text-muted-foreground ml-1">learners</span>
+              </div>
+              <div className="text-[11px] text-muted-foreground">
+                {c.registerTaken ? `${c.presentToday} present · ${c.absentToday} absent today` : "Register not taken today"}
+              </div>
+              <div className="mt-2 flex items-center gap-1 text-[11px] font-medium text-primary">
+                <CalendarCheck className="size-3" /> Take today&rsquo;s register
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* ops strip — daily services, payroll, inventory, sms, transport (staff with money scope only) */}
       {ops && !isTeacher && (
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4 mt-3">
@@ -115,7 +164,33 @@ export function Dashboard() {
         </div>
       )}
 
-      <div className="grid lg:grid-cols-3 gap-4 mt-4">
+      {/* daily-fees strip — per daily-service "received today" cards + unpaid balances
+          (admin/finance-visible roles only, same gate as the ops strip above) */}
+      {ops && !isTeacher && (ops.dailyToday?.length ?? 0) > 0 && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mt-3">
+          {ops.dailyToday.map((d) => (
+            <button key={d.service} onClick={() => setModule("daily")} className="text-left rounded-xl border bg-card hover:bg-secondary/40 transition-colors p-4">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground truncate">{d.label} · today</span>
+                {SERVICE_ICONS[cat(d.label)] ?? SERVICE_ICONS.OTHER}
+              </div>
+              <div className="mt-1.5 text-xl font-bold tabular-nums text-primary">{fmtCedi(d.cents, { compact: true })}</div>
+              <div className="text-[11px] text-muted-foreground">{d.txns} charge{d.txns === 1 ? "" : "s"} received today</div>
+            </button>
+          ))}
+          <button onClick={() => setModule("daily", { tab: "ledger" })}
+            className="text-left rounded-xl border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/30 hover:bg-red-100 dark:hover:bg-red-950/50 transition-colors p-4">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-medium uppercase tracking-wide text-red-700 dark:text-red-300">Unpaid daily-fee balances</span>
+              <AlertTriangle className="size-4 text-red-600 dark:text-red-400" />
+            </div>
+            <div className="mt-1.5 text-xl font-bold tabular-nums text-destructive">{fmtCedi(ops.dailyArrearsCents, { compact: true })}</div>
+            <div className="text-[11px] text-red-700/80 dark:text-red-300/80">open the ledger to chase payments</div>
+          </button>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
         <Card className="lg:col-span-2">
           <CardHeader className="pb-2"><CardTitle className="text-base">Attendance trend</CardTitle></CardHeader>
           <CardContent className="h-56">
@@ -175,7 +250,47 @@ export function Dashboard() {
         )}
       </div>
 
-      <div className="grid lg:grid-cols-2 gap-4 mt-4">
+      {/* learner distribution — gender split donut + enrolment by classroom */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-base">Learners by gender</CardTitle></CardHeader>
+          <CardContent className="h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={genderData} dataKey="value" nameKey="name" innerRadius={44} outerRadius={68} paddingAngle={3} strokeWidth={0}>
+                  <Cell fill={GENDER_COLORS.boys} />
+                  <Cell fill={GENDER_COLORS.girls} />
+                </Pie>
+                <Tooltip formatter={(v: any) => [v, "learners"]} contentStyle={{ borderRadius: 10, border: "1px solid #e7ddc8" }} />
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="flex items-center justify-center gap-4 -mt-2 pb-1">
+              <span className="flex items-center gap-1.5 text-xs text-muted-foreground"><span className="size-2.5 rounded-full" style={{ background: GENDER_COLORS.boys }} /> Boys · {stats.gender.M}</span>
+              <span className="flex items-center gap-1.5 text-xs text-muted-foreground"><span className="size-2.5 rounded-full" style={{ background: GENDER_COLORS.girls }} /> Girls · {stats.gender.F}</span>
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="lg:col-span-2">
+          <CardHeader className="pb-2"><CardTitle className="text-base">Enrolment by classroom <span className="text-xs font-normal text-muted-foreground">— top 10, boys/girls stacked</span></CardTitle></CardHeader>
+          <CardContent className="h-56">
+            {bands.length ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={bands} margin={{ top: 4, right: 8, left: -12, bottom: 0 }}>
+                  <XAxis dataKey="classroom" tick={{ fontSize: 9 }} stroke="#888" interval={0} angle={-20} textAnchor="end" height={44} />
+                  <YAxis tick={{ fontSize: 11 }} stroke="#888" allowDecimals={false} />
+                  <Tooltip formatter={(v: any, n: any) => [v, n]} contentStyle={{ borderRadius: 10 }} />
+                  <Bar dataKey="m" name="Boys" stackId="a" fill={GENDER_COLORS.boys} radius={[4, 0, 0, 0]} />
+                  <Bar dataKey="f" name="Girls" stackId="a" fill={GENDER_COLORS.girls} radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-full grid place-items-center text-sm text-muted-foreground">No active enrolments yet.</div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
         {!isTeacher && (
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-base">Arrears by class</CardTitle></CardHeader>
@@ -219,7 +334,7 @@ export function Dashboard() {
         </Card>
       </div>
 
-      <div className="grid lg:grid-cols-2 gap-4 mt-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
         {!isTeacher && (
         <Card>
           <CardHeader className="pb-3"><CardTitle className="text-base">Recent receipts</CardTitle></CardHeader>
@@ -266,4 +381,16 @@ export function Dashboard() {
       </div>
     </div>
   );
+}
+
+/* pick a strip icon from the service label — services are named e.g.
+   "Lunch (canteen)", "Sachet Water"; fall back to OTHER */
+function cat(label: string): string {
+  const l = label.toLowerCase();
+  if (/(lunch|breakfast|meal|canteen|food|snack)/.test(l)) return "MEAL";
+  if (/(water|drink|juice|sachet|beverage)/.test(l)) return "DRINK";
+  if (/(class|lesson|remedial|tutorial|extra)/.test(l)) return "CLASS";
+  if (/(transport|bus|fare|shuttle)/.test(l)) return "TRANSPORT";
+  if (/(care|creche|nurse|sick)/.test(l)) return "CARE";
+  return "OTHER";
 }

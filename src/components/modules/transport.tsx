@@ -82,7 +82,7 @@ export function Transportation() {
 
       {data.routes.length === 0 && <Card className="mt-5"><CardContent><EmptyState icon={<Bus className="size-5" />} title="No routes yet" hint="Create your first bus route to start assigning learners." /></CardContent></Card>}
 
-      <div className="grid lg:grid-cols-2 gap-4 mt-5">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-5">
         {data.routes.map((r) => (
           <Card key={r.id} className={r.active ? "" : "opacity-60"}>
             <CardHeader className="pb-3 flex-row items-start justify-between space-y-0">

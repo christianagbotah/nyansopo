@@ -14,7 +14,7 @@ import { ModuleHeader, LoadingBlock, EmptyState } from "@/components/ui-helpers"
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell } from "recharts";
-import { ClipboardList, Plus, Save, Trash2, CloudOff, PencilLine, Sigma, CalendarRange, ShieldCheck, BarChart3, TrendingUp } from "lucide-react";
+import { ClipboardList, Plus, Save, Trash2, CloudOff, PencilLine, Sigma, CalendarRange, ShieldCheck, BarChart3, TrendingUp, Baby, ClipboardCheck, Wand2 } from "lucide-react";
 
 type GBData = {
   classrooms: { id: string; name: string }[];
@@ -177,6 +177,8 @@ export function Gradebook() {
         <TabsList className="flex-wrap h-auto">
           <TabsTrigger value="assessments">Assessments</TabsTrigger>
           <TabsTrigger value="portfolio" className="gap-1.5"><CalendarRange className="size-4" /> Portfolio (weekly SBA)</TabsTrigger>
+          <TabsTrigger value="sba" className="gap-1.5"><ClipboardCheck className="size-4" /> SBA sheet</TabsTrigger>
+          <TabsTrigger value="creche" className="gap-1.5"><Baby className="size-4" /> Crèche ratings</TabsTrigger>
           <TabsTrigger value="analytics" className="gap-1.5"><BarChart3 className="size-4" /> Analytics</TabsTrigger>
         </TabsList>
 
@@ -185,7 +187,7 @@ export function Gradebook() {
             <Card><CardContent><EmptyState icon={<BarChart3 className="size-5" />} title={classId ? "No marks to analyse yet" : "Pick a class to see assessment graphs"} hint="Charts appear once assessments carry marks." /></CardContent></Card>
           ) : (
             <div className="space-y-4">
-              <div className="grid lg:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <Card>
                   <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><BarChart3 className="size-4" /> Subject averages — {data.classroom?.name}</CardTitle></CardHeader>
                   <CardContent className="h-64">
@@ -245,7 +247,7 @@ export function Gradebook() {
                 </CardContent>
               </Card>
 
-              <div className="grid lg:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <Card>
                   <CardHeader className="pb-2"><CardTitle className="text-base">Top performers</CardTitle></CardHeader>
                   <CardContent className="space-y-1.5">
@@ -352,6 +354,16 @@ export function Gradebook() {
         {/* ── PORTFOLIO ASSESSMENT (GES weekly SBA — iEduPro parity) ── */}
         <TabsContent value="portfolio" className="mt-4">
           <PortfolioTab classId={classId} />
+        </TabsContent>
+
+        {/* ── SBA SHEET (four fixed columns + exam → Assessment/Mark rows) ── */}
+        <TabsContent value="sba" className="mt-4">
+          <SbaSheetTab classId={classId} subjects={data.subjects} termId={data.termId} termName={data.termName} />
+        </TabsContent>
+
+        {/* ── CRÈCHE / EARLY-YEARS RATINGS (NaCCA developmental domains) ── */}
+        <TabsContent value="creche" className="mt-4">
+          <CrecheRatingsTab classId={classId} classroomName={data.classroom?.name ?? null} termId={data.termId} termName={data.termName} />
         </TabsContent>
       </Tabs>
 
@@ -568,6 +580,419 @@ function PortfolioTab({ classId }: { classId: string | null }) {
                       </td>
                     </tr>
                   ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+const round1 = (x: number) => Math.round(x * 10) / 10;
+
+/* ═══════════════════════════════════════════════════════════════
+   CRÈCHE / EARLY-YEARS RATINGS — GES NaCCA developmental domains.
+   One domain at a time (keeps the table narrow), one row per learner,
+   one rating select per observable skill. Upserts by learner+term+skill. */
+type CrecheGrid = {
+  scale: { id: string; code: string; label: string; sortOrder: number }[];
+  domains: { id: string; name: string; sortOrder: number; active: boolean; skills: { id: string; name: string; sortOrder: number }[] }[];
+  students: { id: string; name: string; rollNo: number | null }[];
+  ratings: Record<string, string>; // "studentId_skillId" → code
+};
+
+function CrecheRatingsTab({ classId, classroomName, termId, termName }: { classId: string | null; classroomName: string | null; termId: string | null; termName: string }) {
+  const { currentSchoolId } = useStore();
+  const [grid, setGrid] = useState<CrecheGrid | null>(null);
+  const [domainId, setDomainId] = useState<string | null>(null);
+  const [cells, setCells] = useState<Record<string, Record<string, string>>>({}); // studentId → skillId → code ("" = none)
+  const [savedSnapshot, setSavedSnapshot] = useState<Record<string, Record<string, string>>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const earlyYearsHint = !!(classroomName && /kg|k\.?g|crech|crèch|nurs|day ?care|play ?group/i.test(classroomName));
+
+  useEffect(() => {
+    if (!currentSchoolId || !classId || !termId) { setGrid(null); return; }
+    apiGet<CrecheGrid>(`/api/school/${currentSchoolId}/ops/academics?action=creche-ratings&classroomId=${classId}&termId=${termId}`)
+      .then((d) => {
+        setGrid(d);
+        const init: Record<string, Record<string, string>> = {};
+        for (const s of d.students) {
+          init[s.id] = {};
+          for (const dom of d.domains) for (const sk of dom.skills) init[s.id][sk.id] = d.ratings[`${s.id}_${sk.id}`] ?? "";
+        }
+        setCells(init);
+        setSavedSnapshot(JSON.parse(JSON.stringify(init)));
+        setDomainId((prev) => (prev && d.domains.some((x) => x.id === prev) ? prev : (d.domains.find((d2) => d2.active) ?? d.domains[0])?.id ?? null));
+      })
+      .catch((e) => toast({ title: "Could not load ratings", description: e.message, variant: "destructive" }));
+  }, [currentSchoolId, classId, termId]);
+
+  const activeDomains = (grid?.domains ?? []).filter((d) => d.active);
+  const domain = activeDomains.find((d) => d.id === domainId) ?? null;
+
+  const dirtyFor = (studentId: string) => {
+    const cur = cells[studentId] ?? {}, saved = savedSnapshot[studentId] ?? {};
+    const keys = new Set([...Object.keys(cur), ...Object.keys(saved)]);
+    for (const k of keys) if ((cur[k] ?? "") !== (saved[k] ?? "")) return true;
+    return false;
+  };
+  const dirtyCount = (grid?.students ?? []).filter((s) => dirtyFor(s.id)).length;
+
+  function setCell(studentId: string, skillId: string, code: string) {
+    setCells((c) => ({ ...c, [studentId]: { ...(c[studentId] ?? {}), [skillId]: code } }));
+  }
+
+  async function save(studentIds?: string[]) {
+    if (!currentSchoolId || !classId || !termId || !grid) return;
+    const ids = studentIds ?? grid.students.map((s) => s.id);
+    const ratings = ids.flatMap((sid) =>
+      grid.domains.flatMap((d) => d.skills.map((sk) => ({ studentId: sid, skillId: sk.id, code: cells[sid]?.[sk.id] || null }))),
+    );
+    setBusy(studentIds ? ids.join(",") : "all");
+    try {
+      const res = await apiPost<{ saved: number; cleared: number }>(`/api/school/${currentSchoolId}/ops/academics`, {
+        action: "creche-ratings-save", classroomId: classId, termId, ratings,
+      });
+      setSavedSnapshot(JSON.parse(JSON.stringify(cells)));
+      toast({ title: "Ratings saved", description: `${res.saved} rating${res.saved === 1 ? "" : "s"} recorded${res.cleared ? `, ${res.cleared} cleared` : ""} for ${termName}.` });
+    } catch (e: any) {
+      toast({ title: "Save failed", description: e.message, variant: "destructive" });
+    } finally { setBusy(null); }
+  }
+
+  const codeBadge = (code: string) => {
+    const s = grid?.scale.find((x) => x.code === code);
+    return s ? `${s.code} — ${s.label}` : code;
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardContent className="pt-4 space-y-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="space-y-1.5 min-w-64">
+              <Label className="text-xs">Developmental domain</Label>
+              <Select value={domainId ?? ""} onValueChange={setDomainId} disabled={!activeDomains.length}>
+                <SelectTrigger><SelectValue placeholder={activeDomains.length ? "Select domain" : "No domains configured"} /></SelectTrigger>
+                <SelectContent>
+                  {activeDomains.map((d) => <SelectItem key={d.id} value={d.id}>{d.name} ({d.skills.length})</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            {grid && <Badge variant="secondary">{grid.scale.map((s) => s.code).join(" · ")}</Badge>}
+            {earlyYearsHint ? (
+              <Badge className="gap-1 bg-emerald-600 hover:bg-emerald-600"><Baby className="size-3.5" /> early-years class detected</Badge>
+            ) : (
+              <span className="text-xs text-muted-foreground">Any class can be rated — typically used for crèche / KG.</span>
+            )}
+            <div className="flex gap-2 ml-auto">
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => save()} disabled={!grid || busy !== null || dirtyCount === 0}>
+                <Save className="size-4" /> Save all{dirtyCount > 0 ? ` (${dirtyCount})` : ""}
+              </Button>
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Rate every observable skill for <b>{termName}</b> — cells upsert by learner + term + skill, so re-saving never duplicates. “—” clears a rating.
+            {" "}Configure the scale and domains in <b>Settings → Early years</b>.
+          </p>
+        </CardContent>
+      </Card>
+
+      {!classId ? (
+        <Card><CardContent><EmptyState icon={<Baby className="size-5" />} title="Pick a class above to load its ratings" hint="Usually the crèche / KG classes — but any class can be rated on the developmental domains." /></CardContent></Card>
+      ) : !grid ? (
+        <LoadingBlock label="Loading developmental domains…" />
+      ) : !activeDomains.length ? (
+        <Card><CardContent><EmptyState icon={<Baby className="size-5" />} title="No developmental domains configured" hint="Ask the administrator to set them up under Settings → Early years (defaults seed automatically)." /></CardContent></Card>
+      ) : !domain ? (
+        <Card><CardContent><EmptyState icon={<Baby className="size-5" />} title="Select a domain to start rating" /></CardContent></Card>
+      ) : grid.students.length === 0 ? (
+        <Card><CardContent><EmptyState icon={<ClipboardList className="size-5" />} title="No learners enrolled in this class" /></CardContent></Card>
+      ) : (
+        <Card>
+          <CardHeader className="pb-3 flex-row flex-wrap items-center justify-between gap-2 space-y-0">
+            <CardTitle className="text-base">{domain.name} — {classroomName}</CardTitle>
+            <span className="text-xs text-muted-foreground">{grid.students.length} learners · {domain.skills.length} indicators · {termName}</span>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="overflow-x-auto nice-scroll max-h-[560px]">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-secondary/70 backdrop-blur z-10">
+                  <tr className="text-left border-b">
+                    <th className="px-3 py-2.5 font-medium min-w-44">Learner</th>
+                    {domain.skills.map((sk) => (
+                      <th key={sk.id} className="px-2 py-2.5 font-medium text-center min-w-24 max-w-40">
+                        <span className="line-clamp-3 font-normal text-[11px] leading-tight" title={sk.name}>{sk.name}</span>
+                      </th>
+                    ))}
+                    <th className="px-3 py-2.5 font-medium text-center w-24">Rated</th>
+                    <th className="px-3 py-2.5 w-24"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {grid.students.map((s) => {
+                    const rated = domain.skills.filter((sk) => cells[s.id]?.[sk.id]).length;
+                    const dirty = dirtyFor(s.id);
+                    return (
+                      <tr key={s.id} className="border-b last:border-0 hover:bg-secondary/30">
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          {s.rollNo != null && <span className="text-muted-foreground mr-1.5 tabular-nums">{s.rollNo}</span>}
+                          <span className="font-medium">{s.name}</span>
+                        </td>
+                        {domain.skills.map((sk) => {
+                          const v = cells[s.id]?.[sk.id] ?? "";
+                          return (
+                            <td key={sk.id} className="px-2 py-2 text-center">
+                              <Select value={v || "__none__"} onValueChange={(code) => setCell(s.id, sk.id, code === "__none__" ? "" : code)}>
+                                <SelectTrigger className="h-8 w-20 mx-auto font-semibold" aria-label={`${s.name} — ${sk.name}`}>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="__none__">—</SelectItem>
+                                  {grid.scale.map((sc) => <SelectItem key={sc.id} value={sc.code}>{codeBadge(sc.code)}</SelectItem>)}
+                                </SelectContent>
+                              </Select>
+                            </td>
+                          );
+                        })}
+                        <td className="px-3 py-2 text-center tabular-nums text-xs text-muted-foreground">{rated}/{domain.skills.length}</td>
+                        <td className="px-3 py-2 text-center">
+                          {busy === s.id ? (
+                            <span className="text-xs text-muted-foreground">saving…</span>
+                          ) : dirty ? (
+                            <Button size="sm" variant="outline" className="h-7 gap-1 text-[11px]" onClick={() => save([s.id])}><Save className="size-3" /> Save</Button>
+                          ) : (
+                            <Badge variant="outline" className="text-[10px] gap-1 bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 border-emerald-200">saved</Badge>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SBA SHEET — the four fixed School-Based Assessment columns plus the
+   terminal exam, one row per learner. Persists as ordinary Assessment
+   + Mark rows ("SBA Class Test · <term>" etc.) and auto-computes the
+   sub-total, class score, exam score and total live.               */
+type SbaSheet = {
+  classroom: { id: string; name: string };
+  subject: { id: string; name: string };
+  term: { id: string; name: string; yearName: string };
+  config: Record<string, number> & { actualMax: number; examWeightPct: number };
+  columns: { key: string; label: string; type: string; max: number }[];
+  examMax: number;
+  students: { id: string; name: string; rollNo: number | null; scores: Record<string, number | null> }[];
+};
+
+function SbaSheetTab({ classId, subjects, termId, termName }: { classId: string | null; subjects: { id: string; name: string }[]; termId: string | null; termName: string }) {
+  const { currentSchoolId } = useStore();
+  const [subjectId, setSubjectId] = useState<string | null>(null);
+  const [sheet, setSheet] = useState<SbaSheet | null>(null);
+  const [cells, setCells] = useState<Record<string, Record<string, string>>>({}); // studentId → column key → raw string
+  const [busy, setBusy] = useState<string | null>(null);
+  const [overwrite, setOverwrite] = useState(false);
+
+  useEffect(() => {
+    if (!currentSchoolId || !classId || !subjectId || !termId) { setSheet(null); return; }
+    apiGet<SbaSheet>(`/api/school/${currentSchoolId}/ops/academics?action=sba-sheet&classroomId=${classId}&subjectId=${subjectId}&termId=${termId}`)
+      .then((d) => {
+        setSheet(d);
+        const init: Record<string, Record<string, string>> = {};
+        for (const s of d.students) {
+          init[s.id] = {};
+          for (const k of [...d.columns.map((c) => c.key), "exam"]) init[s.id][k] = s.scores[k] !== null && s.scores[k] !== undefined ? String(s.scores[k]) : "";
+        }
+        setCells(init);
+      })
+      .catch((e) => toast({ title: "Could not load SBA sheet", description: e.message, variant: "destructive" }));
+  }, [currentSchoolId, classId, subjectId, termId]);
+
+  const clampTo = (raw: string, max: number) => {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return "";
+    return String(Math.max(0, Math.min(max, n)));
+  };
+  const num = (sid: string, key: string) => {
+    const v = Number(cells[sid]?.[key]);
+    return Number.isFinite(v) && cells[sid]?.[key] !== "" ? v : null;
+  };
+
+  const weight = sheet?.config["sba.classScoreWeightPct"] ?? 50;
+  const actualMax = sheet?.config.actualMax ?? 60;
+
+  const compute = (sid: string) => {
+    const cols = sheet?.columns ?? [];
+    const subtotal = cols.reduce((s, c) => s + (num(sid, c.key) ?? 0), 0);
+    const classScore = actualMax > 0 ? Math.min(weight, (subtotal * weight) / actualMax) : 0;
+    const exam = num(sid, "exam");
+    const examScore = exam === null ? null : (exam * (100 - weight)) / 100;
+    return { subtotal, classScore, examScore, total: classScore + (examScore ?? 0) };
+  };
+
+  function setCell(sid: string, key: string, value: string, max: number) {
+    setCells((c) => ({ ...c, [sid]: { ...(c[sid] ?? {}), [key]: clampTo(value, max) } }));
+  }
+
+  async function save() {
+    if (!currentSchoolId || !classId || !subjectId || !termId || !sheet) return;
+    setBusy("save");
+    try {
+      const res = await apiPost<{ saved: number }>(`/api/school/${currentSchoolId}/ops/academics`, {
+        action: "sba-sheet-save", classroomId: classId, subjectId, termId,
+        rows: sheet.students.map((s) => ({
+          studentId: s.id,
+          classTest: num(s.id, "classTest"), groupWork: num(s.id, "groupWork"),
+          test2: num(s.id, "test2"), project: num(s.id, "project"), exam: num(s.id, "exam"),
+        })),
+      });
+      toast({ title: "SBA sheet saved", description: `${res.saved} marks across the four SBA columns and the exam — visible as ordinary assessments too.` });
+    } catch (e: any) {
+      toast({ title: "Save failed", description: e.message, variant: "destructive" });
+    } finally { setBusy(null); }
+  }
+
+  async function autoFill() {
+    if (!currentSchoolId || !classId || !subjectId || !termId) return;
+    setBusy("fill");
+    try {
+      const res = await apiPost<{ filled: number; skipped: number; portfolioPct: number }>(`/api/school/${currentSchoolId}/ops/academics`, {
+        action: "sba-portfolio-fill", classroomId: classId, subjectId, termId, overwrite,
+      });
+      toast({ title: "Class test auto-filled from portfolio", description: `${res.filled} learners filled${res.skipped ? `, ${res.skipped} skipped (no portfolio entries or already scored${overwrite ? "" : " — tick overwrite to replace"})` : ""} at ${res.portfolioPct}% weight.` });
+      // reload the sheet with the persisted marks
+      const d = await apiGet<SbaSheet>(`/api/school/${currentSchoolId}/ops/academics?action=sba-sheet&classroomId=${classId}&subjectId=${subjectId}&termId=${termId}`);
+      setSheet(d);
+      const init: Record<string, Record<string, string>> = {};
+      for (const s of d.students) {
+        init[s.id] = {};
+        for (const k of [...d.columns.map((c) => c.key), "exam"]) init[s.id][k] = s.scores[k] !== null && s.scores[k] !== undefined ? String(s.scores[k]) : "";
+      }
+      setCells(init);
+    } catch (e: any) {
+      toast({ title: "Auto-fill failed", description: e.message, variant: "destructive" });
+    } finally { setBusy(null); }
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardContent className="pt-4 space-y-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="space-y-1.5 min-w-56">
+              <Label className="text-xs">Subject</Label>
+              <Select value={subjectId ?? ""} onValueChange={setSubjectId}>
+                <SelectTrigger><SelectValue placeholder="Select subject" /></SelectTrigger>
+                <SelectContent>{subjects.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            {sheet && (
+              <div className="flex flex-wrap gap-2">
+                <Badge variant="secondary" className="gap-1">Sub-total out of {sheet.config.actualMax}</Badge>
+                <Badge variant="secondary" className="gap-1">Class {weight}% · Exam {sheet.config.examWeightPct}%</Badge>
+                {sheet.config.actualMax !== 60 && <Badge variant="outline" className="gap-1 border-amber-400 text-amber-700 dark:text-amber-400">non-standard sub-total</Badge>}
+              </div>
+            )}
+            <div className="flex flex-wrap gap-2 items-center ml-auto">
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <input type="checkbox" className="accent-primary size-3.5" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} />
+                overwrite existing
+              </label>
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={autoFill} disabled={!classId || !subjectId || busy !== null}>
+                <Wand2 className="size-4" /> {busy === "fill" ? "Filling…" : "Auto-fill class test from portfolio"}
+              </Button>
+              <Button size="sm" className="gap-1.5" onClick={save} disabled={!sheet || busy !== null}>
+                <Save className="size-4" /> {busy === "save" ? "Saving…" : "Save sheet"}
+              </Button>
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Class score = sub-total × {weight} ÷ {actualMax || "…"} (capped at {weight}) · Exam score = raw exam × {100 - weight} ÷ 100 · Total = class + exam.
+            {" "}Saving creates the four SBA assessments (e.g. <i>SBA Class Test · {termName}</i>) plus the end-of-term paper as ordinary assessment rows.
+          </p>
+        </CardContent>
+      </Card>
+
+      {!classId ? (
+        <Card><CardContent><EmptyState icon={<ClipboardCheck className="size-5" />} title="Pick a class above to open its SBA sheet" hint="The four fixed columns — Class Test, Group Work, Test 2, Project — plus the terminal exam." /></CardContent></Card>
+      ) : !subjectId || !sheet ? (
+        <Card><CardContent><EmptyState icon={<ClipboardCheck className="size-5" />} title={subjectId ? "Loading SBA sheet…" : "Pick a subject to load the sheet"} hint="Column maxima come from Settings → SBA marks config." /></CardContent></Card>
+      ) : sheet.students.length === 0 ? (
+        <Card><CardContent><EmptyState icon={<ClipboardList className="size-5" />} title="No learners enrolled in this class" /></CardContent></Card>
+      ) : (
+        <Card>
+          <CardHeader className="pb-3 flex-row flex-wrap items-center justify-between gap-2 space-y-0">
+            <CardTitle className="text-base">{sheet.classroom.name} · {sheet.subject.name} — SBA sheet</CardTitle>
+            <span className="text-xs text-muted-foreground">{sheet.term.name}, {sheet.term.yearName} · {sheet.students.length} learners</span>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="overflow-x-auto nice-scroll max-h-[560px]">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-secondary/70 backdrop-blur z-10">
+                  <tr className="text-left border-b">
+                    <th className="px-3 py-2.5 font-medium min-w-44">Learner</th>
+                    {sheet.columns.map((c) => (
+                      <th key={c.key} className="px-2 py-2.5 font-medium text-center w-24">
+                        <div>{c.label}</div>
+                        <div className="text-[10px] font-normal text-muted-foreground">max {c.max}</div>
+                      </th>
+                    ))}
+                    <th className="px-2 py-2.5 font-medium text-center w-20">Sub-total<div className="text-[10px] font-normal text-muted-foreground">/{sheet.config.actualMax}</div></th>
+                    <th className="px-2 py-2.5 font-medium text-center w-20">Class score<div className="text-[10px] font-normal text-muted-foreground">/{weight}</div></th>
+                    <th className="px-2 py-2.5 font-medium text-center w-24">Exam<div className="text-[10px] font-normal text-muted-foreground">/100 raw</div></th>
+                    <th className="px-2 py-2.5 font-medium text-center w-20">Exam score<div className="text-[10px] font-normal text-muted-foreground">/{sheet.config.examWeightPct}</div></th>
+                    <th className="px-3 py-2.5 font-medium text-center w-20">Total<div className="text-[10px] font-normal text-muted-foreground">/100</div></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sheet.students.map((s) => {
+                    const c = compute(s.id);
+                    return (
+                      <tr key={s.id} className="border-b last:border-0 hover:bg-secondary/30">
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          {s.rollNo != null && <span className="text-muted-foreground mr-1.5 tabular-nums">{s.rollNo}</span>}
+                          <span className="font-medium">{s.name}</span>
+                        </td>
+                        {sheet.columns.map((col) => (
+                          <td key={col.key} className="px-2 py-2">
+                            <Input
+                              type="number" min={0} max={col.max} step="0.5"
+                              className="h-8 w-20 text-center tabular-nums mx-auto"
+                              value={cells[s.id]?.[col.key] ?? ""}
+                              onChange={(e) => setCell(s.id, col.key, e.target.value, col.max)}
+                              placeholder="—"
+                              aria-label={`${s.name} — ${col.label}`}
+                            />
+                          </td>
+                        ))}
+                        <td className="px-2 py-2 text-center font-semibold tabular-nums">{round1(c.subtotal)}</td>
+                        <td className="px-2 py-2 text-center font-semibold tabular-nums">{round1(c.classScore)}</td>
+                        <td className="px-2 py-2">
+                          <Input
+                            type="number" min={0} max={100} step="0.5"
+                            className="h-8 w-20 text-center tabular-nums mx-auto"
+                            value={cells[s.id]?.["exam"] ?? ""}
+                            onChange={(e) => setCell(s.id, "exam", e.target.value, 100)}
+                            placeholder="—"
+                            aria-label={`${s.name} — terminal exam raw score`}
+                          />
+                        </td>
+                        <td className="px-2 py-2 text-center font-semibold tabular-nums">{c.examScore === null ? <span className="text-muted-foreground font-normal">—</span> : round1(c.examScore)}</td>
+                        <td className="px-3 py-2 text-center font-bold tabular-nums">{round1(c.total)}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

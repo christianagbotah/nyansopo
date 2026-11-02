@@ -5,12 +5,233 @@ import { sendSms } from "@/lib/sms";
 import { invoicePaymentReceipt } from "@/lib/receipt-payload";
 import { nextInvoiceNo, nextReceiptNo, nextStudentIndex } from "@/lib/codes";
 
+// ═══════════════════════════════════════════════════════════════
+// BULK CSV ADMISSION (CI3 parity) — template / validate / import
+// One row per learner; guardian matched by phone so siblings share
+// the guardian record fields already on file. No external CSV deps.
+// ═══════════════════════════════════════════════════════════════
+
+const BULK_CSV_HEADERS = [
+  "firstName", "lastName", "otherNames", "gender", "dateOfBirth",
+  "guardianName", "guardianPhone", "guardianAltPhone", "guardianEmail",
+  "guardianOccupation", "relationship", "hometown", "previousSchool",
+];
+const BULK_ROW_CAP = 500;
+
+/** Whitespace-insensitive phone key (+233/0 formats compared as typed). */
+const normPhone = (p: string) => p.replace(/\s+/g, "");
+
+type CsvRecord = { line: number; cells: string[] };
+
+/** Small RFC-4180-style CSV parser: quoted fields, "" escapes, commas and
+ *  newlines inside quotes, CRLF/CR/LF line endings and a leading UTF-8 BOM.
+ *  `line` is the 1-based physical line where each record starts. */
+function parseCsv(text: string): CsvRecord[] {
+  const src = text.replace(/^\uFEFF/, "");
+  const records: CsvRecord[] = [];
+  let cells: string[] = [];
+  let cur = "";
+  let inQuotes = false;
+  let line = 1;
+  let recordLine = -1; // -1 = no content seen for the current record yet
+  const touch = () => { if (recordLine === -1) recordLine = line; };
+  const endRecord = () => {
+    if (recordLine !== -1) { cells.push(cur); records.push({ line: recordLine, cells }); }
+    cells = []; cur = ""; recordLine = -1;
+  };
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (src[i + 1] === '"') { cur += '"'; i++; }
+        else inQuotes = false;
+      } else {
+        if (ch === "\r") { if (src[i + 1] === "\n") i++; line++; }
+        else if (ch === "\n") line++;
+        else cur += ch;
+      }
+      touch();
+      continue;
+    }
+    if (ch === '"' && cur === "") { inQuotes = true; touch(); continue; }
+    if (ch === ",") { touch(); cells.push(cur); cur = ""; continue; }
+    if (ch === "\n" || ch === "\r") {
+      if (ch === "\r" && src[i + 1] === "\n") i++;
+      endRecord(); line++;
+      continue;
+    }
+    touch(); cur += ch;
+  }
+  endRecord();
+  return records;
+}
+
+type BulkRowData = Record<string, string>; // keyed by lowercased header name
+type ParsedBulkRow = { line: number; data: BulkRowData };
+
+/** Header row → column map; skips blank rows and the template's example row. */
+function mapCsvToRows(csv: string): { error: string; rows?: undefined } | { error?: undefined; rows: ParsedBulkRow[] } {
+  const records = parseCsv(csv);
+  if (!records.length) return { error: "The CSV file is empty — download the template, then fill in one row per learner." };
+  const header = records[0].cells.map((h) => h.trim().toLowerCase());
+  if (!header.includes("firstname")) {
+    return { error: "The first line must be the template header row (firstName,lastName,…). Download the template and paste your rows underneath it." };
+  }
+  const rows: ParsedBulkRow[] = [];
+  for (const rec of records.slice(1)) {
+    const data: BulkRowData = {};
+    rec.cells.forEach((cell, i) => { const key = header[i]; if (key) data[key] = cell.trim(); });
+    if (Object.values(data).every((v) => !v)) continue; // blank line
+    if ((data.firstname ?? "").toLowerCase() === "example") continue; // template example row
+    rows.push({ line: rec.line, data });
+  }
+  return { rows };
+}
+
+type GuardianOnFile = {
+  guardianName: string; guardianPhone: string; guardianAltPhone: string | null;
+  guardianEmail: string | null; guardianOccupation: string | null; guardianAddress: string | null; relationship: string;
+};
+
+type BulkRowResult = {
+  line: number; name: string; ok: boolean;
+  errors: string[]; warnings: string[];
+  guardianMatch?: { name: string; phone: string };
+  // internal (stripped before responding):
+  data?: BulkRowData; reuse?: GuardianOnFile; gender?: "M" | "F";
+  dobDate?: Date | null; dobYear?: number;
+};
+
+const dupKey = (firstName: string, lastName: string, phone: string) =>
+  `${firstName.trim().toLowerCase()}|${lastName.trim().toLowerCase()}|${normPhone(phone)}`;
+
+/** Parse + validate every row against the file itself and the school register.
+ *  Pure check — never writes anything. Results stay in row order. */
+async function validateBulkRows(schoolId: string, rows: ParsedBulkRow[]) {
+  // guardians-on-file = students with an enrollment (any status) in this school
+  const schoolStudents = await db.student.findMany({
+    where: { enrollments: { some: { schoolId } } },
+    select: {
+      firstName: true, lastName: true,
+      guardianName: true, guardianPhone: true, guardianAltPhone: true,
+      guardianEmail: true, guardianOccupation: true, guardianAddress: true, relationship: true,
+    },
+  });
+  const guardianByPhone = new Map<string, GuardianOnFile>();
+  const existingLearners = new Set<string>();
+  for (const s of schoolStudents) {
+    const key = normPhone(s.guardianPhone);
+    if (key && !guardianByPhone.has(key)) guardianByPhone.set(key, s);
+    existingLearners.add(dupKey(s.firstName, s.lastName, s.guardianPhone));
+  }
+
+  const seenInFile = new Map<string, number>();
+  const results: BulkRowResult[] = [];
+
+  for (const { line, data } of rows) {
+    const errors: string[] = [];
+    const warnings: string[] = [];
+    const firstName = data.firstname ?? "";
+    const lastName = data.lastname ?? "";
+    const rawPhone = data.guardianphone ?? "";
+    const phone = normPhone(rawPhone);
+    const name = `${firstName} ${lastName}`.trim() || "(no name)";
+
+    if (!firstName) errors.push("First name is required");
+    if (!lastName) errors.push("Last name is required");
+
+    // gender: M/F (male/female accepted case-insensitively, normalised)
+    let gender: "M" | "F" | null = null;
+    const g = (data.gender ?? "").trim().toLowerCase();
+    if (!g) errors.push("Gender is required (M or F)");
+    else if (g === "m" || g === "male") gender = "M";
+    else if (g === "f" || g === "female") gender = "F";
+    else errors.push(`Gender must be M or F (male/female accepted) — got "${data.gender}"`);
+
+    // dateOfBirth: optional, but when present a real YYYY-MM-DD calendar date
+    let dobDate: Date | null = null;
+    let dobYear: number | undefined;
+    const dob = data.dateofbirth ?? "";
+    if (dob) {
+      const m = dob.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      const d = m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])) : null;
+      if (!d || d.getUTCFullYear() !== +m![1] || d.getUTCMonth() !== +m![2] - 1 || d.getUTCDate() !== +m![3]) {
+        errors.push("Date of birth must be a valid date as YYYY-MM-DD (e.g. 2016-05-14)");
+      } else if (d.getTime() > Date.now()) {
+        errors.push("Date of birth cannot be in the future");
+      } else {
+        dobDate = d;
+        dobYear = d.getUTCFullYear();
+      }
+    }
+
+    // guardian phone: required; spaces stripped; +233/0 formats accepted as typed
+    if (!phone) errors.push("Guardian phone is required (MoMo number)");
+    else if (phone.replace(/\D/g, "").length < 9) errors.push("Guardian phone looks too short — use 0XXXXXXXXX or +233XXXXXXXXX");
+
+    // duplicate rows INSIDE the file (same learner name + guardian phone)
+    if (firstName && lastName && phone) {
+      const key = dupKey(firstName, lastName, phone);
+      const firstLine = seenInFile.get(key);
+      if (firstLine !== undefined) errors.push(`Duplicate of line ${firstLine} in this file (same learner name + guardian phone)`);
+      else seenInFile.set(key, line);
+    }
+
+    // existing guardian on file (phone match) → warning, details reused on import
+    const reuse = phone ? guardianByPhone.get(phone) : undefined;
+    if (reuse) {
+      warnings.push(`existing guardian: ${reuse.guardianName} (${normPhone(reuse.guardianPhone)}) — their details will be reused`);
+    } else if (phone && !(data.guardianname ?? "").trim()) {
+      errors.push("Guardian name is required (no existing guardian with this phone to reuse)");
+    }
+
+    // learner already on the school roll (same name + guardian phone) → error
+    if (firstName && lastName && phone && existingLearners.has(dupKey(firstName, lastName, phone))) {
+      errors.push(`${firstName} ${lastName} is already enrolled in this school with guardian ${phone}`);
+    }
+
+    results.push({
+      line, name, ok: errors.length === 0, errors, warnings,
+      ...(reuse ? { guardianMatch: { name: reuse.guardianName, phone: normPhone(reuse.guardianPhone) } } : {}),
+      data, reuse, gender: gender ?? undefined, dobDate, dobYear,
+    });
+  }
+
+  const validCount = results.filter((r) => r.ok).length;
+  return { results, validCount, invalidCount: results.length - validCount };
+}
+
+/** Strip internal fields before a row result leaves the server. */
+const publicRow = (r: BulkRowResult) => ({
+  line: r.line, name: r.name, ok: r.ok, errors: r.errors, warnings: r.warnings,
+  ...(r.guardianMatch ? { guardianMatch: r.guardianMatch } : {}),
+});
+
 // ── GET /api/school/[id]/ops/admissions — admission workspace ──
 // classrooms with capacity/fees, invoice discounts, recent admissions
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: schoolId } = await params;
   const auth = await opsAuth(req, schoolId, "GET", { perms: ["admissions.manage"] });
   if (!auth.ok) return auth.res;
+
+  // ── action=bulk-template — CSV template for one class (header + example row) ──
+  if (new URL(req.url).searchParams.get("action") === "bulk-template") {
+    const classroomId = new URL(req.url).searchParams.get("classroomId") ?? "";
+    const classroom = await db.classroom.findUnique({ where: { id: classroomId } });
+    if (!classroom || classroom.schoolId !== schoolId) return NextResponse.json({ error: "Class not found" }, { status: 404 });
+    const example = [
+      "Example", "(delete this row)", "Ama Kesi", "Female", "2016-05-14",
+      "Maame Mansa", "024 000 0000", "", "", "Trader", "Mother", "Kumasi", "Sunrise International School",
+    ];
+    const csv = [BULK_CSV_HEADERS.join(","), example.join(",")].join("\r\n") + "\r\n";
+    const slug = classroom.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "class";
+    return new NextResponse(csv, {
+      headers: {
+        "content-type": "text/csv; charset=utf-8",
+        "content-disposition": `attachment; filename="nyansapo-admissions-${slug}.csv"`,
+      },
+    });
+  }
 
   const term = await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId } }, include: { academicYear: true } });
 
@@ -193,6 +414,137 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       invoice: invoice ? { id: invoice.id, invoiceNo: invoice.invoiceNo, total: gross, discount: discountCents, payable: gross - discountCents } : null,
       receipt,
     });
+  }
+
+  // ── action=bulk-validate — parse + check a CSV without creating anything ──
+  if (action === "bulk-validate") {
+    const { classroomId, csv } = body;
+    if (typeof csv !== "string" || !csv.trim()) return NextResponse.json({ error: "Upload a CSV file first" }, { status: 400 });
+    if (!classroomId) return NextResponse.json({ error: "Choose the class to enrol the learners in" }, { status: 400 });
+    const classroom = await db.classroom.findUnique({ where: { id: classroomId } });
+    if (!classroom || classroom.schoolId !== schoolId) return NextResponse.json({ error: "Class not found" }, { status: 404 });
+
+    const parsed = mapCsvToRows(csv);
+    if (!parsed.rows) return NextResponse.json({ error: parsed.error ?? "Could not read the CSV file" }, { status: 400 });
+    if (parsed.rows.length === 0) return NextResponse.json({ error: "No learner rows found — fill in one row per learner under the header row." }, { status: 400 });
+    if (parsed.rows.length > BULK_ROW_CAP) return NextResponse.json({ error: `Too many rows — bulk admission accepts at most ${BULK_ROW_CAP} learners per file. Split the file and import in batches.` }, { status: 400 });
+
+    const { results, validCount, invalidCount } = await validateBulkRows(schoolId, parsed.rows);
+    return NextResponse.json({ rows: results.map(publicRow), validCount, invalidCount, classroom: classroom.name });
+  }
+
+  // ── action=bulk-import — admit every valid row (all-or-nothing on errors,
+  //    explicit confirmation required when guardian details will be reused) ──
+  if (action === "bulk-import") {
+    const { classroomId, csv, confirmGuardianReuse } = body;
+    if (typeof csv !== "string" || !csv.trim()) return NextResponse.json({ error: "Upload a CSV file first" }, { status: 400 });
+    if (!classroomId) return NextResponse.json({ error: "Choose the class to enrol the learners in" }, { status: 400 });
+    const classroom = await db.classroom.findUnique({ where: { id: classroomId } });
+    if (!classroom || classroom.schoolId !== schoolId) return NextResponse.json({ error: "Class not found" }, { status: 404 });
+
+    const parsed = mapCsvToRows(csv);
+    if (!parsed.rows) return NextResponse.json({ error: parsed.error ?? "Could not read the CSV file" }, { status: 400 });
+    if (parsed.rows.length === 0) return NextResponse.json({ error: "No learner rows found — fill in one row per learner under the header row." }, { status: 400 });
+    if (parsed.rows.length > BULK_ROW_CAP) return NextResponse.json({ error: `Too many rows — bulk admission accepts at most ${BULK_ROW_CAP} learners per file. Split the file and import in batches.` }, { status: 400 });
+    const rowCount = parsed.rows.length;
+
+    // re-validate: any invalid row blocks the whole import
+    const { results, validCount, invalidCount } = await validateBulkRows(schoolId, parsed.rows);
+    if (invalidCount > 0) {
+      return NextResponse.json({
+        error: `Import blocked — ${invalidCount} of ${rowCount} row${invalidCount === 1 ? "" : "s"} ha${invalidCount === 1 ? "s" : "ve"} errors. Fix the file and upload again.`,
+        rows: results.map(publicRow), validCount, invalidCount,
+      }, { status: 400 });
+    }
+
+    // guardian reuse needs an explicit confirmation (UI re-submits after the dialog)
+    const matches = results.filter((r) => r.guardianMatch);
+    if (matches.length > 0 && confirmGuardianReuse !== true) {
+      return NextResponse.json({
+        error: `${matches.length} row${matches.length === 1 ? "" : "s"} reuse a guardian already on file — confirm to continue.`,
+        requireGuardianConfirm: true,
+        matches: matches.map((m) => ({ line: m.line, name: m.name, guardianMatch: m.guardianMatch })),
+        rows: results.map(publicRow), validCount, invalidCount,
+      }, { status: 409 });
+    }
+
+    // import loop — per-row results; one bad row never rolls back the others
+    const rollBase = await db.enrollment.count({ where: { classroomId, status: "ACTIVE" } });
+    let nextRoll = rollBase + 1;
+    let created = 0;
+    const indexes: { line: number; name: string; studentId: string; index: string; rollNo: number }[] = [];
+    const failed: { line: number; name: string; error: string }[] = [];
+
+    for (let i = 0; i < rowCount; i++) {
+      const row = parsed.rows[i];
+      const v = results[i]; // results are row-parallel
+      const data = v.data!;
+      try {
+        // confirmed reuse: sibling inherits the guardian record already on file
+        // (contact fields shared; relationship stays the row's own, if given)
+        const reuse = v.reuse;
+        const guardian = reuse
+          ? {
+              guardianName: reuse.guardianName,
+              guardianPhone: reuse.guardianPhone,
+              guardianAltPhone: reuse.guardianAltPhone,
+              guardianEmail: reuse.guardianEmail,
+              guardianOccupation: reuse.guardianOccupation,
+              guardianAddress: reuse.guardianAddress,
+            }
+          : {
+              guardianName: data.guardianname ?? "",
+              guardianPhone: normPhone(data.guardianphone ?? ""),
+              guardianAltPhone: data.guardianaltphone || null,
+              guardianEmail: data.guardianemail || null,
+              guardianOccupation: data.guardianoccupation || null,
+              guardianAddress: null, // not a template column — captured later from the guardian record
+            };
+        const relationship = data.relationship?.trim() || reuse?.relationship || "Parent";
+
+        const nyansapoIndex = await nextStudentIndex(v.dobYear ?? new Date().getFullYear());
+        const student = await db.student.create({
+          data: {
+            nyansapoIndex,
+            firstName: data.firstname ?? "",
+            lastName: data.lastname ?? "",
+            otherNames: data.othernames || null,
+            gender: v.gender ?? "M",
+            dateOfBirth: v.dobDate ?? null,
+            guardianName: guardian.guardianName,
+            guardianPhone: guardian.guardianPhone,
+            guardianAltPhone: guardian.guardianAltPhone,
+            guardianEmail: guardian.guardianEmail,
+            guardianOccupation: guardian.guardianOccupation,
+            guardianAddress: guardian.guardianAddress,
+            relationship,
+            hometown: data.hometown || null,
+            previousSchool: data.previousschool || null,
+            status: "ACTIVE",
+          },
+        });
+
+        try {
+          const rollNo = nextRoll++;
+          const enrollment = await db.enrollment.create({
+            data: {
+              studentId: student.id, classroomId, schoolId,
+              rollNo, admissionDate: new Date(), status: "ACTIVE",
+            },
+          });
+          created++;
+          indexes.push({ line: row.line, name: `${student.firstName} ${student.lastName}`, studentId: student.id, index: nyansapoIndex, rollNo });
+        } catch (e) {
+          // enrollment failed — remove the orphan learner so the file can be retried cleanly
+          await db.student.delete({ where: { id: student.id } }).catch(() => {});
+          throw e;
+        }
+      } catch (e: any) {
+        failed.push({ line: row.line, name: v.name, error: e?.meta?.target?.includes?.("nyansapoIndex") ? "Nyansapo Index collision — retry this row" : (e?.message ?? "Could not admit this learner") });
+      }
+    }
+
+    return NextResponse.json({ created, failed, indexes, classroom: classroom.name });
   }
 
   return NextResponse.json({ error: "Unknown action" }, { status: 400 });

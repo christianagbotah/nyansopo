@@ -134,7 +134,7 @@ export function ParentPortal() {
         </TabsList>
 
         <TabsContent value="overview" className="mt-3 space-y-4">
-          <div className="grid lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             <Card className="lg:col-span-2">
               <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><Receipt className="size-4" /> Bills this year</CardTitle></CardHeader>
               <CardContent>
@@ -228,7 +228,7 @@ export function ParentPortal() {
             </CardContent>
           </Card>
 
-          <div className="grid md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Card>
               <CardHeader className="pb-2"><CardTitle className="text-base">Payment history</CardTitle></CardHeader>
               <CardContent>
@@ -336,7 +336,7 @@ export function ParentPortal() {
 
         {/* ── LIBRARY (iEduPro parity): books out + request on behalf of the child ── */}
         <TabsContent value="library" className="mt-3 space-y-4">
-          <div className="grid lg:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <Card>
               <CardHeader className="pb-2 flex-row items-center justify-between space-y-0">
                 <CardTitle className="text-base flex items-center gap-2"><BookOpen className="size-4" /> Books out — {child.name}</CardTitle>

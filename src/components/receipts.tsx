@@ -283,7 +283,7 @@ export function FormalReceipt({ data }: { data: ReceiptData }) {
 
         {data.creditCreated ? (
           <div className="mt-3 rounded border border-emerald-500/60 bg-emerald-50 dark:bg-emerald-950/40 px-3 py-1.5 text-center text-[11.5px] font-semibold text-emerald-700 dark:text-emerald-300">
-            CREDIT CREATED — GH₵ {(data.creditCreated / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })} carried forward to future bills
+            CREDIT CREATED — GH₵ {(data.creditCreated / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })} applied to future bills
           </div>
         ) : null}
 

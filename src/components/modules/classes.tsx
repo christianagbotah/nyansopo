@@ -142,7 +142,7 @@ export function Classes() {
         }
       />
 
-      <div className="grid lg:grid-cols-[300px_1fr] gap-5 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-5 items-start">
         {/* ── class list ── */}
         <div className="space-y-2.5">
           {data.classrooms.map((c) => (

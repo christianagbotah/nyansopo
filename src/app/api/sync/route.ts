@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
         if (dup) { results.push({ clientId: op.clientId, ok: true, detail: "already synced" }); continue; }
         const term = await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId } } });
         const session = await db.attendanceSession.create({ data: { classroomId, schoolId, termId: term!.id, date: new Date(date), takenByName: `${user.fullName} (SYNC:${op.clientId})` } });
-        for (const r of records) await db.attendanceRecord.create({ data: { sessionId: session.id, studentId: r.studentId, status: r.status, markedOffline: true } });
+        for (const r of records) await db.attendanceRecord.create({ data: { sessionId: session.id, studentId: r.studentId, status: r.status, excusedReason: r.excusedReason ?? null, markedOffline: true } });
         results.push({ clientId: op.clientId, ok: true, detail: `${records.length} marked` });
       } else if (op.kind === "marks") {
         const { schoolId, assessmentId, marks } = op.payload;

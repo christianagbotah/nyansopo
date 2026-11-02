@@ -395,7 +395,7 @@ function TemplatesTab({ data, onEdit, onNew, onDelete, busy, onUseTemplate }: {
       {rows.length === 0 ? (
         <Card><CardContent><EmptyState icon={<BookMarked className="size-8" />} title="No templates yet" hint="Build the GES skeleton once — strand, sub-strand, content standard, core points — then reuse it every week." /></CardContent></Card>
       ) : (
-        <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
           {rows.map((t) => (
             <Card key={t.id}>
               <CardHeader className="pb-2">
@@ -532,7 +532,7 @@ function MaterialsTab({ data, materials, onNew, onEdit, onDelete, busy }: {
       {materials === null ? <LoadingBlock label="Loading study material…" /> : rows.length === 0 ? (
         <Card><CardContent><EmptyState icon={<LibraryBig className="size-8" />} title="Nothing shared yet" hint="Share revision notes, past questions or reading links with a class." /></CardContent></Card>
       ) : (
-        <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
           {rows.map((m) => (
             <Card key={m.id}>
               <CardHeader className="pb-2">

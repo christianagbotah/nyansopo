@@ -400,3 +400,157 @@ export function CompactSheet({ d }: { d: SheetData }) {
     </div>
   );
 }
+
+/* ── CRÈCHE / EARLY-YEARS DEVELOPMENTAL REPORT (NaCCA domains) ──
+   A5-ish progress sheet: one section per developmental domain, one
+   row per observable skill with its proficiency code badge, the
+   grading legend (code → label), narrative remarks, attendance and
+   signature lines. No scores, no ranking — early-years convention. */
+export type CrecheSheetSkill = { skill: string; code: string | null };
+export type CrecheSheetDomain = {
+  domain: string;
+  dominant: string | null;   // mode of the learner's codes in this domain
+  label?: string | null;     // scale label of the dominant code
+  ratedCount?: number | null;
+  skills: CrecheSheetSkill[];
+};
+export type CrecheSheetData = {
+  student: { name: string; index?: string; classroom: string };
+  termName: string;
+  scale: { code: string; label: string }[];
+  domains: CrecheSheetDomain[];
+  conduct?: string | null;
+  attendanceSummary?: string | null;
+  teacherRemark?: string | null;
+  headRemark?: string | null;
+  published?: boolean;
+  school: { name: string; motto?: string | null; town?: string | null; region?: string | null; phone?: string | null };
+};
+
+const CRECHE_CHIPS: Record<string, string> = {
+  EX: "bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-300",
+  GD: "bg-lime-100 text-lime-900 dark:bg-lime-950 dark:text-lime-300",
+  SD: "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300",
+  NA: "bg-rose-100 text-rose-900 dark:bg-rose-950 dark:text-rose-300",
+};
+
+export function CrecheSheet({ d }: { d: CrecheSheetData }) {
+  return (
+    <div className="print-sheet bg-card text-card-foreground rounded-xl border shadow-sm overflow-hidden mx-auto max-w-[760px]">
+      {/* letterhead */}
+      <div className="px-7 pt-5 pb-3 text-center border-b-2 border-foreground/80">
+        <div className="flex items-center justify-center gap-3">
+          <LogoMark size={44} />
+          <div className="text-left">
+            <div className="font-bold text-lg tracking-tight uppercase leading-tight">{d.school.name}</div>
+            <div className="text-[10px] text-muted-foreground">
+              {[d.school.town, d.school.region].filter(Boolean).join(", ")}{d.school.phone ? ` · ${d.school.phone}` : ""}
+            </div>
+            {d.school.motto && <div className="text-[9px] italic text-muted-foreground">{d.school.motto}</div>}
+          </div>
+        </div>
+        <div className="mt-2.5 inline-block border-2 border-foreground px-4 py-1 font-bold tracking-[0.2em] text-xs uppercase">
+          Early-Years Progress Report
+        </div>
+        <div className="text-[11px] text-muted-foreground mt-1.5">{d.termName} · Crèche / Kindergarten developmental domains</div>
+      </div>
+
+      <div className="px-7 py-4">
+        {/* bio strip */}
+        <div className="grid grid-cols-3 gap-x-5 gap-y-1.5 text-[12.5px] border-y border-foreground/30 py-2.5">
+          <div className="col-span-2"><span className="text-muted-foreground">Name of learner: </span><b className="uppercase">{d.student.name}</b></div>
+          <div><span className="text-muted-foreground">Learner ID: </span><b className="font-mono">{d.student.index ?? "—"}</b></div>
+          <div><span className="text-muted-foreground">Class: </span><b>{d.student.classroom}</b></div>
+          <div className="col-span-2"><span className="text-muted-foreground">Attendance: </span><b>{d.attendanceSummary ?? "—"}</b></div>
+        </div>
+
+        {/* grading legend */}
+        <div className="mt-3 rounded border border-foreground/30 p-2.5">
+          <div className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground mb-1">Proficiency ratings</div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10.5px]">
+            {d.scale.map((s) => (
+              <span key={s.code} className="text-muted-foreground">
+                <b className="text-foreground">{s.code}</b> · {s.label}
+              </span>
+            ))}
+            <span className="text-muted-foreground">— · not yet observed</span>
+          </div>
+        </div>
+
+        {/* per-domain skill tables */}
+        <div className="mt-4 space-y-4">
+          {d.domains.map((dom) => (
+            <div key={dom.domain}>
+              <div className="flex flex-wrap items-center justify-between gap-2 bg-foreground text-background px-3 py-1.5">
+                <span className="font-semibold uppercase text-[11px] tracking-wider">{dom.domain}</span>
+                <span className="flex items-center gap-2 text-[10px]">
+                  {typeof dom.ratedCount === "number" && <span className="opacity-80">{dom.ratedCount} of {dom.skills.length} indicators rated</span>}
+                  {dom.dominant ? (
+                    <span className="rounded bg-background/20 px-1.5 py-0.5 font-bold">{dom.dominant}{dom.label ? ` — ${dom.label}` : ""}</span>
+                  ) : (
+                    <span className="opacity-70">no ratings yet</span>
+                  )}
+                </span>
+              </div>
+              <table className="w-full text-[12px] border border-t-0 border-foreground/40">
+                <tbody>
+                  {dom.skills.map((s, i) => (
+                    <tr key={i} className={i % 2 ? "bg-secondary/40" : ""}>
+                      <td className="px-3 py-1.5 border-t border-foreground/15 w-10 text-center text-[10px] text-muted-foreground tabular-nums">{i + 1}</td>
+                      <td className="px-3 py-1.5 border-t border-foreground/15">{s.skill}</td>
+                      <td className="px-2 py-1.5 border-t border-foreground/15 text-center w-16">
+                        {s.code ? (
+                          <span className={`inline-block min-w-8 rounded px-1.5 py-0.5 font-bold ${CRECHE_CHIPS[s.code] ?? "bg-secondary text-secondary-foreground"}`}>{s.code}</span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  {dom.skills.length === 0 && (
+                    <tr><td colSpan={3} className="px-3 py-2 border-t border-foreground/15 text-muted-foreground text-[11px]">No indicators configured for this domain yet.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          ))}
+          {d.domains.length === 0 && (
+            <div className="rounded border border-dashed border-foreground/30 p-4 text-center text-sm text-muted-foreground">
+              No developmental domains configured — set them up in Settings → Early years.
+            </div>
+          )}
+        </div>
+
+        {/* conduct + remarks */}
+        {d.conduct && (
+          <div className="mt-4 text-[12.5px]">
+            <div className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">Conduct &amp; disposition</div>
+            <p className="mt-0.5">{d.conduct}</p>
+          </div>
+        )}
+        <div className="mt-4 space-y-3 text-[12.5px]">
+          <div>
+            <div className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">Class teacher&apos;s remarks</div>
+            <p className="mt-1 min-h-6 italic">“{d.teacherRemark ?? "—"}”</p>
+          </div>
+          <div>
+            <div className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">Head of school&apos;s remarks</div>
+            <p className="mt-1 min-h-6 italic">“{d.headRemark ?? "—"}”</p>
+          </div>
+        </div>
+
+        {/* signatures + status */}
+        <div className="grid grid-cols-3 gap-8 pt-8 text-[10px] text-muted-foreground">
+          <div className="border-t border-foreground/60 pt-1">Class teacher (sign &amp; date)</div>
+          <div className="border-t border-foreground/60 pt-1">Head of school (sign &amp; stamp)</div>
+          <div className="border-t border-foreground/60 pt-1">Parent / guardian (sign)</div>
+        </div>
+        <div className="mt-3 flex justify-between text-[10.5px]">
+          <span className="text-muted-foreground">Rated on the {d.scale.length}-point early-years proficiency scale (NaCCA developmental domains).</span>
+          <span className="text-muted-foreground">Status: <b className={d.published ? "text-foreground" : "text-amber-600"}>{d.published ? "OFFICIAL" : "PROVISIONAL"}</b></span>
+        </div>
+      </div>
+      <KenteStrip />
+    </div>
+  );
+}

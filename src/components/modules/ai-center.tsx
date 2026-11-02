@@ -132,7 +132,7 @@ function InsightsPanel({ schoolId }: { schoolId: string | null }) {
   };
 
   return (
-    <div className="grid lg:grid-cols-2 gap-4">
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
       <Card>
         <CardHeader className="pb-3 flex-row items-center justify-between space-y-0">
           <CardTitle className="text-base flex items-center gap-2"><AlertTriangle className="size-4 text-orange-500" /> Anomaly alerts</CardTitle>

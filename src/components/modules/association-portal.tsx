@@ -75,7 +75,7 @@ export function AssociationPortal() {
 
         {/* ── OVERVIEW ── */}
         <TabsContent value="overview">
-          <div className="grid lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             <Card>
               <CardHeader className="pb-2"><CardTitle className="text-base">Schools by region</CardTitle></CardHeader>
               <CardContent className="space-y-2">

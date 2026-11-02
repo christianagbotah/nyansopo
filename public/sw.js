@@ -17,11 +17,18 @@ self.addEventListener("activate", (e) => {
   );
 });
 
+const IS_DEV = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return; // writes handled by the client sync queue
   const url = new URL(req.url);
   if (url.origin !== location.origin) return;
+
+  // Dev server: never serve from cache — Next.js/Turbopack reuses chunk
+  // filenames whose content changes on every edit, so a cached chunk would
+  // run STALE CODE (this caused phantom bugs during development).
+  if (IS_DEV) return;
 
   // skip Next.js dev assets / HMR
   if (url.pathname.startsWith("/_next/webpack-hmr") || url.pathname.startsWith("/_next/static/")) {

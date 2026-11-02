@@ -133,7 +133,7 @@ export function SmsCenter() {
           <div className="flex justify-end mb-3">
             <Button size="sm" className="gap-1.5" onClick={() => setTplDialog("new")}><Plus className="size-4" /> New template</Button>
           </div>
-          <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {data.templates.map((t) => (
               <Card key={t.id} className="flex flex-col">
                 <CardHeader className="pb-2 flex-row items-center justify-between space-y-0">
@@ -246,7 +246,7 @@ function ComposeTab({ data, onSent }: { data: SmsData; onSent: () => void }) {
   }
 
   return (
-    <div className="grid lg:grid-cols-3 gap-4">
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
       <Card className="lg:col-span-2">
         <CardHeader className="pb-3"><CardTitle className="text-base">New broadcast</CardTitle></CardHeader>
         <CardContent className="space-y-4">
@@ -366,7 +366,7 @@ function SettingsTab({ data, onSaved }: { data: SmsData; onSaved: () => void }) 
   }
 
   return (
-    <div className="grid lg:grid-cols-2 gap-4">
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
       <Card>
         <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><Settings2 className="size-4" /> Gateway & sender</CardTitle></CardHeader>
         <CardContent className="space-y-4">
@@ -519,7 +519,7 @@ function AutomationsTab({ data, onRefresh }: { data: SmsData; onRefresh: () => v
         <Button size="sm" className="gap-1.5 shrink-0" onClick={() => setEdit("new")}><Plus className="size-4" /> New rule</Button>
       </div>
 
-      <div className="grid md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {data.automations.map((a) => (
           <Card key={a.id} className={a.active ? "" : "opacity-60"}>
             <CardHeader className="pb-2 flex-row items-center justify-between space-y-0">
@@ -670,7 +670,7 @@ function NoticeboardTab() {
   }
 
   return (
-    <div className="grid lg:grid-cols-3 gap-4">
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
       <Card className="lg:col-span-2">
         <CardHeader className="pb-3"><CardTitle className="text-base">Notices</CardTitle></CardHeader>
         <CardContent className="space-y-2 max-h-[560px] overflow-y-auto nice-scroll">

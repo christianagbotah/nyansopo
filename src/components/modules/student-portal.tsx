@@ -181,7 +181,7 @@ export function StudentPortal() {
             <CardHeader className="pb-2"><CardTitle className="text-base">Weekly routine — {me.classroom}</CardTitle></CardHeader>
             <CardContent>
               {me.timetable.length ? (
-                <div className="grid md:grid-cols-5 gap-2">
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
                   {[1, 2, 3, 4, 5].map((d) => (
                     <div key={d} className="rounded-lg border p-2.5 min-h-32">
                       <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">{DAYS[d]}</div>
@@ -244,7 +244,7 @@ export function StudentPortal() {
         </TabsContent>
 
         <TabsContent value="library" className="mt-3 space-y-4">
-          <div className="grid lg:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <Card>
               <CardHeader className="pb-2 flex-row items-center justify-between space-y-0">
                 <CardTitle className="text-base flex items-center gap-2"><BookOpen className="size-4" /> Books out in my name</CardTitle>

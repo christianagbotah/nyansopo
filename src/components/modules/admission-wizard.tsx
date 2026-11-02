@@ -175,7 +175,7 @@ export function AdmissionWizard({ schoolId, onAdmitted }: { schoolId: string; on
   }
 
   return (
-    <div className="grid lg:grid-cols-[1fr_340px] gap-5 items-start">
+    <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] gap-5 items-start">
       {/* ── stepper + form ── */}
       <div className="space-y-4">
         <div className="flex items-center gap-1 overflow-x-auto pb-1">
