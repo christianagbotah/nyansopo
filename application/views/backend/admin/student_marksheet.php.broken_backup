@@ -1,0 +1,2066 @@
+<style>
+    .exam_chart {
+    width           : 100%;
+        height      : 265px;
+        font-size   : 11px;
+}
+  #hint_table{
+    position: relative;
+    left: 50px;
+    top: 30px;
+    border: 0px;
+  }
+
+  #hint_table tr th{
+    width: 10px;
+  }
+
+  #circle1, #circle2{
+    border: 2px solid #000000;
+    width: 15px;
+    height: 15px;
+    border-radius: 14px;
+  }
+
+  #circle1{
+    background-color: #7f8c8d;
+    border: 2px solid #7f8c8d;
+  }
+
+  #circle2{
+    background-color: #34495e;
+    border: 2px solid #34495e;
+  }
+</style>
+
+<!-- Load Chart.js for modern performance visualization -->
+<script src="<?php echo base_url(); ?>assets/cdn/js/chart-3.9.1.min.js"></script>
+
+<?php 
+
+    $year = $running_year;
+    $term = $running_term;
+    $sem  = $running_sem;
+
+    $class_name = $this->crud_model->get_class_name($class_id);
+
+
+    $student_info = $this->crud_model->get_student_info($student_id);
+
+   // $exams         = $this->crud_model->get_exams();
+    if($class_name == 'JHSS') {
+
+
+   foreach ($student_info as $row1):
+   // foreach ($exams as $row2):
+?>
+
+<!--
+<hr>
+<div class="row">
+    <div class="col-md-12">
+        <?php echo form_open(site_url('admin/student_results_sheet'));?>
+        <div class="col-md-2">
+                <div class="form-group">
+                    <label class="control-label"><?php echo get_phrase('class');?></label>
+                    <select name="class_id" class="form-control selectboxit" id="class_id" onchange="showTermSem($(this).val())">
+                        <option value=""><?php echo get_phrase('select_a_class');?></option>
+                        <?php 
+                        $this->db->select('class_id');
+                        $this->db->distinct();
+                        $this->db->where('student_id', $student_id);
+                        $classes = $this->db->get('mark')->result_array();
+                        foreach($classes as $row):
+                        ?>
+                        <?php
+                            //add section A or B if the class has more than one section
+                            $section_name = $this->db->get_where('section', array('class_id' => $row['class_id']))->row()->name;
+                            $c_name = $this->crud_model->get_class_name($row['class_id']);
+                            $c_name_numeric = $this->crud_model->get_class_name_numeric($row['class_id']);
+
+                            $class_has_more_sections = $this->db->get_where('class', array('name' => $c_name, 'name_numeric' => $c_name_numeric))->num_rows();
+                            $sec_name = '';
+                            if($class_has_more_sections > 1) {
+                                $sec_name = $section_name;
+                            }
+                        ?>
+                            <option value="<?php echo $row['class_id'];?>"
+                                <?php if ($class_id == $row['class_id']) echo 'selected';?>>
+                                    <?php echo $c_name.' '.$c_name_numeric.$sec_name;?>
+                            </option>
+                        <?php
+                        endforeach;
+                        ?>
+                    </select>
+                </div>
+            </div>
+            <div class="col-md-2" id="term_holder">
+                <div class="form-group">
+                    <label  class="control-label"><?php echo get_phrase('selected_term');?></label>
+                      <select name="term" class="form-control selectboxit"  onchange="get_exam_type()" id="term">
+                      <option value="" disabled="true"><?php echo get_phrase('select_term');?></option>
+                      <?php for($i = 1; $i <= 3; $i++):?>
+                          <option value="<?php echo $i;?>"
+                            <?php if($term == $i) {echo 'selected'; } else if($running_sem == $i) { echo 'selected';};?>>
+                              <?php echo $i;?>
+                          </option>
+                      <?php endfor;?>
+                      </select>
+                </div>
+            </div>
+
+            <div class="col-md-2" id="sem_holder">
+                <div class="form-group">
+                    <label  class="control-label"><?php echo get_phrase('selected_semester');?></label>
+                      <select name="sem" class="form-control selectboxit"  onchange="get_exam_type_sem()" id="sem">
+                      <option value="" disabled="true"><?php echo get_phrase('select_semester');?></option>
+                      <?php for($i = 1; $i <= 2; $i++):?>
+                          <option value="<?php echo $i;?>"
+                            <?php if($sem == $i) echo 'selected';?>>
+                              <?php echo $i;?>
+                          </option>
+                      <?php endfor;?>
+                      </select>
+                </div>
+            </div>
+
+            <div class="col-md-2">
+                <div class="form-group">
+                  <label  class="control-label"><?php echo get_phrase('selected_year');?></label>
+                      <select name="year" class="form-control selectboxit"  onchange="get_exam_type()" id="year">
+                      <option value="" disabled="true"><?php echo get_phrase('select_year');?></option>
+                      <?php
+                         // echo populate_academic_year();
+                        ?>
+                      </select>
+                </div>
+            </div>
+            <div id="exam_holder">
+            <div class="col-md-3">
+                <div class="form-group" id="exam_holder_g">
+                <label class="control-label"><?php echo get_phrase('exam');?></label>
+                 <select name="exam_id" class="form-control" id="exam_id">
+                    <?php 
+                    $exams = $this->db->get_where('exam', array('term' => $term, 'year' => $year, 'category_id !=' => '1'));
+                     $array_exams  = $exams->result_array();
+
+                    if($exams->num_rows() < 1) {
+                       ?>
+                       <option value=""><?php echo get_phrase('no_exam_was_found'); ?></option>
+                       <?php
+                    }
+                    ?>
+                        <option value=""><?php echo get_phrase('select_exam_to_view'); ?></option>
+                    <?php
+                    foreach($array_exams as $row):
+                    ?>
+                        <option value="<?php echo $row['exam_id'];?>"
+                            <?php if ($exam_id == $row['exam_id']) echo 'selected';?>>
+                                <?php echo $row['name'];?>
+                        </option>
+                    <?php
+                    endforeach;
+                    ?>
+                </select>
+                </div>
+
+                <div class="form-group" id="exam_holder_jhs">
+                <label class="control-label"><?php echo get_phrase('exam');?></label>
+                 <select name="exam_id" class="form-control" id="exam_id_sem">
+                    <?php 
+                    $exams = $this->db->get_where('exam', array('sem' => $sem, 'year' => $year, 'category_id !=' => '1'));
+                     $array_exams  = $exams->result_array();
+
+                    if($exams->num_rows() < 1) {
+                       ?>
+                       <option value=""><?php echo get_phrase('no_exam_was_found'); ?></option>
+                       <?php
+                    }
+                    ?>
+                        <option value=""><?php echo get_phrase('select_exam_to_view'); ?></option>
+                    <?php
+                    foreach($array_exams as $row):
+                    ?>
+                        <option value="<?php echo $row['exam_id'];?>"
+                            <?php if ($exam_id == $row['exam_id']) echo 'selected';?>>
+                                <?php echo $row['name'];?>
+                        </option>
+                    <?php
+                    endforeach;
+                    ?>
+                </select>
+                </div>
+            </div>
+            <input type="hidden" name="operation" value="selection">
+            <input type="hidden" name="student_id" value="<?php echo $student_id; ?>">
+            <div class="col-md-3" style="margin-top: 20px;">
+                <button type="submit" id="submit" class="btn btn-info"><?php echo get_phrase('view_results');?></button>
+            </div>
+        </div>
+        <?php echo form_close();?>
+    </div>
+</div>-->
+<hr><!--//end of results check-->
+
+
+<div class="row">
+
+    <div class="col-md-12 -col-sm-12 col-lg-12" style="display: flex;">
+        <div class="col-md-6 -col-sm-6 col-lg-6"></div>
+        <div class="col-md-6 -col-sm-6 col-lg-6 form-group row" style="padding-bottom: 10px; display: flex;">
+            <label class="col-md-4 -col-sm-4 col-lg-4 control-label pt-50">STUDENTS LIST:</label>
+            <select class="col-md-8 -col-sm-8 col-lg-8 form-control select2" id="other_students">
+            <?php
+                foreach($other_students as $os) {?>
+                    <option value="<?=$os['student_id']?>" <?=$student_id == $os['student_id'] ? 'selected' : ''; ?>><?=$this->crud_model->getStudentNameById($os['student_id'])?></option>
+            <?php
+                }
+            ?>
+            </select>
+        </div>
+    </div>
+    
+    <div class="col-md-12">
+        <div class="panel panel-primary panel-shadow" data-collapsed="0">
+            <div class="panel-heading">
+                <div class="panel-title"><?php echo $this->crud_model->get_exams_name($exam_id);?></div>
+            </div>
+            <div class="panel-body">
+                
+                
+               <div class="col-md-12">
+                   <table class="table table-bordered table-responsive table-striped table-hover table-active">
+                       <thead>
+                        <tr>
+                            <th style="text-align: center; font-weight: bold;">S/N</th>
+                            <th style="text-align: center; font-weight: bold;">SUBJECT</th>
+                            <th style="text-align: center; font-weight: bold;">CLASS SCORE</th>
+                            <th style="text-align: center; font-weight: bold;">EXAM SCORE</th>
+                            <th style="text-align: center; font-weight: bold;">TOTAL SCORE</th>
+                            <th style="text-align: center; font-weight: bold;">GRADE</th>
+                            <th style="text-align: center; font-weight: bold;">REMARK</th>
+                            <th style="text-align: center; font-weight: bold;">POSITION</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <?php
+                            $class_score_total = 0;
+                            $exam_score_total =0; 
+                            $total_marks = 0;
+                            $total_grade_point = 0;
+                            $subjects = $this->db->get_where('subject' , array(
+                                'class_id' => $class_id , 'year' => $running_year, 'sem' => $running_sem
+                            ))->result_array();
+
+                            $sn = 1;
+                            foreach ($subjects as $row3):
+                        ?>
+                            <tr>
+                                <td style="text-align: center;"><?php echo $sn;?></td>
+                                <td><?php if(strlen($row3['name']) <= 4) {
+                                    echo strtoupper($row3['name']);
+                                }else{ 
+                                    echo $row3['name'];
+                                };?></td>
+                                 <td style="text-align: center;">
+                                    <?php
+                                        $class_score_query = $this->db->get_where('mark' , array(
+                                                    'subject_id' => $row3['subject_id'],
+                                                        'exam_id' => $exam_id,
+                                                            'class_id' => $class_id,
+                                                                'student_id' => $student_id , 
+                                                                    'year' => $running_year,
+                                                                        'sem' => $running_sem));
+                                        if ( $class_score_query->num_rows() > 0) {
+                                            $class_score = $class_score_query->result_array();
+                                            foreach ($class_score as $row4) {
+                                                echo round($row4['class_score'], 2);
+                                                $class_score_total += $row4['class_score'];
+                                                $total_marks += $row4['class_score'];
+                                            }
+                                        }else{
+                                          echo "N/A";
+                                        }
+                                    ?>
+                                </td>
+                                 <td style="text-align: center;">
+                                    <?php
+                                        $exam_score_query = $this->db->get_where('mark' , array(
+                                                    'subject_id' => $row3['subject_id'],
+                                                        'exam_id' => $exam_id,
+                                                            'class_id' => $class_id,
+                                                                'student_id' => $student_id , 
+                                                                    'year' => $running_year,
+                                                                        'sem' => $running_sem));
+                                        if ( $exam_score_query->num_rows() > 0) {
+                                            $exam_score = $exam_score_query->result_array();
+                                            foreach ($exam_score as $row4) {
+                                                echo round($row4['exam_score'], 2);
+                                                $exam_score_total += $row4['exam_score'];
+                                                $total_marks += $row4['exam_score'];
+                                            }
+                                        }else{
+                                          echo "N/A";
+                                        }
+                                    ?>
+                                </td>
+                                <td style="text-align: center;">
+                                    <?php
+                                        $obtained_mark_query = $this->db->get_where('mark' , array(
+                                                    'subject_id' => $row3['subject_id'],
+                                                        'exam_id' => $exam_id,
+                                                            'class_id' => $class_id,
+                                                                'student_id' => $student_id , 
+                                                                    'year' => $running_year,
+                                                                        'sem' => $running_sem));
+                                        if ( $obtained_mark_query->num_rows() > 0) {
+                                            $marks = $obtained_mark_query->result_array();
+                                            foreach ($marks as $row4) {
+                                                echo round($row4['mark_obtained'], 2);
+                                                $total_marks;
+                                            }
+                                        }else{
+                                          echo "N/A";
+                                        }
+                                    ?>
+                                </td>
+                               <!-- <td style="text-align: center;">
+                                    <?php
+
+                                    $highest_mark = $this->crud_model->get_highest_marks($exam_id , $class_id , $row3['subject_id'] );
+                                    echo $highest_mark;
+
+
+        
+                                    ?>
+                                </td>. //take highest mark column out-->
+                                <td style="text-align: center;">
+                                    <?php
+                                        if($obtained_mark_query->num_rows() > 0) {
+                                            if ($row4['mark_obtained'] >= 0 || $row4['mark_obtained'] != '') {
+                                                $grade = $this->crud_model->get_grade($row4['mark_obtained']);
+                                                echo $grade['grade_point'];
+                                               /** $total_grade_point += $grade['grade_point'];No grade point**/
+                                            }
+                                        }else{
+                                          echo "N/A";
+                                        }
+                                    ?>
+                                </td>
+                                <td style="text-align: center;">
+                                    <?php
+                                        if($obtained_mark_query->num_rows() > 0) {
+                                            if ($row4['mark_obtained'] >= 0 || $row4['mark_obtained'] != '') {
+                                                $grade = $this->crud_model->get_grade($row4['mark_obtained']);
+                                                echo $grade['name'];
+                                                /**$total_grade_point += $grade['grade_point'];==No grade point**/
+                                            }
+                                        }else{
+                                          echo "N/A";
+                                        }
+                                    ?>
+                                </td>
+                                <td style="text-align: center;">
+                                <?php
+                                 $this->crud_model->get_total_score($exam_id , $class_id , $row3['subject_id'], $row1['student_id'], $running_year, $running_sem);
+                                 ?>
+                                </td>
+                              <!--  <td style="text-align: center;">
+                                    <?php // if($obtained_mark_query->num_rows() > 0) 
+                                            //echo $row4['comment'];
+                                    ?>
+                                </td>.//take comment column out-->
+                            </tr>
+                        <?php 
+                       $sn++;
+                        endforeach;?>
+
+                        <tr>
+                            <th colspan="2" style="text-align: center;">TOTAL</th>
+                            <td style="text-align: center; font-weight: bold;"><?php echo $class_score_total?round($class_score_total, 2):'N/A'; ?></td>
+                            <td style="text-align: center; font-weight: bold;"><?php echo $exam_score_total?round($exam_score_total, 2):'N/A'; ?></td>
+                            <td style="text-align: center; font-weight: bold;"><?php echo $total_marks?round($total_marks, 2):'N/A'; ?></td>
+                            <td colspan="3"></td>
+                        </tr>
+                    </tbody>
+                   </table>
+
+<div class="row">
+    
+</div>
+                   <hr />
+
+                  <!-- <?php // echo get_phrase('total_marks');?> : <?php echo $total_marks;?>
+                   <br>
+                   <?php //echo get_phrase('average_grade_point');?> : 
+                        <?php 
+                           /** $this->db->where('class_id' , $class_id);
+                            $this->db->where('year' , $running_year);
+                            $this->db->from('subject');
+                            $number_of_subjects = $this->db->count_all_results();
+                            echo ($total_grade_point / $number_of_subjects);
+                            **/
+                        ?>.//Hide the total and agpa-->
+
+                        <?php
+
+                        $conducts_data = $this->db->get_where('aggregation', array('student_id' => $row1['student_id'], 'class_id' => $class_id, 'exam_id' => $exam_id, 'sem' => $running_sem, 'year' => $running_year))->result_array();
+
+                         // Build array of selected conduct IDs
+                         $selected_conduct_ids = array();
+                         $ret_remarks = '';
+
+                         // Fetch days_opened from terms table for audit trail
+                         $term_record = $this->db->get_where('terms', array('year' => $running_year, 'term' => $running_term))->row();
+                         $days_opened = $term_record && isset($term_record->days_opened) ? $term_record->days_opened : 0;
+
+                         // Calculate days_present from attendance table (COUNT present + late statuses)
+                         $this->db->select('COUNT(*) as days_present');
+                         $this->db->from('attendance');
+                         $this->db->where('student_id', $row1['student_id']);
+                         $this->db->where('year', $running_year);
+                         $this->db->where('term', $running_term);
+                         $this->db->where_in('status', array(1, 3)); // Status: 1=Present, 3=Late
+                         $attendance_query = $this->db->get();
+                         $days_present = $attendance_query->row() ? (int)$attendance_query->row()->days_present : 0;
+
+                        foreach ($conducts_data as $conduct) {
+                            $ret_remarks = $conduct['remarks'];
+                            $exam_id2 = $conduct['exam_id'];
+                            $student_id2 = $conduct['student_id'];
+                            $class_id2 = $conduct['class_id'];
+                            $sem2 = $conduct['sem'];
+                            $year2 = $conduct['year'];
+                            
+                            // Collect all selected conduct IDs from c1-c15 columns
+                            for($i = 1; $i <= 15; $i++){
+                                if(!empty($conduct['c'.$i])) {
+                                    // Check if it's numeric ID (new system) or text (legacy)
+                                    if(is_numeric($conduct['c'.$i])) {
+                                        $selected_conduct_ids[] = $conduct['c'.$i];
+                                    } else {
+                                        // Legacy text - try to match by name
+                                        foreach($conduct_items as $item) {
+                                            if($item->name == $conduct['c'.$i]) {
+                                                $selected_conduct_ids[] = $item->id;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }   
+                        }
+
+                        ?>
+                     <!--Conducts-->
+                        <div class="row">
+                            <div class="col-lg-12 col-md-12">
+                                <?php echo form_open(site_url('admin/conducts_update'), array('id' => 'conducts_form'));?>
+                                    <div class="table table-responsive">
+                                        <table class="table table-bordered table-striped" id="conducts" style="width:100%; border-collapse:collapse;border: 1px solid #ccc; margin-top: 10px;" border="1">
+                                            <caption>CONDUCTS OF <b><?php echo strtoupper($this->db->get_where('student' , array('student_id' => $student_id))->row()->name);?></b></caption>
+                                            <tbody>
+                                                <?php
+                                                // Render dynamic conduct items in rows of 5
+                                                $items_per_row = 5;
+                                                $item_count = 0;
+                                                
+                                                foreach($conduct_items_from_db as $item):
+                                                    if($item_count % $items_per_row == 0) {
+                                                        if($item_count > 0) echo '</tr>';
+                                                        echo '<tr>';
+                                                    }
+                                                    
+                                                    $checked = in_array($item->id, $selected_conduct_ids) ? 'checked' : '';
+                                                    $item_id_safe = 'conduct_' . $item->id;
+                                                ?>
+                                                    <td><input type="checkbox" id="<?php echo $item_id_safe; ?>" class="form-check" name="conducts[]" value="<?php echo $item->id; ?>" <?php echo $checked; ?>></td>
+                                                    <td><label for="<?php echo $item_id_safe; ?>" class="form-control-label"><?php echo $item->name; ?></label></td>
+                                                <?php
+                                                    $item_count++;
+                                                endforeach;
+                                                
+                                                // Close last row if needed
+                                                if($item_count % $items_per_row != 0) {
+                                                    // Fill remaining cells
+                                                    $remaining = $items_per_row - ($item_count % $items_per_row);
+                                                    for($i = 0; $i < $remaining; $i++) {
+                                                        echo '<td></td><td></td>';
+                                                    }
+                                                    echo '</tr>';
+                                                }
+                                                ?>
+                                            </tbody>
+                                        </table>
+
+                                        <!-- Modern UI: Attendance Section -->
+                                        <div class="card shadow-sm" style="margin-top: 20px; border-radius: 8px; overflow: hidden;">
+                                            <div class="card-header" style="background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; padding: 15px;">
+                                                <h5 style="margin: 0; font-weight: 600;">
+                                                    <i class="fa fa-calendar-check"></i> Student's Attendance
+                                                </h5>
+                                            </div>
+                                            <div class="card-body" style="padding: 25px; background-color: #f8f9fa;">
+                                                <div class="row">
+                                                    <!-- Days Opened -->
+                                                    <div class="col-md-4">
+                                                        <div class="attendance-stat-card" style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-left: 4px solid #3b82f6;">
+                                                            <div style="display: flex; align-items: center; justify-content: space-between;">
+                                                                <div>
+                                                                    <label class="text-muted" style="font-size: 12px; text-transform: uppercase; font-weight: 600; margin-bottom: 5px; display: block;">
+                                                                        <i class="fa fa-door-open text-primary"></i> Days Opened
+                                                                    </label>
+                                                                    <h3 style="margin: 0; color: #1e40af; font-weight: 700;">
+                                                                        <?php echo $days_opened; ?>
+                                                                    </h3>
+                                                                </div>
+                                                                <div style="width: 60px; height: 60px; background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); border-radius: 50%; display: flex; align-items: center; justify-content: center;">
+                                                                    <i class="fa fa-calendar-alt" style="font-size: 24px; color: #3b82f6;"></i>
+                                                                </div>
+                                                            </div>
+                                                            <input type="hidden" name="days_opened" id="days_opened" value="<?php echo $days_opened; ?>">
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    <!-- Days Present -->
+                                                    <div class="col-md-4">
+                                                        <div class="attendance-stat-card" style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-left: 4px solid #10b981;">
+                                                            <div style="display: flex; align-items: center; justify-content: space-between;">
+                                                                <div>
+                                                                    <label class="text-muted" style="font-size: 12px; text-transform: uppercase; font-weight: 600; margin-bottom: 5px; display: block;">
+                                                                        <i class="fa fa-check-circle text-success"></i> Days Present
+                                                                    </label>
+                                                                    <h3 style="margin: 0; color: #059669; font-weight: 700;">
+                                                                        <?php echo $days_present; ?>
+                                                                    </h3>
+                                                                </div>
+                                                                <div style="width: 60px; height: 60px; background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%); border-radius: 50%; display: flex; align-items: center; justify-content: center;">
+                                                                    <i class="fa fa-user-check" style="font-size: 24px; color: #10b981;"></i>
+                                                                </div>
+                                                            </div>
+                                                            <input type="hidden" name="days_present" id="days_present" value="<?php echo $days_present; ?>">
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    <!-- Days Absent -->
+                                                    <div class="col-md-4">
+                                                        <div class="attendance-stat-card" style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-left: 4px solid #ef4444;">
+                                                            <div style="display: flex; align-items: center; justify-content: space-between;">
+                                                                <div>
+                                                                    <label class="text-muted" style="font-size: 12px; text-transform: uppercase; font-weight: 600; margin-bottom: 5px; display: block;">
+                                                                        <i class="fa fa-times-circle text-danger"></i> Days Absent
+                                                                    </label>
+                                                                    <h3 style="margin: 0; color: #dc2626; font-weight: 700;">
+                                                                        <?php echo ($days_opened - $days_present); ?>
+                                                                    </h3>
+                                                                </div>
+                                                                <div style="width: 60px; height: 60px; background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%); border-radius: 50%; display: flex; align-items: center; justify-content: center;">
+                                                                    <i class="fa fa-user-times" style="font-size: 24px; color: #ef4444;"></i>
+                                                                </div>
+                                                            </div>
+                                                            <input type="hidden" name="days_absent" id="days_absent" value="<?php echo ($days_opened - $days_present); ?>">
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                
+                                                <!-- Attendance Progress Bar -->
+                                                <?php 
+                                                $attendance_percentage = $days_opened > 0 ? round(($days_present / $days_opened) * 100, 2) : 0;
+                                                $progress_color = $attendance_percentage >= 90 ? '#10b981' : ($attendance_percentage >= 75 ? '#f59e0b' : '#ef4444');
+                                                ?>
+                                                <div style="margin-top: 20px; background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                                        <span style="font-weight: 600; color: #374151;">Attendance Rate</span>
+                                                        <span style="font-weight: 700; font-size: 18px; color: <?php echo $progress_color; ?>;">
+                                                            <?php echo $attendance_percentage . '%'; ?>
+                                                        </span>
+                                                    </div>
+                                                    <div style="width: 100%; height: 12px; background-color: #e5e7eb; border-radius: 6px; overflow: hidden;">
+                                                        <div style="width: <?php echo $attendance_percentage; %>%; height: 100%; background: <?php echo $progress_color; ?>; border-radius: 6px; transition: width 0.6s ease;">
+                                                        </div>
+                                                    </div>
+                                                    <small class="text-muted" style="display: block; margin-top: 5px;">
+                                                        <i class="fa fa-info-circle"></i> 
+                                                        <?php 
+                                                        if($attendance_percentage >= 90) {
+                                                            echo "Excellent attendance!";
+                                                        } elseif($attendance_percentage >= 75) {
+                                                            echo "Good attendance. Keep it up!";
+                                                        } else {
+                                                            echo "Needs improvement.";
+                                                        }
+                                                        ?>
+                                                    </small>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <!--add simple script here-->
+                                        <script type="text/javascript">
+                                          function change_days_absent() {
+                                            let days_opened = Number($('td #days_opened').val());
+                                            let days_present = Number($('#days_present').val());
+                                            let days_absent = days_opened - days_present;
+
+                                            $('#days_absent').val(days_absent);  
+                                          }
+
+                                          // Conduct checkbox validation - Maximum 3 selections
+                                          $(document).ready(function() {
+                                            const MAX_CONDUCTS = 3;
+                                            const conductCheckboxes = $('input[name="conduct_ids[]"]');
+                                            
+                                            function updateConductCheckboxes() {
+                                              const checkedCount = conductCheckboxes.filter(':checked').length;
+                                              
+                                              if (checkedCount >= MAX_CONDUCTS) {
+                                                // Disable unchecked boxes
+                                                conductCheckboxes.not(':checked').prop('disabled', true).closest('td').css('opacity', '0.5');
+                                              } else {
+                                                // Enable all boxes
+                                                conductCheckboxes.prop('disabled', false).closest('td').css('opacity', '1');
+                                              }
+                                              
+                                              // Show/hide warning message
+                                              if (checkedCount >= MAX_CONDUCTS) {
+                                                if ($('#conduct_limit_warning').length === 0) {
+                                                  $('#conducts').before('<div id="conduct_limit_warning" class="alert alert-warning" style="margin-top:10px;"><strong>Maximum Limit Reached!</strong> You can only select up to 3 conducts. Uncheck one to select another.</div>');
+                                                }
+                                              } else {
+                                                $('#conduct_limit_warning').remove();
+                                              }
+                                            }
+                                            
+                                            // Initialize on page load
+                                            updateConductCheckboxes();
+                                            
+                                            // Update on checkbox change
+                                            conductCheckboxes.on('change', updateConductCheckboxes);
+                                          });
+                                        </script>
+
+                                        <?php
+                                          // Get interest and remarks from aggregation table (JHS uses 'sem')
+                                          $interest_row = $this->db->get_where('aggregation', array('student_id' => $row1['student_id'], 'class_id' => $class_id, 'exam_id' => $exam_id, 'sem' => $running_sem, 'year' => $running_year))->row();
+                                          $interest = $interest_row ? $interest_row->interest : '';
+                                          $ret_remarks = $interest_row ? $interest_row->remarks : '';
+                                          
+                                          // Get selected interest ID (single selection)
+                                          $selected_interest_id = '';
+                                          if($interest_row && !empty($interest_row->interest)) {
+                                              // Check if it's numeric ID (new system) or text (legacy)
+                                              if(is_numeric($interest_row->interest)) {
+                                                  $selected_interest_id = $interest_row->interest;
+                                              }
+                                              // Otherwise it's legacy text, keep $interest as-is for display
+                                          }
+                                          
+                                          // Calculate student's total percentage for head teacher remark
+                                          $student_percentage = 0;
+                                          if(isset($total_marks) && $total_marks > 0) {
+                                              // Calculate total possible marks (assuming each subject out of 100)
+                                              $total_possible = count($subjects) * 100;
+                                              if($total_possible > 0) {
+                                                  $student_percentage = ($total_marks / $total_possible) * 100;
+                                              }
+                                          }
+                                          
+                                          // Find appropriate head teacher remark based on percentage
+                                          $auto_head_remark = $this->Head_teacher_remarks_model->find_by_percentage($student_percentage);
+                                          $head_teacher_remark_text = $auto_head_remark ? $auto_head_remark->remark_text : '';
+                                        ?>
+
+                                        <!-- Modern UI: Interest, Teacher Remarks, Head Teacher Remarks -->
+                                        <div class="card shadow-sm" style="margin-top: 20px; border-radius: 8px; overflow: hidden;">
+                                            <div class="card-header" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px;">
+                                                <h5 style="margin: 0; font-weight: 600;">
+                                                    <i class="fa fa-comment-dots"></i> Student Assessment & Remarks
+                                                </h5>
+                                            </div>
+                                            <div class="card-body" style="padding: 25px; background-color: #f8f9fa;">
+                                                <div class="row">
+                                                    <!-- Interest Column -->
+                                                    <div class="col-md-4">
+                                                        <div class="form-group">
+                                                            <label for="interest_id" class="font-weight-bold" style="color: #495057; font-size: 14px; margin-bottom: 8px;">
+                                                                <i class="fa fa-star text-warning"></i> INTEREST
+                                                            </label>
+                                                            <select id="interest_id" name="interest_id" class="form-control select2-interest" style="width: 100%;">
+                                                                <option value="">Select Interest</option>
+                                                                <?php foreach($interest_items as $item): ?>
+                                                                    <option value="<?php echo $item->id; ?>" <?php echo ($item->id == $selected_interest_id) ? 'selected' : ''; ?>>
+                                                                        <?php echo htmlspecialchars($item->name); ?>
+                                                                    </option>
+                                                                <?php endforeach; ?>
+                                                            </select>
+                                                            <small class="form-text text-muted">
+                                                                <i class="fa fa-info-circle"></i> <?php echo get_phrase('select_one_interest'); ?>
+                                                            </small>
+                                                            <!-- Keep old interest field hidden for backward compatibility -->
+                                                            <input type="hidden" name="interest" value="<?php echo htmlspecialchars($interest); ?>">
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    <!-- Teacher Remarks Column -->
+                                                    <div class="col-md-4">
+                                                        <div class="form-group">
+                                                            <label for="teacher_remarks" class="font-weight-bold" style="color: #495057; font-size: 14px; margin-bottom: 8px;">
+                                                                <i class="fa fa-user-graduate text-primary"></i> CLASS TEACHER'S REMARKS
+                                                            </label>
+                                                            <select id="teacher_remarks" class="form-control select2-teacher-remarks" name="teacher_remarks" 
+                                                                    style="width: 100%;">
+                                                                <option value=""></option>
+                                                                <?php foreach($teacher_remark_templates as $template): ?>
+                                                                    <option value="<?php echo htmlspecialchars($template->remark_text); ?>"
+                                                                            <?php if($ret_remarks == $template->remark_text) echo 'selected'; ?>>
+                                                                        <?php echo htmlspecialchars($template->remark_text); ?>
+                                                                    </option>
+                                                                <?php endforeach; ?>
+                                                                <?php 
+                                                                // Check if current remark is not in templates (custom remark)
+                                                                $template_texts = array_map(function($t) { return $t->remark_text; }, $teacher_remark_templates);
+                                                                if($ret_remarks && !in_array($ret_remarks, $template_texts)): 
+                                                                ?>
+                                                                    <!-- Custom remark not in templates -->
+                                                                    <option value="<?php echo htmlspecialchars($ret_remarks); ?>" selected>
+                                                                        <?php echo htmlspecialchars($ret_remarks); ?>
+                                                                    </option>
+                                                                <?php endif; ?>
+                                                            </select>
+                                                            <small class="form-text text-muted">
+                                                                <i class="fa fa-keyboard"></i> <?php echo get_phrase('select_template_or_type_custom_remark'); ?>
+                                                            </small>
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    <!-- Head Teacher Remarks Column -->
+                                                    <div class="col-md-4">
+                                                        <div class="form-group">
+                                                            <label for="head_teacher_remark" class="font-weight-bold" style="color: #495057; font-size: 14px; margin-bottom: 8px;">
+                                                                <i class="fa fa-user-tie text-success"></i> HEAD TEACHER'S REMARKS
+                                                            </label>
+                                                            <input type="text" id="head_teacher_remark" name="head_teacher_remark" 
+                                                                   class="form-control" 
+                                                                   value="<?php echo htmlspecialchars($head_teacher_remark_text); ?>" 
+                                                                   readonly 
+                                                                   style="background-color: #e9ecef; cursor: not-allowed; border: 1px solid #ced4da;">
+                                                            <small class="form-text text-muted">
+                                                                <i class="fa fa-magic"></i> <?php echo get_phrase('auto_generated_based_on_performance'); ?> 
+                                                                <span class="badge badge-info"><?php echo number_format($student_percentage, 2); ?>%</span>
+                                                            </small>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <input type="hidden" name="exam_id" value="<?php echo $exam_id; ?>">
+                                        <input type="hidden" name="student_id" value="<?php echo $row1['student_id']; ?>">
+                                        <input type="hidden" name="class_id" value="<?php echo $class_id;?>">
+                                        <div>
+                                            <div class="alert alert-danger alert-dismissable" style="display: none;" id="alert_error">
+                                                <strong>Please enter student's marks before proceeding with the conducts. Go to >>Examination >>Manage Exam Marks</strong>
+                                            </div>
+                                        </div>
+                                        <input type="submit" name="save_conducts" id="submit_c" class="btn btn-primary btn-lg btn-md btn-sm" value="<?php echo get_phrase('save_conducts_&_remarks');?>" style="position: relative; float: right; bottom: 20px; right: 10px; margin-top: 30px;">
+                                    </div>
+                                <?php echo form_close();?>
+                            </div>
+                        </div>
+
+                        <?php
+
+                        ?>
+
+                    <br> <br>
+               </div>
+
+               <div class="col-md-12">
+                   <!-- Modern Chart.js Performance Visualization -->
+                   <div class="card shadow-sm" style="margin-top: 20px; margin-bottom: 30px; border-radius: 8px; overflow: hidden;">
+                       <div class="card-header" style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: white; padding: 15px;">
+                           <h5 style="margin: 0; font-weight: 600;">
+                               <i class="fa fa-chart-bar"></i> Performance Analysis - Class Score vs Exam Score
+                           </h5>
+                       </div>
+                       <div class="card-body" style="padding: 25px; background-color: #ffffff;">
+                           <canvas id="performanceChart<?php echo $exam_id;?>" style="max-height: 400px;"></canvas>
+                       </div>
+                   </div>
+                   
+                   <script>
+                   (function() {
+                       // Prepare data for Chart.js
+                       var chartData = {
+                           labels: [
+                               <?php 
+                                   foreach ($subjects as $subject) :
+                                       // Use first 10 chars or full name if shorter
+                                       $subjectName = strlen($subject['name']) > 10 ? substr($subject['name'], 0, 10) . '...' : $subject['name'];
+                               ?>
+                               "<?php echo addslashes($subjectName); ?>",
+                               <?php endforeach; ?>
+                           ],
+                           datasets: [
+                               {
+                                   label: 'Class Score',
+                                   data: [
+                                       <?php 
+                                           foreach ($subjects as $subject) :
+                                               $class_mark = $this->crud_model->get_class_score( $exam_id , $class_id , $subject['subject_id'] , $row1['student_id']);
+                                               echo $class_mark ? $class_mark : 0;
+                                               echo ",";
+                                           endforeach;
+                                       ?>
+                                   ],
+                                   backgroundColor: 'rgba(59, 130, 246, 0.8)',
+                                   borderColor: 'rgba(59, 130, 246, 1)',
+                                   borderWidth: 2,
+                                   borderRadius: 5,
+                                   barThickness: 30,
+                               },
+                               {
+                                   label: 'Exam Score',
+                                   data: [
+                                       <?php 
+                                           foreach ($subjects as $subject) :
+                                               $exam_mark = $this->crud_model->get_exam_score( $exam_id , $class_id , $subject['subject_id'], $row1['student_id'] );
+                                               echo $exam_mark ? $exam_mark : 0;
+                                               echo ",";
+                                           endforeach;
+                                       ?>
+                                   ],
+                                   backgroundColor: 'rgba(139, 92, 246, 0.8)',
+                                   borderColor: 'rgba(139, 92, 246, 1)',
+                                   borderWidth: 2,
+                                   borderRadius: 5,
+                                   barThickness: 30,
+                               }
+                           ]
+                       };
+                       
+                       // Configuration
+                       var config = {
+                           type: 'bar',
+                           data: chartData,
+                           options: {
+                               responsive: true,
+                               maintainAspectRatio: true,
+                               plugins: {
+                                   legend: {
+                                       display: true,
+                                       position: 'top',
+                                       labels: {
+                                           font: {
+                                               size: 14,
+                                               weight: 600
+                                           },
+                                           padding: 15,
+                                           usePointStyle: true,
+                                           pointStyle: 'rectRounded'
+                                       }
+                                   },
+                                   tooltip: {
+                                       enabled: true,
+                                       backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                                       titleColor: '#fff',
+                                       bodyColor: '#fff',
+                                       borderColor: 'rgba(255, 255, 255, 0.3)',
+                                       borderWidth: 1,
+                                       padding: 12,
+                                       displayColors: true,
+                                       callbacks: {
+                                           label: function(context) {
+                                               return context.dataset.label + ': ' + context.parsed.y + '%';
+                                           }
+                                       }
+                                   }
+                               },
+                               scales: {
+                                   y: {
+                                       beginAtZero: true,
+                                       max: 100,
+                                       ticks: {
+                                           callback: function(value) {
+                                               return value + '%';
+                                           },
+                                           font: {
+                                               size: 12
+                                           }
+                                       },
+                                       grid: {
+                                           color: 'rgba(0, 0, 0, 0.05)',
+                                           borderDash: [5, 5]
+                                       },
+                                       title: {
+                                           display: true,
+                                           text: 'Score (%)',
+                                           font: {
+                                               size: 14,
+                                               weight: 'bold'
+                                           }
+                                       }
+                                   },
+                                   x: {
+                                       grid: {
+                                           display: false
+                                       },
+                                       ticks: {
+                                           font: {
+                                               size: 11
+                                           }
+                                       },
+                                       title: {
+                                           display: true,
+                                           text: 'Subjects',
+                                           font: {
+                                               size: 14,
+                                               weight: 'bold'
+                                           }
+                                       }
+                                   }
+                               },
+                               interaction: {
+                                   mode: 'index',
+                                   intersect: false,
+                               }
+                           }
+                       };
+                       
+                       // Create chart when DOM is ready
+                       if (document.readyState === 'loading') {
+                           document.addEventListener('DOMContentLoaded', function() {
+                               var ctx = document.getElementById('performanceChart<?php echo $exam_id;?>');
+                               if (ctx && typeof Chart !== 'undefined') {
+                                   new Chart(ctx.getContext('2d'), config);
+                               }
+                           });
+                       } else {
+                           var ctx = document.getElementById('performanceChart<?php echo $exam_id;?>');
+                           if (ctx && typeof Chart !== 'undefined') {
+                               new Chart(ctx.getContext('2d'), config);
+                           }
+                       }
+                   })();
+                   </script>
+               </div>
+                
+               <div class="row">
+                        <div class="col-lg-2 col-md-3 col-sm-4 col-xs-5">
+                            <table class="table" id="hint_table">
+                                <caption>Hints</caption>
+                                <tr>
+                                   <th><div id="circle1"></th> 
+                                   <td><b><i>Class Score</i></b></td>
+                                </tr>
+                                <tr>
+                                   <th><div id="circle2"></th> 
+                                   <td><b><i>Exam Score</i></b></td>
+                                </tr>
+                            </table>
+                        </div>
+                    </div>
+            </div>
+
+            <br><br> <br><br>
+                <a href="<?php echo site_url('admin/student_marksheet_print_view/'.$student_id.'/'.$exam_id);?>" 
+                        class="btn btn-primary" target="_blank" style="position: relative; float: right; bottom: 20px; right: 10px;">
+                        <?php echo get_phrase('print_marksheet');?>
+                    </a>
+            <br><br>        
+        </div>  
+    </div>
+</div>
+<?php
+   // endforeach;
+        endforeach;
+//end of the JHS
+    } else {
+    foreach ($student_info as $row1):
+   // foreach ($exams as $row2):
+?>
+
+<!--
+<hr>
+<div class="row">
+    <div class="col-md-12">
+        <?php echo form_open(site_url('admin/student_results_sheet'));?>
+        <div class="col-md-2">
+                <div class="form-group">
+                    <label class="control-label"><?php echo get_phrase('class');?></label>
+                    <select name="class_id" class="form-control selectboxit" id="class_id" onchange="showTermSem($(this).val())">
+                        <option value=""><?php echo get_phrase('select_a_class');?></option>
+                        <?php 
+                        $this->db->select('class_id');
+                        $this->db->distinct();
+                        $this->db->where('student_id', $student_id);
+                        $classes = $this->db->get('mark')->result_array();
+                        foreach($classes as $row):
+                        ?>
+                        <?php
+                            //add section A or B if the class has more than one section
+                            $section_name = $this->db->get_where('section', array('class_id' => $row['class_id']))->row()->name;
+                            $c_name = $this->crud_model->get_class_name($row['class_id']);
+                            $c_name_numeric = $this->crud_model->get_class_name_numeric($row['class_id']);
+
+                            $class_has_more_sections = $this->db->get_where('class', array('name' => $c_name, 'name_numeric' => $c_name_numeric))->num_rows();
+                            $sec_name = '';
+                            if($class_has_more_sections > 1) {
+                                $sec_name = $section_name;
+                            }
+                        ?>
+                            <option value="<?php echo $row['class_id'];?>"
+                                <?php if ($class_id == $row['class_id']) echo 'selected';?>>
+                                    <?php echo $c_name.' '.$c_name_numeric.$sec_name;?>
+                            </option>
+                        <?php
+                        endforeach;
+                        ?>
+                    </select>
+                </div>
+            </div>
+            <div class="col-md-2" id="term_holder">
+                <div class="form-group">
+                    <label  class="control-label"><?php echo get_phrase('selected_term');?></label>
+                      <select name="term" class="form-control selectboxit"  onchange="get_exam_type()" id="term">
+                      <option value="" disabled="true"><?php echo get_phrase('select_term');?></option>
+                      <?php for($i = 1; $i <= 3; $i++):?>
+                          <option value="<?php echo $i;?>"
+                            <?php if($term == $i) {echo 'selected'; } else if($running_term == $i) { echo 'selected';};?>>
+                              <?php echo $i;?>
+                          </option>
+                      <?php endfor;?>
+                      </select>
+                </div>
+            </div>
+
+            <div class="col-md-2" id="sem_holder">
+                <div class="form-group">
+                    <label  class="control-label"><?php echo get_phrase('selected_semester');?></label>
+                      <select name="sem" class="form-control selectboxit"  onchange="get_exam_type_sem()" id="sem">
+                      <option value="" disabled="true"><?php echo get_phrase('select_semester');?></option>
+                      <?php for($i = 1; $i <= 2; $i++):?>
+                          <option value="<?php echo $i;?>"
+                            <?php if($sem == $i) echo 'selected';?>>
+                              <?php echo $i;?>
+                          </option>
+                      <?php endfor;?>
+                      </select>
+                </div>
+            </div>
+
+            <div class="col-md-2">
+                <div class="form-group">
+                  <label  class="control-label"><?php echo get_phrase('selected_year');?></label>
+                      <select name="year" class="form-control selectboxit"  onchange="get_exam_type()" id="year">
+                      <option value="" disabled="true"><?php echo get_phrase('select_year');?></option>
+                      <?php
+                          //echo populate_academic_year();
+                        ?>
+                      </select>
+                </div>
+            </div>
+            <div id="exam_holder">
+            <div class="col-md-3">
+                <div class="form-group" id="exam_holder_g">
+                <label class="control-label"><?php echo get_phrase('exam');?></label>
+                 <select name="exam_id" class="form-control" id="exam_id">
+                    <?php 
+                    $exams = $this->db->get_where('exam', array('term' => $term, 'year' => $year, 'category_id !=' => '1'));
+                     $array_exams  = $exams->result_array();
+
+                    if($exams->num_rows() < 1) {
+                       ?>
+                       <option value=""><?php echo get_phrase('no_exam_was_found'); ?></option>
+                       <?php
+                    }
+                    ?>
+                        <option value=""><?php echo get_phrase('select_exam_to_view'); ?></option>
+                    <?php
+                    foreach($array_exams as $row):
+                    ?>
+                        <option value="<?php echo $row['exam_id'];?>"
+                            <?php if ($exam_id == $row['exam_id']) echo 'selected';?>>
+                                <?php echo $row['name'];?>
+                        </option>
+                    <?php
+                    endforeach;
+                    ?>
+                </select>
+                </div>
+
+                <div class="form-group" id="exam_holder_jhs">
+                <label class="control-label"><?php echo get_phrase('exam');?></label>
+                 <select name="exam_id" class="form-control" id="exam_id_sem">
+                    <?php 
+                    $exams = $this->db->get_where('exam', array('sem' => $sem, 'year' => $year, 'category_id !=' => '1'));
+                     $array_exams  = $exams->result_array();
+
+                    if($exams->num_rows() < 1) {
+                       ?>
+                       <option value=""><?php echo get_phrase('no_exam_was_found'); ?></option>
+                       <?php
+                    }
+                    ?>
+                        <option value=""><?php echo get_phrase('select_exam_to_view'); ?></option>
+                    <?php
+                    foreach($array_exams as $row):
+                    ?>
+                        <option value="<?php echo $row['exam_id'];?>"
+                            <?php if ($exam_id == $row['exam_id']) echo 'selected';?>>
+                                <?php echo $row['name'];?>
+                        </option>
+                    <?php
+                    endforeach;
+                    ?>
+                </select>
+                </div>
+            </div>
+            <input type="hidden" name="operation" value="selection">
+            <input type="hidden" name="student_id" value="<?php echo $student_id; ?>">
+            <div class="col-md-3" style="margin-top: 20px;">
+                <button type="submit" id="submit" class="btn btn-info"><?php echo get_phrase('view_results');?></button>
+            </div>
+        </div>
+        <?php echo form_close();?>
+    </div>
+</div>-->
+<hr><!--//end of results check-->
+
+<div class="row">
+    <?php if($ajax != 'yes'):?>
+    <div class="col-md-12 -col-sm-12 col-lg-12" style="display: flex;">
+        <div class="col-md-6 -col-sm-6 col-lg-6"></div>
+        <div class="col-md-6 -col-sm-6 col-lg-6 form-group row" style="padding-bottom: 10px; display: flex;">
+            <label class="col-md-4 -col-sm-4 col-lg-4 control-label pt-50">STUDENTS LIST:</label>
+            <select class="col-md-8 -col-sm-8 col-lg-8 form-control select2" id="other_students">
+            <?php
+                foreach($other_students as $os) {?>
+                    <option value="<?=$os['student_id']?>" <?=$student_id == $os['student_id'] ? 'selected' : ''; ?>><?=$this->crud_model->getStudentNameById($os['student_id'])?></option>
+            <?php
+                }
+            ?>
+            </select>
+        </div>
+    </div>
+    <?php endif;?>
+
+    <div class="col-md-12">
+        <div class="panel panel-primary panel-shadow" data-collapsed="0">
+            <div class="panel-heading">
+                <div class="panel-title"><?php echo $this->crud_model->get_exams_name($exam_id);?></div>
+            </div>
+            <div class="panel-body">
+                
+                
+               <div class="col-md-12">
+                   <table class="table table-bordered table-responsive table-striped table-hover table-active">
+                       <thead>
+                        <tr>
+                            <th style="text-align: center; font-weight: bold;">S/N</th>
+                            <th style="text-align: center; font-weight: bold;">SUBJECT</th>
+                            <th style="text-align: center; font-weight: bold;">CLASS SCORE</th>
+                            <th style="text-align: center; font-weight: bold;">EXAM SCORE</th>
+                            <th style="text-align: center; font-weight: bold;">TOTAL SCORE</th>
+                            <th style="text-align: center; font-weight: bold;">GRADE</th>
+                            <th style="text-align: center; font-weight: bold;">REMARK</th>
+                            <th style="text-align: center; font-weight: bold;">POSITION</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <?php
+                            $class_score_total = 0;
+                            $exam_score_total =0; 
+                            $total_marks = 0;
+                            $total_grade_point = 0;
+                            $subjects = $this->db->get_where('subject' , array(
+                                'class_id' => $class_id , 'year' => $running_year, 'term' => $running_term
+                            ))->result_array();
+
+                            $sn = 1;
+                            foreach ($subjects as $row3):
+                        ?>
+                            <tr>
+                                <td style="text-align: center;"><?php echo $sn;?></td>
+                                <td><?php if(strlen($row3['name']) <= 4) {
+                                    echo strtoupper($row3['name']);
+                                }else{ 
+                                    echo $row3['name'];
+                                };?></td>
+                                 <td style="text-align: center;">
+                                    <?php
+                                        $class_score_query = $this->db->get_where('mark' , array(
+                                                    'subject_id' => $row3['subject_id'],
+                                                        'exam_id' => $exam_id,
+                                                            'class_id' => $class_id,
+                                                                'student_id' => $student_id , 
+                                                                    'year' => $running_year,
+                                                                        'term' => $running_term));
+                                        if ( $class_score_query->num_rows() > 0) {
+                                            $class_score = $class_score_query->result_array();
+                                            foreach ($class_score as $row4) {
+                                                echo round($row4['class_score'], 2);
+                                                $class_score_total += $row4['class_score'];
+                                                $total_marks += $row4['class_score'];
+                                            }
+                                        }else{
+                                          echo "N/A";
+                                        }
+                                    ?>
+                                </td>
+                                 <td style="text-align: center;">
+                                    <?php
+                                        $exam_score_query = $this->db->get_where('mark' , array(
+                                                    'subject_id' => $row3['subject_id'],
+                                                        'exam_id' => $exam_id,
+                                                            'class_id' => $class_id,
+                                                                'student_id' => $student_id , 
+                                                                    'year' => $running_year,
+                                                                        'term' => $running_term));
+                                        if ( $exam_score_query->num_rows() > 0) {
+                                            $exam_score = $exam_score_query->result_array();
+                                            foreach ($exam_score as $row4) {
+                                                echo round($row4['exam_score'], 2);
+                                                $exam_score_total += $row4['exam_score'];
+                                                $total_marks += $row4['exam_score'];
+                                            }
+                                        }else{
+                                          echo "N/A";
+                                        }
+                                    ?>
+                                </td>
+                                <td style="text-align: center;">
+                                    <?php
+                                        $obtained_mark_query = $this->db->get_where('mark' , array(
+                                                    'subject_id' => $row3['subject_id'],
+                                                        'exam_id' => $exam_id,
+                                                            'class_id' => $class_id,
+                                                                'student_id' => $student_id , 
+                                                                    'year' => $running_year,
+                                                                        'term' => $running_term));
+                                        if ( $obtained_mark_query->num_rows() > 0) {
+                                            $marks = $obtained_mark_query->result_array();
+                                            foreach ($marks as $row4) {
+                                                echo round($row4['mark_obtained'], 2);
+                                                $total_marks;
+                                            }
+                                        }else{
+                                          echo "N/A";
+                                        }
+                                    ?>
+                                </td>
+                               <!-- <td style="text-align: center;">
+                                    <?php
+
+                                    $highest_mark = $this->crud_model->get_highest_marks($exam_id , $class_id , $row3['subject_id'] );
+                                    echo $highest_mark;
+
+
+        
+                                    ?>
+                                </td>. //take highest mark column out-->
+                                <td style="text-align: center;">
+                                    <?php
+                                        if($obtained_mark_query->num_rows() > 0) {
+                                            if ($row4['mark_obtained'] >= 0 || $row4['mark_obtained'] != '') {
+                                                $grade = $this->crud_model->get_grade($row4['mark_obtained']);
+                                                echo $grade['grade_point'];
+                                               /** $total_grade_point += $grade['grade_point'];No grade point**/
+                                            }
+                                        }else{
+                                          echo "N/A";
+                                        }
+                                    ?>
+                                </td>
+                                <td style="text-align: center;">
+                                    <?php
+                                        if($obtained_mark_query->num_rows() > 0) {
+                                            if ($row4['mark_obtained'] >= 0 || $row4['mark_obtained'] != '') {
+                                                $grade = $this->crud_model->get_grade($row4['mark_obtained']);
+                                                echo $grade['name'];
+                                                /**$total_grade_point += $grade['grade_point'];==No grade point**/
+                                            }
+                                        }else{
+                                          echo "N/A";
+                                        }
+                                    ?>
+                                </td>
+                                <td style="text-align: center;">
+                                <?php
+                                 $this->crud_model->get_total_score($exam_id , $class_id , $row3['subject_id'], $row1['student_id'], $running_year, $running_term);
+                                 ?>
+                                </td>
+                              <!--  <td style="text-align: center;">
+                                    <?php // if($obtained_mark_query->num_rows() > 0) 
+                                            //echo $row4['comment'];
+                                    ?>
+                                </td>.//take comment column out-->
+                            </tr>
+                        <?php 
+                       $sn++;
+                        endforeach;?>
+
+                        <tr>
+                            <th colspan="2" style="text-align: center;">TOTAL</th>
+                            <td style="text-align: center; font-weight: bold;"><?php echo $class_score_total?round($class_score_total, 2):'N/A'; ?></td>
+                            <td style="text-align: center; font-weight: bold;"><?php echo $exam_score_total?round($exam_score_total, 2):'N/A'; ?></td>
+                            <td style="text-align: center; font-weight: bold;"><?php echo $total_marks?round($total_marks, 2):'N/A'; ?></td>
+                            <td colspan="3"></td>
+                        </tr>
+                    </tbody>
+                   </table>
+
+<div class="row">
+    
+</div>
+                   <hr />
+
+                  <!-- <?php // echo get_phrase('total_marks');?> : <?php echo $total_marks;?>
+                   <br>
+                   <?php //echo get_phrase('average_grade_point');?> : 
+                        <?php 
+                           /** $this->db->where('class_id' , $class_id);
+                            $this->db->where('year' , $running_year);
+                            $this->db->from('subject');
+                            $number_of_subjects = $this->db->count_all_results();
+                            echo ($total_grade_point / $number_of_subjects);
+                            **/
+                        ?>.//Hide the total and agpa-->
+
+                        <?php
+
+                        $conducts_data = $this->db->get_where('aggregation', array('student_id' => $row1['student_id'], 'class_id' => $class_id, 'exam_id' => $exam_id, 'term' => $running_term, 'year' => $running_year))->result_array();
+
+                         // Build array of selected conduct IDs from aggregation table
+                         $selected_conduct_ids = array();
+                         $ret_remarks = '';
+
+                         // Fetch days_opened from terms table
+                         $term_record = $this->db->get_where('terms', array('year' => $running_year, 'term' => $running_term))->row();
+                         $days_opened = $term_record && isset($term_record->days_opened) ? $term_record->days_opened : 0;
+
+                         // Calculate days_present from attendance table
+                         $this->db->select('COUNT(*) as days_present');
+                         $this->db->from('attendance');
+                         $this->db->where('student_id', $row1['student_id']);
+                         $this->db->where('year', $running_year);
+                         $this->db->where('term', $running_term);
+                         $this->db->where_in('status', array(1, 3)); // Status: 1=Present, 3=Late
+                         $attendance_query = $this->db->get();
+                         $days_present = $attendance_query->row() ? (int)$attendance_query->row()->days_present : 0;
+
+                        foreach ($conducts_data as $conduct) {
+
+                            $ret_remarks = $conduct['remarks'];
+                            $exam_id2 = $conduct['exam_id'];
+                            $student_id2 = $conduct['student_id'];
+                            $class_id2 = $conduct['class_id'];
+                            $term2 = $conduct['term'];
+                            $year2 = $conduct['year'];
+                            
+                            // Collect selected conduct IDs from c1-c15 columns
+                            for($i = 1; $i <= 15; $i++){
+                                if(!empty($conduct['c'.$i])) {
+                                    // Check if it's numeric ID (new system) or text (legacy)
+                                    if(is_numeric($conduct['c'.$i])) {
+                                        $selected_conduct_ids[] = $conduct['c'.$i];
+                                    } else {
+                                        // Legacy text - try to match by name
+                                        foreach($conduct_items as $item) {
+                                            if($item->name == $conduct['c'.$i]) {
+                                                $selected_conduct_ids[] = $item->id;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }   
+                           
+                        }
+
+                        ?>
+                     <!--Conducts - Database Driven-->
+                        <div class="row">
+                            <div class="col-lg-12 col-md-12">
+                                <?php echo form_open(site_url('admin/conducts_update'), array('id' => 'conducts_form'));?>
+                                    <div class="table table-responsive">
+                                        <table class="table table-bordered table-striped" id="conducts" style="width:100%; border-collapse:collapse;border: 1px solid #ccc; margin-top: 10px;" border="1">
+                                            <caption>CONDUCTS OF <b><?php echo strtoupper($this->db->get_where('student' , array('student_id' => $student_id))->row()->name);?></b></caption>
+                                            <tbody>
+                                                <?php 
+                                                // Generate conduct checkboxes dynamically in rows of 5 columns (checkbox + label pairs)
+                                                $conduct_count = 0;
+                                                $items_per_row = 5;
+                                                
+                                                foreach($conduct_items as $item): 
+                                                    if($conduct_count % $items_per_row == 0):
+                                                        if($conduct_count > 0) echo '</tr>';
+                                                        echo '<tr>';
+                                                    endif;
+                                                    
+                                                    $is_checked = in_array($item->id, $selected_conduct_ids) ? 'checked' : '';
+                                                    $checkbox_id = 'conduct_' . $item->id;
+                                                ?>
+                                                    <td><input type="checkbox" id="<?php echo $checkbox_id; ?>" class="form-check conduct-checkbox" name="conduct_ids[]" value="<?php echo $item->id; ?>" <?php echo $is_checked; ?>></td>
+                                                    <td><label for="<?php echo $checkbox_id; ?>" class="form-control-label"><?php echo htmlspecialchars($item->name); ?></label></td>
+                                                <?php 
+                                                    $conduct_count++;
+                                                endforeach;
+                                                
+                                                // Close last row
+                                                if($conduct_count > 0) echo '</tr>';
+                                                
+                                                // If no items found, show message
+                                                if($conduct_count == 0):
+                                                ?>
+                                                <tr>
+                                                    <td colspan="10" class="text-center">
+                                                        <em><?php echo get_phrase('no_conduct_items_configured'); ?></em>
+                                                    </td>
+                                                </tr>
+                                                <?php endif; ?>
+                                            </tbody>
+                                        </table>
+
+                                        <!-- Modern UI: Attendance Section -->
+                                        <div class="card shadow-sm" style="margin-top: 20px; border-radius: 8px; overflow: hidden;">
+                                            <div class="card-header" style="background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; padding: 15px;">
+                                                <h5 style="margin: 0; font-weight: 600;">
+                                                    <i class="fa fa-calendar-check"></i> Student's Attendance
+                                                </h5>
+                                            </div>
+                                            <div class="card-body" style="padding: 25px; background-color: #f8f9fa;">
+                                                <div class="row">
+                                                    <!-- Days Opened -->
+                                                    <div class="col-md-4">
+                                                        <div class="attendance-stat-card" style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-left: 4px solid #3b82f6;">
+                                                            <div style="display: flex; align-items: center; justify-content: space-between;">
+                                                                <div>
+                                                                    <label class="text-muted" style="font-size: 12px; text-transform: uppercase; font-weight: 600; margin-bottom: 5px; display: block;">
+                                                                        <i class="fa fa-door-open text-primary"></i> Days Opened
+                                                                    </label>
+                                                                    <h3 style="margin: 0; color: #1e40af; font-weight: 700;">
+                                                                        <?php echo $days_opened; ?>
+                                                                    </h3>
+                                                                </div>
+                                                                <div style="width: 60px; height: 60px; background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); border-radius: 50%; display: flex; align-items: center; justify-content: center;">
+                                                                    <i class="fa fa-calendar-alt" style="font-size: 24px; color: #3b82f6;"></i>
+                                                                </div>
+                                                            </div>
+                                                            <input type="hidden" name="days_opened" id="days_opened" value="<?php echo $days_opened; ?>">
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    <!-- Days Present -->
+                                                    <div class="col-md-4">
+                                                        <div class="attendance-stat-card" style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-left: 4px solid #10b981;">
+                                                            <div style="display: flex; align-items: center; justify-content: space-between;">
+                                                                <div>
+                                                                    <label class="text-muted" style="font-size: 12px; text-transform: uppercase; font-weight: 600; margin-bottom: 5px; display: block;">
+                                                                        <i class="fa fa-check-circle text-success"></i> Days Present
+                                                                    </label>
+                                                                    <h3 style="margin: 0; color: #059669; font-weight: 700;">
+                                                                        <?php echo $days_present; ?>
+                                                                    </h3>
+                                                                </div>
+                                                                <div style="width: 60px; height: 60px; background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%); border-radius: 50%; display: flex; align-items: center; justify-content: center;">
+                                                                    <i class="fa fa-user-check" style="font-size: 24px; color: #10b981;"></i>
+                                                                </div>
+                                                            </div>
+                                                            <input type="hidden" name="days_present" id="days_present" value="<?php echo $days_present; ?>">
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    <!-- Days Absent -->
+                                                    <div class="col-md-4">
+                                                        <div class="attendance-stat-card" style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-left: 4px solid #ef4444;">
+                                                            <div style="display: flex; align-items: center; justify-content: space-between;">
+                                                                <div>
+                                                                    <label class="text-muted" style="font-size: 12px; text-transform: uppercase; font-weight: 600; margin-bottom: 5px; display: block;">
+                                                                        <i class="fa fa-times-circle text-danger"></i> Days Absent
+                                                                    </label>
+                                                                    <h3 style="margin: 0; color: #dc2626; font-weight: 700;">
+                                                                        <?php echo ($days_opened - $days_present); ?>
+                                                                    </h3>
+                                                                </div>
+                                                                <div style="width: 60px; height: 60px; background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%); border-radius: 50%; display: flex; align-items: center; justify-content: center;">
+                                                                    <i class="fa fa-user-times" style="font-size: 24px; color: #ef4444;"></i>
+                                                                </div>
+                                                            </div>
+                                                            <input type="hidden" name="days_absent" id="days_absent" value="<?php echo ($days_opened - $days_present); ?>">
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                
+                                                <!-- Attendance Progress Bar -->
+                                                <?php 
+                                                $attendance_percentage = $days_opened > 0 ? round(($days_present / $days_opened) * 100, 2) : 0;
+                                                $progress_color = $attendance_percentage >= 90 ? '#10b981' : ($attendance_percentage >= 75 ? '#f59e0b' : '#ef4444');
+                                                ?>
+                                                <div style="margin-top: 20px; background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                                        <span style="font-weight: 600; color: #374151;">Attendance Rate</span>
+                                                        <span style="font-weight: 700; font-size: 18px; color: <?php echo $progress_color; ?>;">
+                                                            <?php echo $attendance_percentage . '%'; ?>
+                                                        </span>
+                                                    </div>
+                                                    <div style="width: 100%; height: 12px; background-color: #e5e7eb; border-radius: 6px; overflow: hidden;">
+                                                        <div style="width: <?php echo $attendance_percentage; %>%; height: 100%; background: <?php echo $progress_color; ?>; border-radius: 6px; transition: width 0.6s ease;">
+                                                        </div>
+                                                    </div>
+                                                    <small class="text-muted" style="display: block; margin-top: 5px;">
+                                                        <i class="fa fa-info-circle"></i> 
+                                                        <?php 
+                                                        if($attendance_percentage >= 90) {
+                                                            echo "Excellent attendance!";
+                                                        } elseif($attendance_percentage >= 75) {
+                                                            echo "Good attendance. Keep it up!";
+                                                        } else {
+                                                            echo "Needs improvement.";
+                                                        }
+                                                        ?>
+                                                    </small>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <!--add simple script here-->
+                                        <script type="text/javascript">
+                                          function change_days_absent() {
+                                            let days_opened = Number($('td #days_opened').val());
+                                            let days_present = Number($('#days_present').val());
+                                            let days_absent = days_opened - days_present;
+
+                                            $('#days_absent').val(days_absent);  
+                                          }
+
+                                          // Conduct checkbox validation - Maximum 3 selections
+                                          $(document).ready(function() {
+                                            const MAX_CONDUCTS = 3;
+                                            const conductCheckboxes = $('input[name="conduct_ids[]"]');
+                                            
+                                            function updateConductCheckboxes() {
+                                              const checkedCount = conductCheckboxes.filter(':checked').length;
+                                              
+                                              if (checkedCount >= MAX_CONDUCTS) {
+                                                // Disable unchecked boxes
+                                                conductCheckboxes.not(':checked').prop('disabled', true).closest('td').css('opacity', '0.5');
+                                              } else {
+                                                // Enable all boxes
+                                                conductCheckboxes.prop('disabled', false).closest('td').css('opacity', '1');
+                                              }
+                                              
+                                              // Show/hide warning message
+                                              if (checkedCount >= MAX_CONDUCTS) {
+                                                if ($('#conduct_limit_warning').length === 0) {
+                                                  $('#conducts').before('<div id="conduct_limit_warning" class="alert alert-warning" style="margin-top:10px;"><strong>Maximum Limit Reached!</strong> You can only select up to 3 conducts. Uncheck one to select another.</div>');
+                                                }
+                                              } else {
+                                                $('#conduct_limit_warning').remove();
+                                              }
+                                            }
+                                            
+                                            // Initialize on page load
+                                            updateConductCheckboxes();
+                                            
+                                            // Update on checkbox change
+                                            conductCheckboxes.on('change', updateConductCheckboxes);
+                                          });
+                                        </script>
+
+                                        <?php
+                                          // Get interest and remarks from aggregation table (non-JHS uses 'term')
+                                          $interest_row = $this->db->get_where('aggregation', array('student_id' => $row1['student_id'], 'class_id' => $class_id, 'exam_id' => $exam_id, 'term' => $running_term, 'year' => $running_year))->row();
+                                          $interest = $interest_row ? $interest_row->interest : '';
+                                          $ret_remarks = $interest_row ? $interest_row->remarks : '';
+                                          
+                                          // Get selected interest ID (single selection) - reuse from earlier if already loaded
+                                          if(!isset($selected_interest_id)) {
+                                              $selected_interest_id = '';
+                                              if($interest_row && !empty($interest_row->interest)) {
+                                                  // Check if it's numeric ID (new system) or text (legacy)
+                                                  if(is_numeric($interest_row->interest)) {
+                                                      $selected_interest_id = $interest_row->interest;
+                                                  }
+                                                  // Otherwise it's legacy text, keep $interest as-is for display
+                                              }
+                                          }
+                                          
+                                          // Calculate student percentage for head teacher remarks (if not already calculated)
+                                          if(!isset($student_percentage)) {
+                                              $student_percentage = 0;
+                                              if($total_marks > 0 && $obtainable_marks > 0) {
+                                                  $student_percentage = ($total_marks / $obtainable_marks) * 100;
+                                              }
+                                          }
+                                          
+                                          // Find appropriate head teacher remark based on percentage
+                                          $auto_head_remark = $this->Head_teacher_remarks_model->find_by_percentage($student_percentage);
+                                          $head_teacher_remark_text = $auto_head_remark ? $auto_head_remark->remark_text : '';
+                                        ?>
+
+                                        <!-- Student Interest - Database Driven Single-Select -->
+                                        <table class="table table-bordered table-striped" style="width:100%; border-collapse:collapse;border: 1px solid #ccc; margin-top: 10px;" border="1">
+                                            <tbody>
+                                                <tr>
+                                                    <td valign="middle" style="background-color: #520452; color: #fff; padding-top: 15px; width: 20%;"><label for="interest_id" class="form-control-label">INTEREST</label></td>
+                                                    <td style="width: 80%;">
+                                                        <select id="interest_id" name="interest_id" class="form-control select2-interest" style="width: 100%;">
+                                                            <option value="">Select Interest</option>
+                                                            <?php foreach($interest_items as $item): ?>
+                                                                <option value="<?php echo $item->id; ?>" <?php echo ($item->id == $selected_interest_id) ? 'selected' : ''; ?>>
+                                                                    <?php echo htmlspecialchars($item->name); ?>
+                                                                </option>
+                                                            <?php endforeach; ?>
+                                                        </select>
+                                                        <small class="text-muted"><?php echo get_phrase('select_one_interest'); ?></small>
+                                                        <!-- Keep old interest field hidden for backward compatibility -->
+                                                        <input type="hidden" name="interest" value="<?php echo htmlspecialchars($interest); ?>">
+                                                    </td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+
+                                        <input type="hidden" name="exam_id" value="<?php echo $exam_id; ?>">
+                                        <input type="hidden" name="student_id" value="<?php echo $row1['student_id']; ?>">
+                                        <input type="hidden" name="class_id" value="<?php echo $class_id;?>">
+                                        <div class="form-group">
+                                            <label class="form-control-label">Class Teacher's Remarks:</label>
+                                            <select class="form-control select2-teacher-remarks" name="teacher_remarks" 
+                                                    data-tags="true" data-placeholder="<?php echo get_phrase('select_or_type_remark'); ?>" 
+                                                    style="width: 100%;">
+                                                <option value=""></option>
+                                                <?php foreach($teacher_remark_templates as $template): ?>
+                                                    <option value="<?php echo htmlspecialchars($template->remark_text); ?>"
+                                                            <?php if($ret_remarks == $template->remark_text) echo 'selected'; ?>>
+                                                        <?php echo htmlspecialchars($template->remark_text); ?>
+                                                    </option>
+                                                <?php endforeach; ?>
+                                                <?php 
+                                                // Check if current remark is not in templates (custom remark)
+                                                $template_texts = array_map(function($t) { return $t->remark_text; }, $teacher_remark_templates);
+                                                if($ret_remarks && !in_array($ret_remarks, $template_texts)): 
+                                                ?>
+                                                    <!-- Custom remark not in templates -->
+                                                    <option value="<?php echo htmlspecialchars($ret_remarks); ?>" selected>
+                                                        <?php echo htmlspecialchars($ret_remarks); ?>
+                                                    </option>
+                                                <?php endif; ?>
+                                            </select>
+                                            <small class="text-muted">
+                                                <?php echo get_phrase('select_template_or_type_custom_remark'); ?>
+                                            </small>
+                                        </div>
+                                        <div class="form-group">
+                                            <label class="form-control-label">Head Teacher's Remarks:</label>
+                                            <input type="text" id="head_teacher_remarks_style3" name="head_teacher_remarks" 
+                                                   class="form-control" 
+                                                   value="<?php echo htmlspecialchars($head_teacher_remark_text); ?>" 
+                                                   readonly style="background-color: #f5f5f5; cursor: not-allowed;">
+                                            <small class="text-muted">
+                                                <?php echo get_phrase('auto_generated_based_on_performance'); ?> 
+                                                (<?php echo number_format($student_percentage, 2); ?>%)
+                                            </small>
+                                        </div>
+                                        <div>
+                                            <div class="alert alert-danger alert-dismissable" style="display: none;" id="alert_error">
+                                                <strong>Please enter student's marks before proceeding with the conducts. Go to >>Examination >>Manage Exam Marks</strong>
+                                            </div>
+                                        </div>
+                                        <input type="submit" name="save_conducts" id="submit_c" class="btn btn-primary btn-lg btn-md btn-sm" value="<?php echo get_phrase('save_conducts_&_remarks');?>" style="position: relative; float: right; bottom: 20px; right: 10px; margin-top: 30px;">
+                                    </div>
+                                <?php echo form_close();?>
+                            </div>
+                        </div>
+
+                        <?php
+
+                        ?>
+
+                    <br> <br>
+               </div>
+
+               <div class="col-md-12">
+                   <!-- Modern Chart.js Performance Visualization -->
+                   <div class="card shadow-sm" style="margin-top: 20px; margin-bottom: 30px; border-radius: 8px; overflow: hidden;">
+                       <div class="card-header" style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: white; padding: 15px;">
+                           <h5 style="margin: 0; font-weight: 600;">
+                               <i class="fa fa-chart-bar"></i> Performance Analysis - Class Score vs Exam Score
+                           </h5>
+                       </div>
+                       <div class="card-body" style="padding: 25px; background-color: #ffffff;">
+                           <canvas id="performanceChart<?php echo $exam_id;?>" style="max-height: 400px;"></canvas>
+                       </div>
+                   </div>
+                   
+                   <script>
+                   (function() {
+                       // Prepare data for Chart.js
+                       var chartData = {
+                           labels: [
+                               <?php 
+                                   foreach ($subjects as $subject) :
+                                       // Use first 10 chars or full name if shorter
+                                       $subjectName = strlen($subject['name']) > 10 ? substr($subject['name'], 0, 10) . '...' : $subject['name'];
+                               ?>
+                               "<?php echo addslashes($subjectName); ?>",
+                               <?php endforeach; ?>
+                           ],
+                           datasets: [
+                               {
+                                   label: 'Class Score',
+                                   data: [
+                                       <?php 
+                                           foreach ($subjects as $subject) :
+                                               $class_mark = $this->crud_model->get_class_score( $exam_id , $class_id , $subject['subject_id'] , $row1['student_id']);
+                                               echo $class_mark ? $class_mark : 0;
+                                               echo ",";
+                                           endforeach;
+                                       ?>
+                                   ],
+                                   backgroundColor: 'rgba(59, 130, 246, 0.8)',
+                                   borderColor: 'rgba(59, 130, 246, 1)',
+                                   borderWidth: 2,
+                                   borderRadius: 5,
+                                   barThickness: 30,
+                               },
+                               {
+                                   label: 'Exam Score',
+                                   data: [
+                                       <?php 
+                                           foreach ($subjects as $subject) :
+                                               $exam_mark = $this->crud_model->get_exam_score( $exam_id , $class_id , $subject['subject_id'], $row1['student_id'] );
+                                               echo $exam_mark ? $exam_mark : 0;
+                                               echo ",";
+                                           endforeach;
+                                       ?>
+                                   ],
+                                   backgroundColor: 'rgba(139, 92, 246, 0.8)',
+                                   borderColor: 'rgba(139, 92, 246, 1)',
+                                   borderWidth: 2,
+                                   borderRadius: 5,
+                                   barThickness: 30,
+                               }
+                           ]
+                       };
+                       
+                       // Configuration
+                       var config = {
+                           type: 'bar',
+                           data: chartData,
+                           options: {
+                               responsive: true,
+                               maintainAspectRatio: true,
+                               plugins: {
+                                   legend: {
+                                       display: true,
+                                       position: 'top',
+                                       labels: {
+                                           font: {
+                                               size: 14,
+                                               weight: 600
+                                           },
+                                           padding: 15,
+                                           usePointStyle: true,
+                                           pointStyle: 'rectRounded'
+                                       }
+                                   },
+                                   tooltip: {
+                                       enabled: true,
+                                       backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                                       titleColor: '#fff',
+                                       bodyColor: '#fff',
+                                       borderColor: 'rgba(255, 255, 255, 0.3)',
+                                       borderWidth: 1,
+                                       padding: 12,
+                                       displayColors: true,
+                                       callbacks: {
+                                           label: function(context) {
+                                               return context.dataset.label + ': ' + context.parsed.y + '%';
+                                           }
+                                       }
+                                   }
+                               },
+                               scales: {
+                                   y: {
+                                       beginAtZero: true,
+                                       max: 100,
+                                       ticks: {
+                                           callback: function(value) {
+                                               return value + '%';
+                                           },
+                                           font: {
+                                               size: 12
+                                           }
+                                       },
+                                       grid: {
+                                           color: 'rgba(0, 0, 0, 0.05)',
+                                           borderDash: [5, 5]
+                                       },
+                                       title: {
+                                           display: true,
+                                           text: 'Score (%)',
+                                           font: {
+                                               size: 14,
+                                               weight: 'bold'
+                                           }
+                                       }
+                                   },
+                                   x: {
+                                       grid: {
+                                           display: false
+                                       },
+                                       ticks: {
+                                           font: {
+                                               size: 11
+                                           }
+                                       },
+                                       title: {
+                                           display: true,
+                                           text: 'Subjects',
+                                           font: {
+                                               size: 14,
+                                               weight: 'bold'
+                                           }
+                                       }
+                                   }
+                               },
+                               interaction: {
+                                   mode: 'index',
+                                   intersect: false,
+                               }
+                           }
+                       };
+                       
+                       // Create chart when DOM is ready
+                       if (document.readyState === 'loading') {
+                           document.addEventListener('DOMContentLoaded', function() {
+                               var ctx = document.getElementById('performanceChart<?php echo $exam_id;?>');
+                               if (ctx && typeof Chart !== 'undefined') {
+                                   new Chart(ctx.getContext('2d'), config);
+                               }
+                           });
+                       } else {
+                           var ctx = document.getElementById('performanceChart<?php echo $exam_id;?>');
+                           if (ctx && typeof Chart !== 'undefined') {
+                               new Chart(ctx.getContext('2d'), config);
+                           }
+                       }
+                   })();
+                   </script>
+               </div>
+                
+               <div class="row">
+                        <div class="col-lg-2 col-md-3 col-sm-4 col-xs-5">
+                            <table class="table" id="hint_table">
+                                <caption>Hints</caption>
+                                <tr>
+                                   <th><div id="circle1"></th> 
+                                   <td><b><i>Class Score</i></b></td>
+                                </tr>
+                                <tr>
+                                   <th><div id="circle2"></th> 
+                                   <td><b><i>Exam Score</i></b></td>
+                                </tr>
+                            </table>
+                        </div>
+                    </div>
+            </div>
+
+            <br><br> <br><br>
+                <a href="<?php echo site_url('admin/student_marksheet_print_view/'.$student_id.'/'.$exam_id);?>" 
+                        class="btn btn-primary" target="_blank" style="position: relative; float: right; bottom: 20px; right: 10px;">
+                        <?php echo get_phrase('print_marksheet');?>
+                    </a>
+            <br><br>        
+        </div>  
+    </div>
+</div>
+<?php
+   // endforeach;
+        endforeach;
+    }
+?>
+
+<script type="text/javascript">
+    //as soon as page is loaded
+    $(function() {
+
+        let exam_id = '<?php echo $exam_id; ?>';
+        let class_id = '<?php echo $class_id; ?>';
+        if(exam_id == '' || exam_id == null) {
+            $('#alert_error').css('display', 'block');
+            $('#submit_c').attr('disabled', 'disabled');
+        }
+
+        showTermSem(class_id)//called to show either semester or term
+
+
+    });
+
+    //redirect if a student is changed
+    $('#other_students').change(function(event) {
+        /* Act on the event */
+        $('html, body').animate({
+          scrollTop: ($('#top').offset().top )
+        }, 1000); 
+
+        const url = '<?php echo site_url('admin/student_marksheet/') ?>' + $(this).val();
+
+        navigation(url);
+        
+    });
+
+    //when form is submitted
+    $('#conducts_form').submit(function(event) {
+
+        event.preventDefault();
+
+        let exam_id = '<?php echo $exam_id; ?>';
+        let is_ajax_page = '<?php echo isset($ajax) ? $ajax : 'no'; ?>';
+        
+        if(exam_id == '' || exam_id == null) {
+
+            $('#alert_error').css('display', 'block');
+            $('#submit_c').val('Sorry you can\'t submit');
+            return false;
+        } else {
+
+            showAjaxModal_alert('Saving...', 'loading');
+
+            let formUrl = $(this).attr('action');
+
+            $.ajax({
+              url: formUrl,
+              type: 'POST',
+              dataType: 'html',
+              data: new FormData(this),
+              cache: false,
+              contentType: false,
+              processData: false
+          })
+          .done(function(data) {
+            if(data == 'no mark') {
+                showAjaxModal_alert('<?=get_phrase('please_enter marks before proceeding with conducts.'); ?>', 'error');
+              
+            } else if(data == 'no conduct') {
+                showAjaxModal_alert('<?=get_phrase('no_conduct_was_selected_for_this_student'); ?>', 'error');
+              
+            } else {
+                
+                
+                // Check if on list page and reload marksheet
+                if(is_ajax_page == 'yes') {
+                    showAjaxModal_alert('<?=get_phrase('records_updated_successfully.'); ?>', 'success', false);
+                    setTimeout(function() {
+                        var student_id = '<?php echo $student_id; ?>';
+                        $('#marksheet_display').html('<div class="loading-spinner"><i class="fa fa-spinner"></i><br>Reloading...</div>');
+                        
+                        $.ajax({
+                            url: '<?php echo site_url('admin'); ?>/load_marksheet_content',
+                            type: 'POST',
+                            data: {student_id: student_id},
+                            success: function(response) {
+                                $('#marksheet_display').html(response);
+                            },
+                            error: function() {
+                                $('#marksheet_display').html('<div class="alert alert-danger">Error reloading marksheet</div>');
+                            }
+                        });
+                    }, 2000);
+                } else {
+                    showAjaxModal_alert('<?=get_phrase('records_updated_successfully.'); ?>', 'success');
+                }
+            }
+          })
+          .fail(function() {
+                showAjaxModal_alert('An error occurred', 'error');
+          });
+        }
+    });
+    function reload_exams() {
+        var exam_id = $('#exam_id')
+        var submit_button = $('#submit')
+        submit_button.html("Reload Exams");
+        submit_button.addClass("btn btn-danger");
+
+    }
+
+    function get_exam_type() {
+            var $term = $('#term').val();
+            var $year = $('#year').val();
+
+            $.ajax({
+                url: '<?php echo site_url('admin/get_exam_type/');?>'+ $term +'/'+ $year,
+                success: function(response) {
+                    $('#exam_id').html(response);
+                }
+            });
+        }
+
+    function get_exam_type_sem() {
+            var $sem = $('#sem').val();
+            var $year = $('#year').val();
+
+            $.ajax({
+                url: '<?php echo site_url('admin/get_exam_type_sem/');?>'+ $sem +'/'+ $year,
+                success: function(response) {
+                    $('#exam_id_sem').html(response);
+
+                    let exam_val = $('#exam_id_sem').val();
+                    if(exam_val == '') {
+                      $('#submit').attr('disabled', 'disabled');
+                      $('#submit').text('Nothing to search');
+
+                    } else {
+                      $('#submit').removeAttr('disabled');
+                      $('#submit').text('View Results');
+                    }
+                }
+            });
+        }
+
+    function get_exam_type() {
+            var $term = $('#term').val();
+            var $year = $('#year').val();
+
+            $.ajax({
+                url: '<?php echo site_url('admin/get_exam_type/');?>'+ $term +'/'+ $year,
+                success: function(response) {
+
+                    $('#exam_id').html(response);
+
+                    let exam_val = $('#exam_id').val();
+                    if(exam_val == '') {
+                      $('#submit').attr('disabled', 'disabled');
+                      $('#submit').text('Nothing to search');
+
+                    } else {
+                      $('#submit').removeAttr('disabled');
+                      $('#submit').text('View Results');
+                    }
+                }
+            });
+        }
+
+    // Initialize Select2 for teacher remarks - NO AJAX, use PHP data directly
+    $(document).ready(function() {
+        if ($('.select2-teacher-remarks').length > 0) {
+            // Initialize Select2 with tags for custom input
+            $('.select2-teacher-remarks').select2({
+                tags: true,
+                tokenSeparators: [','],
+                placeholder: '<?php echo get_phrase('select_or_type_remark'); ?>',
+                allowClear: true,
+                width: '100%'
+            });
+        }
+        
+        // Initialize Select2 for interest items (single select, not multi)
+        if ($('.select2-interest').length > 0) {
+            $('.select2-interest').select2({
+                placeholder: '<?php echo get_phrase('select_one_interest'); ?>',
+                allowClear: true,
+                width: '100%'
+            });
+        }
+    });
+</script>

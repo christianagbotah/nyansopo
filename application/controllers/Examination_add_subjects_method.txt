@@ -1,0 +1,24 @@
+    public function add_exam_subjects() {
+        $exam_id = $this->input->post('exam_id');
+        $subject_ids = $this->input->post('subject_ids');
+        
+        $this->db->trans_start();
+        
+        foreach($subject_ids as $subject_id) {
+            $data = [
+                'exam_id' => $exam_id,
+                'subject_id' => $subject_id,
+                'total_marks' => 100,
+                'pass_mark' => 50
+            ];
+            $this->db->insert('enterprise_exam_subjects', $data);
+        }
+        
+        $this->db->trans_complete();
+        
+        if($this->db->trans_status()) {
+            echo json_encode(['status' => 'success', 'message' => 'Subjects added successfully']);
+        } else {
+            echo json_encode(['status' => 'error', 'message' => 'Failed to add subjects']);
+        }
+    }

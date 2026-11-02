@@ -1,0 +1,1 @@
+pnpm i payload @payloadcms/next @payloadcms/richtext-lexical @payloadcms/db-mongodb sharp graphql

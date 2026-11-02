@@ -1,0 +1,13 @@
+# Runtime artifacts
+application/cache/*
+!application/cache/index.html
+!application/cache/.gitkeep
+application/logs/*
+!application/logs/index.html
+*.cache.php
+
+# IDE / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

@@ -1,0 +1,379 @@
+<style>
+.profile-container { max-width: 1200px; margin: 0 auto; }
+.profile-card { background: white; border-radius: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); overflow: hidden; margin-bottom: 24px; }
+.profile-header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 32px; text-align: center; color: white; position: relative; }
+.profile-header::before { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="20" cy="20" r="3" fill="rgba(255,255,255,0.1)"/><circle cx="80" cy="40" r="2" fill="rgba(255,255,255,0.1)"/><circle cx="50" cy="80" r="2.5" fill="rgba(255,255,255,0.1)"/></svg>'); opacity: 0.3; }
+.profile-avatar { width: 120px; height: 120px; border-radius: 50%; border: 4px solid white; margin: 0 auto 16px; position: relative; z-index: 1; object-fit: cover; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+.profile-name { font-size: 24px; font-weight: 700; margin-bottom: 4px; position: relative; z-index: 1; }
+.profile-role { font-size: 14px; opacity: 0.9; position: relative; z-index: 1; }
+.profile-code { font-size: 13px; opacity: 0.8; position: relative; z-index: 1; margin-top: 4px; }
+.profile-body { padding: 32px; }
+.section-title { font-size: 18px; font-weight: 700; color: #1a202c; margin-bottom: 24px; display: flex; align-items: center; gap: 10px; }
+.section-title i { color: #667eea; font-size: 20px; }
+.info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 24px; }
+.info-item { padding: 16px; background: #f9fafb; border-radius: 10px; border-left: 4px solid #667eea; }
+.info-label { font-size: 12px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+.info-value { font-size: 15px; font-weight: 600; color: #1f2937; word-break: break-word; white-space: pre-wrap; }
+.info-value.empty { color: #9ca3af; font-style: italic; }
+.status-badge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 20px; font-size: 13px; font-weight: 600; }
+.status-badge.active { background: #d1fae5; color: #065f46; }
+.status-badge.inactive { background: #fee2e2; color: #991b1b; }
+.status-badge.online { background: #dbeafe; color: #1e40af; }
+.status-badge.offline { background: #f3f4f6; color: #4b5563; }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px; }
+.form-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px; margin-bottom: 24px; }
+.form-field { display: flex; flex-direction: column; }
+.field-label { font-size: 14px; font-weight: 600; color: #374151; margin-bottom: 8px; }
+.field-input { padding: 12px 16px; border: 2px solid #e5e7eb; border-radius: 10px; font-size: 15px; transition: all 0.3s; background: #f9fafb; }
+.field-input:focus { outline: none; border-color: #667eea; background: white; box-shadow: 0 0 0 4px rgba(102,126,234,0.1); }
+.password-field .field-input { padding-right: 45px; }
+.photo-upload { display: flex; align-items: center; gap: 20px; padding: 20px; background: #f9fafb; border-radius: 10px; border: 2px dashed #e5e7eb; }
+.photo-preview { width: 100px; height: 100px; border-radius: 50%; object-fit: cover; border: 3px solid #e5e7eb; }
+.upload-controls { flex: 1; }
+.upload-label { display: inline-block; padding: 10px 20px; background: #667eea; color: white; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600; transition: all 0.3s; }
+.upload-label:hover { background: #5568d3; transform: translateY(-1px); }
+.upload-label input { display: none; }
+.btn-update { padding: 12px 32px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer; transition: all 0.3s; }
+.btn-update:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(102,126,234,0.3); }
+.password-field { position: relative; }
+.password-toggle { position: absolute; right: 16px; top: 12px; cursor: pointer; color: #9ca3af; font-size: 16px; }
+.password-toggle:hover { color: #667eea; }
+.divider { height: 1px; background: #e5e7eb; margin: 32px 0; }
+@media (max-width: 768px) {
+.form-row, .form-row-3, .info-grid { grid-template-columns: 1fr; gap: 16px; }
+.profile-body { padding: 20px; }
+.photo-upload { flex-direction: column; text-align: center; }
+}
+</style>
+
+<div class="profile-container">
+    <?php foreach($edit_data as $row): ?>
+    
+    <!-- Profile Header Card -->
+    <div class="profile-card">
+        <div class="profile-header">
+            <img src="<?php echo $this->crud_model->get_image_url('admin', $row['admin_id']);?>" alt="Profile" class="profile-avatar">
+            <div class="profile-name"><?php echo $row['name'];?></div>
+            <div class="profile-role">
+                <i class="fas fa-user-shield"></i> Administrator
+            </div>
+            <?php if (!empty($row['admin_code'])): ?>
+            <div class="profile-code">
+                <i class="fas fa-id-badge"></i> <?php echo $row['admin_code'];?>
+            </div>
+            <?php endif; ?>
+        </div>
+    </div>
+    
+    <!-- Comprehensive Admin Details Card -->
+    <div class="profile-card">
+        <div class="profile-body">
+            <div class="section-title">
+                <i class="fas fa-info-circle"></i>
+                <?php echo get_phrase('account_information');?>
+            </div>
+            
+            <div class="info-grid">
+                <div class="info-item">
+                    <div class="info-label">
+                        <i class="fas fa-user"></i> Full Name
+                    </div>
+                    <div class="info-value"><?php echo $row['name'];?></div>
+                </div>
+                
+                <div class="info-item">
+                    <div class="info-label">
+                        <i class="fas fa-envelope"></i> Email Address
+                    </div>
+                    <div class="info-value"><?php echo $row['email'];?></div>
+                </div>
+                
+                <?php if (!empty($row['phone'])): ?>
+                <div class="info-item">
+                    <div class="info-label">
+                        <i class="fas fa-phone"></i> Phone Number
+                    </div>
+                    <div class="info-value"><?php echo $row['phone'];?></div>
+                </div>
+                <?php endif; ?>
+                
+                <?php if (!empty($row['gender'])): ?>
+                <div class="info-item">
+                    <div class="info-label">
+                        <i class="fas fa-venus-mars"></i> Gender
+                    </div>
+                    <div class="info-value"><?php echo ucfirst($row['gender']);?></div>
+                </div>
+                <?php endif; ?>
+            </div>
+            
+            <?php if (!empty($row['first_name']) || !empty($row['last_name']) || !empty($row['other_name'])): ?>
+            <div class="section-title" style="margin-top: 32px;">
+                <i class="fas fa-address-card"></i>
+                <?php echo get_phrase('personal_details');?>
+            </div>
+            
+            <div class="info-grid">
+                <?php if (!empty($row['first_name'])): ?>
+                <div class="info-item">
+                    <div class="info-label">
+                        <i class="fas fa-signature"></i> First Name
+                    </div>
+                    <div class="info-value"><?php echo $row['first_name'];?></div>
+                </div>
+                <?php endif; ?>
+                
+                <?php if (!empty($row['last_name'])): ?>
+                <div class="info-item">
+                    <div class="info-label">
+                        <i class="fas fa-signature"></i> Last Name
+                    </div>
+                    <div class="info-value"><?php echo $row['last_name'];?></div>
+                </div>
+                <?php endif; ?>
+                
+                <?php if (!empty($row['other_name'])): ?>
+                <div class="info-item">
+                    <div class="info-label">
+                        <i class="fas fa-signature"></i> Other Name
+                    </div>
+                    <div class="info-value"><?php echo $row['other_name'];?></div>
+                </div>
+                <?php endif; ?>
+            </div>
+            <?php endif; ?>
+            
+            <?php if (!empty($row['ssnit_id']) || !empty($row['ghana_card_id']) || !empty($row['petra_id'])): ?>
+            <div class="section-title" style="margin-top: 32px;">
+                <i class="fas fa-id-card"></i>
+                <?php echo get_phrase('identification_numbers');?>
+            </div>
+            
+            <div class="info-grid">
+                <?php if (!empty($row['ssnit_id'])): ?>
+                <div class="info-item">
+                    <div class="info-label">
+                        <i class="fas fa-fingerprint"></i> SSNIT ID (Tier 1)
+                    </div>
+                    <div class="info-value"><?php echo $row['ssnit_id'];?></div>
+                </div>
+                <?php endif; ?>
+                
+                <?php if (!empty($row['ghana_card_id'])): ?>
+                <div class="info-item">
+                    <div class="info-label">
+                        <i class="fas fa-id-card-alt"></i> Ghana Card ID
+                    </div>
+                    <div class="info-value"><?php echo $row['ghana_card_id'];?></div>
+                </div>
+                <?php endif; ?>
+                
+                <?php if (!empty($row['petra_id'])): ?>
+                <div class="info-item">
+                    <div class="info-label">
+                        <i class="fas fa-id-badge"></i> Petra ID (Legacy)
+                    </div>
+                    <div class="info-value"><?php echo $row['petra_id'];?></div>
+                </div>
+                <?php endif; ?>
+            </div>
+            <?php endif; ?>
+            
+            <?php if (!empty($row['tier2_provider_id']) || !empty($row['tier2_member_id'])): ?>
+            <div class="section-title" style="margin-top: 32px;">
+                <i class="fas fa-university"></i>
+                <?php echo get_phrase('ssnit_tier_2_pension');?>
+            </div>
+            
+            <div class="info-grid">
+                <?php if (!empty($tier2_provider_name)): ?>
+                <div class="info-item">
+                    <div class="info-label">
+                        <i class="fas fa-building"></i> Tier 2 Provider
+                    </div>
+                    <div class="info-value"><?php echo $tier2_provider_name;?></div>
+                </div>
+                <?php endif; ?>
+                
+                <?php if (!empty($row['tier2_member_id'])): ?>
+                <div class="info-item">
+                    <div class="info-label">
+                        <i class="fas fa-id-badge"></i> Tier 2 Member ID
+                    </div>
+                    <div class="info-value"><?php echo $row['tier2_member_id'];?></div>
+                </div>
+                <?php endif; ?>
+            </div>
+            <?php endif; ?>
+            
+            <div class="section-title" style="margin-top: 32px;">
+                <i class="fas fa-shield-alt"></i>
+                <?php echo get_phrase('account_status');?>
+            </div>
+            
+            <div class="info-grid">
+                <div class="info-item">
+                    <div class="info-label">
+                        <i class="fas fa-toggle-on"></i> Account Status
+                    </div>
+                    <div class="info-value">
+                        <span class="status-badge <?php echo $row['active_status'] == '1' ? 'active' : 'inactive'; ?>">
+                            <i class="fas fa-circle" style="font-size: 8px;"></i>
+                            <?php echo $row['active_status'] == '1' ? 'Active' : 'Inactive'; ?>
+                        </span>
+                    </div>
+                </div>
+                
+                <div class="info-item">
+                    <div class="info-label">
+                        <i class="fas fa-wifi"></i> Online Status
+                    </div>
+                    <div class="info-value">
+                        <span class="status-badge <?php echo $row['online_status'] == '1' ? 'online' : 'offline'; ?>">
+                            <i class="fas fa-circle" style="font-size: 8px;"></i>
+                            <?php echo $row['online_status'] == '1' ? 'Online' : 'Offline'; ?>
+                        </span>
+                    </div>
+                </div>
+            </div>
+            
+            <?php if (!empty($row['account_number']) || !empty($row['account_details'])): ?>
+            <div class="section-title" style="margin-top: 32px;">
+                <i class="fas fa-university"></i>
+                <?php echo get_phrase('banking_information');?>
+            </div>
+            
+            <div class="info-grid">
+                <?php if (!empty($row['account_number'])): ?>
+                <div class="info-item">
+                    <div class="info-label">
+                        <i class="fas fa-hashtag"></i> Account Number
+                    </div>
+                    <div class="info-value"><?php echo $row['account_number'];?></div>
+                </div>
+                <?php endif; ?>
+                
+                <?php if (!empty($row['account_details'])): ?>
+                <div class="info-item">
+                    <div class="info-label">
+                        <i class="fas fa-file-invoice"></i> Account Details
+                    </div>
+                    <div class="info-value"><?php echo $row['account_details'];?></div>
+                </div>
+                <?php endif; ?>
+            </div>
+            <?php endif; ?>
+        </div>
+    </div>
+    
+    <!-- Edit Profile Information Card -->
+    <?php if (!isset($is_viewing_other) || !$is_viewing_other): ?>
+    <div class="profile-card">
+        <div class="profile-body">
+            <div class="section-title">
+                <i class="fas fa-user-edit"></i>
+                <?php echo get_phrase('edit_personal_information');?>
+            </div>
+            
+            <?php echo form_open_multipart(site_url('admin/manage_profile/update_profile_info/'.$row['admin_id']), array('id' => 'profile_form'));?>
+                <div class="form-row">
+                    <div class="form-field">
+                        <label class="field-label"><?php echo get_phrase('name');?></label>
+                        <input type="text" class="field-input" name="name" value="<?php echo $row['name'];?>" required>
+                    </div>
+                    <div class="form-field">
+                        <label class="field-label"><?php echo get_phrase('email');?></label>
+                        <input type="email" class="field-input" name="email" value="<?php echo $row['email'];?>" required>
+                    </div>
+                </div>
+                
+                <div class="form-field" style="margin-bottom: 24px;">
+                    <label class="field-label"><?php echo get_phrase('photo');?></label>
+                    <div class="photo-upload">
+                        <img src="<?php echo $this->crud_model->get_image_url('admin', $row['admin_id']);?>" alt="Preview" class="photo-preview" id="photo_preview">
+                        <div class="upload-controls">
+                            <label class="upload-label">
+                                <i class="fas fa-camera"></i> <?php echo get_phrase('choose_photo');?>
+                                <input type="file" name="userfile" accept="image/*" onchange="previewPhoto(this)">
+                            </label>
+                            <p style="margin: 8px 0 0 0; font-size: 13px; color: #6b7280;">JPG, PNG or GIF (Max 2MB)</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <button type="submit" class="btn-update">
+                    <i class="fas fa-save"></i> <?php echo get_phrase('update_profile');?>
+                </button>
+            </form>
+        </div>
+    </div>
+    
+    <!-- Change Password Card -->
+    <div class="profile-card">
+        <div class="profile-body">
+            <div class="section-title">
+                <i class="fas fa-lock"></i>
+                <?php echo get_phrase('change_password');?>
+            </div>
+            
+            <?php echo form_open(site_url('admin/manage_profile/change_password'), array('id' => 'password_form'));?>
+                <div class="form-row-3">
+                    <div class="form-field">
+                        <label class="field-label"><?php echo get_phrase('current_password');?></label>
+                        <div class="password-field">
+                            <input type="password" class="field-input" name="password" id="current_password" required>
+                            <i class="fas fa-eye password-toggle" onclick="togglePassword('current_password')"></i>
+                        </div>
+                    </div>
+                    <div class="form-field">
+                        <label class="field-label"><?php echo get_phrase('new_password');?></label>
+                        <div class="password-field">
+                            <input type="password" class="field-input" name="new_password" id="new_password" required>
+                            <i class="fas fa-eye password-toggle" onclick="togglePassword('new_password')"></i>
+                        </div>
+                    </div>
+                    <div class="form-field">
+                        <label class="field-label"><?php echo get_phrase('confirm_new_password');?></label>
+                        <div class="password-field">
+                            <input type="password" class="field-input" name="confirm_new_password" id="confirm_password" required>
+                            <i class="fas fa-eye password-toggle" onclick="togglePassword('confirm_password')"></i>
+                        </div>
+                    </div>
+                </div>
+                
+                <button type="submit" class="btn-update">
+                    <i class="fas fa-key"></i> <?php echo get_phrase('update_password');?>
+                </button>
+            </form>
+        </div>
+    </div>
+    <?php endif; ?>
+    
+    <?php endforeach; ?>
+</div>
+
+<script>
+function previewPhoto(input) {
+    if (input.files && input.files[0]) {
+        var reader = new FileReader();
+        reader.onload = function(e) {
+            document.getElementById('photo_preview').src = e.target.result;
+        }
+        reader.readAsDataURL(input.files[0]);
+    }
+}
+
+function togglePassword(fieldId) {
+    var field = document.getElementById(fieldId);
+    var icon = field.nextElementSibling;
+    if (field.type === 'password') {
+        field.type = 'text';
+        icon.classList.remove('fa-eye');
+        icon.classList.add('fa-eye-slash');
+    } else {
+        field.type = 'password';
+        icon.classList.remove('fa-eye-slash');
+        icon.classList.add('fa-eye');
+    }
+}
+</script>

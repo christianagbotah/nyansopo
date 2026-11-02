@@ -1,0 +1,30 @@
+<!-- AJAX Page Refresh with Tab Persistence -->
+<script>
+// Track active tab
+let activeTab = 'bill_item';
+
+// Update on tab change
+$('.nav-tabs a[data-toggle="tab"]').on('shown.bs.tab', function(e) {
+    activeTab = $(e.target).attr('href').substring(1);
+});
+
+// Refresh function
+function refreshPageWithTab() {
+    $.ajax({
+        url: window.location.href,
+        type: 'GET',
+        dataType: 'html',
+        success: function(response) {
+            const $newContent = $(response).find('.row').first();
+            $('.row').first().replaceWith($newContent);
+            setTimeout(() => {
+                $('.nav-tabs a[href="#' + activeTab + '"]').tab('show');
+                $('.select2').select2();
+            }, 100);
+        },
+        error: function() {
+            location.reload();
+        }
+    });
+}
+</script>
