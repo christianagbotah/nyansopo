@@ -2500,54 +2500,103 @@ function showWaterReport() {
     });
 }
 
+/* ------------------------------------------------------------------ */
+/* Daily fee collection report with date-range + class filters         */
+/* (defaults to today, all classes - same behaviour as before).        */
+/* ------------------------------------------------------------------ */
+var feeReportClasses = <?php
+    $report_classes = $this->db->select('class_id, name, name_numeric')->order_by('name_numeric', 'ASC')->get('class')->result_array();
+    echo json_encode($report_classes);
+?>;
+
+function feeReportFilterHtml(feeType) {
+    var html = '<div class="p-4">';
+    html += '<div class="bg-gray-50 border border-gray-200 rounded-lg p-3 mb-4">';
+    html += '<div class="grid grid-cols-5 gap-3 items-end">';
+    // Date from
+    html += '<div><label class="text-xs font-semibold text-gray-600 block mb-1"><i class="fa fa-calendar"></i> From</label>';
+    html += '<input type="date" id="fr_date_from" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm" value=""></div>';
+    // Date to
+    html += '<div><label class="text-xs font-semibold text-gray-600 block mb-1"><i class="fa fa-calendar"></i> To</label>';
+    html += '<input type="date" id="fr_date_to" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm" value=""></div>';
+    // Class
+    html += '<div><label class="text-xs font-semibold text-gray-600 block mb-1"><i class="fa fa-school"></i> Class</label>';
+    html += '<select id="fr_class_id" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm">';
+    html += '<option value="">All Classes</option>';
+    feeReportClasses.forEach(function(c) {
+        html += '<option value="' + c.class_id + '">' + c.name + (c.name_numeric ? ' ' + c.name_numeric : '') + '</option>';
+    });
+    html += '</select></div>';
+    // Buttons
+    html += '<div class="flex gap-2">';
+    html += '<button type="button" class="bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-1.5 text-sm font-semibold" onclick="loadFeeReportData(\'' + feeType + '\')"><i class="fa fa-sync"></i> Apply</button>';
+    html += '<button type="button" class="bg-green-600 hover:bg-green-700 text-white rounded px-3 py-1.5 text-sm font-semibold" onclick="exportFeeReport()"><i class="fa fa-file-excel"></i> CSV</button>';
+    html += '</div>';
+    html += '</div></div>';
+    html += '<div id="fee_report_content"><div class="text-center py-8 text-gray-400"><i class="fa fa-spinner fa-spin"></i> Loading...</div></div>';
+    html += '</div>';
+    return html;
+}
+
+function feeReportQuery() {
+    var params = [];
+    var df = $('#fr_date_from').val();
+    var dt = $('#fr_date_to').val();
+    var cls = $('#fr_class_id').val();
+    if (df) params.push('date_from=' + df);
+    if (dt) params.push('date_to=' + dt);
+    if (cls) params.push('class_id=' + cls);
+    return params.join('&');
+}
+
 function showFeeReport(feeType) {
-    showAjaxModal_alert('Loading report...', 'loading');
-    
-    $.get('<?php echo site_url('fee_collection/daily_fee_report'); ?>/' + feeType, function(response) {
+    showModalWithContent('detailsModal', '<i class="fa fa-chart-bar"></i> Collection Report', feeReportFilterHtml(feeType));
+    loadFeeReportData(feeType);
+}
+
+function loadFeeReportData(feeType) {
+    var qs = feeReportQuery();
+    $('#fee_report_content').html('<div class="text-center py-8 text-gray-400"><i class="fa fa-spinner fa-spin"></i> Loading...</div>');
+
+    $.get('<?php echo site_url("fee_collection/daily_fee_report"); ?>/' + feeType + (qs ? '?' + qs : ''), function(response) {
         var data = typeof response === 'string' ? JSON.parse(response) : response;
-        
-        $('#modal_alert').modal('hide');
-        $('.modal-backdrop').remove();
-        $('body').removeClass('modal-open').css('padding-right', '');
-        
+
         if (data.status === 'success') {
-            setTimeout(function() {
-                var icons = {feeding: 'utensils', breakfast: 'coffee', classes: 'book', transport: 'bus'};
-                var html = '<div class="p-4">';
-                html += '<h3 class="text-xl font-bold text-gray-800 mb-4"><i class="fa fa-' + icons[feeType] + '"></i> ' + feeType.charAt(0).toUpperCase() + feeType.slice(1) + ' Collection Report (Today)</h3>';
-                html += '<div class="grid grid-cols-3 gap-4 mb-4">';
-                html += '<div class="bg-blue-50 p-3 rounded-lg text-center"><div class="text-2xl font-bold text-blue-600">' + data.count + '</div><div class="text-sm text-gray-600">Students</div></div>';
-                html += '<div class="bg-green-50 p-3 rounded-lg text-center"><div class="text-2xl font-bold text-green-600">GHS ' + parseFloat(data.total).toFixed(2) + '</div><div class="text-sm text-gray-600">Collected</div></div>';
-                html += '<div class="bg-purple-50 p-3 rounded-lg text-center"><div class="text-2xl font-bold text-purple-600">GHS ' + parseFloat(data.average).toFixed(2) + '</div><div class="text-sm text-gray-600">Average</div></div>';
-                html += '</div>';
-                
-                if (data.students && data.students.length > 0) {
-                    html += '<h4 class="font-bold text-gray-700 mb-2">Students Who Paid:</h4>';
-                    html += '<div class="max-h-64 overflow-y-auto">';
-                    html += '<table class="w-full text-sm"><thead><tr class="bg-gray-100"><th class="p-2 text-left">Code</th><th class="p-2 text-left">Name</th><th class="p-2 text-left">Class</th><th class="p-2 text-right">Amount</th></tr></thead><tbody>';
-                    data.students.forEach(function(s) {
-                        var classDisplay = s.class_name + (s.name_numeric ? ' ' + s.name_numeric : '') + (s.section_name ? ' - ' + s.section_name : '');
-                        html += '<tr class="border-b"><td class="p-2">' + s.student_code + '</td><td class="p-2">' + s.name + '</td><td class="p-2">' + classDisplay + '</td><td class="p-2 text-right">GHS ' + parseFloat(s.amount).toFixed(2) + '</td></tr>';
-                    });
-                    html += '</tbody></table></div>';
-                }
-                html += '</div>';
-                
-                showModalWithContent('detailsModal', '<i class="fa fa-' + icons[feeType] + '"></i> ' + feeType.charAt(0).toUpperCase() + feeType.slice(1) + ' Report', html);
-            }, 300);
+            var periodLabel = (data.period && data.period.from === data.period.to)
+                ? data.period.from
+                : ((data.period ? data.period.from : '') + ' - ' + (data.period ? data.period.to : ''));
+
+            var html = '<div class="grid grid-cols-3 gap-4 mb-4">';
+            html += '<div class="bg-blue-50 p-3 rounded-lg text-center"><div class="text-2xl font-bold text-blue-600">' + data.count + '</div><div class="text-sm text-gray-600">Students</div></div>';
+            html += '<div class="bg-green-50 p-3 rounded-lg text-center"><div class="text-2xl font-bold text-green-600">GHS ' + parseFloat(data.total).toFixed(2) + '</div><div class="text-sm text-gray-600">Collected</div></div>';
+            html += '<div class="bg-purple-50 p-3 rounded-lg text-center"><div class="text-2xl font-bold text-purple-600">GHS ' + parseFloat(data.average).toFixed(2) + '</div><div class="text-sm text-gray-600">Average</div></div>';
+            html += '</div>';
+            html += '<p class="text-xs text-gray-500 mb-3"><i class="fa fa-info-circle"></i> Period: <strong>' + periodLabel + '</strong></p>';
+
+            if (data.students && data.students.length > 0) {
+                html += '<h4 class="font-bold text-gray-700 mb-2">Students Who Paid:</h4>';
+                html += '<div class="max-h-64 overflow-y-auto">';
+                html += '<table class="w-full text-sm"><thead><tr class="bg-gray-100"><th class="p-2 text-left">Code</th><th class="p-2 text-left">Name</th><th class="p-2 text-left">Class</th><th class="p-2 text-right">Amount</th></tr></thead><tbody>';
+                data.students.forEach(function(s) {
+                    var classDisplay = s.class_name + (s.name_numeric ? ' ' + s.name_numeric : '') + (s.section_name ? ' - ' + s.section_name : '');
+                    html += '<tr class="border-b"><td class="p-2">' + s.student_code + '</td><td class="p-2">' + s.name + '</td><td class="p-2">' + classDisplay + '</td><td class="p-2 text-right">GHS ' + parseFloat(s.amount).toFixed(2) + '</td></tr>';
+                });
+                html += '</tbody></table></div>';
+            } else {
+                html += '<div class="text-center py-6 text-gray-400"><i class="fa fa-inbox"></i> No collections found for the selected filters.</div>';
+            }
+            $('#fee_report_content').html(html);
         } else {
-            setTimeout(function() {
-                showAjaxModal_alert(data.message || 'Failed to load report', 'error');
-            }, 300);
+            $('#fee_report_content').html('<div class="text-center py-6 text-red-500"><i class="fa fa-exclamation-circle"></i> ' + (data.message || 'Failed to load report') + '</div>');
         }
     }).fail(function() {
-        $('#modal_alert').modal('hide');
-        $('.modal-backdrop').remove();
-        $('body').removeClass('modal-open').css('padding-right', '');
-        setTimeout(function() {
-            showAjaxModal_alert('An error occurred', 'error');
-        }, 300);
+        $('#fee_report_content').html('<div class="text-center py-6 text-red-500"><i class="fa fa-exclamation-circle"></i> An error occurred</div>');
     });
+}
+
+function exportFeeReport() {
+    var qs = feeReportQuery();
+    window.open('<?php echo site_url("fee_collection/export_statistics"); ?>' + (qs ? '?' + qs : ''), '_blank');
 }
 
 

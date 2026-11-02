@@ -1798,13 +1798,17 @@ class Fee_collection extends CI_Controller {
     
     // Daily fee report
     public function daily_fee_report($fee_type) {
-        $today = strtotime(date('Y-m-d'));
+        // Optional filters (all backward compatible - default to today, all classes)
+        $date_from = $this->input->get('date_from') ? strtotime($this->input->get('date_from')) : strtotime(date('Y-m-d'));
+        $date_to   = $this->input->get('date_to')   ? strtotime($this->input->get('date_to')) + 86399 : $date_from + 86399;
+        $class_id  = $this->input->get('class_id');
+        $collector_id = $this->input->get('collector_id');
         $running_year = get_settings('running_year');
         $running_term = get_settings('running_term');
         
         $column = $fee_type . '_amount';
         
-        $students = $this->db->query("
+        $sql = "
             SELECT s.student_id, s.name, s.student_code, c.name as class_name, c.name_numeric, sec.name as section_name,
                    t.{$column} as amount
             FROM daily_fee_transactions t
@@ -1814,10 +1818,21 @@ class Fee_collection extends CI_Controller {
             LEFT JOIN section sec ON e.section_id = sec.section_id
             WHERE t.{$column} > 0 
             AND t.payment_date >= ? 
-            AND t.payment_date < ?
-            AND e.year = ? AND e.term = ?
-            ORDER BY t.created_at DESC
-        ", [$today, $today + 86400, $running_year, $running_term])->result_array();
+            AND t.payment_date <= ?
+            AND e.year = ? AND e.term = ?";
+        $params = [$date_from, $date_to, $running_year, $running_term];
+        
+        if ($class_id) {
+            $sql .= " AND e.class_id = ?";
+            $params[] = $class_id;
+        }
+        if ($collector_id) {
+            $sql .= " AND t.collected_by = ?";
+            $params[] = $collector_id;
+        }
+        $sql .= " ORDER BY t.created_at DESC";
+        
+        $students = $this->db->query($sql, $params)->result_array();
         
         $total = array_sum(array_column($students, 'amount'));
         $count = count($students);
@@ -1828,6 +1843,10 @@ class Fee_collection extends CI_Controller {
             'count' => $count,
             'total' => $total,
             'average' => $average,
+            'period' => [
+                'from' => date('d M Y', $date_from),
+                'to' => date('d M Y', $date_to)
+            ],
             'students' => $students
         ]);
     }
