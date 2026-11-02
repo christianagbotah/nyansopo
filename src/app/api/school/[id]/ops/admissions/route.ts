@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
 import { sendSms } from "@/lib/sms";
 import { invoicePaymentReceipt } from "@/lib/receipt-payload";
-import { nextInvoiceNo } from "@/lib/invoice-no";
+import { nextInvoiceNo, nextReceiptNo, nextStudentIndex } from "@/lib/codes";
 
 // ── GET /api/school/[id]/ops/admissions — admission workspace ──
 // classrooms with capacity/fees, invoice discounts, recent admissions
@@ -95,10 +95,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       .map((i: any) => ({ name: String(i.name).trim(), amountCents: Math.round(Number(i.amountCents)) }));
     const gross = items.reduce((s, i) => s + i.amountCents, 0);
 
-    // ── student + national index ──
-    const year = new Date().getFullYear();
-    const count = await db.student.count();
-    const nyansapoIndex = `NY-${year}-${String(100000 + count + 1).slice(1)}`;
+    // ── student + national index (sync-safe atomic counter) ──
+    const nyansapoIndex = await nextStudentIndex(new Date().getFullYear());
 
     const student = await db.student.create({
       data: {
@@ -166,10 +164,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (pay > 0 && invoice) {
       const payable = invoice.totalCents - discountCents;
       const amt = Math.min(pay, payable);
-      const seq = (await db.payment.count({ where: { schoolId } })) + 1001;
       const payment = await db.payment.create({
         data: {
-          receiptNo: `RCP-${year}-${String(seq).padStart(5, "0")}`,
+          receiptNo: await nextReceiptNo(),
           invoiceId: invoice.id, studentId: student.id, schoolId, amountCents: amt,
           method: initialPaymentMethod ?? "CASH", receivedByName: user.fullName, paidAt: new Date(),
         },

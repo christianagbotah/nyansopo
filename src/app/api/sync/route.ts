@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getUser } from "@/lib/session";
+import { nextReceiptNo, nextStudentIndex } from "@/lib/codes";
 
 // POST /api/sync — flush the offline action queue (idempotent per clientId)
 export async function POST(req: NextRequest) {
@@ -24,8 +25,7 @@ export async function POST(req: NextRequest) {
           const owedCents = owed._sum.amountCents ?? 0;
           if (owedCents <= 0) throw new Error("no daily balance");
           const amt = Math.max(0, Math.min(Number(amountCents), owedCents));
-          const seq = (await db.payment.count({ where: { schoolId } })) + 1001;
-          const payment = await db.payment.create({ data: { receiptNo: `RCP-2026-${String(seq).padStart(5, "0")}`, studentId, category: "DAILY", schoolId, amountCents: amt, method, reference: `SYNC:${op.clientId}`, receivedByName: `${user.fullName} (offline)`, paidAt: paidAt ? new Date(paidAt) : new Date(), offlineQueued: true, syncedAt: new Date() } });
+          const payment = await db.payment.create({ data: { receiptNo: await nextReceiptNo(), studentId, category: "DAILY", schoolId, amountCents: amt, method, reference: `SYNC:${op.clientId}`, receivedByName: `${user.fullName} (offline)`, paidAt: paidAt ? new Date(paidAt) : new Date(), offlineQueued: true, syncedAt: new Date() } });
           let remaining = amt;
           const owedCharges = await db.dailyCharge.findMany({ where: { studentId, status: "OWED" }, orderBy: { date: "asc" } });
           for (const c of owedCharges) {
@@ -47,8 +47,7 @@ export async function POST(req: NextRequest) {
         const inv = await db.invoice.findUnique({ where: { id: invoiceId } });
         if (!inv) throw new Error("invoice missing");
         const amt = Math.max(0, Math.min(Number(amountCents), inv.totalCents - inv.discountCents - inv.paidCents));
-        const seq = (await db.payment.count({ where: { schoolId } })) + 1001;
-        await db.payment.create({ data: { receiptNo: `RCP-2026-${String(seq).padStart(5, "0")}`, invoiceId, studentId: inv.studentId, schoolId, amountCents: amt, method, reference: `SYNC:${op.clientId}`, receivedByName: `${user.fullName} (offline)`, paidAt: paidAt ? new Date(paidAt) : new Date(), offlineQueued: true, syncedAt: new Date() } });
+        await db.payment.create({ data: { receiptNo: await nextReceiptNo(), invoiceId, studentId: inv.studentId, schoolId, amountCents: amt, method, reference: `SYNC:${op.clientId}`, receivedByName: `${user.fullName} (offline)`, paidAt: paidAt ? new Date(paidAt) : new Date(), offlineQueued: true, syncedAt: new Date() } });
         const paid = inv.paidCents + amt;
         await db.invoice.update({ where: { id: invoiceId }, data: { paidCents: paid, status: paid >= inv.totalCents - inv.discountCents ? "PAID" : "PARTIAL" } });
         results.push({ clientId: op.clientId, ok: true, detail: `receipt issued` });
@@ -73,11 +72,10 @@ export async function POST(req: NextRequest) {
         if (!user.schoolIds.includes(p.schoolId)) throw new Error("forbidden");
         const dup = await db.enrollment.findFirst({ where: { student: { nyansapoIndex: `SYNC-${op.clientId}` } } });
         if (dup) { results.push({ clientId: op.clientId, ok: true, detail: "already synced" }); continue; }
-        const count = await db.student.count();
         const student = await db.student.create({ data: { nyansapoIndex: `SYNC-${op.clientId}`, firstName: p.firstName, lastName: p.lastName, gender: p.gender ?? "M", guardianName: p.guardianName, guardianPhone: p.guardianPhone, status: "ACTIVE", previousSchool: "Registered offline" } });
         // upgrade index now that we are online
         const year = p.dateOfBirth ? new Date(p.dateOfBirth).getFullYear() : 2016;
-        await db.student.update({ where: { id: student.id }, data: { nyansapoIndex: `NY-${year}-${String(100000 + count + 1).slice(1)}` } });
+        await db.student.update({ where: { id: student.id }, data: { nyansapoIndex: await nextStudentIndex(year) } });
         const roll = (await db.enrollment.count({ where: { classroomId: p.classroomId } })) + 1;
         await db.enrollment.create({ data: { studentId: student.id, classroomId: p.classroomId, schoolId: p.schoolId, rollNo: roll, admissionDate: new Date(), status: "ACTIVE" } });
         results.push({ clientId: op.clientId, ok: true, detail: "student enrolled" });

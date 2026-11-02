@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
 import { receiptSchool, posSaleReceipt } from "@/lib/receipt-payload";
+import { nextReceiptNo } from "@/lib/codes";
 
 // ── GET /api/school/[id]/ops/inventory — items, movements, suppliers ──
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -180,9 +181,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       void mv;
     }
     // record as a formal payment so the receipt can be reprinted from history
-    const paySeq = (await db.payment.count({ where: { schoolId } })) + 1001;
     await db.payment.create({
-      data: { receiptNo: `RCP-2026-${String(paySeq).padStart(5, "0")}`, studentId: student?.id ?? null, category: "POS", schoolId, amountCents: total, method: payMethod, reference: saleNo, receivedByName: user.fullName, paidAt: now },
+      data: { receiptNo: await nextReceiptNo(), studentId: student?.id ?? null, category: "POS", schoolId, amountCents: total, method: payMethod, reference: saleNo, receivedByName: user.fullName, paidAt: now },
     });
     const school = await receiptSchool(db, schoolId);
     const saleLines = prepared.map((p) => ({ item: p.item.name, qty: p.qty, amount: (p.item.sellPriceCents ?? 0) * p.qty }));

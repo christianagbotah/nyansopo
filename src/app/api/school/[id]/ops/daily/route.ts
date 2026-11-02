@@ -4,6 +4,7 @@ import { opsAuth } from "@/lib/ops-auth";
 import { generateDayCharges, settleDailyCharges, effectivePrice, applyTransportUsage, parseTeacherPerms, DEFAULT_TEACHER_PERMS, collectionAllowed, TRANSPORT_USAGES, logDailyFeeAudit, arrearsTotalCents, type CollectionMode, type TeacherPerms, type TransportUsage } from "@/lib/daily-billing";
 import { sendAutomated } from "@/lib/sms";
 import { dailyServicesReceipt } from "@/lib/receipt-payload";
+import { nextReceiptNo } from "@/lib/codes";
 import { PAYMENT_LABELS } from "@/lib/format";
 
 // ── GET /api/school/[id]/ops/daily — services, ledger, POS, wallets, settings ──
@@ -482,10 +483,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       onlyCategory = "TRANSPORT"; // transport wallet may only clear transport-fare charges
     }
 
-    const seq = (await db.payment.count({ where: { schoolId } })) + 1001;
     const payment = await db.payment.create({
       data: {
-        receiptNo: `RCP-2026-${String(seq).padStart(5, "0")}`, studentId, category: "DAILY", schoolId,
+        receiptNo: await nextReceiptNo(), studentId, category: "DAILY", schoolId,
         amountCents: amt, method: payMethod, reference: reference ?? null,
         receivedByName: user.fullName,
         paidAt: paidAt ? new Date(paidAt) : new Date(),

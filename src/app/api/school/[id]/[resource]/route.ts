@@ -5,7 +5,7 @@ import { canAny } from "@/lib/rbac";
 import { gradeFor } from "@/lib/grading";
 import { sendSms, sendAutomated } from "@/lib/sms";
 import { invoicePaymentReceipt } from "@/lib/receipt-payload";
-import { nextInvoiceNo } from "@/lib/invoice-no";
+import { nextInvoiceNo, nextReceiptNo, nextStudentIndex } from "@/lib/codes";
 import { effectiveValue } from "@/lib/discounts";
 
 const C = (cedis: number) => Math.round(cedis * 100);
@@ -306,10 +306,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         if (!inv) return NextResponse.json({ error: "Invoice not found" }, { status: 404 });
         const amt = Math.max(0, Math.min(Number(amountCents), inv.totalCents - inv.discountCents - inv.paidCents));
         if (amt <= 0) return NextResponse.json({ error: "Amount exceeds balance or is invalid" }, { status: 400 });
-        const seq = (await db.payment.count({ where: { schoolId } })) + 1001;
         const payment = await db.payment.create({
           data: {
-            receiptNo: `RCP-2026-${String(seq).padStart(5, "0")}`, invoiceId, studentId: inv.studentId, schoolId, amountCents: amt,
+            receiptNo: await nextReceiptNo(), invoiceId, studentId: inv.studentId, schoolId, amountCents: amt,
             method: method ?? "CASH", reference: clientId ? `SYNC:${clientId}` : reference ?? null,
             receivedByName: user.fullName, paidAt: new Date(body.paidAt ?? Date.now()),
             offlineQueued: !!offline, syncedAt: offline ? new Date() : null,
@@ -626,9 +625,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         if (!firstName || !lastName || !guardianName || !guardianPhone || !classroomId) return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
         const classroom = await db.classroom.findUnique({ where: { id: classroomId } });
         if (!classroom) return NextResponse.json({ error: "Classroom not found" }, { status: 404 });
-        const count = await db.student.count();
         const birthYear = dateOfBirth ? new Date(dateOfBirth).getFullYear() : 2016;
-        const student = await db.student.create({ data: { nyansapoIndex: `NY-${birthYear}-${String(100000 + count + 1).slice(1)}`, firstName, lastName, otherNames, gender, dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null, guardianName, guardianPhone, guardianOccupation, relationship: relationship ?? "Parent", previousSchool, status: "ACTIVE" } });
+        const student = await db.student.create({ data: { nyansapoIndex: await nextStudentIndex(birthYear), firstName, lastName, otherNames, gender, dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null, guardianName, guardianPhone, guardianOccupation, relationship: relationship ?? "Parent", previousSchool, status: "ACTIVE" } });
         const roll = (await db.enrollment.count({ where: { classroomId } })) + 1;
         await db.enrollment.create({ data: { studentId: student.id, classroomId, schoolId, rollNo: roll, admissionDate: new Date(), status: "ACTIVE" } });
         // auto-bill for current term

@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
 import { sendSms } from "@/lib/sms";
 import { transportFareReceipt } from "@/lib/receipt-payload";
+import { nextReceiptNo } from "@/lib/codes";
 
 // ── GET /api/school/[id]/ops/transport — routes, assignments, trips ──
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -285,10 +286,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const fare = a.fareOverrideCents ?? a.route.farePerTermCents;
     const outstanding = Math.max(0, fare - (already._sum.amountCents ?? 0));
     if (outstanding <= 0) return NextResponse.json({ error: "This learner's fare is already settled for the term" }, { status: 400 });
-    const seq = (await db.payment.count({ where: { schoolId } })) + 1001;
     const payment = await db.payment.create({
       data: {
-        receiptNo: `RCP-2026-${String(seq).padStart(5, "0")}`, studentId: a.studentId, category: "TRANSPORT",
+        receiptNo: await nextReceiptNo(), studentId: a.studentId, category: "TRANSPORT",
         schoolId, amountCents: outstanding, method: method ?? "CASH", reference: reference ?? null,
         receivedByName: auth.user.fullName, paidAt: new Date(),
       },

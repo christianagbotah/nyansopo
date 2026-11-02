@@ -1589,3 +1589,18 @@ model SyllabusTopic {
 
   @@unique([classroomId, subjectId, termId, weekNumber, topic])
 }
+
+// ─────────────────────────────────────────────────────────────
+// SYNC-SAFE CODE ALLOCATION
+// Human-readable codes (INV-YYYY-NNNN, RCP-YYYY-NNNNN, NY-YYYY-NNNNNN)
+// are minted from atomic monotonic counters — never from row counts or
+// read-then-write max() lookups. This makes online/offline and
+// multi-device code generation conflict-free: the counter row is the
+// single source of truth, updated with an atomic SQL increment.
+// `next` stores the LAST allocated number for the scope.
+// ─────────────────────────────────────────────────────────────
+model CodeCounter {
+  scope     String   @id // e.g. "INV:2026" | "RCP:2026" | "NYIDX:2016"
+  next      Int      @default(0) // last allocated sequence number
+  updatedAt DateTime @updatedAt
+}
