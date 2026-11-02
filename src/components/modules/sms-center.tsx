@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { StatCard, ModuleHeader, LoadingBlock, EmptyState } from "@/components/ui-helpers";
+import { StatCard, ModuleHeader, LoadingBlock, EmptyState, FilterBar, FilterSelect, FilterSearch } from "@/components/ui-helpers";
 import { fmtDateTime } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
 import { Smartphone, Send, FileText, History, Settings2, Plus, CheckCheck, XCircle, AlertTriangle, Wallet, Zap, Megaphone, ClipboardCheck } from "lucide-react";
@@ -56,6 +56,13 @@ export function SmsCenter() {
   const [tab, setTab] = useState("compose");
   const [tplDialog, setTplDialog] = useState<Template | "new" | null>(null);
   const [category, setCategory] = useState("all");
+  const [smsStatus, setSmsStatus] = useState("all");
+  const [smsSearch, setSmsSearch] = useState("");
+  // client-side status + search on top of the category filter (which reloads from the API)
+  const visibleMessages = useMemo(() => (data?.messages ?? []).filter((m) =>
+    (smsStatus === "all" || m.status === smsStatus) &&
+    (!smsSearch.trim() || `${m.recipientName} ${m.recipientPhone} ${m.body}`.toLowerCase().includes(smsSearch.toLowerCase()))
+  ), [data, smsStatus, smsSearch]);
 
   /* iEduPro nested nav: preselect the Marks SMS tab on deep link */
   const [appliedTarget, setAppliedTarget] = useState<any>(null);
@@ -149,7 +156,14 @@ export function SmsCenter() {
         </TabsContent>
 
         <TabsContent value="history">
-          <Card>
+          <div className="space-y-3">
+            <FilterBar active={smsStatus !== "all" || !!smsSearch.trim()} onClear={() => { setSmsStatus("all"); setSmsSearch(""); }} count={visibleMessages.length} total={data.messages.length} label="Message filters">
+              <FilterSearch value={smsSearch} onChange={setSmsSearch} placeholder="Recipient, phone, text…" />
+              <FilterSelect label="Status" value={smsStatus} onChange={setSmsStatus} options={[
+                { value: "all", label: "All statuses" }, { value: "DELIVERED", label: "Delivered" }, { value: "SENT", label: "Sent" }, { value: "FAILED", label: "Failed" },
+              ]} />
+            </FilterBar>
+            <Card>
             <CardHeader className="pb-3 flex-row items-center justify-between space-y-0">
               <CardTitle className="text-base flex items-center gap-2"><History className="size-4" /> Message log</CardTitle>
               <Select value={category} onValueChange={(v) => { setCategory(v); load(v); }}>
@@ -162,8 +176,8 @@ export function SmsCenter() {
             </CardHeader>
             <CardContent className="p-0">
               <div className="max-h-[520px] overflow-y-auto nice-scroll">
-                {data.messages.length === 0 && <EmptyState title="No messages yet" hint="Compose your first broadcast." />}
-                {data.messages.map((m) => (
+                {visibleMessages.length === 0 && <EmptyState title={smsStatus !== "all" || smsSearch ? "No messages match" : "No messages yet"} hint={smsStatus !== "all" || smsSearch ? "Adjust the status or search filter." : "Compose your first broadcast."} />}
+                {visibleMessages.map((m) => (
                   <div key={m.id} className="px-4 py-3 border-b last:border-0 hover:bg-secondary/30">
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <div className="flex items-center gap-2 min-w-0">
@@ -185,6 +199,7 @@ export function SmsCenter() {
               </div>
             </CardContent>
           </Card>
+          </div>
         </TabsContent>
 
         <TabsContent value="settings">

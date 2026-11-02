@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { StatCard, ModuleHeader, LoadingBlock, EmptyState } from "@/components/ui-helpers";
+import { StatCard, ModuleHeader, LoadingBlock, EmptyState, FilterBar, FilterSelect, FilterSearch } from "@/components/ui-helpers";
 import { fmtCedi, fmtDate, fmtDateTime, PAYMENT_LABELS } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
 import { UtensilsCrossed, Wallet, CalendarPlus, Plus, TrendingUp, Search, Droplets, BookOpenCheck, Coffee, HandCoins, CheckCircle2, Printer, Percent, Bus, Settings2, CircleDollarSign, ArrowDownToLine, History, BadgeCheck, UserCheck, Landmark, ScrollText } from "lucide-react";
@@ -90,6 +90,14 @@ export function DailyServices() {
   const [receipt, setReceipt] = useState<any | null>(null);
   const [busy, setBusy] = useState(false);
   const [search, setSearch] = useState("");
+  const [posClass, setPosClass] = useState("all");
+  const [posOwingOnly, setPosOwingOnly] = useState(false);
+  const [walSearch, setWalSearch] = useState("");
+  const [walClass, setWalClass] = useState("all");
+  const [walState, setWalState] = useState("all");
+  const [ledSearch, setLedSearch] = useState("");
+  const [ledClass, setLedClass] = useState("all");
+  const [ledService, setLedService] = useState("all");
   const [topUpFor, setTopUpFor] = useState<PosStudent | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [auditStudentId, setAuditStudentId] = useState(""); // audit-log learner filter (recon tab)
@@ -114,9 +122,36 @@ export function DailyServices() {
 
   const filteredStudents = useMemo(() => {
     const q = search.toLowerCase();
-    return (data?.posStudents ?? []).filter((s) => !q || s.name.toLowerCase().includes(q) || s.classroom.toLowerCase().includes(q));
-  }, [data, search]);
+    return (data?.posStudents ?? []).filter((s) =>
+      (!q || s.name.toLowerCase().includes(q) || s.classroom.toLowerCase().includes(q)) &&
+      (posClass === "all" || s.classroom === posClass) &&
+      (!posOwingOnly || s.balance > 0));
+  }, [data, search, posClass, posOwingOnly]);
   const withBalance = useMemo(() => filteredStudents.filter((s) => s.balance > 0), [filteredStudents]);
+  // wallet + ledger filters (client-side — payloads already carry class + service breakdown)
+  const classroomOptions = useMemo(() => {
+    const names = new Set<string>();
+    (data?.posStudents ?? []).forEach((s) => names.add(s.classroom));
+    (data?.ledger ?? []).forEach((r) => r.classroom && names.add(r.classroom));
+    return [...names].sort().map((c) => ({ value: c, label: c }));
+  }, [data]);
+  const filteredWallets = useMemo(() => (data?.wallets ?? []).filter((w) =>
+    (walClass === "all" || w.classroom === walClass) &&
+    (walState === "all" || (walState === "prepaid" ? w.prepaid > 0 : walState === "transport" ? w.transport > 0 : w.arrears > 0)) &&
+    (!walSearch.trim() || `${w.student} ${w.classroom}`.toLowerCase().includes(walSearch.toLowerCase()))
+  ), [data, walClass, walState, walSearch]);
+  const walFiltersActive = walClass !== "all" || walState !== "all" || !!walSearch.trim();
+  const ledgerServices = useMemo(() => {
+    const names = new Set<string>();
+    (data?.ledger ?? []).forEach((r) => Object.keys(r.items).forEach((k) => names.add(k)));
+    return [...names].sort().map((c) => ({ value: c, label: c }));
+  }, [data]);
+  const filteredLedger = useMemo(() => (data?.ledger ?? []).filter((r) =>
+    (ledClass === "all" || r.classroom === ledClass) &&
+    (ledService === "all" || (r.items[ledService] ?? 0) > 0) &&
+    (!ledSearch.trim() || `${r.student} ${r.classroom ?? ""} ${r.guardianPhone}`.toLowerCase().includes(ledSearch.toLowerCase()))
+  ), [data, ledClass, ledService, ledSearch]);
+  const ledFiltersActive = ledClass !== "all" || ledService !== "all" || !!ledSearch.trim();
 
   /* iedupro §1 collection policy — client mirror of the server gate (server stays authoritative) */
   const collectGate = (s: PosStudent): { ok: boolean; reason?: string } => {
@@ -208,15 +243,19 @@ export function DailyServices() {
           </div>
           <div className="grid lg:grid-cols-3 gap-4">
             <Card className="lg:col-span-2">
-              <CardHeader className="pb-3 flex-row items-center justify-between space-y-0">
+              <CardHeader className="pb-3 flex-row items-center justify-between space-y-0 flex-wrap gap-2">
                 <CardTitle className="text-base">Collect a payment</CardTitle>
-                <div className="relative">
-                  <Search className="size-4 absolute left-2.5 top-2.5 text-muted-foreground" />
-                  <Input placeholder="Search learner or class…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-8 w-56 h-8" />
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <FilterSearch value={search} onChange={setSearch} placeholder="Learner or class…" />
+                  <FilterSelect label="" value={posClass} onChange={setPosClass} options={[{ value: "all", label: "All classes" }, ...classroomOptions]} />
+                  <button type="button" onClick={() => setPosOwingOnly(!posOwingOnly)}
+                    className={`rounded-full border px-2.5 py-1 text-[11px] transition-colors ${posOwingOnly ? "border-primary bg-primary text-primary-foreground" : "hover:bg-secondary"}`}>
+                    Owing only
+                  </button>
                 </div>
               </CardHeader>
               <CardContent className="max-h-[520px] overflow-y-auto nice-scroll space-y-1.5">
-                {withBalance.length === 0 && <EmptyState icon={<CheckCircle2 className="size-5" />} title="No outstanding daily balances" hint="Everything collected — or generate today's charges first." />}
+                {withBalance.length === 0 && <EmptyState icon={<CheckCircle2 className="size-5" />} title={posOwingOnly || posClass !== "all" || search ? "No learners match" : "No outstanding daily balances"} hint={posOwingOnly || posClass !== "all" || search ? "Adjust the search, class or owing filter." : "Everything collected — or generate today's charges first."} />}
                 {withBalance.slice(0, 60).map((s) => {
                   const gate = collectGate(s);
                   return (
@@ -281,7 +320,15 @@ export function DailyServices() {
             <StatCard icon={<Bus className="size-4" />} label="Transport wallets" value={fmtCedi(data.wallets.reduce((a, w) => a + w.transport, 0), { compact: true })} tone="gold" sub={`${data.wallets.filter((w) => w.transport > 0).length} learners holding credit`} />
             <StatCard icon={<Percent className="size-4" />} label="Arrears balance" value={fmtCedi(data.wallets.reduce((a, w) => a + w.arrears, 0), { compact: true })} tone={data.wallets.some((w) => w.arrears > 0) ? "danger" : "default"} sub="derived from unpaid charges" />
           </div>
-          <div className="grid lg:grid-cols-3 gap-4">
+          <div className="space-y-3">
+            <FilterBar active={walFiltersActive} onClear={() => { setWalClass("all"); setWalState("all"); setWalSearch(""); }} count={filteredWallets.length} total={data.wallets.length} label="Wallet filters">
+              <FilterSearch value={walSearch} onChange={setWalSearch} placeholder="Learner or class…" />
+              <FilterSelect label="Class" value={walClass} onChange={setWalClass} options={[{ value: "all", label: "All classes" }, ...classroomOptions]} />
+              <FilterSelect label="Wallet" value={walState} onChange={setWalState} options={[
+                { value: "all", label: "All" }, { value: "prepaid", label: "Has prepaid" }, { value: "transport", label: "Has transport" }, { value: "arrears", label: "In arrears" },
+              ]} />
+            </FilterBar>
+            <div className="grid lg:grid-cols-3 gap-4">
             <Card className="lg:col-span-2">
               <CardHeader className="pb-3 flex-row items-center justify-between space-y-0">
                 <CardTitle className="text-base">Learner wallets</CardTitle>
@@ -305,8 +352,8 @@ export function DailyServices() {
                       </tr>
                     </thead>
                     <tbody>
-                      {data.wallets.length === 0 && <tr><td colSpan={6}><EmptyState icon={<BadgeCheck className="size-5" />} title="No wallet balances" hint="Top up a learner to open a prepaid wallet." /></td></tr>}
-                      {data.wallets.map((w) => {
+                      {filteredWallets.length === 0 && <tr><td colSpan={6}><EmptyState icon={<BadgeCheck className="size-5" />} title={walFiltersActive ? "No wallets match" : "No wallet balances"} hint={walFiltersActive ? "Adjust the search, class or wallet filter." : "Top up a learner to open a prepaid wallet."} /></td></tr>}
+                      {filteredWallets.map((w) => {
                         const ps = data.posStudents.find((p) => p.id === w.studentId) ?? null;
                         return (
                           <tr key={w.studentId} className="border-b last:border-0 hover:bg-secondary/30">
@@ -350,11 +397,18 @@ export function DailyServices() {
               </CardContent>
             </Card>
           </div>
+          </div>
         </TabsContent>
 
         {/* ── LEDGER ── */}
         <TabsContent value="ledger">
-          <Card>
+          <div className="space-y-3">
+            <FilterBar active={ledFiltersActive} onClear={() => { setLedClass("all"); setLedService("all"); setLedSearch(""); }} count={filteredLedger.length} total={data.ledger.length} label="Arrears filters">
+              <FilterSearch value={ledSearch} onChange={setLedSearch} placeholder="Learner, class, guardian…" />
+              <FilterSelect label="Class" value={ledClass} onChange={setLedClass} options={[{ value: "all", label: "All classes" }, ...classroomOptions]} />
+              <FilterSelect label="Service" value={ledService} onChange={setLedService} options={[{ value: "all", label: "All services" }, ...ledgerServices]} />
+            </FilterBar>
+            <Card>
             <CardContent className="p-0">
               <div className="overflow-x-auto nice-scroll max-h-[560px]">
                 <table className="w-full text-sm">
@@ -369,8 +423,8 @@ export function DailyServices() {
                     </tr>
                   </thead>
                   <tbody>
-                    {data.ledger.length === 0 && <tr><td colSpan={6}><EmptyState icon={<CheckCircle2 className="size-5" />} title="Clean ledger — no daily arrears" /></td></tr>}
-                    {data.ledger.map((r) => (
+                    {filteredLedger.length === 0 && <tr><td colSpan={6}><EmptyState icon={<CheckCircle2 className="size-5" />} title={ledFiltersActive ? "No arrears match" : "Clean ledger — no daily arrears"} hint={ledFiltersActive ? "Adjust the search, class or service filter." : undefined} /></td></tr>}
+                    {filteredLedger.map((r) => (
                       <tr key={r.studentId} className="border-b last:border-0 hover:bg-secondary/30">
                         <td className="px-3 py-2.5">
                           <div className="font-medium">{r.student}</div>
@@ -399,6 +453,7 @@ export function DailyServices() {
               </div>
             </CardContent>
           </Card>
+          </div>
         </TabsContent>
 
         {/* ── SERVICES ── */}

@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
 import { apiGet, apiPost } from "@/lib/api";
-import { ModuleHeader, LoadingBlock, EmptyState } from "@/components/ui-helpers";
+import { ModuleHeader, LoadingBlock, EmptyState, FilterSelect } from "@/components/ui-helpers";
 import { fmtDate } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -40,6 +40,8 @@ export function LibraryPortal() {
   const [bookDialog, setBookDialog] = useState<{ open: boolean; book: Book | null }>({ open: false, book: null });
   const [issueOpen, setIssueOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const [catFilter, setCatFilter] = useState("all");
+  const [availFilter, setAvailFilter] = useState("all");
 
   const load = useCallback(() => {
     if (!currentSchoolId) return;
@@ -65,8 +67,12 @@ export function LibraryPortal() {
   const filteredBooks = useMemo(() => {
     if (!data) return [];
     const q = search.toLowerCase();
-    return data.books.filter((b) => !q || `${b.title} ${b.author ?? ""} ${b.category} ${b.isbn ?? ""}`.toLowerCase().includes(q));
-  }, [data, search]);
+    return data.books.filter((b) =>
+      (!q || `${b.title} ${b.author ?? ""} ${b.category} ${b.isbn ?? ""}`.toLowerCase().includes(q)) &&
+      (catFilter === "all" || b.category === catFilter) &&
+      (availFilter === "all" || (availFilter === "in" ? b.available > 0 : b.available === 0)));
+  }, [data, search, catFilter, availFilter]);
+  const catFiltersActive = catFilter !== "all" || availFilter !== "all" || !!search.trim();
 
   if (loading || !data) return <LoadingBlock label="Opening the library…" />;
 
@@ -116,11 +122,19 @@ export function LibraryPortal() {
 
         <TabsContent value="catalogue" className="mt-3">
           <div className="rounded-xl border bg-card">
-            <div className="p-3 border-b flex items-center gap-2">
+            <div className="p-3 border-b flex flex-wrap items-center gap-2">
               <div className="relative flex-1 max-w-sm">
                 <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
                 <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search title, author, ISBN…" className="pl-8" />
               </div>
+              <FilterSelect label="Category" value={catFilter} onChange={setCatFilter}
+                options={[{ value: "all", label: "All categories" }, ...CATEGORIES.map((c) => ({ value: c, label: c }))]} />
+              <FilterSelect label="Shelf" value={availFilter} onChange={setAvailFilter}
+                options={[{ value: "all", label: "All" }, { value: "in", label: "On shelf" }, { value: "out", label: "All copies out" }]} />
+              {catFiltersActive && (
+                <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => { setCatFilter("all"); setAvailFilter("all"); setSearch(""); }}><X className="size-3" /> Reset</Button>
+              )}
+              <Badge variant="secondary" className="text-[10px] tabular-nums ml-auto">{filteredBooks.length} of {data.books.length}</Badge>
             </div>
             <Table>
               <TableHeader>

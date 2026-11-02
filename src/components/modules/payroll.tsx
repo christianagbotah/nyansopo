@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { StatCard, ModuleHeader, LoadingBlock, StatusBadge, EmptyState } from "@/components/ui-helpers";
+import { StatCard, ModuleHeader, LoadingBlock, StatusBadge, EmptyState, FilterSearch } from "@/components/ui-helpers";
 import { fmtCedi, fmtDate } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
 import { Calculator, Users, Plus, CheckCheck, Banknote, Printer, Pencil, Trash2, ShieldCheck, FileText, AlertTriangle, Settings2, Landmark, GraduationCap, Download } from "lucide-react";
@@ -45,6 +45,7 @@ export function Payroll() {
   const [staffDialog, setStaffDialog] = useState<StaffRow | null>(null);
   const [newStaffOpen, setNewStaffOpen] = useState(false);
   const [staffCat, setStaffCat] = useState<string>("ALL");
+  const [staffSearch, setStaffSearch] = useState("");
   const [slipFor, setSlipFor] = useState<Slip | null>(null);
   const [newPeriod, setNewPeriod] = useState("");
   const [busy, setBusy] = useState(false);
@@ -186,7 +187,7 @@ export function Payroll() {
           <Card>
             <CardContent className="pt-4 pb-0">
               <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                <div className="flex flex-wrap gap-1.5">
+                <div className="flex flex-wrap gap-1.5 items-center">
                   {["ALL", "TEACHING", "NON_TEACHING", "ADMINISTRATION"].map((c) => (
                     <button key={c}
                       onClick={() => setStaffCat(c)}
@@ -195,6 +196,7 @@ export function Payroll() {
                       <span className="ml-1 opacity-70">{c === "ALL" ? data.staff.filter((s) => s.active).length : data.staff.filter((s) => s.active && (s.category ?? (s.role === "TEACHER" || s.role === "HEADTEACHER" ? "TEACHING" : "ADMINISTRATION")) === c).length}</span>
                     </button>
                   ))}
+                  <FilterSearch value={staffSearch} onChange={setStaffSearch} placeholder="Name, position, MoMo…" />
                 </div>
                 <Button size="sm" className="gap-1.5" onClick={() => setNewStaffOpen(true)}><Plus className="size-4" /> Add staff</Button>
               </div>
@@ -214,6 +216,7 @@ export function Payroll() {
                   <tbody>
                     {data.staff
                       .filter((s) => staffCat === "ALL" || (s.category ?? (s.role === "TEACHER" || s.role === "HEADTEACHER" ? "TEACHING" : "ADMINISTRATION")) === staffCat)
+                      .filter((s) => !staffSearch.trim() || `${s.fullName} ${s.position ?? ""} ${s.momoNumber ?? ""} ${s.staffCode ?? ""}`.toLowerCase().includes(staffSearch.toLowerCase()))
                       .map((s) => (
                       <tr key={s.id} className={`border-b last:border-0 hover:bg-secondary/30 ${!s.active ? "opacity-50" : ""}`}>
                         <td className="px-3 py-2.5">

@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { StatCard, ModuleHeader, LoadingBlock, EmptyState } from "@/components/ui-helpers";
+import { StatCard, ModuleHeader, LoadingBlock, EmptyState, FilterBar, FilterSelect, FilterSearch } from "@/components/ui-helpers";
 import { fmtCedi, fmtDate, PAYMENT_LABELS } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
 import { LogoMark, KenteStrip } from "@/components/brand";
@@ -498,7 +498,17 @@ function ExpenditureTab({ data, onRefresh }: { data: FinanceData; onRefresh: () 
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState("CASH");
   const [busy, setBusy] = useState(false);
+  // expense-list filters
+  const [expCat, setExpCat] = useState("all");
+  const [expMethod, setExpMethod] = useState("all");
+  const [expSearch, setExpSearch] = useState("");
   const max = Math.max(1, ...data.expenditure.byCategory.map((c) => c.amount));
+  const expFiltersActive = expCat !== "all" || expMethod !== "all" || !!expSearch.trim();
+  const filteredExpenses = useMemo(() => data.expenditure.recent.filter((e) =>
+    (expCat === "all" || e.category === expCat) &&
+    (expMethod === "all" || e.method === expMethod) &&
+    (!expSearch.trim() || `${e.description} ${e.category} ${e.method}`.toLowerCase().includes(expSearch.toLowerCase()))
+  ), [data, expCat, expMethod, expSearch]);
 
   async function submit() {
     const cents = Math.round(parseFloat(amount || "0") * 100);
@@ -537,6 +547,15 @@ function ExpenditureTab({ data, onRefresh }: { data: FinanceData; onRefresh: () 
       <Card className="lg:col-span-2">
         <CardHeader className="pb-3"><CardTitle className="text-base">Recent expenses</CardTitle></CardHeader>
         <CardContent className="p-0">
+          <div className="px-3 py-2 border-b">
+            <FilterBar active={expFiltersActive} onClear={() => { setExpCat("all"); setExpMethod("all"); setExpSearch(""); }} count={filteredExpenses.length} total={data.expenditure.recent.length} label="Expense filters">
+              <FilterSearch value={expSearch} onChange={setExpSearch} placeholder="Description…" />
+              <FilterSelect label="Category" value={expCat} onChange={setExpCat}
+                options={[{ value: "all", label: "All" }, ...EXPENSE_CATEGORIES.map((c) => ({ value: c.key, label: c.label }))]} />
+              <FilterSelect label="Method" value={expMethod} onChange={setExpMethod}
+                options={[{ value: "all", label: "All" }, ...Object.entries(PAYMENT_LABELS).map(([k, v]) => ({ value: k, label: v }))]} />
+            </FilterBar>
+          </div>
           <div className="overflow-x-auto nice-scroll max-h-[440px]">
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-secondary/70 backdrop-blur">
@@ -550,7 +569,7 @@ function ExpenditureTab({ data, onRefresh }: { data: FinanceData; onRefresh: () 
                 </tr>
               </thead>
               <tbody>
-                {data.expenditure.recent.map((e) => (
+                {filteredExpenses.map((e) => (
                   <tr key={e.id} className="border-b last:border-0 hover:bg-secondary/30">
                     <td className="px-3 py-2.5 text-muted-foreground whitespace-nowrap">{fmtDate(e.date)}</td>
                     <td className="px-3 py-2.5"><div className="font-medium">{e.description}</div><div className="text-[11px] text-muted-foreground lg:hidden">{catLabel(e.category)}</div></td>
@@ -564,7 +583,7 @@ function ExpenditureTab({ data, onRefresh }: { data: FinanceData; onRefresh: () 
                     </td>
                   </tr>
                 ))}
-                {data.expenditure.recent.length === 0 && <tr><td colSpan={6}><EmptyState title="Nothing recorded yet" /></td></tr>}
+                {filteredExpenses.length === 0 && <tr><td colSpan={6}><EmptyState title={expFiltersActive ? "No expenses match" : "Nothing recorded yet"} hint={expFiltersActive ? "Adjust the search, category or method filter." : undefined} /></td></tr>}
               </tbody>
             </table>
           </div>

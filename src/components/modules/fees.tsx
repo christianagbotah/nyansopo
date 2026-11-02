@@ -10,11 +10,11 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { StatCard, ModuleHeader, LoadingBlock, StatusBadge, EmptyState } from "@/components/ui-helpers";
+import { StatCard, ModuleHeader, LoadingBlock, StatusBadge, EmptyState, FilterBar, FilterSelect, FilterSearch, downloadCsv } from "@/components/ui-helpers";
 import { fmtCedi, fmtDate, PAYMENT_LABELS } from "@/lib/format";
 import { canAny } from "@/lib/rbac";
 import { toast } from "@/hooks/use-toast";
-import { Banknote, Receipt, AlertTriangle, CheckCircle2, Plus, Flag, Printer, Wallet, Ticket, Percent, UserPlus, XCircle, ListChecks, Copy as CopyIcon, Eye, Link2, ClipboardList, ShieldCheck, Undo2, PencilLine, Trash2, FileWarning, Ban } from "lucide-react";
+import { Banknote, Receipt, AlertTriangle, CheckCircle2, Plus, Flag, Printer, Wallet, Ticket, Percent, UserPlus, XCircle, ListChecks, Copy as CopyIcon, Eye, Link2, ClipboardList, ShieldCheck, Undo2, PencilLine, Trash2, FileWarning, Ban, Download } from "lucide-react";
 import { ReceiptDocument, BulkReceiptsDocument, RECEIPT_STYLES, type ReceiptStyle } from "@/components/receipts";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DiscountProfilesTab, DiscountApprovalsTab, type DiscountData } from "@/components/modules/discounts-workspace";
@@ -71,6 +71,13 @@ export function Fees() {
   const [bulkReceipts, setBulkReceipts] = useState<any[] | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
 
+  // invoice + receipt filters (filter-on-demand for busy termly ledgers)
+  const [invSearch, setInvSearch] = useState("");
+  const [invClass, setInvClass] = useState("all");
+  const [invStatus, setInvStatus] = useState("all");
+  const [rcpSearch, setRcpSearch] = useState("");
+  const [rcpMethod, setRcpMethod] = useState("all");
+
   /* reprint machinery — full receipt payloads come back from the API */
   async function fetchPayloads(ids: string[]): Promise<any[]> {
     const res = await apiPost<any>(`/api/school/${currentSchoolId}/fees`, { action: "receipt-payloads", paymentIds: ids });
@@ -121,6 +128,39 @@ export function Fees() {
   const allPayments = useMemo(() =>
     (data?.invoices ?? []).flatMap((i) => i.payments.map((p) => ({ ...p, student: i.student, classroom: i.classroom, invoiceNo: i.invoiceNo }))).sort((a, b) => new Date(b.paidAt).getTime() - new Date(a.paidAt).getTime()),
   [data]);
+  const classOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    (data?.invoices ?? []).forEach((i) => { if (i.classroom) seen.set(i.classroom, i.classroom); });
+    return [...seen.values()].sort().map((c) => ({ value: c, label: c }));
+  }, [data]);
+  const filteredInvoices = useMemo(() => (data?.invoices ?? []).filter((i) => {
+    if (invClass !== "all" && i.classroom !== invClass) return false;
+    if (invStatus !== "all") {
+      if (invStatus === "owing") { if (!(i.balance > 0)) return false; }
+      else if (i.status !== invStatus) return false;
+    }
+    if (invSearch.trim()) {
+      const q = invSearch.toLowerCase();
+      if (!`${i.student} ${i.invoiceNo} ${i.classroom ?? ""}`.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  }), [data, invClass, invStatus, invSearch]);
+  const invFiltersActive = invClass !== "all" || invStatus !== "all" || !!invSearch.trim();
+  const visiblePayments = useMemo(() => allPayments.filter((p) => {
+    if (rcpMethod !== "all" && p.method !== rcpMethod) return false;
+    if (rcpSearch.trim()) {
+      const q = rcpSearch.toLowerCase();
+      if (!`${p.student} ${p.receiptNo} ${p.classroom ?? ""} ${p.invoiceNo}`.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  }), [allPayments, rcpMethod, rcpSearch]);
+  const rcpFiltersActive = rcpMethod !== "all" || !!rcpSearch.trim();
+
+  const exportInvoicesCsv = () => downloadCsv(
+    `invoices-${data?.terms.find((t) => t.id === termId)?.name ?? "term"}.csv`,
+    ["Invoice", "Learner", "Class", "Total (GH¢)", "Discount (GH¢)", "Paid (GH¢)", "Balance (GH¢)", "Status"],
+    filteredInvoices.map((i) => [i.invoiceNo, i.student, i.classroom ?? "", i.total / 100, i.discount / 100, i.paid / 100, i.balance / 100, i.status]),
+  );
 
   if (!data) return <LoadingBlock label="Loading billing…" />;
 
@@ -158,24 +198,34 @@ export function Fees() {
         </TabsList>
 
         <TabsContent value="invoices">
-          <Card>
-            <CardContent className="p-0">
-              <div className="overflow-x-auto nice-scroll max-h-[560px]">
-                <table className="w-full text-sm">
-                  <thead className="sticky top-0 bg-secondary/70 backdrop-blur">
-                    <tr className="text-left border-b">
-                      <th className="px-3 py-2.5 font-medium">Invoice</th>
-                      <th className="px-3 py-2.5 font-medium">Learner</th>
-                      <th className="px-3 py-2.5 font-medium hidden md:table-cell">Class</th>
-                      <th className="px-3 py-2.5 font-medium text-right">Total</th>
-                      <th className="px-3 py-2.5 font-medium text-right hidden sm:table-cell">Paid</th>
-                      <th className="px-3 py-2.5 font-medium text-right">Balance</th>
-                      <th className="px-3 py-2.5 font-medium hidden lg:table-cell">Status</th>
-                      <th className="px-3 py-2.5"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.invoices.map((inv) => (
+          <div className="space-y-3">
+            <FilterBar active={invFiltersActive} onClear={() => { setInvClass("all"); setInvStatus("all"); setInvSearch(""); }} count={filteredInvoices.length} total={data.invoices.length} label="Invoice filters"
+              actions={<Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={exportInvoicesCsv} disabled={!filteredInvoices.length}><Download className="size-3.5" /> CSV</Button>}>
+              <FilterSearch value={invSearch} onChange={setInvSearch} placeholder="Learner, invoice no…" />
+              <FilterSelect label="Class" value={invClass} onChange={setInvClass} options={[{ value: "all", label: "All classes" }, ...classOptions]} />
+              <FilterSelect label="Status" value={invStatus} onChange={setInvStatus} options={[
+                { value: "all", label: "All" }, { value: "owing", label: "Owing" }, { value: "UNPAID", label: "Unpaid" },
+                { value: "PARTIAL", label: "Partial" }, { value: "PAID", label: "Paid" }, { value: "OVERDUE", label: "Overdue" },
+              ]} />
+            </FilterBar>
+            <Card>
+              <CardContent className="p-0">
+                <div className="overflow-x-auto nice-scroll max-h-[560px]">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 bg-secondary/70 backdrop-blur">
+                      <tr className="text-left border-b">
+                        <th className="px-3 py-2.5 font-medium">Invoice</th>
+                        <th className="px-3 py-2.5 font-medium">Learner</th>
+                        <th className="px-3 py-2.5 font-medium hidden md:table-cell">Class</th>
+                        <th className="px-3 py-2.5 font-medium text-right">Total</th>
+                        <th className="px-3 py-2.5 font-medium text-right hidden sm:table-cell">Paid</th>
+                        <th className="px-3 py-2.5 font-medium text-right">Balance</th>
+                        <th className="px-3 py-2.5 font-medium hidden lg:table-cell">Status</th>
+                        <th className="px-3 py-2.5"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredInvoices.map((inv) => (
                       <tr key={inv.id} className="border-b last:border-0 hover:bg-secondary/30">
                         <td className="px-3 py-2.5 font-mono text-xs">{inv.invoiceNo}</td>
                         <td className="px-3 py-2.5">
@@ -198,21 +248,31 @@ export function Fees() {
                         </td>
                       </tr>
                     ))}
+                      {!filteredInvoices.length && <tr><td colSpan={8}><EmptyState icon={<Receipt className="size-5" />} title="No invoices match" hint="Adjust the class, status or search." /></td></tr>}
                   </tbody>
                 </table>
               </div>
             </CardContent>
           </Card>
+          </div>
         </TabsContent>
 
         <TabsContent value="receipts">
+          <div className="space-y-3">
+            <FilterBar active={rcpFiltersActive} onClear={() => { setRcpMethod("all"); setRcpSearch(""); }} count={visiblePayments.length} total={allPayments.length} label="Receipt filters">
+              <FilterSearch value={rcpSearch} onChange={setRcpSearch} placeholder="Learner, receipt no…" />
+              <FilterSelect label="Method" value={rcpMethod} onChange={setRcpMethod} options={[
+                { value: "all", label: "All methods" },
+                ...Object.entries(PAYMENT_LABELS).map(([k, v]) => ({ value: k, label: v })),
+              ]} />
+            </FilterBar>
           <Card>
             <CardHeader className="pb-3 flex-row items-center justify-between space-y-0 flex-wrap gap-2">
-              <CardTitle className="text-base flex items-center gap-2"><Receipt className="size-4" /> Issued receipts — {allPayments.length} this term</CardTitle>
+              <CardTitle className="text-base flex items-center gap-2"><Receipt className="size-4" /> Issued receipts — {visiblePayments.length} shown</CardTitle>
               <div className="flex items-center gap-2">
                 <Checkbox
-                  checked={allPayments.length > 0 && checkedReceipts.size === allPayments.length}
-                  onCheckedChange={(v) => setCheckedReceipts(v ? new Set(allPayments.map((p) => p.id)) : new Set())}
+                  checked={visiblePayments.length > 0 && visiblePayments.every((p) => checkedReceipts.has(p.id))}
+                  onCheckedChange={(v) => setCheckedReceipts(v ? new Set(visiblePayments.map((p) => p.id)) : new Set())}
                   aria-label="Select all receipts"
                 />
                 <span className="text-xs text-muted-foreground select-all-label">Select all</span>
@@ -238,7 +298,7 @@ export function Fees() {
                     </tr>
                   </thead>
                   <tbody>
-                    {allPayments.slice(0, 150).map((p) => (
+                    {visiblePayments.slice(0, 150).map((p) => (
                       <tr key={p.id} className="border-b last:border-0 hover:bg-secondary/30">
                         <td className="px-3 py-2.5">
                           <Checkbox
@@ -264,6 +324,7 @@ export function Fees() {
               </div>
             </CardContent>
           </Card>
+          </div>
         </TabsContent>
 
         <TabsContent value="structures">

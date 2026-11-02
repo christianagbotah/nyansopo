@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ModuleHeader, LoadingBlock, StatusBadge, SeverityBadge, RiskPill, EmptyState } from "@/components/ui-helpers";
+import { ModuleHeader, LoadingBlock, StatusBadge, SeverityBadge, RiskPill, EmptyState, FilterBar, FilterSelect, FilterSearch } from "@/components/ui-helpers";
 import { fmtCedi, fmtDate, FLAG_LABELS, PAYMENT_LABELS, fmtDateTime } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -36,6 +36,8 @@ export function Students() {
   const [classrooms, setClassrooms] = useState<{ id: string; name: string }[]>([]);
   const [search, setSearch] = useState("");
   const [classId, setClassId] = useState("all");
+  const [gender, setGender] = useState("all");
+  const [feeState, setFeeState] = useState("all");
   const [selected, setSelected] = useState<StudentRow | null>(null);
   const [profile, setProfile] = useState<any | null>(null);
   const [addOpen, setAddOpen] = useState(false);
@@ -67,12 +69,24 @@ export function Students() {
     if (!rows) return [];
     let out = rows;
     if (classId !== "all") out = out.filter((r) => r.classroomId === classId);
+    if (gender !== "all") out = out.filter((r) => r.gender === gender);
+    if (feeState !== "all") {
+      out = out.filter((r) => {
+        const bal = (r.invoice?.billed ?? 0) - (r.invoice?.paid ?? 0);
+        if (feeState === "owing") return bal > 0;
+        if (feeState === "settled") return bal <= 0;
+        if (feeState === "overdue") return r.invoice?.status === "OVERDUE" || (r.invoice?.status === "UNPAID" && bal > 0);
+        return true;
+      });
+    }
     if (search.trim()) {
       const q = search.toLowerCase();
       out = out.filter((r) => `${r.name} ${r.otherNames ?? ""} ${r.nyansapoIndex} ${r.guardianName} ${r.guardianPhone}`.toLowerCase().includes(q));
     }
     return out;
-  }, [rows, classId, search]);
+  }, [rows, classId, gender, feeState, search]);
+  const filtersActive = classId !== "all" || gender !== "all" || feeState !== "all" || !!search.trim();
+  const clearFilters = () => { setClassId("all"); setGender("all"); setFeeState("all"); setSearch(""); };
 
   async function openProfile(s: StudentRow) {
     setSelected(s);
@@ -130,20 +144,16 @@ export function Students() {
         }
       />
 
-      <div className="flex flex-wrap gap-2 mb-4">
-        <div className="relative flex-1 min-w-52">
-          <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
-          <Input className="pl-8" placeholder="Search name, index, guardian or MoMo number…" value={search} onChange={(e) => setSearch(e.target.value)} />
-        </div>
-        <Select value={classId} onValueChange={setClassId}>
-          <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All classes</SelectItem>
-            {classrooms.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
-          </SelectContent>
-        </Select>
+      <FilterBar active={filtersActive} onClear={clearFilters} count={filtered.length} total={rows.length} label="Roster filters">
+        <FilterSearch value={search} onChange={setSearch} placeholder="Name, index, guardian, MoMo…" className="min-w-52" />
+        <FilterSelect label="Class" value={classId} onChange={setClassId}
+          options={[{ value: "all", label: "All classes" }, ...classrooms.map((c) => ({ value: c.id, label: c.name }))]} />
+        <FilterSelect label="Gender" value={gender} onChange={setGender}
+          options={[{ value: "all", label: "All" }, { value: "M", label: "Boys" }, { value: "F", label: "Girls" }]} />
+        <FilterSelect label="Fees" value={feeState} onChange={setFeeState}
+          options={[{ value: "all", label: "All" }, { value: "owing", label: "Owing" }, { value: "settled", label: "Settled" }, { value: "overdue", label: "Overdue" }]} />
         {/* iEduPro roster views: on roll / muted / alumni */}
-        <div className="inline-flex rounded-lg border bg-muted/40 p-0.5" role="group" aria-label="Roster view">
+        <div className="inline-flex rounded-lg border bg-muted/40 p-0.5 ml-auto" role="group" aria-label="Roster view">
           {([
             ["ACTIVE", "On roll"],
             ["WITHDRAWN", "Muted"],
@@ -160,7 +170,7 @@ export function Students() {
             >{label}</button>
           ))}
         </div>
-      </div>
+      </FilterBar>
 
       <Card>
         <CardContent className="p-0">
