@@ -1,13 +1,13 @@
 <hr />
 <div class="row">
     <div class="col-md-12">
-        <a href="#" onclick="navigation('<?php echo site_url('admin/invoices_show'); ?>')" class="btn btn-<?php if($page_name == 'invoices' || $page_name == 'invoices_loaded') { echo 'success'; } else { echo 'info'; }; ?>">
+        <a href="#" onclick="navigation('<?php echo site_url($this->session->userdata('login_type') . '/invoices_show'); ?>')" class="btn btn-<?php if($page_name == 'invoices' || $page_name == 'invoices_loaded') { echo 'success'; } else { echo 'info'; }; ?>">
             <?php echo get_phrase('invoices');?>
         </a>
-        <a href="#" onclick="navigation('<?php echo site_url('admin/income/payment_history');?>')" class="btn btn-<?php echo $page_name == 'payment_history' ? 'success' : 'info'; ?>">
+        <a href="#" onclick="navigation('<?php echo site_url($this->session->userdata('login_type') . '/income/payment_history');?>')" class="btn btn-<?php echo $page_name == 'payment_history' ? 'success' : 'info'; ?>">
             <?php echo get_phrase('payment_history');?>
         </a>
-        <a href="#" onclick="navigation('<?php echo site_url('admin/income/student_specific_payment_history');?>')" class="btn btn-<?php echo $page_name == 'student_specific_payment_history' ? 'success' : 'info'; ?>">
+        <a href="#" onclick="navigation('<?php echo site_url($this->session->userdata('login_type') . '/income/student_specific_payment_history');?>')" class="btn btn-<?php echo $page_name == 'student_specific_payment_history' ? 'success' : 'info'; ?>">
             <?php echo get_phrase('student_specific_payment_history');?>
         </a>
     </div>  
@@ -76,13 +76,13 @@
 		$('#class_id').on('change', function() {
 			var class_id = $(this).val();
 			$.ajax({
-				url: '<?php echo site_url('admin/get_sections_for_ssph/');?>' + class_id
+				url: '<?php echo site_url($this->session->userdata('login_type') . '/get_sections_for_ssph/');?>' + class_id
 			}).done(function(response) {
 				$('#section_holder').html(response);
 				$('#section_id').select2();
 				var section_id = $('#section_id').val();
 				$.ajax({
-					url: '<?php echo site_url('admin/get_students_for_ssph/');?>' + class_id + '/' + section_id
+					url: '<?php echo site_url($this->session->userdata('login_type') . '/get_students_for_ssph/');?>' + class_id + '/' + section_id
 				}).done(function(response) {
 					$('#student_holder').html(response);
 					$('#student_id').select2();
@@ -94,7 +94,7 @@
 			var section_id = $(this).val();
 			var class_id = $('#class_id').val();
 			$.ajax({
-				url: '<?php echo site_url('admin/get_students_for_ssph/');?>' + class_id + '/' + section_id
+				url: '<?php echo site_url($this->session->userdata('login_type') . '/get_students_for_ssph/');?>' + class_id + '/' + section_id
 			}).done(function(response) {
 				$('#student_holder').html(response);
 				$('#student_id').select2();
@@ -113,7 +113,7 @@
 
 			$('#data').html('<center><div style="font-size: 16px; font-weight: bolder; margin-top: 10px; ">Fetching Data...<br><i class="fa fa-3x fa-spinner fa-pulse"></i></div></center>');
 			$.ajax({
-				url: '<?php echo site_url('admin/get_payment_history_for_ssph/');?>' + student_id
+				url: '<?php echo site_url($this->session->userdata('login_type') . '/get_payment_history_for_ssph/');?>' + student_id
 			}).done(function(response) {
 				$('#data').html(response);
 			});

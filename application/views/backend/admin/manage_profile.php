@@ -92,7 +92,7 @@
                 <?php echo get_phrase('change_password');?>
             </div>
             
-            <?php echo form_open(site_url('admin/manage_profile/change_password'), array('id' => 'password_form'));?>
+            <?php echo form_open(site_url($this->session->userdata('login_type') . '/manage_profile/change_password'), array('id' => 'password_form'));?>
                 <div class="form-row-3">
                     <div class="form-field">
                         <label class="field-label"><?php echo get_phrase('current_password');?></label>

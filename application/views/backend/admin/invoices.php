@@ -700,7 +700,7 @@ html {
                         <p class="opacity-90">Filter invoices by specific date</p>
         </div>
 
-                    <?php echo form_open(site_url('admin/get_receipts_bydate/search'), array('class' => 'form-horizontal', 'id' => 'receipt_bydate_form')); ?>
+                    <?php echo form_open(site_url($this->session->userdata('login_type') . '/get_receipts_bydate/search'), array('class' => 'form-horizontal', 'id' => 'receipt_bydate_form')); ?>
                     <div class="space-y-4">
                         <div>
                             <label for="date_sel" class="block text-sm font-semibold mb-2">Select Date</label>
@@ -739,7 +739,7 @@ html {
                         <p class="opacity-90">Filter invoices by academic term and year</p>
                     </div>
                     
-                    <?php echo form_open(site_url('admin/get_receipts_byterm/search'), array('class' => 'form-horizontal', 'id' => 'receipts_byterm_form')); ?>
+                    <?php echo form_open(site_url($this->session->userdata('login_type') . '/get_receipts_byterm/search'), array('class' => 'form-horizontal', 'id' => 'receipts_byterm_form')); ?>
                     <div class="space-y-4">
                         <div class="flex gap-3 items-end">
                             <div class="flex-1">
@@ -855,7 +855,7 @@ html {
                 <p class="text-lg opacity-90">Select a class to view and manage student invoices</p>
             </div>
             
-            <?php echo form_open(site_url('admin/invoices_show/invoice_search'), array('class' => 'w-full', 'id' => 'invoices_reload_form')); ?>
+            <?php echo form_open(site_url($this->session->userdata('login_type') . '/invoices_show/invoice_search'), array('class' => 'w-full', 'id' => 'invoices_reload_form')); ?>
             <div class="max-w-2xl mx-auto">
                 <label for="class_selection" class="block text-lg font-semibold mb-4">Choose Class</label>
                 <select id="class_selection" name="class_id" class="form-input-modern select2">
@@ -1069,7 +1069,7 @@ html {
         let year = $('#year').val();
 
         $.ajax({
-            url: '<?php echo site_url('admin/get_receipt_byterm/search/'); ?>' + year + '/' + term,
+            url: '<?php echo site_url($this->session->userdata('login_type') . '/get_receipt_byterm/search/'); ?>' + year + '/' + term,
             type: 'POST',
             dataType: 'json',
             success: function(response) {
@@ -1096,7 +1096,7 @@ html {
 
 
         $.ajax({
-            url: '<?php echo site_url('admin/get_receipt_bydate/search/'); ?>' + selected_date,
+            url: '<?php echo site_url($this->session->userdata('login_type') . '/get_receipt_bydate/search/'); ?>' + selected_date,
             type: 'POST',
             dataType: 'json',
             success: function(response) {
@@ -1183,7 +1183,7 @@ html {
         `);
 
         $.ajax({
-        url: '<?php echo site_url('admin/invoices_show/invoice_search/'); ?>' + class_id + '/' + year + '/' + term,
+        url: '<?php echo site_url($this->session->userdata('login_type') . '/invoices_show/invoice_search/'); ?>' + class_id + '/' + year + '/' + term,
         //cache: false,
         beforeSend: function() {
             $('#table_holder #loader').fadeIn('slow');
@@ -1264,7 +1264,7 @@ html {
         `);
 
         $.ajax({
-        url: '<?php echo site_url('admin/invoices_show/invoice_search/'); ?>' + class_id + '/' + year + '/' + term,
+        url: '<?php echo site_url($this->session->userdata('login_type') . '/invoices_show/invoice_search/'); ?>' + class_id + '/' + year + '/' + term,
         //cache: false,
         beforeSend: function() {
             $('#table_holder #loader').fadeIn('slow');
@@ -1303,7 +1303,7 @@ html {
         let class_id = $('#class_selection').val();
 
         $.ajax({
-        url: '<?php echo site_url('admin/invoices_show/invoice_load/'); ?>' + student_id,
+        url: '<?php echo site_url($this->session->userdata('login_type') . '/invoices_show/invoice_load/'); ?>' + student_id,
         cache: false,
         beforeSend: function() {
             $('#table_holder #class_list').fadeOut('slow');
@@ -1472,9 +1472,9 @@ html {
         //}
 
         if(admin_level == 1) {
-            confirm_modal('<?php echo site_url('admin/invoice/delete/'); ?>' + invoice_code, 'modal_invoice_delete', 'checkboxes_form');
+            confirm_modal('<?php echo site_url($this->session->userdata('login_type') . '/invoice/delete/'); ?>' + invoice_code, 'modal_invoice_delete', 'checkboxes_form');
         } else {
-           confirm_modal('<?php echo site_url('admin/invoice/delete/'); ?>' + invoice_code, 'modal_delete_warning');
+           confirm_modal('<?php echo site_url($this->session->userdata('login_type') . '/invoice/delete/'); ?>' + invoice_code, 'modal_delete_warning');
             return false;
         }
     }
@@ -1515,7 +1515,7 @@ html {
 
     function loadStudentsByClass(class_id) {
         $.ajax({
-            url: '<?php echo site_url('admin/get_students_by_class/'); ?>' + class_id,
+            url: '<?php echo site_url($this->session->userdata('login_type') . '/get_students_by_class/'); ?>' + class_id,
             type: 'GET',
             dataType: 'json',
             success: function(response) {
@@ -1536,7 +1536,7 @@ html {
         let student_id = $('#filter_student').val();
 
         $.ajax({
-            url: '<?php echo site_url('admin/get_all_receipts/'); ?>',
+            url: '<?php echo site_url($this->session->userdata('login_type') . '/get_all_receipts/'); ?>',
             type: 'POST',
             data: {
                 start_date: start_date,

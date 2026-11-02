@@ -114,7 +114,7 @@
 												</div>
 											<?php endif;?>	
 
-											<?php echo form_open(site_url('admin/modal_mobile_money_checkout/confirm_t_id/'.$invoice_id), array('class' => 'form-horizontal form-group-bordered')) ?>
+											<?php $momo_base = $this->session->userdata('login_type'); echo form_open(site_url($momo_base . '/modal_mobile_money_checkout/confirm_t_id/'.$invoice_id), array('class' => 'form-horizontal form-group-bordered')) ?>
 												<div class="form-group">
 													<label class="form-control-label col-sm-6">Transaction ID from Parent:</label>
 													<div class="col-sm-6">
@@ -147,7 +147,7 @@
 															<input type="submit" id="confirm_btn" class="btn btn-primary" name="confirm_transaction_id" value="Confirm Transaction ID">
 														</div>
 														<div class="col-sm-6 col-xs-6">
-															<a href="<?php echo site_url('admin/'.$page_name); ?>" class="btn btn-danger">Cancel Transaction</a>
+															<a href="<?php echo site_url($this->session->userdata('login_type').'/'.$page_name); ?>" class="btn btn-danger">Cancel Transaction</a>
 														</div>
 													</div>
 												</div>
@@ -191,7 +191,7 @@
 
  		//send request to via ajax
  		$.ajax({
- 			url: '<?php echo site_url('admin/confirm_transaction/') ?>' + student_id + '/' + invoice_id + '/' + parent_t_id + '/' + admin_t_id,
+ 			url: '<?php echo site_url($this->session->userdata('login_type').'/confirm_transaction/') ?>' + student_id + '/' + invoice_id + '/' + parent_t_id + '/' + admin_t_id,
  			success: function(confirmation_t) {
 
  					if(admin_t_id.length == 10 && confirmation_t == 'TRUE') {

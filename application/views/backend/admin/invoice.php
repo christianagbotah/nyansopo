@@ -103,7 +103,7 @@
             
 			<!----CREATION FORM STARTS---->
 			<div class="tab-pane box" id="add" style="padding: 5px">
-            <?php echo form_open(site_url('admin/invoice/create'), array('class' => 'form-horizontal form-groups-bordered validate','target'=>'_top'));?>
+            <?php echo form_open(site_url($this->session->userdata('login_type') . '/invoice/create'), array('class' => 'form-horizontal form-groups-bordered validate','target'=>'_top'));?>
                 <div class="row">
                     <div class="col-md-6">
                         <div class="panel panel-default panel-shadow" data-collapsed="0">

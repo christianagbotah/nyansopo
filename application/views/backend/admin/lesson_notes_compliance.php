@@ -625,7 +625,7 @@
                                 <td><strong><?php echo $teacher->name; ?></strong></td>
                                 <td><?php echo $teacher->subjects_count; ?></td>
                                 <td>
-                                    <a href="<?php echo site_url('admin/lesson_notes_pending?teacher_id=' . $teacher->teacher_id); ?>" 
+                                    <a href="<?php echo site_url($this->session->userdata('login_type') . '/lesson_notes_pending?teacher_id=/' . $teacher->teacher_id); ?>" 
                                        class="modern-btn modern-btn-primary" style="padding: 6px 12px; font-size: 13px;">
                                         <?php echo get_phrase('view_details'); ?>
                                     </a>
@@ -666,7 +666,7 @@
                                 <td><?php echo $teacher->declined_notes; ?></td>
                                 <td><?php echo number_format($teacher->decline_rate, 1); ?>%</td>
                                 <td>
-                                    <a href="<?php echo site_url('admin/lesson_notes_pending?teacher_id=' . $teacher->teacher_id . '&status=declined'); ?>" 
+                                    <a href="<?php echo site_url($this->session->userdata('login_type') . '/lesson_notes_pending?teacher_id=/' . $teacher->teacher_id . '&status=declined'); ?>" 
                                        class="modern-btn modern-btn-primary" style="padding: 6px 12px; font-size: 13px;">
                                         <?php echo get_phrase('view_declined_notes'); ?>
                                     </a>

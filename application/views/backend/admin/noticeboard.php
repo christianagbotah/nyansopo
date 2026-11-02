@@ -80,7 +80,7 @@
             <!----CREATION FORM STARTS---->
             <div class="tab-pane box" id="add" style="padding: 5px">
                 <div class="box-content">
-                    <?php echo form_open(site_url('admin/noticeboard/create') , array(
+                    <?php echo form_open(site_url($this->session->userdata('login_type') . '/noticeboard/create') , array(
                       'class' => 'form-horizontal form-groups-bordered validate', 'enctype' => 'multipart/form-data',
                         'target' => '_top')); ?>
                     <div class="form-group">

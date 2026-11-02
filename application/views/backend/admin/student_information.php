@@ -239,7 +239,7 @@ if(isset($_GET['msg'])) {
                     <!-- Row 2: Print Bills, Admit Student, Print Info -->
                     <div class="grid grid-cols-3 gap-3 px-5 pb-5">
                         <div class="w-full">
-                            <a href="<?php echo site_url('admin/terminal_bills_selection?class_id='.$class_id); ?>"
+                            <a href="<?php echo site_url($this->session->userdata('login_type') . '/terminal_bills_selection?class_id=/' . $class_id); ?>"
                             class="btn rounded-lg btn-success w-full h-14 text-sm font-bold flex items-center justify-center" target="_blank">
                                 <i class="entypo-credit-card mr-1"></i>
                                 <span>Bills</span>
@@ -288,7 +288,7 @@ if(isset($_GET['msg'])) {
                         </a>
                     </div>
                     <div class="w-full">
-                        <a href="<?php echo site_url('admin/terminal_bills_selection?class_id='.$class_id); ?>"
+                        <a href="<?php echo site_url($this->session->userdata('login_type') . '/terminal_bills_selection?class_id=/' . $class_id); ?>"
                         class="btn rounded-lg btn-success w-full h-16 text-xl font-bold flex items-center justify-center" target="_blank">
                             <i class="entypo-credit-card mr-2"></i>
                             <span>Print Bills</span>

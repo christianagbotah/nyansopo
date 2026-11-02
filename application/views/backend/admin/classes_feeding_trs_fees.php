@@ -383,7 +383,7 @@ $('#byterm_form').submit(function(e) {
 function get_fct_by_date() {
     let date = $('#date_sel').val();
     $.ajax({
-        url: '<?php echo site_url('admin/get_fct_bydate/search/'); ?>' + date,
+        url: '<?php echo site_url($this->session->userdata('login_type') . '/get_fct_bydate/search/'); ?>' + date,
         type: 'POST',
         dataType: 'json',
         success: function(r) {
@@ -417,7 +417,7 @@ function get_fct_by_term() {
     let term = $('#term').val();
     
     $.ajax({
-        url: '<?php echo site_url('admin/get_fct_byterm/search/'); ?>' + year + '/' + term,
+        url: '<?php echo site_url($this->session->userdata('login_type') . '/get_fct_byterm/search/'); ?>' + year + '/' + term,
         type: 'POST',
         dataType: 'json',
         success: function(r) {

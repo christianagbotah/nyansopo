@@ -43,7 +43,7 @@
     </div>
 
     <div class="col-md-12" id="table_holder">
-        <?php echo form_open(site_url('admin/bulk_invoice_delete/invoices_show/true'), array('class' => 'form-horizontal form-groups-bordered validate', 'id' => 'checkboxes_form',  'enctype' => 'multipart/form-data'));?>
+        <?php echo form_open(site_url($this->session->userdata('login_type') . '/bulk_invoice_delete/invoices_show/true'), array('class' => 'form-horizontal form-groups-bordered validate', 'id' => 'checkboxes_form',  'enctype' => 'multipart/form-data'));?>
                     
 
                     <table class="w-full text-xl text-left text-gray-500 dark:text-gray-400 datatable normal_table" id="tinvoices">
@@ -196,7 +196,7 @@
 
                                         <li><a href="#" onclick="bulk_invoice_view_modal('.$student_id.')" style="color: black;"><i class="entypo-credit-card"></i>&nbsp;'.get_phrase('view_bulk_invoice').'</a></li><li class="divider"></li>
 
-                                        <li><a href="#" onclick="loadModalContent(\'createModal\', \''.site_url('admin/invoice_modification_modal/').'\' + \''.$in_code.'\', \'<i class=\"fa fa-edit\"></i> Modify Invoice\')" style="color: green;"><i class="entypo-pencil"></i>&nbsp;' . get_phrase('modify_invoice') . '</a></li><li class="divider"></li>
+                                        <li><a href="#" onclick="loadModalContent(\'createModal\', \''.site_url($this->session->userdata('login_type') . '/invoice_modification_modal/').'\' + \''.$in_code.'\', \'<i class=\"fa fa-edit\"></i> Modify Invoice\')" style="color: green;"><i class="entypo-pencil"></i>&nbsp;' . get_phrase('modify_invoice') . '</a></li><li class="divider"></li>
 
                                         </ul></div>';
                     $nchecked      = $bulk_invoice_sel;
@@ -280,14 +280,14 @@
 
         if(admin_level == 1) {
                     
-            confirm_modal('<?php echo site_url('admin/bulk_invoice_delete'); ?>', 'modal_invoice_delete', 'checkboxes_form', <?=$class_id;?>);
+            confirm_modal('<?php echo site_url($this->session->userdata('login_type') . '/bulk_invoice_delete'); ?>', 'modal_invoice_delete', 'checkboxes_form', <?=$class_id;?>);
 
         } else {
 
             if(approvedCounter > 0) {
                 //We have approval for some of the invoices here, so we can display the direct delete button now
 
-                confirm_modal('<?php echo site_url('admin/bulk_invoice_delete'); ?>', 'modal_invoice_delete', 'checkboxes_form', <?=$class_id;?>);
+                confirm_modal('<?php echo site_url($this->session->userdata('login_type') . '/bulk_invoice_delete'); ?>', 'modal_invoice_delete', 'checkboxes_form', <?=$class_id;?>);
                 return false;
 
             } else {
@@ -331,7 +331,7 @@
             "processing": true,
             "serverSide": true,
             "ajax":{
-                "url": "<?php //echo site_url('admin/get_invoices') ?>",
+                "url": "<?php //echo site_url($this->session->userdata('login_type') . '/get_invoices') ?>",
                 "dataType": "json",
                 "type": "POST",
             },

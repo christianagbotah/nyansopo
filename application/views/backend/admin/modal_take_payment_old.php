@@ -465,7 +465,7 @@ $receipt_style = $this->db->get_where('settings', array('type' => 'receipt_style
             $('#err').text('No Payment Made!');
         } else {
             
-            //const url = '<?php //echo site_url('admin/income?id='.$class_id); ?>';
+            //const url = '<?php //echo site_url($this->session->userdata('login_type') . '/income?id=/' . $class_id); ?>';
 
             //reload that student's invoices
             //invoice_load(<?//=$student_id;?>);
