@@ -1,9 +1,27 @@
 <?php
 defined('BASEPATH') OR exit('No direct script access allowed');
 
+// Vehicle / haulage module DataTable backends (vajax_* functions).
+// Dispatched transparently through __call() below so models can keep calling
+// $this->ajaxload->getAllLoadingsDataTable(...) etc.
+require_once __DIR__ . '/vehicle_ajaxdataload.php';
+
 class Ajaxdataload_model extends CI_Model {
         function __construct() {
                 parent::__construct();
+        }
+
+        /**
+         * Forward calls to undefined methods to the vehicle module backends.
+         * Keeps this mega-model open for extension without editing every caller.
+         */
+        public function __call($method, $args) {
+                $fn = 'vajax_' . $method;
+                if (function_exists($fn)) {
+                        return $fn($this, $args);
+                }
+                log_message('error', 'Ajaxdataload_model: call to undefined method ' . $method);
+                return NULL;
         }
 
         /*----------------------------- BOOKS -------------------------------*/
