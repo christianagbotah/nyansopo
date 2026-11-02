@@ -884,6 +884,69 @@
     margin-left: 2px;
 }
 
+/* Quick Presets */
+.preset-section {
+    background: linear-gradient(135deg, rgba(250, 204, 21, 0.08) 0%, rgba(251, 146, 60, 0.08) 100%);
+    border: 1px dashed rgba(245, 158, 11, 0.45);
+    border-radius: 12px;
+    padding: 14px 16px;
+}
+
+.preset-hint {
+    font-weight: 400;
+    font-size: 11px;
+    color: #92702a;
+    margin-left: 6px;
+}
+
+.preset-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-top: 10px;
+}
+
+@media (max-width: 900px) {
+    .preset-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+.preset-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    background: white;
+    border: 1.5px solid rgba(245, 158, 11, 0.4);
+    color: #92600a;
+    border-radius: 10px;
+    padding: 10px 8px;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: center;
+}
+
+.preset-btn:hover {
+    background: linear-gradient(135deg, #f59e0b 0%, #f97316 100%);
+    color: white;
+    border-color: transparent;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 14px rgba(245, 158, 11, 0.35);
+}
+
+.preset-btn.preset-accent {
+    border-color: rgba(99, 102, 241, 0.4);
+    color: #4338ca;
+}
+
+.preset-btn.preset-accent:hover {
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    box-shadow: 0 6px 14px rgba(99, 102, 241, 0.35);
+}
+
 .modal-form-footer {
     margin-top: 24px;
     padding-top: 20px;
@@ -1324,6 +1387,39 @@ function showCreateModal() {
             <input type="hidden" id="profile_id" name="profile_id">
             <input type="hidden" name="<?php echo $this->security->get_csrf_token_name(); ?>" value="<?php echo $this->security->get_csrf_hash(); ?>">
             
+            <div class="preset-section">
+                <label class="modal-form-label">
+                    <i class="fa fa-bolt text-warning"></i> Quick Presets
+                    <span class="preset-hint"><?php echo get_phrase('fills_the_form_for_common_daily_fee_discounts'); ?></span>
+                </label>
+                <div class="preset-grid">
+                    <button type="button" class="preset-btn" onclick="applyPreset(['feeding'], 100, 'Full Lunch (Feeding) 100%')">
+                        <i class="fa fa-utensils"></i> Full Lunch
+                    </button>
+                    <button type="button" class="preset-btn" onclick="applyPreset(['feeding'], 50, 'Half Lunch (Feeding) 50%')">
+                        <i class="fa fa-utensils"></i> Half Lunch
+                    </button>
+                    <button type="button" class="preset-btn" onclick="applyPreset(['classes'], 100, 'Class Fee 100%')">
+                        <i class="fa fa-school"></i> Full Class Fee
+                    </button>
+                    <button type="button" class="preset-btn" onclick="applyPreset(['classes'], 50, 'Class Fee 50%')">
+                        <i class="fa fa-school"></i> Half Class Fee
+                    </button>
+                    <button type="button" class="preset-btn" onclick="applyPreset(['breakfast'], 100, 'Breakfast 100%')">
+                        <i class="fa fa-mug-hot"></i> Full Breakfast
+                    </button>
+                    <button type="button" class="preset-btn" onclick="applyPreset(['water'], 100, 'Water 100%')">
+                        <i class="fa fa-tint"></i> Full Water
+                    </button>
+                    <button type="button" class="preset-btn preset-accent" onclick="applyPreset(['all_daily_fees'], 100, 'All Daily Fees 100%')">
+                        <i class="fa fa-star"></i> All Fees FULL
+                    </button>
+                    <button type="button" class="preset-btn preset-accent" onclick="applyPreset(['all_daily_fees'], 50, 'All Daily Fees 50%')">
+                        <i class="fa fa-star-half-alt"></i> All Fees 50%
+                    </button>
+                </div>
+            </div>
+            
             <div class="grid grid-cols-2 gap-4">
                 <div>
                     <div class="modal-form-group">
@@ -1612,6 +1708,51 @@ function toggleStatus(profile_id) {
     }).fail(function() {
         showAjaxModal_alert('<?php echo get_phrase('an_error_occurred'); ?>', 'error');
     });
+}
+
+/*
+ * Apply a quick preset to the create-profile form.
+ * feeTypes: array of fee type values as used by the multiselect
+ *           (e.g. ['feeding'], ['classes'], ['all_daily_fees'])
+ * value:    percentage discount value (100 = full, 50 = half)
+ * name:     suggested profile name
+ */
+function applyPreset(feeTypes, value, name) {
+    // Switch to daily fees category (unless the select is disabled by restricted mode)
+    var catSelect = $('#discount_category');
+    if (!catSelect.prop('disabled') && catSelect.val() !== 'daily_fees') {
+        catSelect.val('daily_fees');
+        updateDiscountTypes();
+    }
+
+    $('#discount_method').val('percentage');
+    $('#discount_value').val(value);
+    if ($('#profile_name').val() === '' && name) {
+        $('#profile_name').val(name);
+    }
+
+    // The multiselect loads via AJAX - wait for it, then tick the right boxes
+    var tries = 0;
+    var timer = setInterval(function() {
+        var boxes = $('.multiselect-item input[type="checkbox"]');
+        if (boxes.length > 0 || tries > 25) {
+            clearInterval(timer);
+            boxes.prop('checked', false);
+            var matched = [];
+            boxes.each(function() {
+                if (feeTypes.indexOf($(this).val()) !== -1) {
+                    $(this).prop('checked', true).trigger('change');
+                    matched.push($(this).val());
+                }
+            });
+            updateHiddenField();
+            updateSelectAllButton();
+            if (matched.length === 0) {
+                showAjaxModal_alert('<?php echo get_phrase('fee_module_not_enabled_for_this_preset'); ?>', 'error');
+            }
+        }
+        tries++;
+    }, 150);
 }
 
 function updateDiscountTypes() {

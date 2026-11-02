@@ -32,3 +32,7 @@ $lang['generating_excel_file'] = 'Generating Excel File';
 
 $lang['bulk_arrears_import'] = 'Bulk Arrears Import';
 $lang['arrears'] = 'Arrears';
+
+$lang['fills_the_form_for_common_daily_fee_discounts'] = 'One click fills the form for common daily-fee discounts';
+$lang['fee_module_not_enabled_for_this_preset'] = 'The fee module for this preset is not enabled in Fee Collection Settings';
+$lang['quick_presets'] = 'Quick Presets';
