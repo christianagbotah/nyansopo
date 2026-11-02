@@ -1,4 +1,11 @@
 <!-- MODAL UPDATED VERSION 2.0 - CASHIER FILTER -->
+<?php
+// Resolve portal context (admin or cashier) so AJAX endpoints hit the right controller
+$asm_base = $this->uri->segment(1);
+if (empty($asm_base) || !in_array($asm_base, array('admin', 'cashier'))) {
+    $asm_base = 'admin';
+}
+?>
 <style>
 * { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
 .modern-form-group { margin-bottom: 28px; }
@@ -12,7 +19,7 @@
 .modern-btn i { margin-right: 0; }
 </style>
 
-<?php echo form_open('admin/assign_student_discount/create', array('id' => 'assign_form_modal')); ?>
+<?php echo form_open($asm_base . '/assign_student_discount/create', array('id' => 'assign_form_modal')); ?>
     
     <div class="modern-form-group">
         <label class="modern-label"><i class="fa fa-users"></i><?php echo get_phrase('search_students'); ?></label>
@@ -84,7 +91,7 @@
         
         if(allStudentsModal.length === 0) {
             $.ajax({
-                url: '<?php echo site_url('admin/get_students_for_discount'); ?>',
+                url: '<?php echo site_url($asm_base . '/get_students_for_discount'); ?>',
                 type: 'GET',
                 dataType: 'json',
                 async: false,
@@ -158,7 +165,7 @@
             
             // Check for existing assignments
             $.ajax({
-                url: '<?php echo site_url('admin/get_student_assigned_profiles'); ?>',
+                url: '<?php echo site_url($asm_base . '/get_student_assigned_profiles'); ?>',
                 type: 'GET',
                 data: {student_id: studentId},
                 dataType: 'json',
@@ -411,7 +418,7 @@
                 function() {
                     showAjaxModal_alert('<?php echo get_phrase("assigning_discount"); ?>...', 'loading');
                     $.ajax({
-                        url: '<?php echo site_url('admin/assign_student_discount/create'); ?>',
+                        url: '<?php echo site_url($asm_base . '/assign_student_discount/create'); ?>',
                         type: 'POST',
                         data: postData + '&confirm=1',
                         dataType: 'json'

@@ -418,12 +418,177 @@ class Cashier extends CI_Controller {
         $page_data['profiles'] = $this->db->where('discount_category', $allowed_category)->get('discount_profiles')->result_array();
         $page_data['restricted_mode'] = true;  // Flag to hide category dropdown
         $page_data['allowed_category'] = $allowed_category;
-        $page_data['page_name'] = 'discount_profiles';
+        $page_data['page_name'] = 'discount_profiles_modern';
         $page_data['page_title'] = get_phrase('daily_fees_discount_profiles');
         $page_data['account_type'] = $this->session->userdata('login_type');
         $this->load->view('backend/main', $page_data);
     }
-}
+
+    /****DISCOUNT PROFILE MODALS (shared UI with Admin, daily-fee scoped)*****/
+    public function create_discount_profile_modal() {
+        $page_data['bill_items'] = $this->db->get('bill_item')->result_array();
+        $page_data['classes'] = $this->db->get('class')->result_array();
+        echo $this->load->view('backend/admin/create_discount_profile_modal', $page_data, TRUE);
+    }
+
+    public function edit_discount_profile_modal($profile_id) {
+        // Cashiers may only edit daily-fee profiles
+        $profile = $this->db->where('profile_id', $profile_id)
+            ->where('discount_category', 'daily_fees')
+            ->get('discount_profiles')->row_array();
+        if (!$profile) {
+            echo json_encode(['status' => 'error', 'message' => get_phrase('profile_not_found')]);
+            return;
+        }
+        $page_data['profile'] = $profile;
+        $page_data['bill_items'] = $this->db->get('bill_item')->result_array();
+        $page_data['classes'] = $this->db->get('class')->result_array();
+        echo $this->load->view('backend/admin/edit_discount_profile_modal', $page_data, TRUE);
+    }
+
+    public function assign_students_to_profile_modal($profile_id) {
+        $profile = $this->db->where('profile_id', $profile_id)
+            ->where('discount_category', 'daily_fees')
+            ->get('discount_profiles')->row_array();
+        if (!$profile) {
+            echo json_encode(['status' => 'error', 'message' => get_phrase('you_do_not_have_permission_to_assign_this_profile')]);
+            return;
+        }
+        $page_data['profile'] = $profile;
+        $page_data['students'] = $this->db->select('s.*, c.name as class_name, sec.name as section_name')
+            ->from('student s')
+            ->join('enroll e', 's.student_id = e.student_id')
+            ->join('class c', 'e.class_id = c.class_id')
+            ->join('section sec', 'e.section_id = sec.section_id')
+            ->where('e.year', get_settings('running_year'))
+            ->where('e.term', get_settings('running_term'))
+            ->order_by('s.name', 'ASC')
+            ->get()->result_array();
+        echo $this->load->view('backend/admin/assign_student_discount_modal', $page_data, TRUE);
+    }
+
+    public function get_students_for_discount() {
+        $running_year = get_settings('running_year');
+        $running_term = get_settings('running_term');
+        $query = "SELECT DISTINCT s.student_id, s.name, s.student_code,
+                  CONCAT(c.name, ' ', c.name_numeric, ' ', sec.name) as class_name
+                  FROM student s
+                  JOIN enroll e ON s.student_id = e.student_id
+                  JOIN class c ON e.class_id = c.class_id
+                  JOIN section sec ON e.section_id = sec.section_id
+                  WHERE e.year = ? AND e.term = ? AND e.mute = '0'
+                  ORDER BY s.name ASC";
+        $students = $this->db->query($query, array($running_year, $running_term))->result_array();
+        echo json_encode(array('status' => 'success', 'data' => $students));
+    }
+
+    public function get_student_assigned_profiles() {
+        $student_id = $this->input->get('student_id');
+        $running_year = get_settings('running_year');
+        $running_term = get_settings('running_term');
+        $query = "SELECT sda.profile_id, dp.profile_name
+                  FROM student_discount_assignments sda
+                  JOIN discount_profiles dp ON sda.profile_id = dp.profile_id
+                  WHERE sda.student_id = ? AND sda.year = ? AND sda.term = ? AND sda.is_active = 1";
+        $profiles = $this->db->query($query, array($student_id, $running_year, $running_term))->result_array();
+        echo json_encode(array('status' => 'success', 'data' => $profiles));
+    }
+
+    public function assign_student_discount($param1 = '') {
+        if ($param1 == 'create') {
+            $student_ids = $this->input->post('student_id');
+            $profile_ids = $this->input->post('profile_id');
+            $confirm = $this->input->post('confirm');
+            $year = get_settings('running_year');
+            $term = get_settings('running_term');
+            $assigned_by = $this->session->userdata('login_user_id');
+
+            if (empty($student_ids) || !is_array($student_ids)) {
+                echo json_encode(['status' => 'error', 'message' => 'No students selected']);
+                return;
+            }
+            if (empty($profile_ids) || !is_array($profile_ids)) {
+                echo json_encode(['status' => 'error', 'message' => 'No profiles selected']);
+                return;
+            }
+
+            // Cashiers can only assign daily-fee profiles
+            foreach ($profile_ids as $pid) {
+                $profile = $this->db->where('profile_id', $pid)->get('discount_profiles')->row();
+                if (!$profile || $profile->discount_category != 'daily_fees') {
+                    echo json_encode(['status' => 'error', 'message' => get_phrase('you_do_not_have_permission_to_assign_this_profile')]);
+                    return;
+                }
+            }
+
+            if (!$confirm) {
+                $duplicates = [];
+                foreach ($student_ids as $student_id) {
+                    foreach ($profile_ids as $profile_id) {
+                        $exists = $this->db->where('student_id', $student_id)
+                            ->where('profile_id', $profile_id)
+                            ->where('is_active', 1)
+                            ->get('student_discount_assignments')->row();
+                        if ($exists) {
+                            $student = $this->db->where('student_id', $student_id)->get('student')->row();
+                            $profile = $this->db->where('profile_id', $profile_id)->get('discount_profiles')->row();
+                            $duplicates[] = ['student' => $student->name, 'profile' => $profile->profile_name];
+                        }
+                    }
+                }
+                if (!empty($duplicates)) {
+                    echo json_encode(['status' => 'confirm', 'message' => 'Some assignments already exist', 'duplicates' => $duplicates]);
+                    return;
+                }
+            }
+
+            // Cashier assignments always require super-admin approval
+            foreach ($student_ids as $student_id) {
+                foreach ($profile_ids as $profile_id) {
+                    $profile = $this->db->where('profile_id', $profile_id)->get('discount_profiles')->row();
+                    if (!$profile) continue;
+                    $exists = $this->db->where('student_id', $student_id)
+                        ->where('profile_id', $profile_id)
+                        ->where('is_active', 1)
+                        ->get('student_discount_assignments')->row();
+                    $data = [
+                        'discount_category' => $profile->discount_category,
+                        'discount_method' => $profile->discount_method,
+                        'discount_value' => $profile->discount_value,
+                        'discount_type' => $profile->discount_type,
+                        'bill_item_ids' => $profile->bill_item_ids,
+                        'year' => $year,
+                        'term' => $term,
+                        'assigned_by' => $assigned_by,
+                        'is_active' => 0,
+                        'status' => 'pending',
+                        'approved_by' => null,
+                        'approved_at' => null
+                    ];
+                    if ($exists) {
+                        $this->db->where('student_id', $student_id)
+                            ->where('profile_id', $profile_id)
+                            ->update('student_discount_assignments', $data);
+                    } else {
+                        $data['student_id'] = $student_id;
+                        $data['profile_id'] = $profile_id;
+                        $data['created_by'] = $assigned_by;
+                        $this->db->insert('student_discount_assignments', $data);
+                    }
+                }
+            }
+
+            echo json_encode([
+                'status' => 'success',
+                'message' => get_phrase('discount_assignment_submitted_for_approval'),
+                'requires_approval' => true
+            ]);
+            return;
+        }
+
+        // Default: go back to the discount profiles page
+        redirect(site_url('cashier/discount_profiles'), 'refresh');
+    }
 
     /****DAILY FEE RATES MANAGEMENT*****/
     function daily_fee_rates($param1 = '', $param2 = '') {

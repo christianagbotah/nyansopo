@@ -1,4 +1,19 @@
 <!-- Modern Discount Profiles Page -->
+<?php
+// Resolve context: works for both Admin and Cashier portals
+$dp_base = $this->uri->segment(1);
+if (empty($dp_base) || !in_array($dp_base, array('admin', 'cashier'))) {
+    $dp_base = 'admin';
+}
+$dp_restricted = !empty($restricted_mode) || $this->session->userdata('user_type') == 4;
+if (!isset($bill_items_map) || !is_array($bill_items_map)) {
+    $bill_items_map = [];
+    $dp_bill_items = $this->db->get('bill_item')->result_array();
+    foreach ($dp_bill_items as $dp_item) {
+        $bill_items_map[$dp_item['id']] = $dp_item['title'];
+    }
+}
+?>
 <style>
 * { box-sizing: border-box; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
 
@@ -639,10 +654,12 @@ input:checked + .slider:before {
                 <p><?php echo get_phrase('manage_discount_profiles_and_assignments'); ?></p>
             </div>
             <div class="hero-actions">
-                <button class="btn-modern btn-secondary" onclick="location.href='<?php echo site_url('admin/manage_discount_assignments'); ?>'">
+                <?php if (!$dp_restricted): ?>
+                <button class="btn-modern btn-secondary" onclick="location.href='<?php echo site_url($dp_base . '/manage_discount_assignments'); ?>'">
                     <i class="fa fa-users"></i>
                     <span><?php echo get_phrase('manage_assignments'); ?></span>
                 </button>
+                <?php endif; ?>
                 <button class="btn-modern btn-primary" onclick="showCreateModal()">
                     <i class="fa fa-plus"></i>
                     <span><?php echo get_phrase('create_profile'); ?></span>
@@ -681,6 +698,7 @@ input:checked + .slider:before {
             </div>
         </div>
 
+        <?php if (!$dp_restricted): ?>
         <div class="stat-card info">
             <div class="stat-header">
                 <div>
@@ -692,6 +710,7 @@ input:checked + .slider:before {
                 </div>
             </div>
         </div>
+        <?php endif; ?>
 
         <div class="stat-card warning">
             <div class="stat-header">
@@ -735,8 +754,10 @@ input:checked + .slider:before {
                     <i class="fa fa-folder filter-icon"></i>
                     <select class="filter-select" id="categoryFilter" onchange="filterProfiles()">
                         <option value="">All Categories</option>
-                        <option value="invoice">📄 Invoice Discounts</option>
                         <option value="daily_fees">📅 Daily Fees Discounts</option>
+                        <?php if (!$dp_restricted): ?>
+                        <option value="invoice">📄 Invoice Discounts</option>
+                        <?php endif; ?>
                     </select>
                 </div>
                 <div class="filter-group">
@@ -807,7 +828,7 @@ $(document).ready(function() {
 
 function loadStats() {
     $.ajax({
-        url: '<?php echo site_url('admin/get_discount_stats'); ?>',
+        url: '<?php echo site_url($dp_base . "/discount_profiles/stats"); ?>',
         type: 'GET',
         dataType: 'json',
         success: function(response) {
@@ -826,7 +847,7 @@ function loadStats() {
 
 function loadProfiles() {
     $.ajax({
-        url: '<?php echo site_url('admin/discount_profiles'); ?>',
+        url: '<?php echo site_url($dp_base . "/discount_profiles"); ?>',
         type: 'GET',
         data: { ajax: 1 },
         dataType: 'json',
@@ -1049,21 +1070,21 @@ function switchView(view) {
 }
 
 function showCreateModal() {
-    loadModalContent('createModal', '<?php echo site_url('admin/create_discount_profile_modal'); ?>', '<i class="fa fa-plus"></i> <?php echo get_phrase('create_discount_profile'); ?>');
+    loadModalContent('createModal', '<?php echo site_url($dp_base . '/create_discount_profile_modal'); ?>', '<i class="fa fa-plus"></i> <?php echo get_phrase('create_discount_profile'); ?>');
 }
 
 function editProfile(id) {
-    loadModalContent('createModal', '<?php echo site_url('admin/edit_discount_profile_modal/'); ?>' + id, '<i class="fa fa-edit"></i> <?php echo get_phrase('edit_discount_profile'); ?>');
+    loadModalContent('createModal', '<?php echo site_url($dp_base . '/edit_discount_profile_modal/'); ?>' + id, '<i class="fa fa-edit"></i> <?php echo get_phrase('edit_discount_profile'); ?>');
 }
 
 function assignStudents(id) {
-    loadModalContent('modal_ajax', '<?php echo site_url('admin/assign_students_to_profile_modal/'); ?>' + id, '<i class="fa fa-user-plus"></i> <?php echo get_phrase('assign_students'); ?>');
+    loadModalContent('modal_ajax', '<?php echo site_url($dp_base . '/assign_students_to_profile_modal/'); ?>' + id, '<i class="fa fa-user-plus"></i> <?php echo get_phrase('assign_students'); ?>');
 }
 
 function toggleStatus(id) {
     showAjaxModal_alert('Processing...', 'loading');
     $.ajax({
-        url: '<?php echo site_url('admin/toggle_discount_profile_status'); ?>',
+        url: '<?php echo site_url($dp_base . '/discount_profiles/toggle_status'); ?>',
         type: 'POST',
         data: { profile_id: id },
         dataType: 'json',
@@ -1093,7 +1114,7 @@ function deleteProfile(id) {
         function() {
             showAjaxModal_alert('Deleting...', 'loading');
             $.ajax({
-                url: '<?php echo site_url('admin/delete_discount_profile'); ?>',
+                url: '<?php echo site_url($dp_base . '/discount_profiles/delete'); ?>',
                 type: 'POST',
                 data: { profile_id: id },
                 dataType: 'json',
