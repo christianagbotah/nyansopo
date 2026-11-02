@@ -171,16 +171,19 @@ class Discount_model extends MY_Model {
         $this->db->where('sda.student_id', $student_id);
         // Removed year/term filter - discount is active regardless of academic period
         $this->db->group_start();
-            $this->db->where('sda.discount_type', $fee_type);           // Specific fee type
+            $this->db->where('sda.discount_type', $fee_type);           // Single fee type
             $this->db->or_where('sda.discount_type', 'all_daily_fees'); // All daily fees wildcard
+            // Multi-fee scope: profiles can target several fee types at once,
+            // stored as a comma-separated list (e.g. "feeding,water")
+            $this->db->or_where("FIND_IN_SET(" . $this->db->escape($fee_type) . ", sda.discount_type)", null, FALSE);
         $this->db->group_end();
         $this->db->where('dp.discount_category', 'daily_fees');
         $this->db->where('sda.is_active', 1);  // Discount must be active
         $this->db->where('DATE(sda.assigned_at) <=', $charge_date_str);
         $this->db->where('sda.status', 'approved');  // Must be approved
-        // Prioritize the SPECIFIC fee type over the 'all_daily_fees' wildcard:
-        // 'all_daily_fees' sorts first alphabetically, so force it to the bottom instead.
-        $this->db->order_by("(sda.discount_type = 'all_daily_fees')", 'ASC', FALSE);
+        // Most specific scope wins: exact fee type (2) > multi-fee list (1) > all_daily_fees wildcard (0)
+        $fee_type_esc = $this->db->escape($fee_type);
+        $this->db->order_by("(CASE WHEN sda.discount_type = {$fee_type_esc} THEN 2 WHEN sda.discount_type = 'all_daily_fees' THEN 0 ELSE 1 END)", 'DESC', FALSE);
         $this->db->order_by('sda.assigned_at', 'DESC'); // Most recent assignment wins
         $this->db->limit(1);
         

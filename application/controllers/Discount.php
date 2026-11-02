@@ -189,9 +189,22 @@ class Discount extends CI_Controller {
                     ->get('student_discount_assignments')->row();
                 
                 if(!$exists) {
+                    // Snapshot the profile's terms so the assignment keeps working
+                    // even if the profile is edited later (same approach as
+                    // Admin::assign_student_discount)
+                    $profile = null;
+                    foreach($valid_profiles as $vp) {
+                        if($vp['profile_id'] == $profile_id) { $profile = $vp; break; }
+                    }
+                    
                     $assignment_data = [
                         'student_id' => $student_id,
                         'profile_id' => $profile_id,
+                        'discount_category' => $profile ? $profile['discount_category'] : null,
+                        'discount_method' => $profile ? $profile['discount_method'] : 'percentage',
+                        'discount_value' => $profile ? $profile['discount_value'] : 0,
+                        'discount_type' => $profile ? $profile['discount_type'] : null,
+                        'bill_item_ids' => $profile ? $profile['bill_item_ids'] : null,
                         'year' => $year,
                         'term' => $term,
                         'assigned_by' => $current_user_id,
