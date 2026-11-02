@@ -26240,6 +26240,82 @@ function parents_gender_report() {
 
 	}
 
+	//Send receivables reminder SMS to parents of selected debtors
+	function send_receivables_sms() {
+		if ($this->session->userdata('admin_login') != 1) {
+			redirect(site_url('login'));
+		}
+
+		$student_ids = $this->input->post('student_ids');
+		$message = trim($this->input->post('message'));
+
+		if (empty($student_ids) || !is_array($student_ids)) {
+			echo json_encode(array('status' => 'error', 'message' => 'No students selected'));
+			return;
+		}
+		if ($message == '') {
+			echo json_encode(array('status' => 'error', 'message' => 'Message cannot be empty'));
+			return;
+		}
+
+		$school_row = $this->db->get_where('settings', array('type' => 'system_name'))->row();
+		$school_name = $school_row ? $school_row->description : 'School';
+
+		$recipients = array();
+		$skipped = array();
+		foreach ($student_ids as $student_id) {
+			$student = $this->db->get_where('student', array('student_id' => $student_id))->row();
+			if (!$student) { $skipped[] = 'Unknown student #' . $student_id; continue; }
+
+			$parent = getStudentParentByStudentId($student_id);
+			if (!$parent || empty($parent->phone)) { $skipped[] = $student->name . ' (no parent phone)'; continue; }
+
+			// Total current dues for this student
+			$this->db->select('SUM(due) as total_due');
+			$this->db->where('student_id', $student_id);
+			$this->db->where('due >', 0);
+			$due_row = $this->db->get('invoice')->row();
+			$total_due = $due_row ? (float)$due_row->total_due : 0;
+
+			$personalized = str_replace(
+				array('{name}', '{class}', '{amount}', '{school}'),
+				array($student->name, getStudentCurrentClassByStudentId($student_id), number_format($total_due, 2), $school_name),
+				$message
+			);
+
+			$recipients[] = array('Recipient' => $parent->phone, 'Content' => $personalized);
+		}
+
+		if (empty($recipients)) {
+			echo json_encode(array('status' => 'error', 'message' => 'No valid recipients found', 'skipped' => $skipped));
+			return;
+		}
+
+		$result = $this->sms_model->send_sms_batch_personalized($recipients);
+
+		// send_sms_batch_personalized returns the provider response or numeric codes; treat 0 / array with status 0 as success
+		$success = false;
+		if (is_array($result) && isset($result['status']) && $result['status'] == 0) $success = true;
+		elseif ($result === 0 || $result === true) $success = true;
+
+		// Log the send attempt
+		$this->db->insert('sms_send_log', array(
+			'message' => $message,
+			'recipient_count' => count($recipients),
+			'sent_by' => $this->session->userdata('admin_id'),
+			'created_at' => time(),
+			'status' => $success ? 'sent' : 'failed',
+			'send_context' => 'receivables_reminder'
+		));
+
+		echo json_encode(array(
+			'status' => $success ? 'success' : 'error',
+			'message' => $success ? count($recipients) . ' SMS submitted for sending' : 'SMS gateway rejected the request',
+			'sent' => count($recipients),
+			'skipped' => $skipped
+		));
+	}
+
 	//get sms step on receivables page
 	function getReceivablesSMSStep($step, $students='') {
 

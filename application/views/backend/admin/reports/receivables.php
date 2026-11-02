@@ -73,6 +73,10 @@
                 .btn-danger-modern:hover { transform:translateY(-2px); box-shadow:0 6px 16px rgba(239,68,68,0.4); }
                 .btn-excel-modern { background:linear-gradient(135deg, #10b981 0%, #059669 100%); color:white; box-shadow:0 4px 12px rgba(16,185,129,0.3); }
                 .btn-excel-modern:hover { transform:translateY(-2px); box-shadow:0 6px 16px rgba(16,185,129,0.4); }
+                .btn-sms-modern { background:linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color:white; box-shadow:0 4px 12px rgba(99,102,241,0.3); }
+                .btn-sms-modern:hover { transform:translateY(-2px); box-shadow:0 6px 16px rgba(99,102,241,0.4); }
+                .sms-wiz-modal .modal-dialog { width:640px; }
+                #smsWizardHolder { min-height:220px; }
                 #selectors_div { padding:20px 0; position:sticky; top:0; z-index:100; background:#f9fafb; box-shadow:0 4px 12px rgba(0,0,0,0.08); }
                 #invoice_table { width:100%; border-collapse:collapse; margin-top:20px; }
                 #invoice_table thead { background:linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
@@ -216,6 +220,9 @@
                                 </button>
                                 <button type="button" onclick="PrintElem('#print')" class="btn-modern btn-primary-modern">
                                     <i class="fa fa-print"></i> Print
+                                </button>
+                                <button type="button" onclick="openSmsWizard()" class="btn-modern btn-sms-modern" title="Send fee reminder SMS to parents of debtors">
+                                    <i class="fa fa-comment"></i> SMS Debtors
                                 </button>
                                 <button type="button" onclick="dashboard()" class="btn-modern btn-danger-modern">
                                     <i class="fa fa-home"></i> Dashboard
@@ -1157,3 +1164,37 @@
         });*/
 </script>
 
+
+<!-- SMS Debtors wizard modal shell -->
+<div class="modal fade sms-wiz-modal" id="smsWizardModal" tabindex="-1" role="dialog" aria-hidden="true">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content" style="border-radius:14px; border:none;">
+            <div class="modal-header" style="background:linear-gradient(135deg,#6366f1,#8b5cf6); color:#fff; border-radius:14px 14px 0 0; padding:16px 22px;">
+                <button type="button" class="close" data-dismiss="modal" style="color:#fff; opacity:.9;">&times;</button>
+                <h4 class="modal-title" style="font-weight:700;"><i class="fa fa-comment"></i> SMS Fee Reminders — Debtors</h4>
+            </div>
+            <div class="modal-body" id="smsWizardHolder" style="padding:22px; max-height:70vh; overflow-y:auto;">
+                <div style="text-align:center; padding:40px; color:#6b7280;">
+                    <i class="fa fa-spinner fa-spin" style="font-size:26px; color:#6366f1;"></i>
+                    <div style="margin-top:10px; font-weight:600;">Loading wizard…</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+function openSmsWizard() {
+    jQuery('#smsWizardHolder').html('<div style="text-align:center;padding:40px;color:#6b7280;"><i class="fa fa-spinner fa-spin" style="font-size:26px;color:#6366f1;"></i><div style="margin-top:10px;font-weight:600;">Loading wizard…</div></div>');
+    jQuery('#smsWizardModal').modal('show');
+    jQuery.ajax({
+        url: '<?php echo site_url('admin/getReceivablesSMSStep/1'); ?>',
+        type: 'GET',
+        success: function(html) {
+            jQuery('#smsWizardHolder').html(html);
+        },
+        error: function() {
+            jQuery('#smsWizardHolder').html('<div style="text-align:center;padding:30px;color:#b91c1c;font-weight:600;">Could not load the wizard. Please try again.</div>');
+        }
+    });
+}
+</script>
