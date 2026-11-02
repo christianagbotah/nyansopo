@@ -492,7 +492,9 @@ function EnrolDialog({ open, onOpenChange, classrooms, onDone }: { open: boolean
     setBusy(true);
     try {
       if (!online) {
-        enqueue({ clientId: `q-${Date.now()}`, kind: "student", payload: { ...form, schoolId: currentSchoolId }, label: `Enrol ${form.firstName} ${form.lastName}`, queuedAt: Date.now() });
+        // collision-proof clientId (same scheme as apiPostQueueable) — two
+        // enrolments queued in the same millisecond must never share an id
+        enqueue({ clientId: `q-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, kind: "student", payload: { ...form, schoolId: currentSchoolId }, label: `Enrol ${form.firstName} ${form.lastName}`, queuedAt: Date.now() });
         toast({ title: "Queued offline", description: "The enrolment will sync when you are back online." });
       } else {
         const res = await apiPost<any>(`/api/school/${currentSchoolId}/students`, { action: "create", ...form });

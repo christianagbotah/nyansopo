@@ -83,3 +83,6 @@ scripts/verify-out.txt
 scripts/pg-data/
 scripts/pg/sockets/
 scripts/pg/postgres.log
+
+# local credential notes — never commit
+GIT_REMOTE.md

@@ -307,6 +307,7 @@ model Student {
   hometown             String?
   previousSchool       String?
   dietNote             String? // special-diet flag (iEduPro student_on_special_diet): allergies, vegetarian, religious observance…
+  syncClientId         String?                  @unique // offline-queue clientId that created this row — makes /api/sync re-flush idempotent
   status               String                   @default("ACTIVE") // ACTIVE | TRACKED (not currently enrolled)
   createdAt            DateTime                 @default(now())
   enrollments          Enrollment[]

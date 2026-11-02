@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { getUser } from "@/lib/session";
-import { nextReceiptNo, nextStudentIndex } from "@/lib/codes";
+import { nextInvoiceNo, nextReceiptNo, nextStudentIndex } from "@/lib/codes";
 
 // POST /api/sync — flush the offline action queue (idempotent per clientId)
 export async function POST(req: NextRequest) {
@@ -70,15 +71,36 @@ export async function POST(req: NextRequest) {
         // enrollment captured offline — replayed through the same logic as the online path
         const p = op.payload;
         if (!user.schoolIds.includes(p.schoolId)) throw new Error("forbidden");
-        const dup = await db.enrollment.findFirst({ where: { student: { nyansapoIndex: `SYNC-${op.clientId}` } } });
+        // durable idempotency: the clientId lives on the student row itself, so
+        // a re-flush (or two flushes racing) can never create a duplicate — the
+        // earlier SYNC-<clientId> index trick broke the moment the index was
+        // upgraded to NY-…, letting a re-flush mint a second student.
+        const dup = await db.student.findFirst({ where: { syncClientId: op.clientId } });
         if (dup) { results.push({ clientId: op.clientId, ok: true, detail: "already synced" }); continue; }
-        const student = await db.student.create({ data: { nyansapoIndex: `SYNC-${op.clientId}`, firstName: p.firstName, lastName: p.lastName, gender: p.gender ?? "M", guardianName: p.guardianName, guardianPhone: p.guardianPhone, status: "ACTIVE", previousSchool: "Registered offline" } });
-        // upgrade index now that we are online
-        const year = p.dateOfBirth ? new Date(p.dateOfBirth).getFullYear() : 2016;
-        await db.student.update({ where: { id: student.id }, data: { nyansapoIndex: await nextStudentIndex(year) } });
+        const birthYear = p.dateOfBirth ? new Date(p.dateOfBirth).getFullYear() : 2016;
+        let student;
+        try {
+          student = await db.student.create({ data: { nyansapoIndex: await nextStudentIndex(birthYear), syncClientId: op.clientId, firstName: p.firstName, lastName: p.lastName, gender: p.gender ?? "M", dateOfBirth: p.dateOfBirth ? new Date(p.dateOfBirth) : null, guardianName: p.guardianName, guardianPhone: p.guardianPhone, status: "ACTIVE", previousSchool: p.previousSchool ?? "Registered offline" } });
+        } catch (e) {
+          if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") { results.push({ clientId: op.clientId, ok: true, detail: "already synced" }); continue; }
+          throw e;
+        }
         const roll = (await db.enrollment.count({ where: { classroomId: p.classroomId } })) + 1;
         await db.enrollment.create({ data: { studentId: student.id, classroomId: p.classroomId, schoolId: p.schoolId, rollNo: roll, admissionDate: new Date(), status: "ACTIVE" } });
-        results.push({ clientId: op.clientId, ok: true, detail: "student enrolled" });
+        // auto-bill for the current term — same as the online enrolment path
+        const term = await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId: p.schoolId } } });
+        let billed: string | null = null;
+        if (term) {
+          const fs = await db.feeStructure.findFirst({ where: { classroomId: p.classroomId, termId: term.id }, include: { items: true } });
+          if (fs) {
+            const inv = await db.invoice.create({ data: { invoiceNo: await nextInvoiceNo(), studentId: student.id, schoolId: p.schoolId, termId: term.id, classroomName: p.classroomName ?? "", totalCents: fs.totalCents, status: "UNPAID", dueDate: new Date(Date.now() + 14 * 864e5) } });
+            for (const it of fs.items.filter((i) => !i.isOptional)) await db.invoiceItem.create({ data: { invoiceId: inv.id, name: it.name, amountCents: it.amountCents } });
+            billed = inv.invoiceNo;
+          }
+        }
+        const onRoll = await db.enrollment.count({ where: { schoolId: p.schoolId, status: "ACTIVE" } });
+        await db.school.update({ where: { id: p.schoolId }, data: { studentsOnRoll: onRoll } });
+        results.push({ clientId: op.clientId, ok: true, detail: billed ? `student enrolled · billed ${billed}` : "student enrolled" });
       } else {
         throw new Error(`unknown op kind ${op.kind}`);
       }

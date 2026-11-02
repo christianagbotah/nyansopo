@@ -21,6 +21,9 @@
 //     when the queued op flushes (see /api/sync), keyed idempotently by
 //     the op's clientId — so a re-flush never duplicates a receipt.
 //   • Numbers restart at 0001 each calendar year (new scope per year).
+//
+// Full design + verification: docs/sync-safe-code-generation.md
+// (23-check proof suite: scripts/smoke-codes.ts)
 // ─────────────────────────────────────────────────────────────
 import { db } from "@/lib/db";
 import { Prisma } from "@prisma/client";
