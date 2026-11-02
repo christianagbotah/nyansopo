@@ -16454,15 +16454,24 @@ private function recalculate_subsequent_owings($student_id, $table_name, $update
 		$order = $columns[$this->input->post('order')[0]['column']];
 		$dir = $this->input->post('order')[0]['dir'];
 
-		$totalData = $this->ajaxload->all_payments_count();
+		// Optional user filters from the payment history filter bar
+		$filters = array(
+			'date_from'      => $this->input->post('date_from'),
+			'date_to'        => $this->input->post('date_to'),
+			'payment_method' => $this->input->post('payment_method'),
+			'term'           => $this->input->post('term'),
+			'year'           => $this->input->post('year'),
+		);
+
+		$totalData = $this->ajaxload->all_payments_count($filters);
 		$totalFiltered = $totalData;
 
 		if (empty($this->input->post('search')['value'])) {
-			$payments = $this->ajaxload->all_payments($limit, $start, $order, $dir);
+			$payments = $this->ajaxload->all_payments($limit, $start, $order, $dir, $filters);
 		} else {
 			$search = $this->input->post('search')['value'];
-			$payments = $this->ajaxload->payment_search($limit, $start, $search, $order, $dir);
-			$totalFiltered = $this->ajaxload->payment_search_count($search);
+			$payments = $this->ajaxload->payment_search($limit, $start, $search, $order, $dir, $filters);
+			$totalFiltered = $this->ajaxload->payment_search_count($search, $filters);
 		}
 
 		$data = array();

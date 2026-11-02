@@ -36,3 +36,13 @@ $lang['arrears'] = 'Arrears';
 $lang['fills_the_form_for_common_daily_fee_discounts'] = 'One click fills the form for common daily-fee discounts';
 $lang['fee_module_not_enabled_for_this_preset'] = 'The fee module for this preset is not enabled in Fee Collection Settings';
 $lang['quick_presets'] = 'Quick Presets';
+
+/* Payment history filters */
+$lang['filter_payments'] = 'Filter Payments';
+$lang['all_methods'] = 'All Methods';
+$lang['all_terms'] = 'All Terms';
+$lang['apply_filters'] = 'Apply Filters';
+$lang['from_date'] = 'From Date';
+$lang['to_date'] = 'To Date';
+$lang['reset'] = 'Reset';
+$lang['mobile_money'] = 'Mobile Money';
