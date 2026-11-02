@@ -19,11 +19,19 @@ import { Switch } from "@/components/ui/switch";
 import { StatCard, StatusBadge, EmptyState } from "@/components/ui-helpers";
 import { fmtCedi } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
-import { Layers, Plus, Pencil, Trash2, CheckCircle2, XCircle, UserPlus, FileSpreadsheet, Ticket, Power } from "lucide-react";
+import { Layers, Plus, Pencil, Trash2, CheckCircle2, XCircle, UserPlus, FileSpreadsheet, Ticket, Power, Utensils, Sparkles } from "lucide-react";
 
-// ── shared types (consumed by fees.tsx) ───────────────────────
+/** Human chips for a daily-service profile scope ("All daily fees" / "Lunch + Breakfast"). */
+export function profileScopeChips(p: { category: string; serviceIds: string; feeItemName: string }, services: { id: string; name: string }[]): string[] {
+  if (p.category !== "DAILY_SERVICE") return p.feeItemName && p.feeItemName !== "*" ? [p.feeItemName] : ["All fee items"];
+  if (!p.serviceIds || p.serviceIds === "*") return ["All daily fees"];
+  const names = p.serviceIds.split(",").map((id) => services.find((s) => s.id === id)?.name).filter(Boolean) as string[];
+  return names.length ? names : ["All daily fees"];
+}
+
+// ── shared types (consumed by fees.tsx) ─────────────────────
 export type ProfileRule = { id: string; classroomName: string | null; feeItemName: string | null; value: number };
-export type ProfileRow = { id: string; name: string; category: string; method: string; value: number; feeItemName: string; description: string | null; active: boolean; applied: number; rules: ProfileRule[] };
+export type ProfileRow = { id: string; name: string; category: string; method: string; value: number; feeItemName: string; serviceIds: string; description: string | null; active: boolean; applied: number; rules: ProfileRule[] };
 export type ApplicationRow = {
   id: string; discountId: string | null; profileId: string | null; discountName: string; type: string; value: number; scope: string;
   serviceId: string | null; student: string; studentIndex: string | null; classroom: string | null; studentId: string; guardianPhone: string;
@@ -100,6 +108,7 @@ export function DiscountProfilesTab({ data, students, onRefresh }: { data: Disco
                 <tr className="text-left border-b text-xs uppercase tracking-wide text-muted-foreground">
                   <th className="px-3 py-2.5 font-medium">Profile name</th>
                   <th className="px-3 py-2.5 font-medium hidden md:table-cell">Category</th>
+                  <th className="px-3 py-2.5 font-medium">Applies to</th>
                   <th className="px-3 py-2.5 font-medium hidden lg:table-cell">Method</th>
                   <th className="px-3 py-2.5 font-medium">Value</th>
                   <th className="px-3 py-2.5 font-medium hidden sm:table-cell">Class overrides</th>
@@ -116,6 +125,14 @@ export function DiscountProfilesTab({ data, students, onRefresh }: { data: Disco
                       {p.description && <div className="text-xs text-muted-foreground max-w-72 truncate">{p.description}</div>}
                     </td>
                     <td className="px-3 py-2.5 hidden md:table-cell"><Badge variant="outline" className="text-[10px]">{p.category === "INVOICE" ? "Invoice" : "Daily fees"}</Badge></td>
+                    <td className="px-3 py-2.5">
+                      <div className="flex flex-wrap gap-1 max-w-52">
+                        {profileScopeChips(p, data?.services ?? []).slice(0, 3).map((c) => (
+                          <Badge key={c} variant={p.category === "DAILY_SERVICE" ? "secondary" : "outline"} className="text-[10px] font-normal">{c}</Badge>
+                        ))}
+                        {profileScopeChips(p, data?.services ?? []).length > 3 && <Badge variant="outline" className="text-[10px]">+{profileScopeChips(p, data?.services ?? []).length - 3}</Badge>}
+                      </div>
+                    </td>
                     <td className="px-3 py-2.5 hidden lg:table-cell text-muted-foreground">{p.method === "PERCENT" ? "📊 Percentage" : "💰 Fixed"}</td>
                     <td className="px-3 py-2.5 tabular-nums font-medium">{p.method === "PERCENT" ? `${p.value}%` : fmtCedi(p.value)}</td>
                     <td className="px-3 py-2.5 hidden sm:table-cell">
@@ -142,7 +159,7 @@ export function DiscountProfilesTab({ data, students, onRefresh }: { data: Disco
         </CardContent>
       </Card>
 
-      <ProfileDialog profile={edit} classrooms={data?.classrooms ?? []} onOpenChange={(o) => !o && setEdit(null)} onDone={() => { setEdit(null); onRefresh(); }} />
+      <ProfileDialog profile={edit} classrooms={data?.classrooms ?? []} services={data?.services ?? []} onOpenChange={(o) => !o && setEdit(null)} onDone={() => { setEdit(null); onRefresh(); }} />
       <ApplyProfileDialog profile={applyFor} data={data} students={students} onOpenChange={(o) => !o && setApplyFor(null)} onDone={() => { setApplyFor(null); onRefresh(); }} />
     </div>
   );
@@ -242,8 +259,8 @@ export function DiscountApprovalsTab({ data, onRefresh, defaultFilter = "ALL" }:
 }
 
 // ── Profile create/edit dialog with per-class rules editor ────
-function ProfileDialog({ profile, classrooms, onOpenChange, onDone }: {
-  profile: ProfileRow | "new" | null; classrooms: { id: string; name: string }[];
+function ProfileDialog({ profile, classrooms, services, onOpenChange, onDone }: {
+  profile: ProfileRow | "new" | null; classrooms: { id: string; name: string }[]; services: { id: string; name: string; price: number }[];
   onOpenChange: (o: boolean) => void; onDone: () => void;
 }) {
   const { currentSchoolId } = useStore();
@@ -254,22 +271,45 @@ function ProfileDialog({ profile, classrooms, onOpenChange, onDone }: {
   const [value, setValue] = useState("");
   const [description, setDescription] = useState("");
   const [rules, setRules] = useState<ProfileRule[]>([]);
+  // DAILY_SERVICE scope: all services, or an explicit selection (lunch-only, classes-only, …)
+  const [allServices, setAllServices] = useState(true);
+  const [pickedServices, setPickedServices] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (profile && profile !== "new") {
       setName(profile.name); setCategory(profile.category); setMethod(profile.method);
       setValue(String(profile.value)); setDescription(profile.description ?? ""); setRules(profile.rules);
-    } else { setName(""); setCategory("INVOICE"); setMethod("PERCENT"); setValue(""); setDescription(""); setRules([]); }
+      if (profile.category === "DAILY_SERVICE" && profile.serviceIds && profile.serviceIds !== "*") {
+        setAllServices(false);
+        setPickedServices(profile.serviceIds.split(",").map((s) => s.trim()).filter(Boolean));
+      } else { setAllServices(true); setPickedServices([]); }
+    } else { setName(""); setCategory("INVOICE"); setMethod("PERCENT"); setValue(""); setDescription(""); setRules([]); setAllServices(true); setPickedServices([]); }
   }, [profile]);
+
+  const isDaily = category === "DAILY_SERVICE";
+
+  // live preview: each covered service's price after this profile is applied
+  const preview = useMemo(() => {
+    if (!isDaily) return [];
+    const v = Number(value) || 0;
+    const covered = allServices ? services : services.filter((s) => pickedServices.includes(s.id));
+    return covered.map((s) => ({
+      name: s.name,
+      standard: s.price,
+      after: method === "PERCENT" ? Math.max(0, Math.round(s.price * (1 - Math.min(100, v) / 100))) : Math.max(0, s.price - v),
+    }));
+  }, [isDaily, allServices, pickedServices, services, method, value]);
 
   async function submit() {
     if (!name.trim() || !Number(value)) { toast({ title: "Profile name and value are required" }); return; }
+    if (isDaily && !allServices && pickedServices.length === 0) { toast({ title: "Pick at least one daily service (or choose all)" }); return; }
     setBusy(true);
     try {
       const res = await apiPost<{ profile: { id: string } }>(`/api/school/${currentSchoolId}/ops/discounts`, {
         action: "save-profile", id: isNew ? undefined : (profile as ProfileRow).id,
         name, category, method, value: Number(value), description, active: isNew ? true : (profile as ProfileRow).active,
+        serviceIds: isDaily && !allServices ? pickedServices : undefined,
       });
       // persist rule edits/additions for the saved profile
       const pid = res.profile?.id ?? (profile as ProfileRow)?.id;
@@ -287,13 +327,13 @@ function ProfileDialog({ profile, classrooms, onOpenChange, onDone }: {
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto nice-scroll">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><Layers className="size-4 text-primary" /> {isNew ? "Create discount profile" : "Edit discount profile"}</DialogTitle>
-          <DialogDescription>A named rule-set assigned to learners — e.g. &quot;Tuition discount for PTA executives&quot; with per-class values.</DialogDescription>
+          <DialogDescription>A named rule-set assigned to learners — e.g. &quot;Full lunch support — needy families&quot; or &quot;Tuition discount — PTA executives&quot;.</DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div className="grid sm:grid-cols-2 gap-3">
             <div className="space-y-1.5 sm:col-span-2">
               <Label>Profile name</Label>
-              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Tuition fee discount — PTA executives" />
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={isDaily ? "e.g. Half-price lunch — staff children" : "e.g. Tuition fee discount — PTA executives"} />
             </div>
             <div className="space-y-1.5">
               <Label>Category</Label>
@@ -311,19 +351,79 @@ function ProfileDialog({ profile, classrooms, onOpenChange, onDone }: {
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="PERCENT">📊 Percentage</SelectItem>
-                  <SelectItem value="FIXED">💰 Fixed amount (pesewas → cedi)</SelectItem>
+                  <SelectItem value="FIXED">💰 Fixed amount (cedi)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label>{method === "PERCENT" ? "Value (%)" : "Value (GH₵)"}</Label>
+              <Label>{method === "PERCENT" ? "Value (% off)" : "Value (GH₵ off)"}</Label>
               <Input type="number" min="0" value={value} onChange={(e) => setValue(e.target.value)} placeholder={method === "PERCENT" ? "e.g. 15" : "e.g. 6.50"} />
+              {method === "PERCENT" && (
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {[
+                    { l: "Full (100%)", v: 100 }, { l: "Half (50%)", v: 50 }, { l: "Quarter (25%)", v: 25 }, { l: "10%", v: 10 },
+                  ].map((p) => (
+                    <button key={p.v} type="button" onClick={() => setValue(String(p.v))}
+                      className={`rounded-full border px-2.5 py-0.5 text-[11px] transition-colors ${Number(value) === p.v ? "border-primary bg-primary text-primary-foreground" : "hover:bg-secondary"}`}>
+                      {p.l}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label>Description (optional)</Label>
+            <div className="space-y-1.5">
+              <Label>Validity note (optional)</Label>
               <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Who qualifies and the evidence required" />
             </div>
           </div>
+
+          {isDaily && (
+            <div className="space-y-2 rounded-lg border p-3 bg-secondary/30">
+              <div className="flex items-center justify-between">
+                <Label className="flex items-center gap-1.5 text-sm"><Utensils className="size-3.5 text-primary" /> Which daily fees does this affect?</Label>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                <button type="button" onClick={() => setAllServices(true)}
+                  className={`rounded-full border px-3 py-1 text-xs transition-colors ${allServices ? "border-primary bg-primary text-primary-foreground" : "hover:bg-secondary"}`}>
+                  All daily fees
+                </button>
+                <button type="button" onClick={() => setAllServices(false)}
+                  className={`rounded-full border px-3 py-1 text-xs transition-colors ${!allServices ? "border-primary bg-primary text-primary-foreground" : "hover:bg-secondary"}`}>
+                  Selected services only
+                </button>
+              </div>
+              {!allServices && (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                  {services.map((s) => {
+                    const on = pickedServices.includes(s.id);
+                    return (
+                      <button key={s.id} type="button" onClick={() => setPickedServices(on ? pickedServices.filter((x) => x !== s.id) : [...pickedServices, s.id])}
+                        className={`flex items-center justify-between rounded-md border px-2.5 py-1.5 text-left text-xs transition-colors ${on ? "border-primary bg-primary/10" : "hover:bg-secondary"}`}>
+                        <span className="flex items-center gap-1.5 truncate">
+                          <span className={`size-2 rounded-full shrink-0 ${on ? "bg-primary" : "bg-muted-foreground/40"}`} />
+                          {s.name}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground shrink-0">{fmtCedi(s.price)}</span>
+                      </button>
+                    );
+                  })}
+                  {services.length === 0 && <div className="col-span-full text-xs text-muted-foreground">No daily services configured yet — create them in Daily Services first.</div>}
+                </div>
+              )}
+              {preview.length > 0 && (
+                <div className="space-y-1 pt-1">
+                  <div className="text-[11px] font-medium text-muted-foreground flex items-center gap-1"><Sparkles className="size-3" /> Learner pays after this profile:</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {preview.map((p) => (
+                      <span key={p.name} className={`rounded-md border px-2 py-0.5 text-[11px] ${p.after === 0 ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : ""}`}>
+                        {p.name}: <s className="opacity-50">{fmtCedi(p.standard)}</s> → <b>{fmtCedi(p.after)}</b>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="space-y-2">
             <div className="flex items-center justify-between">
@@ -361,31 +461,44 @@ function ApplyProfileDialog({ profile, data, students, onOpenChange, onDone }: {
 }) {
   const { currentSchoolId } = useStore();
   const [studentId, setStudentId] = useState("");
-  const [serviceId, setServiceId] = useState("");
   const [reason, setReason] = useState("");
   const [approveNow, setApproveNow] = useState(true);
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => { setStudentId(""); setServiceId(""); setReason(""); setSearch(""); setApproveNow(true); }, [profile]);
+  useEffect(() => { setStudentId(""); setReason(""); setSearch(""); setApproveNow(true); }, [profile]);
 
   // full learner list threaded in from the fees module (invoices carry every billed learner)
   const list = useMemo(() => students, [students]);
 
+  // daily profiles carry their own scope — show what the learner will actually pay
+  const coverage = useMemo(() => {
+    if (!profile || profile.category !== "DAILY_SERVICE") return [];
+    const services = data?.services ?? [];
+    const covered = !profile.serviceIds || profile.serviceIds === "*"
+      ? services
+      : services.filter((s) => profile.serviceIds.split(",").includes(s.id));
+    return covered.map((s) => ({
+      name: s.name,
+      standard: s.price,
+      after: profile.method === "PERCENT"
+        ? Math.max(0, Math.round(s.price * (1 - Math.min(100, profile.value) / 100)))
+        : Math.max(0, s.price - profile.value),
+    }));
+  }, [profile, data]);
+
   async function submit() {
     if (!profile || !studentId) { toast({ title: "Choose a learner" }); return; }
-    if (profile.category === "DAILY_SERVICE" && !serviceId) { toast({ title: "Choose the daily service to subsidise" }); return; }
     setBusy(true);
     try {
       await apiPost(`/api/school/${currentSchoolId}/ops/discounts`, {
         action: "apply", profileId: profile.id, studentId,
-        serviceId: profile.category === "DAILY_SERVICE" ? serviceId : undefined,
         reason: reason || undefined, approveNow,
       });
       toast({
         title: approveNow ? "Profile assigned & approved" : "Profile assigned — pending approval",
         description: profile.category === "DAILY_SERVICE"
-          ? (approveNow ? "The learner's daily rate is subsidised from today." : "The subsidised rate takes effect once approved.")
+          ? (approveNow ? "The learner's daily rates are subsidised from today — the most generous rate wins where profiles overlap." : "The subsidised rates take effect once approved.")
           : (approveNow ? "Applied automatically the next time invoices are generated." : "Takes effect at billing once approved."),
       });
       onDone();
@@ -394,12 +507,24 @@ function ApplyProfileDialog({ profile, data, students, onOpenChange, onDone }: {
 
   return (
     <Dialog open={!!profile} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto nice-scroll">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><UserPlus className="size-4 text-primary" /> Assign — {profile?.name}</DialogTitle>
           <DialogDescription>{profile?.method === "PERCENT" ? `${profile.value}% off` : fmtCedi(profile?.value ?? 0)} · {profile?.category === "INVOICE" ? "termly invoices" : "daily fees"}</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
+          {coverage.length > 0 && (
+            <div className="rounded-lg border bg-secondary/30 p-3 space-y-1.5">
+              <div className="text-[11px] font-medium text-muted-foreground flex items-center gap-1"><Utensils className="size-3" /> Covered daily fees — learner pays:</div>
+              <div className="flex flex-wrap gap-1.5">
+                {coverage.map((c) => (
+                  <span key={c.name} className={`rounded-md border px-2 py-0.5 text-[11px] ${c.after === 0 ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : ""}`}>
+                    {c.name}: <s className="opacity-50">{fmtCedi(c.standard)}</s> → <b>{fmtCedi(c.after)}</b>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
           <Input placeholder="Search learner…" value={search} onChange={(e) => setSearch(e.target.value)} />
           <div className="border rounded-lg max-h-48 overflow-y-auto nice-scroll">
             {list.filter((s) => !search || s.name.toLowerCase().includes(search)).slice(0, 40).map((s) => (
@@ -410,15 +535,6 @@ function ApplyProfileDialog({ profile, data, students, onOpenChange, onDone }: {
             ))}
             {list.length === 0 && <div className="p-3 text-xs text-muted-foreground">Learners appear here once invoices exist for them.</div>}
           </div>
-          {profile?.category === "DAILY_SERVICE" && (
-            <div className="space-y-1.5">
-              <Label>Service to subsidise</Label>
-              <Select value={serviceId} onValueChange={setServiceId}>
-                <SelectTrigger><SelectValue placeholder="Choose service" /></SelectTrigger>
-                <SelectContent>{(data?.services ?? []).map((s) => <SelectItem key={s.id} value={s.id}>{s.name} ({fmtCedi(s.price)})</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-          )}
           <div className="space-y-1.5">
             <Label>Reason / evidence</Label>
             <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. PTA executive — verified by chairman" />

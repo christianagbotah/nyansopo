@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
-import { applyDailySubsidy, removeDailySubsidy, effectiveValue } from "@/lib/discounts";
+import { recalcDailySubsidies, recalcProfileApplications } from "@/lib/discounts";
 
 // ── GET /api/school/[id]/ops/discounts — catalog + profiles + applications ──
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -37,7 +37,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     })),
     profiles: profiles.map((p) => ({
       id: p.id, name: p.name, category: p.category, method: p.method, value: p.value,
-      feeItemName: p.feeItemName, description: p.description, active: p.active, applied: p._count.applications,
+      feeItemName: p.feeItemName, serviceIds: p.serviceIds, description: p.description, active: p.active, applied: p._count.applications,
       rules: p.rules.map((r) => ({ id: r.id, classroomName: r.classroomName, feeItemName: r.feeItemName, value: r.value })),
     })),
     applications: applications.map((a) => ({
@@ -73,17 +73,32 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   // ── profile CRUD (iedupro "Discount Profiles") ──────────────
   if (action === "save-profile") {
-    const { id, name, category, method, value, feeItemName, description, active } = body;
+    const { id, name, category, method, value, feeItemName, description, active, serviceIds } = body;
     if (!name?.trim() || !Number(value)) return NextResponse.json({ error: "Profile name and value are required" }, { status: 400 });
     if (method === "PERCENT" && (Number(value) <= 0 || Number(value) > 100)) return NextResponse.json({ error: "Percent must be 1–100" }, { status: 400 });
     const clash = await db.discountProfile.findFirst({ where: { schoolId, name: name.trim(), ...(id ? { id: { not: id } } : {}) } });
     if (clash) return NextResponse.json({ error: "A profile with this name already exists" }, { status: 400 });
+
+    // DAILY_SERVICE profiles scope to a set of services: "*" (all) or explicit ids
+    let serviceScope = "*";
+    if ((category ?? "INVOICE") === "DAILY_SERVICE") {
+      if (Array.isArray(serviceIds) && serviceIds.length > 0) {
+        const valid = await db.dailyService.findMany({ where: { schoolId, id: { in: serviceIds } }, select: { id: true } });
+        if (valid.length !== serviceIds.length) return NextResponse.json({ error: "One of the selected services was not found" }, { status: 400 });
+        serviceScope = valid.map((v) => v.id).join(",");
+      }
+    }
+
     const data = {
       name: String(name).trim(), category: category ?? "INVOICE", method: method ?? "PERCENT",
-      value: Number(value), feeItemName: feeItemName?.trim() || "*",
+      value: Number(value), feeItemName: feeItemName?.trim() || "*", serviceIds: serviceScope,
       description: description?.trim() || null, active: active ?? true,
     };
     const p = id ? await db.discountProfile.update({ where: { id }, data }) : await db.discountProfile.create({ data: { ...data, schoolId } });
+    // scope/value changed → learners already assigned need their rates recomputed
+    if ((p.category === "DAILY_SERVICE")) {
+      await recalcProfileApplications(p.id, { performedByName: user.fullName, performedByRole: user.role, reason: `profile updated — ${p.name}` });
+    }
     return NextResponse.json({ profile: p });
   }
 
@@ -91,6 +106,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const p = await db.discountProfile.findUnique({ where: { id: body.id } });
     if (!p || p.schoolId !== schoolId) return NextResponse.json({ error: "Profile not found" }, { status: 404 });
     const updated = await db.discountProfile.update({ where: { id: body.id }, data: { active: !p.active } });
+    if (p.category === "DAILY_SERVICE") {
+      await recalcProfileApplications(p.id, { performedByName: user.fullName, performedByRole: user.role, reason: `profile ${p.active ? "paused" : "reactivated"} — ${p.name}` });
+    }
     return NextResponse.json({ profile: updated });
   }
 
@@ -140,23 +158,25 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // ── apply discount or profile to a learner (iedupro "Apply Discount") ──
   // approveNow (default true for school staff) activates immediately with an audit trail;
   // otherwise the assignment waits in the approvals queue.
+  // DAILY_SERVICE profiles carry their own service scope (lunch-only, all daily
+  // fees, …) — no single service is required. Plain catalog discounts with
+  // DAILY_SERVICE scope still pick one service.
   if (action === "apply") {
     const { discountId, profileId, studentId, serviceId, reason, valueOverride, approveNow } = body;
     if (!studentId) return NextResponse.json({ error: "Choose a learner" }, { status: 400 });
     const student = await db.student.findUnique({ where: { id: studentId } });
     if (!student) return NextResponse.json({ error: "Learner not found" }, { status: 404 });
 
-    let scope = "INVOICE", type = "PERCENT", baseValue = 0;
+    let scope = "INVOICE", baseValue = 0;
     if (discountId) {
       const d = await db.discount.findUnique({ where: { id: discountId } });
       if (!d || d.schoolId !== schoolId) return NextResponse.json({ error: "Discount not found" }, { status: 404 });
       if (d.scope === "DAILY_SERVICE" && !serviceId) return NextResponse.json({ error: "Choose the service this subsidy applies to" }, { status: 400 });
-      scope = d.scope; type = d.type; baseValue = d.value;
+      scope = d.scope; baseValue = d.value;
     } else if (profileId) {
       const p = await db.discountProfile.findUnique({ where: { id: profileId } });
       if (!p || p.schoolId !== schoolId) return NextResponse.json({ error: "Profile not found" }, { status: 404 });
-      if (p.category === "DAILY_SERVICE" && !serviceId) return NextResponse.json({ error: "Choose the service this subsidy applies to" }, { status: 400 });
-      scope = p.category; type = p.method; baseValue = p.value;
+      scope = p.category; baseValue = p.value;
     } else return NextResponse.json({ error: "Pick a discount or profile" }, { status: 400 });
 
     const approved = approveNow !== false; // default: school staff approve their own assignment
@@ -169,8 +189,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         approvedByName: approved ? user.fullName : null, decidedAt: approved ? new Date() : null,
       },
     });
-    if (approved && scope === "DAILY_SERVICE" && serviceId) {
-      await applyDailySubsidy(serviceId, studentId, type, app.valueOverride ?? baseValue);
+    if (approved && scope === "DAILY_SERVICE") {
+      await recalcDailySubsidies(studentId, { performedByName: user.fullName, performedByRole: user.role, reason: `discount applied — ${app.discountId ?? app.profileId}` });
     }
     return NextResponse.json({ application: app });
   }
@@ -186,14 +206,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         ? { status: "ACTIVE", approvedByName: user.fullName, decidedAt: new Date() }
         : { status: "REJECTED", approvedByName: user.fullName, decidedAt: new Date() },
     });
-    // on approval, DAILY_SERVICE subsidies take effect on the learner's rate
-    if (action === "approve" && (app.discount?.scope ?? app.profile?.category) === "DAILY_SERVICE" && app.serviceId) {
-      const type = app.discount?.type ?? app.profile?.method ?? "PERCENT";
-      const src = app.discount
-        ? { kind: "discount" as const, id: app.discount.id, name: app.discount.name, type: app.discount.type, value: app.discount.value, scope: app.discount.scope }
-        : { kind: "profile" as const, id: app.profileId!, name: app.profile!.name, type: app.profile!.method, value: app.profile!.value, category: app.profile!.category };
-      const eff = await effectiveValue(src, app.studentId);
-      await applyDailySubsidy(app.serviceId, app.studentId, app.valueOverride ? type : eff.type, app.valueOverride ?? eff.value);
+    // on approval, DAILY_SERVICE subsidies take effect on the learner's rates
+    if (action === "approve" && (app.discount?.scope ?? app.profile?.category) === "DAILY_SERVICE") {
+      await recalcDailySubsidies(app.studentId, { performedByName: user.fullName, performedByRole: user.role, reason: `assignment approved — ${app.discount?.name ?? app.profile?.name}` });
     }
     return NextResponse.json({ application: updated });
   }
@@ -202,8 +217,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const app = await db.discountApplication.findUnique({ where: { id: body.applicationId }, include: { discount: true, profile: true } });
     if (!app || app.schoolId !== schoolId) return NextResponse.json({ error: "Application not found" }, { status: 404 });
     await db.discountApplication.update({ where: { id: app.id }, data: { status: "REVOKED" } });
-    if ((app.discount?.scope ?? app.profile?.category) === "DAILY_SERVICE" && app.serviceId) {
-      await removeDailySubsidy(app.serviceId, app.studentId);
+    if ((app.discount?.scope ?? app.profile?.category) === "DAILY_SERVICE") {
+      await recalcDailySubsidies(app.studentId, { performedByName: user.fullName, performedByRole: user.role, reason: `assignment revoked — ${app.discount?.name ?? app.profile?.name}` });
     }
     return NextResponse.json({ ok: true });
   }

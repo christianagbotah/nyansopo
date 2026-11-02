@@ -1130,7 +1130,10 @@ model Discount {
   applications DiscountApplication[]
 }
 
-// Discount profiles: named rule-sets assigned to classes / fee items — iedupro parity
+// Discount profiles: named rule-sets assigned to classes / fee items — iedupro parity.
+// For DAILY_SERVICE profiles `serviceIds` scopes the subsidy: "*" = every daily
+// service, or a comma-separated list of DailyService ids — e.g. lunch-only
+// (part or full), extra-classes-only, or "lunch + breakfast".
 model DiscountProfile {
   id           String                @id @default(cuid())
   schoolId     String
@@ -1140,6 +1143,7 @@ model DiscountProfile {
   method       String                @default("PERCENT") // PERCENT | FIXED
   value        Int // percent or pesewas
   feeItemName  String                @default("*") // "*" = all fee items, otherwise exact item name
+  serviceIds   String                @default("*") // DAILY_SERVICE scope: "*" = all services, else csv of DailyService ids
   description  String?
   active       Boolean               @default(true)
   createdAt    DateTime              @default(now())
