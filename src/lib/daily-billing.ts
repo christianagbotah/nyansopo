@@ -1,5 +1,7 @@
 import { PrismaClient, Prisma } from "@prisma/client";
-import type { DailyCharge } from "@prisma/client";
+import type { DailyCharge, Payment } from "@prisma/client";
+import { nextReceiptNo } from "./codes";
+import { PAYMENT_LABELS } from "./format";
 
 // ── Daily-service billing helpers (shared by API + offline sync) ──
 //  iEduPro CI3 parity (Daily_fee_model):
@@ -82,6 +84,127 @@ export async function creditItemBalance(db: PrismaClient, opts: {
     },
   });
   return b.prepaidCents;
+}
+
+// ── Per-item collection core (shared by the online POS and offline sync) ──
+//  iEduPro §apply_payment: each fee item carries the amount being paid for it;
+//  the item's arrears settle FIFO and any EXCESS lands on that item's prepaid
+//  balance as advance (payment_type: arrears | current | advance | mixed).
+//  Extracted so the online counter and the offline queue flush can never drift.
+
+const fmtGH = (cents: number) => `GH₵${(cents / 100).toFixed(2)}`;
+
+export type CollectItemEntry = { serviceId: string; amountCents: number };
+export type CollectBreakdownRow = { name: string; paid: number; advance: number };
+export type DailyPaymentType = "arrears" | "current" | "advance" | "mixed";
+
+/** Sanitise a raw `items[]` payload (POS dialog / offline queue entry) into
+ *  validated per-item entries. Returns `{ error }` when nothing is payable. */
+export function sanitizeCollectItems(raw: unknown): { error?: string; items?: CollectItemEntry[] } {
+  if (!Array.isArray(raw) || raw.length === 0) return { error: "items[] required" };
+  const items = (raw as { serviceId?: unknown; amountCents?: unknown }[])
+    .map((i) => ({ serviceId: String(i?.serviceId ?? ""), amountCents: Math.max(0, Math.round(Number(i?.amountCents) || 0)) }))
+    .filter((i) => i.serviceId && i.amountCents > 0);
+  if (!items.length) return { error: "Enter an amount for at least one fee item" };
+  return { items };
+}
+
+/** Run one per-item daily collection: mints the receipt, settles each item's
+ *  arrears FIFO, banks the excess on that item's balance as advance, and writes
+ *  the daily_fee_audit_log row. Callers validate the serviceIds belong to the
+ *  school and pass display names via `services`. */
+export async function collectDailyItems(db: PrismaClient, opts: {
+  schoolId: string;
+  studentId: string;
+  items: CollectItemEntry[]; // sanitized (sanitizeCollectItems)
+  services: { id: string; name: string }[]; // the school's rows for those items
+  method?: string | null;
+  reference?: string | null;
+  receivedByName: string;
+  performedByRole?: string | null;
+  paidAt?: Date;
+  offlineQueued?: boolean;
+  syncedAt?: Date;
+}): Promise<{
+  payment: Payment;
+  breakdown: CollectBreakdownRow[];
+  settledTotal: number;
+  advanceTotal: number;
+  paymentType: DailyPaymentType;
+  arrearsBefore: number;
+  arrearsAfter: number;
+}> {
+  const owedBefore = await arrearsTotalCents(db, opts.studentId);
+  const payMethod = opts.method ?? "CASH";
+  const total = opts.items.reduce((s, i) => s + i.amountCents, 0);
+  const payment = await db.payment.create({
+    data: {
+      receiptNo: await nextReceiptNo(), studentId: opts.studentId, category: "DAILY", schoolId: opts.schoolId,
+      amountCents: total, method: payMethod, reference: opts.reference ?? null,
+      receivedByName: opts.receivedByName,
+      paidAt: opts.paidAt ?? new Date(),
+      offlineQueued: opts.offlineQueued ?? false,
+      syncedAt: opts.syncedAt ?? null,
+    },
+  });
+
+  const breakdown: CollectBreakdownRow[] = [];
+  let settledTotal = 0;
+  let advanceTotal = 0;
+  for (const it of opts.items) {
+    const applied = await settleDailyCharges(db, payment.id, opts.studentId, it.amountCents, undefined, it.serviceId);
+    const excess = it.amountCents - applied;
+    if (excess > 0) {
+      await creditItemBalance(db, {
+        schoolId: opts.schoolId, studentId: opts.studentId, serviceId: it.serviceId,
+        amountCents: excess, kind: "TOPUP", note: `advance — ${payment.receiptNo}`, byName: opts.receivedByName,
+      });
+    }
+    settledTotal += applied;
+    advanceTotal += excess;
+    breakdown.push({ name: opts.services.find((s) => s.id === it.serviceId)?.name ?? it.serviceId, paid: applied, advance: excess });
+  }
+  const paymentType: DailyPaymentType = advanceTotal === 0 ? "arrears" : settledTotal === 0 ? "advance" : "mixed";
+
+  const arrearsAfter = await arrearsTotalCents(db, opts.studentId);
+  await logDailyFeeAudit(db, {
+    schoolId: opts.schoolId, studentId: opts.studentId, actionType: "PAYMENT",
+    serviceCode: breakdown.length === 1 ? breakdown[0].name : "MULTIPLE",
+    amountCents: total,
+    arrearsBeforeCents: owedBefore, arrearsAfterCents: arrearsAfter,
+    performedByName: opts.receivedByName, performedByRole: opts.performedByRole ?? "SYSTEM",
+    reference: payment.receiptNo,
+    notes: `${PAYMENT_LABELS[payMethod] ?? payMethod} · ${paymentType} · ${breakdown.map((b) => `${b.name} ${fmtGH(b.paid)}${b.advance ? ` (+${fmtGH(b.advance)} advance)` : ""}`).join(", ")}${opts.reference ? ` · ref ${opts.reference}` : ""}`,
+  });
+
+  return { payment, breakdown, settledTotal, advanceTotal, paymentType, arrearsBefore: owedBefore, arrearsAfter };
+}
+
+/** Mark a learner present on the register for the given day (the POS "mark
+ *  present" checkbox). Shared by the online counter and the offline flush. */
+export async function markPresentForDate(
+  db: PrismaClient,
+  opts: { schoolId: string; studentId: string; date: Date },
+): Promise<"no-class" | "no-session" | "marked" | "updated" | "already"> {
+  const d = new Date(opts.date);
+  const dStart = new Date(d); dStart.setHours(0, 0, 0, 0);
+  const dEnd = new Date(d); dEnd.setHours(23, 59, 59, 999);
+  const en = await db.enrollment.findFirst({ where: { studentId: opts.studentId, status: "ACTIVE", schoolId: opts.schoolId } });
+  if (!en) return "no-class";
+  const session = await db.attendanceSession.findFirst({
+    where: { classroomId: en.classroomId, date: { gte: dStart, lte: dEnd } },
+    include: { records: { where: { studentId: opts.studentId } } },
+  });
+  if (!session) return "no-session";
+  if (session.records.length) {
+    if (session.records[0].status !== "PRESENT") {
+      await db.attendanceRecord.update({ where: { id: session.records[0].id }, data: { status: "PRESENT" } });
+      return "updated";
+    }
+    return "already";
+  }
+  await db.attendanceRecord.create({ data: { sessionId: session.id, studentId: opts.studentId, status: "PRESENT" } });
+  return "marked";
 }
 
 /** Auto-deduct a fresh charge from the learner's per-item prepaid balance

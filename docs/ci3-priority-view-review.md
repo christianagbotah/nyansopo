@@ -113,3 +113,17 @@ week — once paid, no further billing until the following week.
 `scripts/upgrade-daily-rates.ts` migrates existing installs. A CI3-style
 Metro Start screen (colorful grouped tiles + search, header Start button
 + floating edge trigger) now mirrors the permission-gated navigation.
+
+**Closed by wave 5** (`agent-ctx/13-offline-item-sync.md`): the offline
+queue flush (`/api/sync`) now understands the per-item `items[]` POS
+payload — the last parity gap left by wave 4. Both the online counter
+and the offline replay run through one shared collection core
+(`collectDailyItems` in `src/lib/daily-billing.ts`): per-item FIFO
+settlement, excess banked on that item as advance, payment_type
+classification, and the daily_fee_audit row — so the two paths can never
+drift. Offline flushes also replay transport-usage picks (the day's stop
+fare materialises before settlement), the "mark present" register hook,
+and the auto receipt SMS (same trigger as the counter, fires when the
+device reconnects). Idempotency unchanged: one flush per `clientId`,
+`SYNC:`-referenced payments are the replay guard. Legacy single-amount
+queue entries from older clients keep the old FIFO-across-items path.

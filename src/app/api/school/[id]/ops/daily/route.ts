@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
-import { generateDayCharges, settleDailyCharges, effectivePrice, applyTransportUsage, parseTeacherPerms, DEFAULT_TEACHER_PERMS, collectionAllowed, TRANSPORT_USAGES, logDailyFeeAudit, arrearsTotalCents, creditItemBalance, itemBalanceCents, type CollectionMode, type TeacherPerms, type TransportUsage } from "@/lib/daily-billing";
+import { generateDayCharges, settleDailyCharges, effectivePrice, applyTransportUsage, parseTeacherPerms, DEFAULT_TEACHER_PERMS, collectionAllowed, TRANSPORT_USAGES, logDailyFeeAudit, arrearsTotalCents, creditItemBalance, itemBalanceCents, collectDailyItems, markPresentForDate, type CollectionMode, type TeacherPerms, type TransportUsage } from "@/lib/daily-billing";
 import { sendAutomated } from "@/lib/sms";
 import { dailyServicesReceipt } from "@/lib/receipt-payload";
 import { nextReceiptNo } from "@/lib/codes";
@@ -540,62 +540,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       });
       if (!gate.ok) return NextResponse.json({ error: gate.reason ?? "Not permitted" }, { status: 403 });
 
-      const owedAgg0 = await db.dailyCharge.aggregate({ where: { studentId, status: "OWED" }, _sum: { amountCents: true } });
-      const owedBefore = owedAgg0._sum.amountCents ?? 0;
-      const payMethod = method ?? "CASH";
-      const payment = await db.payment.create({
-        data: {
-          receiptNo: await nextReceiptNo(), studentId, category: "DAILY", schoolId,
-          amountCents: total, method: payMethod, reference: reference ?? null,
-          receivedByName: user.fullName,
-          paidAt: paidAt ? new Date(paidAt) : new Date(),
-        },
+      // shared per-item collection core (also used by the offline queue flush)
+      const { payment, breakdown, settledTotal, advanceTotal, paymentType } = await collectDailyItems(db, {
+        schoolId, studentId, items: parsed,
+        services: svcRows.map((s) => ({ id: s.id, name: s.name })),
+        method, reference: reference ?? null,
+        receivedByName: user.fullName, performedByRole: user.role,
+        paidAt: paidAt ? new Date(paidAt) : new Date(),
       });
 
-      const breakdown: { name: string; paid: number; advance: number }[] = [];
-      let settledTotal = 0, advanceTotal = 0;
-      for (const it of parsed) {
-        const svc = svcRows.find((s) => s.id === it.serviceId)!;
-        const applied = await settleDailyCharges(db, payment.id, studentId, it.amountCents, undefined, it.serviceId);
-        const excess = it.amountCents - applied;
-        if (excess > 0) await creditItemBalance(db, { schoolId, studentId, serviceId: it.serviceId, amountCents: excess, kind: "TOPUP", note: `advance — ${payment.receiptNo}`, byName: user.fullName });
-        settledTotal += applied; advanceTotal += excess;
-        breakdown.push({ name: svc.name, paid: applied, advance: excess });
-      }
-      const paymentType = advanceTotal === 0 ? "arrears" : settledTotal === 0 ? "advance" : "mixed"; // iEduPro daily_fee_transactions.payment_type
-
-      const arrearsAfterAgg = await db.dailyCharge.aggregate({ where: { studentId, status: "OWED" }, _sum: { amountCents: true } });
-      await logDailyFeeAudit(db, {
-        schoolId, studentId, actionType: "PAYMENT",
-        serviceCode: breakdown.length === 1 ? breakdown[0].name : "MULTIPLE",
-        amountCents: total,
-        arrearsBeforeCents: owedBefore, arrearsAfterCents: arrearsAfterAgg._sum.amountCents ?? 0,
-        performedByName: user.fullName, performedByRole: user.role,
-        reference: payment.receiptNo,
-        notes: `${PAYMENT_LABELS[payMethod] ?? payMethod} · ${paymentType} · ${breakdown.map((b) => `${b.name} ${fmtMoney(b.paid)}${b.advance ? ` (+${fmtMoney(b.advance)} advance)` : ""}`).join(", ")}${reference ? ` · ref ${reference}` : ""}`,
-      });
-
-      // mark present (same as the legacy path)
-      let present: string | null = null;
-      if (markPresent) {
-        const d = new Date(body.date ?? new Date().toISOString().slice(0, 10));
-        const dStart = new Date(d); dStart.setHours(0, 0, 0, 0);
-        const dEnd = new Date(d); dEnd.setHours(23, 59, 59, 999);
-        if (!en) present = "no-class";
-        else {
-          const session = await db.attendanceSession.findFirst({ where: { classroomId: en.classroomId, date: { gte: dStart, lte: dEnd } }, include: { records: { where: { studentId } } } });
-          if (!session) present = "no-session";
-          else if (session.records.length) {
-            if (session.records[0].status !== "PRESENT") {
-              await db.attendanceRecord.update({ where: { id: session.records[0].id }, data: { status: "PRESENT" } });
-              present = "updated";
-            } else present = "already";
-          } else {
-            await db.attendanceRecord.create({ data: { sessionId: session.id, studentId, status: "PRESENT" } });
-            present = "marked";
-          }
-        }
-      }
+      // mark present (shared with the offline flush)
+      const present = markPresent
+        ? await markPresentForDate(db, { schoolId, studentId, date: new Date(body.date ?? new Date().toISOString().slice(0, 10)) })
+        : null;
 
       // auto receipt SMS
       const setting = await db.smsSetting.findUnique({ where: { schoolId } });

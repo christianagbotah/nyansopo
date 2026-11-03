@@ -3,6 +3,8 @@ import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { getUser } from "@/lib/session";
 import { nextInvoiceNo, nextReceiptNo, nextStudentIndex } from "@/lib/codes";
+import { sanitizeCollectItems, collectDailyItems, markPresentForDate, applyTransportUsage, TRANSPORT_USAGES, type TransportUsage } from "@/lib/daily-billing";
+import { sendAutomated } from "@/lib/sms";
 
 // POST /api/sync — flush the offline action queue (idempotent per clientId)
 export async function POST(req: NextRequest) {
@@ -21,7 +23,49 @@ export async function POST(req: NextRequest) {
         if (dup) { results.push({ clientId: op.clientId, ok: true, detail: "already synced" }); continue; }
 
         if (category === "DAILY") {
-          // POS collection on daily services (canteen, water, classes)
+          // per-item offline collection (wave 5): the POS dialog queues `items[]`
+          // (one entry per fee item); replay through the SAME core as the online
+          // counter — per-item FIFO settlement, excess → that item's balance as
+          // advance (iEduPro §apply_payment). Legacy single-amount entries from
+          // older queued clients keep the FIFO-across-items path below.
+          if (Array.isArray(op.payload.items) && op.payload.items.length) {
+            const sanitized = sanitizeCollectItems(op.payload.items);
+            if (!sanitized.items) throw new Error(sanitized.error ?? "invalid items[]");
+            const svcRows = await db.dailyService.findMany({ where: { schoolId, id: { in: sanitized.items.map((i) => i.serviceId) } } });
+            if (svcRows.length !== sanitized.items.length) throw new Error("One of the fee items does not belong to this school");
+            const learner = await db.student.findUnique({ where: { id: studentId } });
+            if (!learner) throw new Error("learner missing");
+            const day = new Date(op.payload.paidAt ?? op.payload.date ?? Date.now());
+            // transport usage decides the day's fare BEFORE settlement (online parity)
+            if (op.payload.transportUsage && (TRANSPORT_USAGES as readonly string[]).includes(op.payload.transportUsage)) {
+              const appliedUsage = await applyTransportUsage(db, schoolId, studentId, day, op.payload.transportUsage as TransportUsage, { performedByName: `${user.fullName} (offline)`, performedByRole: user.role });
+              if (op.payload.transportUsage !== "NOT_USING" && !appliedUsage) throw new Error("no active route assignment — transport fare follows the bus route");
+            }
+            const collected = await collectDailyItems(db, {
+              schoolId, studentId, items: sanitized.items,
+              services: svcRows.map((s) => ({ id: s.id, name: s.name })),
+              method: op.payload.method ?? "CASH",
+              reference: `SYNC:${op.clientId}`,
+              receivedByName: `${user.fullName} (offline)`,
+              performedByRole: user.role,
+              paidAt: day, offlineQueued: true, syncedAt: new Date(),
+            });
+            const present = op.payload.markPresent ? await markPresentForDate(db, { schoolId, studentId, date: day }) : null;
+            // auto receipt SMS — same trigger as the counter, fires when the queue flushes
+            const setting = await db.smsSetting.findUnique({ where: { schoolId } });
+            if (setting?.autoPaymentReceipts) {
+              await sendAutomated({
+                db, schoolId, trigger: "PAYMENT_RECEIVED",
+                defaultBody: `We have received GH₵${(collected.payment.amountCents / 100).toFixed(2)} for ${learner.firstName} (${collected.payment.receiptNo}) towards daily services. Thank you.`,
+                vars: { student: learner.firstName, amount: `GH₵${(collected.payment.amountCents / 100).toFixed(2)}`, receipt: collected.payment.receiptNo, date: new Date().toLocaleDateString("en-GB") },
+                studentId, recipientName: learner.guardianName, recipientPhone: learner.guardianPhone, sentByName: `${user.fullName} (offline)`,
+              });
+            }
+            results.push({ clientId: op.clientId, ok: true, detail: `daily receipt ${collected.payment.receiptNo} (${collected.paymentType})${present ? ` · present ${present}` : ""}` });
+            continue;
+          }
+
+          // POS collection on daily services (canteen, water, classes) — legacy shape
           const owed = await db.dailyCharge.aggregate({ where: { studentId, status: "OWED" }, _sum: { amountCents: true } });
           const owedCents = owed._sum.amountCents ?? 0;
           if (owedCents <= 0) throw new Error("no daily balance");
