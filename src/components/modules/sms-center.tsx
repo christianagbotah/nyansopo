@@ -23,7 +23,7 @@ type Automation = { id: string; name: string; trigger: string; recipients: strin
 type Message = { id: string; recipientName: string; recipientPhone: string; body: string; category: string; status: string; sentByName: string | null; sentAt: string; errorReason: string | null };
 type SmsData = {
   setting: { provider: string; senderId: string; credits: number; autoFeeReminders: boolean; autoAbsenceAlerts: boolean; autoPaymentReceipts: boolean; autoLessonNoteAlerts: boolean } | null;
-  gateway?: { arkesel: boolean; termii: boolean };
+  gateway?: { arkesel: boolean; termii: boolean; hubtel?: boolean };
   templates: Template[];
   messages: Message[];
   stats: { total: number; delivered: number; deliveredRate: number; credits: number };
@@ -327,7 +327,7 @@ function ComposeTab({ data, onSent }: { data: SmsData; onSent: () => void }) {
             <div className="font-semibold text-sm text-foreground mb-1.5 flex items-center gap-1.5"><Smartphone className="size-4 text-primary" /> Gateway</div>
             Provider <b className="text-foreground">{data.setting?.provider ?? "—"}</b> · Sender ID <b className="text-foreground">{data.setting?.senderId ?? "—"}</b>.
             {data.setting?.provider === "SIMULATED"
-              ? " Demo mode — messages are logged with realistic statuses instead of hitting a real gateway. Switch to Arkesel or Termii in Settings for live delivery."
+              ? " Demo mode — messages are logged with realistic statuses instead of hitting a real gateway. Switch to Arkesel, Termii or Hubtel in Settings for live delivery."
               : data.setting?.provider === "ARKESEL"
                 ? (data.gateway?.arkesel
                     ? " Arkesel is configured — messages go out live."
@@ -336,7 +336,11 @@ function ComposeTab({ data, onSent }: { data: SmsData; onSent: () => void }) {
                   ? (data.gateway?.termii
                       ? " Termii is configured — messages go out live."
                       : " Termii selected but no API key on the server (SMS_TERMII_API_KEY) — messages will be recorded as FAILED without using credits.")
-                  : " Live gateway — configure the API key during deployment."}
+                  : data.setting?.provider === "HUBTEL"
+                    ? (data.gateway?.hubtel
+                        ? " Hubtel is configured — messages go out live via smsc.hubtel.com."
+                        : " Hubtel selected but no keys on the server (SMS_HUBTEL_CLIENT_ID / SMS_HUBTEL_CLIENT_SECRET) — messages will be recorded as FAILED without using credits.")
+                    : " Live gateway — configure the API key during deployment."}
           </CardContent>
         </Card>
       </div>
@@ -400,11 +404,13 @@ function SettingsTab({ data, onSaved }: { data: SmsData; onSaved: () => void }) 
                 <SelectItem value="SIMULATED">Demo (simulated delivery)</SelectItem>
                 <SelectItem value="ARKESEL">Arkesel (Ghana)</SelectItem>
                 <SelectItem value="TERMII">Termii (Africa)</SelectItem>
+                <SelectItem value="HUBTEL">Hubtel (Ghana)</SelectItem>
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">
               {provider === "ARKESEL" ? (data.gateway?.arkesel ? "Arkesel API key detected on the server — live delivery active." : "No Arkesel API key on the server yet — set SMS_ARKESEL_API_KEY during deployment; sends stay free until then.")
                 : provider === "TERMII" ? (data.gateway?.termii ? "Termii API key detected on the server — live delivery active." : "No Termii API key on the server yet — set SMS_TERMII_API_KEY during deployment; sends stay free until then.")
+                : provider === "HUBTEL" ? (data.gateway?.hubtel ? "Hubtel SMS keys detected on the server — live delivery via smsc.hubtel.com." : "No Hubtel keys on the server yet — set SMS_HUBTEL_CLIENT_ID / SMS_HUBTEL_CLIENT_SECRET (Messaging → Manage → Programmable SMS); sends stay free until then.")
                 : "Demo mode records messages locally with realistic statuses — no real SMS is sent."}
             </p>
           </div>
@@ -699,7 +705,7 @@ function NoticeboardTab() {
       .then((d) => setNotices(d.announcements ?? []))
       .catch(() => setNotices([]));
   };
-  useEffect(() => { load(); }, [currentSchoolId]); // eslint-disable-line react-hooks/set-state-in-effect
+  useEffect(() => { load(); }, [currentSchoolId]);  
 
   async function post() {
     if (!title.trim() || !bodyText.trim()) { toast({ title: "Title and body are required" }); return; }

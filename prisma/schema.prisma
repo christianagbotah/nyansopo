@@ -105,6 +105,7 @@ model School {
   feeStructures        FeeStructure[]
   invoices             Invoice[]
   payments             Payment[]
+  paymentRequests     PaymentRequest[]
   enrollments          Enrollment[]
   assessments          Assessment[]
   attendanceSessions   AttendanceSession[]
@@ -359,6 +360,7 @@ model Student {
   onlineExamAttempts  OnlineExamAttempt[]
   stockIssues          StockMovement[]
   posPayments          Payment[]
+  paymentRequests     PaymentRequest[]
   credits              StudentCredit[]
   crecheRatings        CrecheRating[]
 }
@@ -451,6 +453,7 @@ model Invoice {
   writeOffNote   String? // audit: who wrote off, original amount, reason
   createdAt      DateTime      @default(now())
   payments       Payment[]
+  momoRequests   PaymentRequest[]
 }
 
 model InvoiceItem {
@@ -484,6 +487,59 @@ model Payment {
   syncedAt       DateTime?
   voided         Boolean       @default(false)
   dailyCharges   DailyCharge[]
+  appliedRequest PaymentRequest? @relation("HubtelAppliedPayment")
+}
+
+// ─────────────────────────────────────────────────────────────
+// MOMO / ONLINE PAYMENT REQUESTS (Hubtel)
+// A request the school raises for a parent to pay by mobile money —
+// either a USSD push ("momo prompt") to the guardian's phone or a hosted
+// checkout link. Completion arrives via the Hubtel webhook (or an on-demand
+// status check) and is applied to the right ledger: invoice, daily items,
+// per-item balance or wallet.
+// ─────────────────────────────────────────────────────────────
+model PaymentRequest {
+  id               String          @id @default(cuid())
+  schoolId         String
+  school           School          @relation(fields: [schoolId], references: [id])
+  studentId        String?
+  student          Student?        @relation(fields: [studentId], references: [id])
+  purpose          String // INVOICE | DAILY_ITEMS | ITEM_BALANCE | WALLET
+  invoiceId        String? // INVOICE — the termly fee invoice being settled
+  invoice          Invoice?        @relation(fields: [invoiceId], references: [id])
+  items            Json? // DAILY_ITEMS / ITEM_BALANCE — [{serviceId, amountCents}]
+  walletKind       String? // WALLET — PREPAID | TRANSPORT | ITEM (with items[0])
+  amountCents      Int
+  method           String // MOMO_PROMPT | PAYMENT_LINK
+  channel          String? // mtn-gh | vodafone-gh | tigo-gh (prompt)
+  payerName        String
+  payerMsisdn      String
+  status           String          @default("PENDING") // PENDING | COMPLETED | FAILED | CANCELLED
+  provider         String          @default("HUBTEL") // HUBTEL | SIMULATED
+  clientReference  String          @unique
+  providerTxnId    String?
+  checkoutToken    String?
+  checkoutUrl      String?
+  appliedPaymentId String?         @unique
+  appliedPayment   Payment?        @relation("HubtelAppliedPayment", fields: [appliedPaymentId], references: [id])
+  appliedNote      String? // human-readable allocation breakdown
+  failureReason    String?
+  lastCheckedAt    DateTime?
+  completedAt      DateTime?
+  createdByName    String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  events           PaymentEvent[]
+}
+
+model PaymentEvent {
+  id        String          @id @default(cuid())
+  requestId String
+  request   PaymentRequest  @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  kind      String // INITIATED | CALLBACK | STATUS_CHECK | COMPLETED | FAILED | CANCELLED | LINK_SHARED | ERROR
+  payload   Json?
+  note      String?
+  createdAt DateTime        @default(now())
 }
 
 // ─────────────────────────────────────────────────────────────

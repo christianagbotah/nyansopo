@@ -33,6 +33,7 @@ import { AiCenter } from "@/components/modules/ai-center";
 import { AssociationPortal } from "@/components/modules/association-portal";
 import { Settings } from "@/components/modules/settings";
 import { DailyServices } from "@/components/modules/daily-services";
+import { MomoPayments } from "@/components/modules/momo-payments";
 import { Transportation } from "@/components/modules/transport";
 import { SmsCenter } from "@/components/modules/sms-center";
 import { Payroll } from "@/components/modules/payroll";
@@ -51,7 +52,7 @@ import {
   LayoutDashboard, Users, Banknote, CalendarCheck, ClipboardList, GraduationCap, ArrowLeftRight, Building2,
   BrainCircuit, Settings as SettingsIcon, Landmark, Menu, CloudOff, Cloud, RefreshCcw, LogOut, Moon, Sun,
   Download, ChevronDown, ChevronRight, School, MessageSquareText, UtensilsCrossed, Bus, Smartphone, Calculator, Package, PieChart, LayoutList,
-  BookOpen, ShieldCheck, Receipt, Route, UserRound, Home, Backpack, Laptop, BedDouble, NotebookPen, Search, LayoutGrid,
+  BookOpen, ShieldCheck, Receipt, Route, UserRound, Home, Backpack, Laptop, BedDouble, NotebookPen, Search, LayoutGrid, SmartphoneNfc,
 } from "lucide-react";
 
 type NavLeaf = { id: string; label: string; icon?: any; target?: NavTarget };
@@ -68,6 +69,7 @@ const SCHOOL_NAV: NavItem[] = [
   { id: "students", label: "Students", icon: Users, section: "People" },
   { id: "admissions", label: "Admissions & Transfers", icon: ArrowLeftRight, section: "People" },
   { id: "fees", label: "Fees & Billing", icon: Banknote, section: "Finance" },
+  { id: "momo", label: "MoMo & Payment Links", icon: SmartphoneNfc, section: "Finance" },
   { id: "daily", label: "Daily Services & Tuck", icon: UtensilsCrossed, section: "Finance" },
   { id: "transport", label: "Transportation", icon: Bus, section: "Finance" },
   { id: "boarding", label: "Boarding Houses", icon: BedDouble, section: "Facilities" },
@@ -566,6 +568,7 @@ export function AppShell() {
              module === "students" && show("students") ? <Students /> :
              module === "admissions" && show("admissions") ? <Admissions /> :
              module === "fees" && show("fees") ? <Fees /> :
+             module === "momo" && show("momo") ? <MomoPayments /> :
              module === "daily" && show("daily") ? <DailyServices /> :
              module === "transport" && show("transport") ? <Transportation /> :
              module === "sms" && show("sms") ? <SmsCenter /> :

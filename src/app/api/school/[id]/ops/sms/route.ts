@@ -66,7 +66,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const { provider, senderId, autoFeeReminders, autoAbsenceAlerts, autoPaymentReceipts, autoLessonNoteAlerts } = body;
     const existing = await db.smsSetting.findUnique({ where: { schoolId } });
     const data = {
-      provider: provider ?? "SIMULATED", senderId: senderId ?? "NYANSAPO",
+      provider: ["ARKESEL", "TERMII", "HUBTEL"].includes(provider) ? provider : "SIMULATED", senderId: senderId ?? "NYANSAPO",
       autoFeeReminders: !!autoFeeReminders, autoAbsenceAlerts: !!autoAbsenceAlerts, autoPaymentReceipts: !!autoPaymentReceipts,
       // lesson-note toggle: preserve the stored value when the caller omits it
       ...(autoLessonNoteAlerts !== undefined ? { autoLessonNoteAlerts: !!autoLessonNoteAlerts } : existing ? {} : { autoLessonNoteAlerts: true }),

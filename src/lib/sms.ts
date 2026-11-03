@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { toGhanaIntl, arkeselSend, termiiSend, type GatewaySendResult } from "@/lib/sms-gateway";
+import { hubtelSmsSend, hubtelSmsConfigured } from "@/lib/hubtel";
 
 // ── SMS sending helper (gateway-agnostic) ───────────────────
 // SIMULATED (default) records messages with realistic statuses for demo /
@@ -40,6 +41,13 @@ async function dispatch(
     if (!intl) return { ok: false, error: "Invalid Ghana number format" };
     return termiiSend({ apiKey, senderId: args.senderId, message: args.body, recipient: intl });
   }
+  if (provider === "HUBTEL") {
+    if (!hubtelSmsConfigured()) return { ok: false, error: "Hubtel SMS keys not configured (set SMS_HUBTEL_CLIENT_ID / SMS_HUBTEL_CLIENT_SECRET on the server)" };
+    const intl = toGhanaIntl(args.recipientPhone);
+    if (!intl) return { ok: false, error: "Invalid Ghana number format" };
+    const r = await hubtelSmsSend({ senderId: args.senderId, recipient: intl, content: args.body });
+    return r.ok ? { ok: true, ref: r.data?.messageId ?? null } : { ok: false, error: r.error };
+  }
   // SIMULATED — a Ghana-format number "delivers"; anything else fails
   return { ok: GHANA_PHONE_OK(args.recipientPhone), error: "Invalid Ghana number format" };
 }
@@ -51,7 +59,7 @@ export async function sendSms({ db, schoolId, studentId, recipientName, recipien
       data: { schoolId, studentId: studentId ?? null, recipientName, recipientPhone, body, category, status: "FAILED", creditsUsed: 0, sentByName: sentByName ?? null, errorReason: "No SMS credits — top up in Settings.", provider: setting?.provider ?? "SIMULATED" },
     });
   }
-  const provider = ["ARKESEL", "TERMII"].includes(setting.provider) ? setting.provider : "SIMULATED";
+  const provider = ["ARKESEL", "TERMII", "HUBTEL"].includes(setting.provider) ? setting.provider : "SIMULATED";
   const result = await dispatch(provider, { senderId: setting.senderId, recipientPhone, body });
   // debit only on success — a failed/config-missing attempt must stay free
   if (result.ok) await db.smsSetting.update({ where: { schoolId }, data: { credits: { decrement: 1 } } });

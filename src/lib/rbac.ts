@@ -25,6 +25,7 @@ export const PERMISSIONS: PermDef[] = [
   { id: "fees.view", label: "View invoices & ledgers", group: "Fees & Finance" },
   { id: "fees.manage", label: "Create / modify invoices & write-offs", group: "Fees & Finance" },
   { id: "fees.collect", label: "Take payments & issue receipts", group: "Fees & Finance" },
+  { id: "payments.momo", label: "MoMo requests & payment links (Hubtel)", group: "Fees & Finance" },
   { id: "discounts.manage", label: "Discount profiles, applications & approvals", group: "Fees & Finance" },
   { id: "cashier.reports", label: "Cashier console & collection reports", group: "Fees & Finance" },
   // Daily services
@@ -113,7 +114,7 @@ export const ROLE_DEFAULTS: Record<string, string[] | "*"> = {
   SCHOOL_ADMIN: minus(ALL_PERM_IDS, ["rbac.manage", "approvals.manage", "portal.self", "campus.self"]),
   ACCOUNTANT: [
     "students.view", "admissions.manage",
-    "fees.view", "fees.manage", "fees.collect", "discounts.manage", "cashier.reports",
+    "fees.view", "fees.manage", "fees.collect", "payments.momo", "discounts.manage", "cashier.reports",
     "daily.view", "daily.collect", "daily.manage",
     "transport.view", "transport.manage",
     "payroll.view", "payroll.process",
@@ -124,7 +125,7 @@ export const ROLE_DEFAULTS: Record<string, string[] | "*"> = {
     "settings.manage", "ai.use", "staffhub.self",
   ],
   CASHIER: [
-    "students.view", "fees.view", "fees.collect", "cashier.reports", "approvals.request",
+    "students.view", "fees.view", "fees.collect", "payments.momo", "cashier.reports", "approvals.request",
     "daily.view", "daily.collect",
     "transport.view", "transport.conduct",
   ],
@@ -190,6 +191,7 @@ export const PERM_IMPLIES: Record<string, string[]> = {
   "curriculum.review": ["curriculum.view"],
   "reports.publish": ["reports.view"],
   "sms.send": ["sms.view"],
+  "payments.momo": ["fees.view"],
   "library.issue": ["library.view"],
   "library.manage": ["library.view"],
 };
@@ -240,6 +242,7 @@ export const MODULE_PERMS: Record<string, string[]> = {
   students: ["students.view"],
   admissions: ["admissions.manage"],
   fees: ["fees.view"],
+  momo: ["payments.momo"],
   daily: ["daily.view"],
   transport: ["transport.view"],
   payroll: ["payroll.view"],

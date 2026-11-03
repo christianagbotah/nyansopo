@@ -1,11 +1,19 @@
-// ── SMS gateway clients (ARKESEL / TERMII) ────────────────────
+// ── SMS gateway clients (ARKESEL / TERMII / HUBTEL) ───────────
 // Real-delivery adapters behind the provider-agnostic sendSms helper.
 // Credentials are deployment-level env vars (never stored in the DB):
 //   SMS_ARKESEL_API_KEY  — Arkesel v2 API key   (https://arkesel.com)
 //   SMS_TERMII_API_KEY   — Termii API key       (https://termii.com)
+//   SMS_HUBTEL_CLIENT_ID / SMS_HUBTEL_CLIENT_SECRET — Hubtel Programmable
+//                          SMS keys (fall back to the shared HUBTEL_* pair;
+//                          the Hubtel adapter itself lives in lib/hubtel.ts)
 // Optional base-URL overrides exist for integration testing:
-//   SMS_ARKESEL_BASE_URL / SMS_TERMII_BASE_URL
+//   SMS_ARKESEL_BASE_URL / SMS_TERMII_BASE_URL / SMS_HUBTEL_BASE_URL
 // Credit accounting stays in-app: one successful send debits one credit.
+
+import { toGhanaIntl } from "@/lib/phone";
+import { hubtelSmsConfigured } from "@/lib/hubtel";
+
+export { toGhanaIntl };
 
 export type GatewaySendResult = {
   ok: boolean;
@@ -15,16 +23,8 @@ export type GatewaySendResult = {
   error?: string;
 };
 
-/** Normalise a Ghana phone number to international format without '+'.
- *  "0244123456" | "+233244123456" | "233244123456" → "233244123456".
- *  Returns null when the number is not a valid Ghana MSISDN. */
-export function toGhanaIntl(phone: string): string | null {
-  const p = (phone ?? "").replace(/[\s-]/g, "");
-  if (/^0\d{9}$/.test(p)) return `233${p.slice(1)}`;
-  if (/^\+233\d{9}$/.test(p)) return p.slice(1);
-  if (/^233\d{9}$/.test(p)) return p;
-  return null;
-}
+/** Normalise a Ghana phone number — moved to lib/phone (shared with the
+ *  Hubtel client); re-exported here for existing importers. */
 
 const TIMEOUT_MS = 15_000;
 
@@ -85,5 +85,6 @@ export function gatewayConfigStatus() {
   return {
     arkesel: !!process.env.SMS_ARKESEL_API_KEY,
     termii: !!process.env.SMS_TERMII_API_KEY,
+    hubtel: hubtelSmsConfigured(),
   };
 }
