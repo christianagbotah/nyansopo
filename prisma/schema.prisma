@@ -169,6 +169,7 @@ model School {
   crecheRatings       CrecheRating[]
   schoolSettings      SchoolSetting[]
   mediaAssets         MediaAsset[]
+  billItems           BillItem[]
   serviceBalances     ServiceBalance[]
 }
 
@@ -429,6 +430,28 @@ model FeeItem {
   name           String
   amountCents    Int
   isOptional     Boolean      @default(false)
+}
+
+/* ── BILL ITEM CATALOG (CI3 bill_item — student_payment.php “Add Billing
+   Item” tab): the school-wide reusable fee catalog that feeds the mass
+   invoice wizard. Applicability: specificClassIds > classCategory > ALL. ── */
+model BillItem {
+  id               String   @id @default(cuid())
+  schoolId         String
+  school           School   @relation(fields: [schoolId], references: [id])
+  title            String
+  category         String   @default("General") // Tuition | Exams | Books | ICT | Meals | Transport | Other…
+  classCategory    String   @default("ALL") // ALL | CRECHE | NURSERY | KG | PRIMARY | JHS | SENIOR
+  specificClassIds Json?    // string[] of classroom ids — overrides classCategory
+  amountCents      Int
+  description      String?
+  active           Boolean  @default(true)
+  sortOrder        Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([schoolId, title])
+  @@index([schoolId])
 }
 
 model Invoice {

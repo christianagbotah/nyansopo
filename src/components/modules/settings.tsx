@@ -15,7 +15,7 @@ import { ModuleHeader, LoadingBlock, StatusBadge, StatCard, EmptyState } from "@
 import { SCALES_TABLE } from "@/lib/grading-scale";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { Settings as SettingsIcon, GraduationCap, BookOpen, Users, CalendarRange, Plus, Save, MessageSquareQuote, Sparkles, Trash2, Award, Pencil, Baby, Sigma, PencilLine, ChevronDown, ChevronRight, ImageUp, ReceiptText } from "lucide-react";
+import {Settings as SettingsIcon, GraduationCap, BookOpen, Users, CalendarRange, Plus, Save, MessageSquareQuote, Sparkles, Trash2, Award, Pencil, Baby, Sigma, PencilLine, ChevronDown, ChevronRight, ImageUp, ReceiptText, ShieldCheck, Banknote} from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 
@@ -46,15 +46,19 @@ export function Settings() {
   const [tab, setTab] = useState("profile");
   const [form, setForm] = useState<any>({ motto: "", phone: "", email: "", curriculum: "GES", nasiaStatus: "", gnacopsStatus: "" });
   // branding & receipts preferences (SchoolSetting-backed)
-  const [branding, setBranding] = useState<{ logoUrl: string | null; signatureUrl: string | null; receiptStyle: string }>({ logoUrl: null, signatureUrl: null, receiptStyle: "A5" });
+  const [branding, setBranding] = useState<{ logoUrl: string | null; signatureUrl: string | null; ssnitLogoUrl: string | null; receiptStyle: string }>({ logoUrl: null, signatureUrl: null, ssnitLogoUrl: null, receiptStyle: "A5" });
+  // CI3 system_settings_modern General/Payment/Security fields (system.* KV)
+  const [sys, setSys] = useState<any>({ slogan: "", address: "", boxNumber: "", digitalAddress: "", website: "", ssnitNumber: "", currency: "GHS", halfPaymentBy: "First Week", fullPaymentBy: "", momoAccountName: "", momoAccountNumber: "", autoLock: false });
+  // statutory rates (OpsSetting — shared with payroll runs)
+  const [rates, setRates] = useState<any>({ ssnitTier1Employee: 5, ssnitTier1Employer: 13, ssnitTier2: 5, getfund: 2.5, nhil: 2.5 });
   // per-term "days opened" edits (termId → value as typed)
   const [daysEdits, setDaysEdits] = useState<Record<string, string>>({});
 
-  /* iEduPro nested nav: preselect the WAEC Grading tab on deep link */
+  /* iEduPro nested nav: deep-link to any settings tab */
   const [appliedTarget, setAppliedTarget] = useState<any>(null);
   if (navTarget !== appliedTarget) {
     setAppliedTarget(navTarget);
-    if (navTarget?.tab === "waec") setTab("waec");
+    if (navTarget?.tab && ["profile", "system", "branding", "classes", "subjects", "calendar", "staff", "grading", "earlyyears", "sba", "waec", "reportlib", "statutory"].includes(navTarget.tab)) setTab(navTarget.tab);
   }
 
   const load = () => {
@@ -62,7 +66,9 @@ export function Settings() {
     apiGet<any>(`/api/school/${currentSchoolId}/settings`).then((d) => {
       setData(d);
       setForm({ motto: d.school.motto ?? "", phone: d.school.phone ?? "", email: d.school.email ?? "", curriculum: d.school.curriculum, nasiaStatus: d.school.nasiaStatus, gnacopsStatus: d.school.gnacopsStatus });
-      setBranding({ logoUrl: d.branding?.logoUrl ?? null, signatureUrl: d.branding?.signatureUrl ?? null, receiptStyle: d.branding?.receiptStyle ?? "A5" });
+      setBranding({ logoUrl: d.branding?.logoUrl ?? null, signatureUrl: d.branding?.signatureUrl ?? null, ssnitLogoUrl: d.branding?.ssnitLogoUrl ?? null, receiptStyle: d.branding?.receiptStyle ?? "A5" });
+      setSys((prev: any) => ({ ...prev, ...(d.system ?? {}) }));
+      setRates(d.statutory ?? rates);
       setDaysEdits({});
     }).catch((e) => toast({ title: "Load failed", description: e.message, variant: "destructive" }));
   };
@@ -81,11 +87,40 @@ export function Settings() {
     finally { setBusy(false); }
   }
 
-  async function savePreferences(prefs: { logoUrl?: string | null; signatureUrl?: string | null; receiptStyle?: string; daysOpened?: Record<string, number> }) {
+  async function savePreferences(prefs: { logoUrl?: string | null; signatureUrl?: string | null; ssnitLogoUrl?: string | null; receiptStyle?: string; daysOpened?: Record<string, number> }) {
     setBusy(true);
     try {
       await apiPost(`/api/school/${currentSchoolId}/settings`, { action: "update-preferences", ...prefs });
       toast({ title: "Preferences saved" });
+      load();
+    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); }
+    finally { setBusy(false); }
+  }
+
+  /* CI3 system_settings do_update — General + Payment + Security in one save */
+  async function saveSystem() {
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/settings`, {
+        action: "update-system",
+        slogan: sys.slogan, address: sys.address, boxNumber: sys.boxNumber, digitalAddress: sys.digitalAddress,
+        website: sys.website, ssnitNumber: sys.ssnitNumber, currency: sys.currency,
+        halfPaymentBy: sys.halfPaymentBy, fullPaymentBy: sys.fullPaymentBy || null,
+        momoAccountName: sys.momoAccountName, momoAccountNumber: sys.momoAccountNumber,
+        autoLock: !!sys.autoLock,
+      });
+      toast({ title: "System settings saved" });
+      load();
+    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); }
+    finally { setBusy(false); }
+  }
+
+  /* statutory rates — same store the payroll runs read (OpsSetting) */
+  async function saveRates() {
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/payroll`, { action: "save-rates", ...rates });
+      toast({ title: "Statutory rates updated", description: "New payroll runs will use these rates — existing payslips keep theirs." });
       load();
     } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); }
     finally { setBusy(false); }
@@ -97,6 +132,9 @@ export function Settings() {
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="flex-wrap">
           <TabsTrigger value="profile">Profile & curriculum</TabsTrigger>
+          <TabsTrigger value="system" className="gap-1.5"><SettingsIcon className="size-4" /> System</TabsTrigger>
+          <TabsTrigger value="branding" className="gap-1.5"><ReceiptText className="size-4" /> Branding &amp; logos</TabsTrigger>
+          <TabsTrigger value="statutory" className="gap-1.5"><ShieldCheck className="size-4" /> Statutory (SSNIT)</TabsTrigger>
           <TabsTrigger value="classes">Classes ({data.classrooms.length})</TabsTrigger>
           <TabsTrigger value="subjects">Subjects ({data.subjects.length})</TabsTrigger>
           <TabsTrigger value="calendar">Calendar</TabsTrigger>
@@ -205,6 +243,20 @@ export function Settings() {
                     </div>
                   </div>
                 </div>
+                {/* SSNIT logo (statutory payroll reports) */}
+                <div className="flex items-center gap-3">
+                  <div className="size-16 rounded-xl border bg-secondary/50 flex items-center justify-center overflow-hidden shrink-0">
+                    {branding.ssnitLogoUrl ? <img src={branding.ssnitLogoUrl} alt="SSNIT logo" className="size-full object-contain" /> : <ImageUp className="size-6 text-muted-foreground/50" />}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <Label className="text-xs">SSNIT logo (Tier 1 / Tier 2 statutory reports)</Label>
+                    <div className="flex items-center gap-2 mt-1.5">
+                      <Input type="file" accept="image/*" className="h-8 w-44 text-xs file:mr-1.5 file:h-6 file:px-2 file:text-xs"
+                        onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; try { setBranding({ ...branding, ssnitLogoUrl: await imageToDataUrl(f, 256, 256) }); } catch (err: any) { toast({ title: "Skipped", description: err.message, variant: "destructive" }); } }} />
+                      {branding.ssnitLogoUrl && <Button size="sm" variant="ghost" className="h-8 text-xs text-muted-foreground" onClick={() => setBranding({ ...branding, ssnitLogoUrl: null })}>Remove</Button>}
+                    </div>
+                  </div>
+                </div>
                 {/* default receipt style */}
                 <div className="space-y-1.5">
                   <Label>Default receipt style</Label>
@@ -219,9 +271,177 @@ export function Settings() {
                   </Select>
                   <p className="text-[11px] text-muted-foreground">Every newly issued receipt (fees, counter, store, transport) opens in this style. Cashiers can still reprint in another style.</p>
                 </div>
-                <Button className="gap-1.5" disabled={busy} onClick={() => savePreferences({ logoUrl: branding.logoUrl, signatureUrl: branding.signatureUrl, receiptStyle: branding.receiptStyle })}>
+                <Button className="gap-1.5" disabled={busy} onClick={() => savePreferences({ logoUrl: branding.logoUrl, signatureUrl: branding.signatureUrl, ssnitLogoUrl: branding.ssnitLogoUrl, receiptStyle: branding.receiptStyle })}>
                   <Save className="size-4" /> {busy ? "Saving…" : "Save branding & receipts"}
                 </Button>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        {/* ── CI3 system_settings_modern — General + Payment + Security tabs ── */}
+        <TabsContent value="system">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <Card>
+              <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><SettingsIcon className="size-4" /> School information</CardTitle></CardHeader>
+              <CardContent className="space-y-3">
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div className="rounded-lg border p-3"><div className="text-xs text-muted-foreground">System name</div><div className="font-semibold">{s.name}</div></div>
+                  <div className="rounded-lg border p-3"><div className="text-xs text-muted-foreground">Location</div><div className="font-semibold">{s.town}, {s.district}, {s.region}</div></div>
+                </div>
+                <div className="space-y-1.5"><Label>School&rsquo;s slogan</Label><Input value={sys.slogan ?? ""} onChange={(e) => setSys({ ...sys, slogan: e.target.value })} placeholder="Wisdom knots, bright futures" /></div>
+                <div className="space-y-1.5"><Label>Address</Label><Textarea rows={2} value={sys.address ?? ""} onChange={(e) => setSys({ ...sys, address: e.target.value })} placeholder="Street / locality" /></div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5"><Label>Box number</Label><Input value={sys.boxNumber ?? ""} onChange={(e) => setSys({ ...sys, boxNumber: e.target.value })} placeholder="P.O. Box &hellip;" /></div>
+                  <div className="space-y-1.5"><Label>Digital address (GhanaPost GPS)</Label><Input value={sys.digitalAddress ?? ""} onChange={(e) => setSys({ ...sys, digitalAddress: e.target.value })} placeholder="GA-123-4567" /></div>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5"><Label>Website</Label><Input value={sys.website ?? ""} onChange={(e) => setSys({ ...sys, website: e.target.value })} placeholder="https://&hellip;" /></div>
+                  <div className="space-y-1.5"><Label>SSNIT Establishment Number</Label><Input value={sys.ssnitNumber ?? ""} onChange={(e) => setSys({ ...sys, ssnitNumber: e.target.value })} placeholder="Employer registration with SSNIT" /></div>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5"><Label>Currency</Label><Input value={sys.currency ?? "GHS"} disabled /></div>
+                  <div className="space-y-1.5"><Label>System email</Label><Input value={s.email ?? ""} disabled /></div>
+                </div>
+              </CardContent>
+            </Card>
+            <div className="space-y-4">
+              <Card>
+                <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><Banknote className="size-4" /> Payment settings</CardTitle></CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label>Half payment expected by</Label>
+                      <Select value={sys.halfPaymentBy ?? "First Week"} onValueChange={(v) => setSys({ ...sys, halfPaymentBy: v })}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="First Week">First week of term</SelectItem>
+                          <SelectItem value="Second Week">Second week of term</SelectItem>
+                          <SelectItem value="Third Week">Third week of term</SelectItem>
+                          <SelectItem value="Fourth Week">Fourth week of term</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5"><Label>Full payment expected by</Label><Input type="date" value={sys.fullPaymentBy ? String(sys.fullPaymentBy).slice(0, 10) : ""} onChange={(e) => setSys({ ...sys, fullPaymentBy: e.target.value })} /></div>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-1.5"><Label>Mobile money account name</Label><Input value={sys.momoAccountName ?? ""} onChange={(e) => setSys({ ...sys, momoAccountName: e.target.value })} placeholder="Golden Excellence Academy" /></div>
+                    <div className="space-y-1.5"><Label>Mobile money number</Label><Input value={sys.momoAccountNumber ?? ""} onChange={(e) => setSys({ ...sys, momoAccountNumber: e.target.value })} placeholder="024 000 0000 (MTN)" /></div>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><ShieldCheck className="size-4" /> Financial security</CardTitle></CardHeader>
+                <CardContent className="space-y-3">
+                  <label className="flex items-start gap-3 rounded-lg border p-3 cursor-pointer">
+                    <Checkbox checked={!!sys.autoLock} onCheckedChange={(v) => setSys({ ...sys, autoLock: !!v })} />
+                    <span>
+                      <span className="text-sm font-medium block">Auto-lock invoices &amp; payments</span>
+                      <span className="text-xs text-muted-foreground">Payments lock on creation and invoices lock once fully paid &mdash; edits then require an approved modification request.</span>
+                    </span>
+                  </label>
+                  <div className="rounded-lg border-l-4 border-blue-400 bg-blue-50 dark:bg-blue-950/40 p-3 text-xs text-muted-foreground">
+                    Locked records change only through the modification-request queue (Fees &rarr; Approvals), keeping an audit trail of who changed what.
+                  </div>
+                </CardContent>
+              </Card>
+              <Button className="gap-1.5" onClick={saveSystem} disabled={busy}><Save className="size-4" /> {busy ? "Saving&hellip;" : "Save all settings"}</Button>
+            </div>
+          </div>
+        </TabsContent>
+
+        {/* ── Branding — the dedicated tab reuses the profile card&rsquo;s branding block
+             (the uploads live in one place; the tab deep-links straight to them) ── */}
+        <TabsContent value="branding">
+          <Card>
+            <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><ReceiptText className="size-4" /> Branding, signatures &amp; receipts</CardTitle></CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-xs text-muted-foreground">Upload once &mdash; the school logo prints on receipts and report cards, the head-teacher signature signs them, and the SSNIT logo heads the Tier&nbsp;1 / Tier&nbsp;2 statutory schedules. Manage the uploads from the <button className="text-primary underline" onClick={() => setTab("profile")}>Profile tab</button> (Branding &amp; receipts card).</p>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-xl border p-3 text-center">
+                  <div className="mx-auto size-20 rounded-xl border bg-secondary/50 flex items-center justify-center overflow-hidden">
+                    {branding.logoUrl ? <img src={branding.logoUrl} alt="School logo" className="size-full object-contain" /> : <ImageUp className="size-7 text-muted-foreground/50" />}
+                  </div>
+                  <div className="mt-2 text-xs font-semibold">School logo</div>
+                  <div className="text-[11px] text-muted-foreground">receipt letterheads</div>
+                </div>
+                <div className="rounded-xl border p-3 text-center">
+                  <div className="mx-auto h-20 w-full rounded-xl border bg-secondary/50 flex items-center justify-center overflow-hidden">
+                    {branding.signatureUrl ? <img src={branding.signatureUrl} alt="Head-teacher signature" className="h-full object-contain" /> : <ImageUp className="size-7 text-muted-foreground/50" />}
+                  </div>
+                  <div className="mt-2 text-xs font-semibold">Head-teacher signature</div>
+                  <div className="text-[11px] text-muted-foreground">signs receipts &amp; reports</div>
+                </div>
+                <div className="rounded-xl border p-3 text-center">
+                  <div className="mx-auto size-20 rounded-xl border bg-secondary/50 flex items-center justify-center overflow-hidden">
+                    {branding.ssnitLogoUrl ? <img src={branding.ssnitLogoUrl} alt="SSNIT logo" className="size-full object-contain" /> : <ImageUp className="size-7 text-muted-foreground/50" />}
+                  </div>
+                  <div className="mt-2 text-xs font-semibold">SSNIT logo</div>
+                  <div className="text-[11px] text-muted-foreground">Tier 1 / Tier 2 reports</div>
+                </div>
+              </div>
+              <div className="space-y-1.5 max-w-sm">
+                <Label>Default receipt style</Label>
+                <Select value={branding.receiptStyle} onValueChange={(v) => setBranding({ ...branding, receiptStyle: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="A5">Standard A5 &mdash; kente-accented, itemised</SelectItem>
+                    <SelectItem value="FORMAL">Formal Bursar A5 &mdash; serif, dotted fields, amount in words</SelectItem>
+                    <SelectItem value="MODERN">Modern Gradient &mdash; bold paid banner</SelectItem>
+                    <SelectItem value="THERMAL">Thermal 80mm &mdash; counter roll printer</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button className="gap-1.5" disabled={busy} onClick={() => savePreferences({ logoUrl: branding.logoUrl, signatureUrl: branding.signatureUrl, ssnitLogoUrl: branding.ssnitLogoUrl, receiptStyle: branding.receiptStyle })}>
+                <Save className="size-4" /> {busy ? "Saving&hellip;" : "Save branding &amp; receipts"}
+              </Button>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ── Statutory rates (CI3 payroll_statutory_settings parity) ── */}
+        <TabsContent value="statutory">
+          <div className="space-y-4">
+            <div className="rounded-lg border-l-4 border-amber-400 bg-amber-50 dark:bg-amber-950/40 p-3 text-xs text-muted-foreground">
+              <b className="text-amber-800 dark:text-amber-300">Important:</b> changes affect all <i>new</i> payroll calculations &mdash; existing payslips keep the rates they were computed with. Verify rates with the Ghana Revenue Authority before making changes.
+            </div>
+            <Card>
+              <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><ShieldCheck className="size-4" /> Statutory deduction rates</CardTitle></CardHeader>
+              <CardContent className="p-0">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-secondary/70">
+                      <tr className="text-left border-b">
+                        <th className="px-4 py-2.5 font-medium">Deduction type</th>
+                        <th className="px-4 py-2.5 font-medium">Description</th>
+                        <th className="px-4 py-2.5 font-medium text-center w-32">Rate (%)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {([
+                        ["ssnitTier1Employer", "SSNIT Tier 1 \u2014 Employer", "Employer contribution to SSNIT Tier 1 (applied to basic salary)"],
+                        ["ssnitTier1Employee", "SSNIT Tier 1 \u2014 Employee", "Employee share deducted for PAYE computation (5.5% statutory, 5% typical net scheme)"],
+                        ["ssnitTier2", "SSNIT Tier 2", "Occupational pension contribution ( Tier 2 fund)"],
+                        ["getfund", "GETFund", "Ghana Education Trust Fund levy on basic salary"],
+                        ["nhil", "NHIL", "National Health Insurance Levy on basic salary"],
+                      ] as const).map(([key, label, desc]) => (
+                        <tr key={key} className="border-b last:border-0">
+                          <td className="px-4 py-2.5 font-medium">{label}</td>
+                          <td className="px-4 py-2.5 text-xs text-muted-foreground">{desc}</td>
+                          <td className="px-4 py-2.5">
+                            <Input type="number" min="0" max="100" step="0.01" className="h-9 text-center" value={rates[key] ?? 0}
+                              onChange={(e) => setRates({ ...rates, [key]: parseFloat(e.target.value) || 0 })} />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 border-t px-4 py-3">
+                  <Button className="gap-1.5" onClick={saveRates} disabled={busy}><Save className="size-4" /> {busy ? "Saving&hellip;" : "Save all changes"}</Button>
+                  <Button variant="outline" onClick={load} disabled={busy}>Reset to saved values</Button>
+                  <span className="text-xs text-muted-foreground ml-auto">Tier-1 contributions are capped at GH₵35,000/month pensionable earnings. Full schedules print from Payroll &rarr; SSNIT reports.</span>
+                </div>
               </CardContent>
             </Card>
           </div>

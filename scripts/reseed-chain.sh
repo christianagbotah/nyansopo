@@ -23,6 +23,7 @@ SCRIPTS=(
   scripts/seed-jhs3-bece.ts
   scripts/seed-pos-sales.ts
   prisma/seed-momo.ts
+  prisma/seed-bill-items.ts
 )
 fail=0
 for s in "${SCRIPTS[@]}"; do

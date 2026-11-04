@@ -174,6 +174,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     } else if (audience?.startsWith("CLASS:")) {
       const clsId = audience.slice(6);
       recipients = enrolled.filter((e) => e.classroomId === clsId).map((e) => ({ studentId: e.studentId, name: `${e.student.firstName} ${e.student.lastName}`, guardianName: e.student.guardianName, guardianPhone: e.student.guardianPhone, classroom: e.classroom.name }));
+    } else if (audience?.startsWith("STUDENTS:")) {
+      // CI3 bulk- invoice SMS: a hand-picked list of learner ids (bulk manage bar)
+      const ids = audience.slice(9).split(",").filter(Boolean);
+      const term = await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId } } });
+      const invoices = term ? await db.invoice.findMany({ where: { schoolId, termId: term.id, studentId: { in: ids } } }) : [];
+      const owed = new Map(invoices.map((i) => [i.studentId, i.totalCents - i.discountCents - i.paidCents]));
+      recipients = enrolled
+        .filter((e) => ids.includes(e.studentId))
+        .map((e) => ({ studentId: e.studentId, name: `${e.student.firstName} ${e.student.lastName}`, guardianName: e.student.guardianName, guardianPhone: e.student.guardianPhone, classroom: e.classroom.name, balanceCents: owed.get(e.studentId) ?? 0 }));
     } else if (audience === "ARREARS") {
       const term = await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId } } });
       if (!term) return NextResponse.json({ error: "No current term" }, { status: 400 });
@@ -208,7 +217,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       });
       const msg = await sendSms({ db, schoolId, studentId: r.studentId, recipientName: r.guardianName, recipientPhone: r.guardianPhone, body: rendered, category: "ANNOUNCEMENT", sentByName: user.fullName });
       // promote FEES reminders to the right category when triggered from arrears
-      if (audience === "ARREARS" && msg.status !== "FAILED") {
+      if ((audience === "ARREARS" || audience?.startsWith("STUDENTS:")) && msg.status !== "FAILED") {
         await db.smsMessage.update({ where: { id: msg.id }, data: { category: "FEES" } });
       }
       if (msg.status === "FAILED") failed++; else sent++;

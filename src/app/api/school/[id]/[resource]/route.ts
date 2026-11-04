@@ -59,6 +59,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       Object.values(byClass).forEach((c) => (c.arrears = c.billed - c.collected));
       const riskHigh = await db.riskScore.count({ where: { schoolId, level: { in: ["HIGH", "CRITICAL"] } } });
       const staffCount = await db.staff.count({ where: { schoolId } });
+      /* CI3 dashboard parity — key-metric links + financial summary numbers */
+      const teacherCount = await db.staff.count({ where: { schoolId, category: "TEACHING" } });
+      const parentCount = await db.user.count({ where: { schoolId, role: "PARENT" } });
+      const unpaidCount = invoices.filter((i) => i.status === "UNPAID" || i.status === "OVERDUE" || i.status === "PARTIAL").length;
+      const expensesTerm = term ? await db.expense.aggregate({ where: { schoolId, expenseDate: { gte: term.startsAt, lte: term.endsAt } }, _sum: { amountCents: true } }) : null;
       const gender = { M: enrollments.filter((e) => e.student.gender === "M").length, F: enrollments.filter((e) => e.student.gender === "F").length };
       return NextResponse.json({
         school: { ...school, group: school.group ? { id: school.group.id, name: school.group.name } : null },
@@ -70,6 +75,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
           collectionRate: billed ? Math.round((collected / billed) * 100) : 0,
           flagged: flags.length, riskHigh, pendingRequests,
           attendanceRate: trend.length ? Math.round(trend.reduce((s, t) => s + t.rate, 0) / trend.length) : null,
+          teacherCount, parentCount, unpaidCount, expensesTerm: expensesTerm?._sum?.amountCents ?? 0,
         },
         recentPayments: recentPayments.map((p) => ({ id: p.id, receiptNo: p.receiptNo, amount: p.amountCents, method: p.method, paidAt: p.paidAt, category: p.category, student: p.invoice?.student ? `${p.invoice.student.firstName} ${p.invoice.student.lastName}` : p.student ? `${p.student.firstName} ${p.student.lastName}` : "—" })),
         arrearsByClass: Object.entries(byClass).map(([name, v]) => ({ name, ...v })).sort((a, b) => b.arrears - a.arrears),
@@ -131,9 +137,21 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       });
       const billed = invoices.reduce((s, i) => s + i.totalCents - i.discountCents, 0);
       const collected = invoices.reduce((s, i) => s + i.paidCents, 0);
+      /* CI3 bill_item catalog (student_payment.php “Add Billing Item”) + the
+         class roster that feeds the Create-Invoice wizard's student picker */
+      const billItems = await db.billItem.findMany({ where: { schoolId }, orderBy: [{ sortOrder: "asc" }, { title: "asc" }] });
+      const classrooms = await db.classroom.findMany({ where: { schoolId }, orderBy: { name: "asc" }, select: { id: true, name: true, gradeLevel: true, stageLabel: true } });
+      const roster = await db.enrollment.findMany({
+        where: { schoolId, status: "ACTIVE" },
+        include: { student: { select: { id: true, firstName: true, lastName: true, nyansapoIndex: true, guardianName: true, guardianPhone: true } }, classroom: { select: { id: true, name: true, gradeLevel: true } } },
+        orderBy: { rollNo: "asc" },
+      });
       return NextResponse.json({
         terms: allYears.flatMap((y) => y.terms.map((t) => ({ id: t.id, name: `${t.name} ${y.name}`, isCurrent: t.isCurrent }))),
         termId,
+        classrooms,
+        billItems: billItems.map((b) => ({ id: b.id, title: b.title, category: b.category, classCategory: b.classCategory, specificClassIds: (b.specificClassIds as string[] | null) ?? [], amountCents: b.amountCents, description: b.description, active: b.active, sortOrder: b.sortOrder })),
+        roster: roster.map((e) => ({ id: e.student.id, name: `${e.student.firstName} ${e.student.lastName}`, index: e.student.nyansapoIndex, classroomId: e.classroomId, classroom: e.classroom.name, grade: e.classroom.gradeLevel, guardian: e.student.guardianName, phone: e.student.guardianPhone, muted: false })),
         structures: structures.map((s) => ({ id: s.id, classroom: s.classroom.name, classroomId: s.classroomId, total: s.totalCents, items: s.items.map((i) => ({ name: i.name, amount: i.amountCents, optional: i.isOptional })) })),
         invoices: invoices.map((i) => ({
           id: i.id, invoiceNo: i.invoiceNo, student: `${i.student.firstName} ${i.student.lastName}`, studentId: i.studentId,
@@ -221,8 +239,17 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       const remarkTemplates = await db.remarkTemplate.findMany({ where: { schoolId }, orderBy: [{ category: "asc" }, { minPercent: "asc" }] });
       const conductItems = await db.conductItem.findMany({ where: { schoolId }, orderBy: [{ kind: "asc" }, { sortOrder: "asc" }] });
       // branding & receipts preferences (SchoolSetting JSON values)
-      const prefSettings = await db.schoolSetting.findMany({ where: { schoolId, key: { in: ["branding.logoUrl", "branding.signatureUrl", "receipts.style"] } } });
+      const prefSettings = await db.schoolSetting.findMany({ where: { schoolId, key: { in: ["branding.logoUrl", "branding.signatureUrl", "branding.ssnitLogoUrl", "receipts.style"] } } });
       const daysOpened = await db.schoolSetting.findMany({ where: { schoolId, key: { startsWith: "term.daysOpened:" } } });
+      // CI3 system_settings_modern General/Payment/Security tabs (system.* KV)
+      const systemSettings = await db.schoolSetting.findMany({ where: { schoolId, key: { startsWith: "system." } } });
+      const sys: Record<string, any> = {};
+      for (const row of systemSettings) {
+        try { sys[row.key.slice("system.".length)] = JSON.parse(row.value); } catch { sys[row.key.slice("system.".length)] = row.value; }
+      }
+      // statutory rates (OpsSetting — shared with payroll, CI3 payroll_statutory_settings)
+      const rateRows = await db.opsSetting.findMany({ where: { schoolId, key: { in: ["SSNIT_TIER1_EMPLOYEE", "SSNIT_TIER1_EMPLOYER", "SSNIT_TIER2", "GETFUND", "NHIL"] } } });
+      const rateMap = Object.fromEntries(rateRows.map((r) => [r.key, parseFloat(r.value)]));
       const pref = (k: string) => {
         const raw = prefSettings.find((r) => r.key === k)?.value;
         try { return raw ? JSON.parse(raw) : null; } catch { return null; }
@@ -240,8 +267,16 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         staff: staff.map((s) => ({ id: s.id, fullName: s.fullName, role: s.role, title: s.title })),
         remarkTemplates: remarkTemplates.map((t) => ({ id: t.id, category: t.category, minPercent: t.minPercent, maxPercent: t.maxPercent, text: t.text, active: t.active })),
         conductItems: conductItems.map((c) => ({ id: c.id, name: c.name, kind: c.kind, active: c.active })),
-        branding: { logoUrl: pref("branding.logoUrl"), signatureUrl: pref("branding.signatureUrl"), receiptStyle: pref("receipts.style") ?? "A5" },
+        branding: { logoUrl: pref("branding.logoUrl"), signatureUrl: pref("branding.signatureUrl"), ssnitLogoUrl: pref("branding.ssnitLogoUrl"), receiptStyle: pref("receipts.style") ?? "A5" },
         daysOpened: daysMap,
+        system: sys,
+        statutory: {
+          ssnitTier1Employee: rateMap.SSNIT_TIER1_EMPLOYEE ?? 5,
+          ssnitTier1Employer: rateMap.SSNIT_TIER1_EMPLOYER ?? 13,
+          ssnitTier2: rateMap.SSNIT_TIER2 ?? 5,
+          getfund: rateMap.GETFUND ?? 2.5,
+          nhil: rateMap.NHIL ?? 2.5,
+        },
       });
     }
 
@@ -298,6 +333,163 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   switch (resource) {
     // ── FEES ──────────────────────────────────────────────
     case "fees": {
+      // ── BILL ITEM CATALOG (CI3 student_payment.php — Add Billing Item tab) ──
+      // single create/update; title unique per school; amount in pesewas
+      if (action === "bill-item-save") {
+        const { id, title, category, classCategory, specificClassIds, amountCents, description } = body as {
+          id?: string; title?: string; category?: string; classCategory?: string; specificClassIds?: string[]; amountCents?: number; description?: string;
+        };
+        const t = (title ?? "").trim();
+        const amt = Math.round(Number(amountCents));
+        if (!t) return NextResponse.json({ error: "Bill item title is required" }, { status: 400 });
+        if (!Number.isFinite(amt) || amt <= 0) return NextResponse.json({ error: "Amount must be greater than zero" }, { status: 400 });
+        const dup = await db.billItem.findFirst({ where: { schoolId, title: t, ...(id ? { NOT: { id } } : {}) } });
+        if (dup) return NextResponse.json({ error: `A bill item titled “${t}” already exists` }, { status: 400 });
+        const data = {
+          title: t.toUpperCase(),
+          category: (category ?? "General").trim() || "General",
+          classCategory: classCategory ?? "ALL",
+          specificClassIds: Array.isArray(specificClassIds) ? specificClassIds.filter(Boolean) : [],
+          amountCents: amt,
+          description: (description ?? "").trim() || null,
+        };
+        const row = id
+          ? await db.billItem.update({ where: { id }, data })
+          : await db.billItem.create({ data: { ...data, schoolId } });
+        return NextResponse.json({ billItem: row, updated: !!id });
+      }
+      // bulk inline edit (CI3 bulk_save_bill_items): updates[] carries every edited row
+      if (action === "bill-items-bulk-save") {
+        const updates: any[] = Array.isArray(body.updates) ? body.updates : [];
+        if (!updates.length) return NextResponse.json({ error: "No changes to save" }, { status: 400 });
+        let saved = 0;
+        for (const u of updates) {
+          const id = String(u.id ?? "");
+          const amt = Math.round(Number(u.amountCents));
+          if (!id || !Number.isFinite(amt) || amt <= 0) continue;
+          await db.billItem.update({
+            where: { id },
+            data: {
+              ...(u.title ? { title: String(u.title).trim().toUpperCase() } : {}),
+              ...(u.category ? { category: String(u.category) } : {}),
+              ...(u.classCategory ? { classCategory: String(u.classCategory) } : {}),
+              specificClassIds: Array.isArray(u.specificClassIds) ? u.specificClassIds.filter(Boolean) : [],
+              amountCents: amt,
+              ...(u.description !== undefined ? { description: String(u.description).trim() || null } : {}),
+            },
+          }).catch(() => null);
+          saved++;
+        }
+        return NextResponse.json({ saved });
+      }
+      // delete one / many — refuses rows already billed onto invoices (CI3 parity)
+      if (action === "bill-item-delete" || action === "bill-items-bulk-delete") {
+        const ids: string[] = action === "bill-item-delete" ? [String(body.id ?? "")] : (Array.isArray(body.ids) ? body.ids.map(String) : []);
+        if (!ids.length || ids.includes("")) return NextResponse.json({ error: "Select the bill item(s) to delete" }, { status: 400 });
+        const items = await db.billItem.findMany({ where: { schoolId, id: { in: ids } } });
+        if (!items.length) return NextResponse.json({ error: "Bill item not found" }, { status: 404 });
+        const titles = items.map((i) => i.title);
+        const used = await db.invoiceItem.count({ where: { invoice: { schoolId }, name: { in: titles } } });
+        if (used > 0) return NextResponse.json({ error: `${used} invoice line${used > 1 ? "s" : ""} reference ${titles.length > 1 ? "these items" : `“${titles[0]}”`} — invoices keep the amount they were billed with, so the item cannot be deleted` }, { status: 400 });
+        await db.billItem.deleteMany({ where: { schoolId, id: { in: ids } } });
+        return NextResponse.json({ deleted: ids.length });
+      }
+      // ── MASS INVOICE CREATE (CI3 mass_invoice_create — Create Invoice tab) ──
+      // one invoice per student for the chosen items; discounts + prepaid
+      // credits auto-apply exactly like generate-invoices. Students that
+      // already hold an invoice this term get the missing items appended
+      // (CI3 updates the existing bill instead of double-billing).
+      if (action === "mass-invoice-create") {
+        const { studentIds, items, termId, dueInDays } = body as { studentIds?: string[]; items?: { title: string; amountCents: number; description?: string }[]; termId?: string; dueInDays?: number };
+        const ids = Array.isArray(studentIds) ? [...new Set(studentIds.map(String))] : [];
+        const rows = (Array.isArray(items) ? items : []).filter((r) => r && String(r.title ?? "").trim() && Number.isFinite(Number(r.amountCents)) && Number(r.amountCents) > 0);
+        if (!ids.length) return NextResponse.json({ error: "Select at least one learner" }, { status: 400 });
+        if (!rows.length) return NextResponse.json({ error: "Add at least one billing item with an amount" }, { status: 400 });
+        const term = termId
+          ? await db.term.findFirst({ where: { id: termId, academicYear: { schoolId } } })
+          : await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId } } });
+        if (!term) return NextResponse.json({ error: "No billing term found" }, { status: 400 });
+        const enrollments = await db.enrollment.findMany({
+          where: { schoolId, studentId: { in: ids }, status: "ACTIVE" },
+          include: { classroom: { select: { name: true } }, student: { select: { id: true } } },
+        });
+        if (!enrollments.length) return NextResponse.json({ error: "None of the selected learners are actively enrolled" }, { status: 400 });
+        const existingInvoices = await db.invoice.findMany({ where: { schoolId, termId: term.id, studentId: { in: enrollments.map((e) => e.studentId) } }, include: { items: true } });
+        const byStudent = new Map(existingInvoices.map((i) => [i.studentId, i]));
+        // active invoice-scope discount applications (auto-apply catalog + approved profiles)
+        const autoApps = await db.discountApplication.findMany({
+          where: {
+            schoolId, status: "ACTIVE",
+            OR: [
+              { discount: { scope: "INVOICE", autoApply: true, active: true } },
+              { profile: { category: "INVOICE", active: true } },
+            ],
+          },
+          include: { discount: true, profile: { include: { rules: true } } },
+        });
+        const appByStudent: Record<string, typeof autoApps> = {};
+        autoApps.forEach((a) => (appByStudent[a.studentId] ??= []).push(a));
+        const dueDate = new Date(Date.now() + Math.max(0, Math.min(120, Number(dueInDays ?? 14))) * 864e5);
+        let created = 0, updated = 0, skipped = 0, discounted = 0, creditsApplied = 0;
+        let totalBilled = 0;
+        for (const e of enrollments) {
+          const have = byStudent.get(e.studentId);
+          // applicability filter: items may be class-scoped via the catalog, but
+          // the wizard already filtered; here rows are explicit user choices
+          if (have) {
+            const existingTitles = new Set(have.items.map((i) => i.name));
+            const missing = rows.filter((r) => !existingTitles.has(r.title.toUpperCase()));
+            if (!missing.length) { skipped++; continue; }
+            for (const r of missing) await db.invoiceItem.create({ data: { invoiceId: have.id, name: r.title.toUpperCase(), amountCents: Math.round(Number(r.amountCents)) } });
+            const added = missing.reduce((s, r) => s + Math.round(Number(r.amountCents)), 0);
+            await db.invoice.update({ where: { id: have.id }, data: { totalCents: have.totalCents + added, status: have.paidCents >= have.totalCents + added - have.discountCents ? have.status : have.status === "PAID" ? "PARTIAL" : have.status } });
+            updated++;
+            totalBilled += added;
+            continue;
+          }
+          const total = rows.reduce((s, r) => s + Math.round(Number(r.amountCents)), 0);
+          const inv = await db.invoice.create({ data: { invoiceNo: await nextInvoiceNo(), studentId: e.studentId, schoolId, termId: term.id, classroomName: e.classroom.name, totalCents: total, status: "UNPAID", dueDate } });
+          for (const r of rows) await db.invoiceItem.create({ data: { invoiceId: inv.id, name: r.title.toUpperCase(), amountCents: Math.round(Number(r.amountCents)) } });
+          // discounts: percentages stack (floor 100%), fixed amounts subtract
+          const apps = appByStudent[e.studentId] ?? [];
+          let discountTotal = 0;
+          if (apps.length) {
+            let pct = 0, fixed = 0;
+            const names: string[] = [];
+            for (const a of apps) {
+              const src = a.discountId
+                ? { kind: "discount" as const, id: a.discountId, name: a.discount!.name, type: a.discount!.type, value: a.discount!.value, scope: a.discount!.scope }
+                : { kind: "profile" as const, id: a.profileId!, name: a.profile!.name, type: a.profile!.method, value: a.profile!.value, category: a.profile!.category };
+              const eff = await effectiveValue(src, e.studentId, e.classroom.name);
+              const v = a.valueOverride ?? eff.value;
+              if ((a.valueOverride ? src.type === "PERCENT" : eff.type === "PERCENT")) pct += v;
+              else fixed += v;
+              names.push(src.name);
+            }
+            const amount = Math.min(total, Math.round((total * Math.min(100, pct)) / 100) + Math.min(total, fixed));
+            if (amount > 0) {
+              await db.invoice.update({ where: { id: inv.id }, data: { discountCents: amount, discountReason: names.join(" + ") } });
+              discountTotal = amount;
+              discounted++;
+            }
+          }
+          // prepaid credit auto-apply (CI3 parity at billing time)
+          const creditAgg = await db.studentCredit.aggregate({ where: { schoolId, studentId: e.studentId }, _sum: { amountCents: true } });
+          const creditBal = creditAgg._sum.amountCents ?? 0;
+          if (creditBal > 0) {
+            const due = total - discountTotal;
+            const applied = Math.min(creditBal, due);
+            if (applied > 0) {
+              await db.studentCredit.create({ data: { schoolId, studentId: e.studentId, kind: "APPLY", amountCents: -applied, balanceAfter: creditBal - applied, invoiceId: inv.id, note: `Auto-applied to ${inv.invoiceNo} at billing`, byName: user.fullName } });
+              await db.invoice.update({ where: { id: inv.id }, data: { paidCents: applied, status: applied >= due ? "PAID" : "PARTIAL" } });
+              creditsApplied++;
+            }
+          }
+          created++;
+          totalBilled += total;
+        }
+        return NextResponse.json({ created, updated, skipped, discounted, creditsApplied, totalBilled, term: term.name });
+      }
       // ── clone previous term's fee structures into the current term ──
       // (iEduPro parity: one click re-bills every class that had a structure
       // last term; classes already billed this term are left untouched)
@@ -783,8 +975,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         // (CI3 system_settings_modern parity). Branding images are stored as
         // binary MediaAssets; the setting value keeps only the short
         // /api/media/{id} URL (legacy data-URL values still render).
-        const { logoUrl, signatureUrl, receiptStyle, daysOpened } = body as {
-          logoUrl?: string | null; signatureUrl?: string | null; receiptStyle?: string; daysOpened?: Record<string, number>;
+        const { logoUrl, signatureUrl, ssnitLogoUrl, receiptStyle, daysOpened } = body as {
+          logoUrl?: string | null; signatureUrl?: string | null; ssnitLogoUrl?: string | null; receiptStyle?: string; daysOpened?: Record<string, number>;
         };
         const entries: [string, string][] = [];
         // valid data-URL → media asset; explicit null clears; anything else keeps the stored value
@@ -793,6 +985,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         if (logoKind) entries.push(["branding.logoUrl", logoKind === "null" ? JSON.stringify(null) : JSON.stringify(await storeMedia({ db, schoolId, kind: "LOGO", dataUrl: logoUrl as string }))]);
         const sigKind = saneImage(signatureUrl);
         if (sigKind) entries.push(["branding.signatureUrl", sigKind === "null" ? JSON.stringify(null) : JSON.stringify(await storeMedia({ db, schoolId, kind: "SIGNATURE", dataUrl: signatureUrl as string }))]);
+        const ssnitKind = saneImage(ssnitLogoUrl);
+        if (ssnitKind) entries.push(["branding.ssnitLogoUrl", ssnitKind === "null" ? JSON.stringify(null) : JSON.stringify(await storeMedia({ db, schoolId, kind: "LOGO", dataUrl: ssnitLogoUrl as string }))]);
         if (receiptStyle != null) {
           if (!["A5", "FORMAL", "MODERN", "THERMAL"].includes(receiptStyle)) return NextResponse.json({ error: "Unknown receipt style" }, { status: 400 });
           entries.push(["receipts.style", JSON.stringify(receiptStyle)]);
@@ -808,6 +1002,28 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           await db.schoolSetting.upsert({ where: { schoolId_key: { schoolId, key } }, create: { schoolId, key, value }, update: { value } });
         }
         return NextResponse.json({ ok: true });
+      }
+      // ── CI3 system_settings General / Payment / Security tabs (system.* KV) ──
+      if (action === "update-system") {
+        const allowed = ["slogan", "address", "boxNumber", "digitalAddress", "website", "ssnitNumber", "currency", "halfPaymentBy", "fullPaymentBy", "momoAccountName", "momoAccountNumber", "autoLock"];
+        const entries: [string, string][] = [];
+        for (const key of allowed) {
+          if (!(key in body)) continue;
+          const v = body[key];
+          if (key === "autoLock") { entries.push(["system.autoLock", JSON.stringify(!!v)]); continue; }
+          if (key === "fullPaymentBy") {
+            const d = v ? new Date(v) : null;
+            if (d && isNaN(d.getTime())) return NextResponse.json({ error: "Full-payment date is not a valid date" }, { status: 400 });
+            entries.push(["system.fullPaymentBy", JSON.stringify(d && !isNaN(d.getTime()) ? d.toISOString() : null)]);
+            continue;
+          }
+          if (typeof v !== "string" && v !== null) continue;
+          entries.push([`system.${key}`, JSON.stringify(typeof v === "string" ? v.trim() : null)]);
+        }
+        for (const [key, value] of entries) {
+          await db.schoolSetting.upsert({ where: { schoolId_key: { schoolId, key } }, create: { schoolId, key, value }, update: { value } });
+        }
+        return NextResponse.json({ ok: true, saved: entries.length });
       }
       if (action === "create-classroom") {
         const { name, grade, stage, capacity } = body;

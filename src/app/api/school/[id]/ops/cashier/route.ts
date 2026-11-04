@@ -69,6 +69,43 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   // ── roster of collectors (for the filter dropdown) ──
   const collectors = Object.keys(perf).sort();
 
+  // ── CI3 my_collections parity: detailed rows (per-fee-type split per
+  //    transaction) + class summary, for the Detailed / Class Summary reports ──
+  const classroomById = new Map<string, string>();
+  (await db.classroom.findMany({ where: { schoolId }, select: { id: true, name: true } })).forEach((c) => classroomById.set(c.id, c.name));
+  const classByStudent = new Map<string, string>();
+  (await db.enrollment.findMany({ where: { schoolId, status: "ACTIVE" }, select: { studentId: true, classroomId: true } })).forEach((e) => classByStudent.set(e.studentId, classroomById.get(e.classroomId) ?? ""));
+  const rows = payments.map((p) => {
+    const byService: Record<string, number> = {};
+    if (p.dailyCharges.length) p.dailyCharges.forEach((c) => { byService[c.service.name] = (byService[c.service.name] ?? 0) + c.amountCents; });
+    if (p.category === "INVOICE") byService["Termly fees"] = p.amountCents;
+    else if (!p.dailyCharges.length && p.category === "DAILY") byService["Other daily"] = p.amountCents;
+    else if (p.category === "POS") byService["Store / tuck"] = p.amountCents;
+    else if (p.category === "TRANSPORT") byService["Transport"] = p.amountCents;
+    else if (!p.dailyCharges.length) byService[p.category === "INVOICE" ? "Termly fees" : "Other"] = p.amountCents;
+    return {
+      id: p.id, date: p.paidAt, student: p.student ? `${p.student.firstName} ${p.student.lastName}` : "—",
+      classroom: p.student ? (classByStudent.get(p.student.id) ?? "") : "",
+      byService, total: p.amountCents, method: p.method, receiptNo: p.receiptNo,
+      collector: p.receivedByName ?? "Unattributed",
+    };
+  });
+  const serviceNames = [...new Set(rows.flatMap((r) => Object.keys(r.byService)))];
+  const classAgg: Record<string, { classroom: string; students: Set<string>; totals: Record<string, number>; total: number; count: number }> = {};
+  rows.forEach((r) => {
+    const key = r.classroom || "—";
+    classAgg[key] ??= { classroom: key, students: new Set(), totals: {}, total: 0, count: 0 };
+    classAgg[key].students.add(r.student);
+    classAgg[key].count++;
+    classAgg[key].total += r.total;
+    Object.entries(r.byService).forEach(([svc, amt]) => { classAgg[key].totals[svc] = (classAgg[key].totals[svc] ?? 0) + amt; });
+  });
+  const classSummary = Object.values(classAgg)
+    .map((c) => ({ classroom: c.classroom, students: c.students.size, totals: c.totals, total: c.total, count: c.count }))
+    .sort((a, b) => b.total - a.total);
+  const serviceTotals: Record<string, number> = {};
+  rows.forEach((r) => Object.entries(r.byService).forEach(([svc, amt]) => { serviceTotals[svc] = (serviceTotals[svc] ?? 0) + amt; }));
+
   return NextResponse.json({
     period: { from: from.toISOString().slice(0, 10), to: toSrc.toISOString().slice(0, 10) },
     collector: collector ?? "all",
@@ -87,5 +124,65 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       student: p.student ? `${p.student.firstName} ${p.student.lastName}` : "—",
       category: p.category, receivedByName: p.receivedByName,
     })),
+    // CI3 my_collections report payload
+    report: {
+      serviceNames,
+      serviceTotals,
+      grandTotal: total,
+      count: rows.length,
+      rows: rows.map((r) => ({ ...r, date: r.date.toISOString() })),
+      classSummary,
+    },
+    // learner roster for the student-ledger lookup (CI3 cashier sidebar parity)
+    roster: (await db.enrollment.findMany({
+      where: { schoolId, status: "ACTIVE" },
+      select: { student: { select: { id: true, firstName: true, lastName: true, nyansapoIndex: true } }, classroom: { select: { name: true } } },
+      orderBy: { rollNo: "asc" },
+    })).map((e) => ({ id: e.student.id, name: `${e.student.firstName} ${e.student.lastName}`, index: e.student.nyansapoIndex, classroom: e.classroom.name })),
+  });
+}
+
+// ── POST /api/school/[id]/ops/cashier — student ledger lookup (CI3 parity)
+//    debit/credit running balance across invoices + payments ──
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id: schoolId } = await params;
+  const auth = await opsAuth(req, schoolId, "POST", { perms: ["cashier.reports"] });
+  if (!auth.ok) return auth.res;
+  const body = await req.json().catch(() => ({}));
+  if (body.action !== "ledger") return NextResponse.json({ error: "Unknown action" }, { status: 400 });
+  const student = await db.student.findUnique({
+    where: { id: String(body.studentId ?? "") },
+    include: { enrollments: { where: { status: "ACTIVE" }, take: 1, include: { classroom: true } } },
+  });
+  if (!student || !await db.enrollment.count({ where: { studentId: student.id, schoolId } }))
+    return NextResponse.json({ error: "Learner not found in this school" }, { status: 404 });
+  const invoices = await db.invoice.findMany({
+    where: { studentId: student.id, schoolId },
+    include: { items: true, term: { include: { academicYear: true } } },
+    orderBy: { createdAt: "asc" },
+  });
+  const payments = await db.payment.findMany({
+    where: { studentId: student.id, schoolId, voided: false },
+    orderBy: { paidAt: "asc" },
+  });
+  type Row = { date: string; kind: "DEBIT" | "CREDIT"; description: string; reference: string; amount: number; balance: number };
+  const rows: Row[] = [];
+  invoices.forEach((i) => rows.push({
+    date: i.createdAt.toISOString(), kind: "DEBIT",
+    description: `${i.term.name} ${i.term.academicYear.name} — ${i.items.map((x) => x.name).join(", ") || "Term bill"}`,
+    reference: i.invoiceNo, amount: i.totalCents - i.discountCents, balance: 0,
+  }));
+  payments.forEach((p) => rows.push({
+    date: p.paidAt.toISOString(), kind: "CREDIT",
+    description: `${p.category === "DAILY" ? "Daily services" : p.category === "POS" ? "Store purchase" : p.category === "TRANSPORT" ? "Transport fare" : "Fees payment"} · ${p.method}`,
+    reference: p.receiptNo, amount: p.amountCents, balance: 0,
+  }));
+  rows.sort((a, b) => (a.date < b.date ? -1 : 1));
+  let bal = 0;
+  rows.forEach((r) => { bal += r.kind === "DEBIT" ? r.amount : -r.amount; r.balance = bal; });
+  return NextResponse.json({
+    student: { name: `${student.firstName} ${student.lastName}`, index: student.nyansapoIndex, classroom: student.enrollments[0]?.classroom?.name ?? null, guardian: student.guardianName, guardianPhone: student.guardianPhone },
+    rows,
+    closing: bal,
   });
 }

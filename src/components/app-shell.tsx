@@ -53,6 +53,7 @@ import {
   BrainCircuit, Settings as SettingsIcon, Landmark, Menu, CloudOff, Cloud, RefreshCcw, LogOut, Moon, Sun,
   Download, ChevronDown, ChevronRight, School, MessageSquareText, UtensilsCrossed, Bus, Smartphone, Calculator, Package, PieChart, LayoutList,
   BookOpen, ShieldCheck, Receipt, Route, UserRound, Home, Backpack, Laptop, BedDouble, NotebookPen, Search, LayoutGrid, SmartphoneNfc,
+  QrCode, UserPlus, Printer, Wallet, BarChart3, CalendarDays, HandCoins, FileWarning, ListChecks, ScanLine, ClipboardPen, Percent,
 } from "lucide-react";
 
 type NavLeaf = { id: string; label: string; icon?: any; target?: NavTarget };
@@ -307,12 +308,42 @@ export function AppShell() {
       ]),
       { id: "daily-trend", label: "14-day trend", target: { tab: "trend" } },
     ];
+    /* CI3 student_payment.php tabs — Bill items / Create invoices / Bulk manage */
     const feesChildren: NavChild[] = [
-      { id: "fees-invoices", label: "Invoices", target: { tab: "invoices" } },
+      { id: "fees-bill-items", label: "Bill items", target: { tab: "bill-items" } },
+      { id: "fees-create", label: "Create invoices", target: { tab: "create" } },
+      { id: "fees-invoices", label: "Bulk manage invoices", target: { tab: "invoices" } },
       { id: "fees-receipts", label: "Receipts", target: { tab: "receipts" } },
       { id: "fees-structures", label: "Fee structures", target: { tab: "structures" } },
       { id: "fees-discounts", label: "Discounts", target: { tab: "discounts" } },
       { id: "fees-arrears", label: "Arrears chase-list", target: { tab: "arrears" } },
+      { id: "fees-credits", label: "Credits", target: { tab: "credits" } },
+      { id: "fees-approvals", label: "Modification approvals", target: { tab: "approvals" } },
+    ];
+    /* CI3 cashier sidebar: portal → collections → summary → handover → receipts */
+    const cashierChildren: NavChild[] = [
+      { id: "cashier-portal", label: "Fee collection portal", target: { tab: "portal" } },
+      { id: "cashier-collections", label: "My collections", target: { tab: "collections" } },
+      { id: "cashier-summary", label: "Daily summary", target: { tab: "summary" } },
+      { id: "cashier-receipts", label: "Print receipts", target: { tab: "receipts" } },
+      { id: "cashier-ledger", label: "Student ledger", target: { tab: "ledger" } },
+    ];
+    /* CI3 attendance sidebar: dashboard / mark / report / scanner */
+    const attendanceChildren: NavChild[] = [
+      { id: "att-register", label: "Mark attendance", target: { tab: "register" } },
+      { id: "att-analytics", label: "Analytics & trends", target: { tab: "analytics" } },
+      { id: "att-monthly", label: "Monthly report", target: { tab: "monthly" } },
+      { id: "att-scanner", label: "Barcode scanner", target: { tab: "scanner" } },
+    ];
+    /* CI3 settings sidebar: general / theme / sms / permissions / payment */
+    const settingsChildren: NavChild[] = [
+      { id: "set-system", label: "System settings", target: { tab: "system" } },
+      { id: "set-branding", label: "Branding & logos", target: { tab: "branding" } },
+      { id: "set-academic", label: "Calendar & terms", target: { tab: "calendar" } },
+      { id: "set-classes", label: "Classes", target: { tab: "classes" } },
+      { id: "set-subjects", label: "Subjects", target: { tab: "subjects" } },
+      { id: "set-grading", label: "Grading scale", target: { tab: "grading" } },
+      { id: "set-statutory", label: "Statutory (SSNIT) rates", target: { tab: "statutory" } },
     ];
 
     // boarding (iEduPro navigation.php FACILITIES): houses → dorms → beds + reports
@@ -342,6 +373,9 @@ export function AppShell() {
       if (item.id === "classes" && classGroups.length) enriched.children = classChildren;
       if (item.id === "daily") enriched.children = dailyChildren;
       if (item.id === "fees") enriched.children = feesChildren;
+      if (item.id === "cashier") enriched.children = cashierChildren;
+      if (item.id === "attendance") enriched.children = attendanceChildren;
+      if (item.id === "settings") enriched.children = settingsChildren;
       if (item.id === "boarding") enriched.children = boardingChildren;
       if (item.id === "curriculum") enriched.children = curriculumChildren;
       items.push(enriched);
@@ -363,6 +397,118 @@ export function AppShell() {
     if (!navItems.length) return;
     if (!navItems.some((i) => i.id === module)) setModule(navItems[0].id);
   }, [navItems, module, setModule]);
+
+  /* ── Metro Start sections (CI3 metro_menu.php): every section holds EXACTLY
+     6 square tiles — candidates are permission-filtered, first 6 allowed win,
+     and a section with fewer than 6 reachable tiles is skipped entirely so no
+     section is ever longer or shorter than another. ── */
+  const metroSections = useMemo(() => {
+    const open = (m: string) => canModule(session?.role, session?.permissions, m);
+    const canFees = open("fees");
+    const canDaily = open("daily");
+    const canCashier = open("cashier");
+    // the MS-Metro flat palette (metro_menu.php .tile-*)
+    const C = { blue: "#0078d4", green: "#107c10", orange: "#d83b01", purple: "#5c2d91", teal: "#008272", amber: "#ff8c00", cyan: "#00bcf2", emerald: "#00b294", red: "#e81123", pink: "#ec008c", violet: "#881798", gray: "#5d5a58" };
+    const defs: { title: string; tiles: { key: string; label: string; icon: any; module: string; target?: any; color: string; when?: boolean }[] }[] = [
+      {
+        title: "Dashboard & Quick Access",
+        tiles: [
+          { key: "m-dash", label: "Dashboard", icon: LayoutDashboard, module: "dashboard", color: C.blue, when: open("dashboard") },
+          { key: "m-cashier", label: "Cashier Console", icon: Receipt, module: "cashier", target: { tab: "portal" }, color: C.green, when: canCashier },
+          { key: "m-pos", label: "Collect Daily Fees", icon: UtensilsCrossed, module: "daily", target: { tab: "pos" }, color: C.teal, when: canDaily },
+          { key: "m-mark", label: "Mark Attendance", icon: CalendarCheck, module: "attendance", target: { tab: "register" }, color: C.amber, when: open("attendance") },
+          { key: "m-inv", label: "Invoices", icon: Banknote, module: "fees", target: { tab: "invoices" }, color: C.purple, when: canFees },
+          { key: "m-sms", label: "Compose SMS", icon: Smartphone, module: "sms", color: C.cyan, when: open("sms") },
+          { key: "m-conductor", label: "Conductor Portal", icon: Route, module: "conductor", color: C.emerald, when: open("conductor") },
+          { key: "m-wallets", label: "Wallets", icon: Wallet, module: "daily", target: { tab: "wallets" }, color: C.cyan, when: canDaily },
+          { key: "m-attan", label: "Attendance Trends", icon: BarChart3, module: "attendance", target: { tab: "analytics" }, color: C.violet, when: open("attendance") },
+        ],
+      },
+      {
+        title: "Students & People",
+        tiles: [
+          { key: "m-students", label: "All Students", icon: Users, module: "students", color: C.blue, when: open("students") },
+          { key: "m-admit", label: "Admit Student", icon: UserPlus, module: "admissions", color: C.green, when: open("admissions") },
+          { key: "m-scan", label: "QR Scanner", icon: QrCode, module: "students", target: { tab: "scanner" }, color: C.orange, when: open("students") },
+          { key: "m-staff", label: "Staff Portal", icon: UserRound, module: "staffhub", color: C.purple, when: open("staffhub") },
+          { key: "m-rbac", label: "Users & Access", icon: ShieldCheck, module: "rbac", color: C.red, when: open("rbac") },
+          { key: "m-classes", label: "Classes", icon: LayoutList, module: "classes", color: C.teal, when: open("classes") },
+          { key: "m-payroll", label: "HR & Payroll", icon: Calculator, module: "payroll", color: C.violet, when: open("payroll") },
+          { key: "m-notes", label: "Lesson Notes", icon: NotebookPen, module: "curriculum", target: { tab: "notes" }, color: C.cyan, when: open("curriculum") },
+          { key: "m-monthly", label: "Monthly Register", icon: CalendarDays, module: "attendance", target: { tab: "monthly" }, color: C.amber, when: open("attendance") },
+        ],
+      },
+      {
+        title: "Student Billing",
+        tiles: [
+          { key: "m-bill", label: "Bill Items", icon: ListChecks, module: "fees", target: { tab: "bill-items" }, color: C.blue, when: canFees },
+          { key: "m-create", label: "Create Invoices", icon: ClipboardPen, module: "fees", target: { tab: "create" }, color: C.green, when: canFees },
+          { key: "m-bulk", label: "Bulk Manage", icon: FileWarning, module: "fees", target: { tab: "invoices" }, color: C.orange, when: canFees },
+          { key: "m-receipts", label: "Receipts", icon: Printer, module: "fees", target: { tab: "receipts" }, color: C.purple, when: canFees },
+          { key: "m-struct", label: "Fee Structure", icon: Banknote, module: "fees", target: { tab: "structures" }, color: C.teal, when: canFees },
+          { key: "m-disc", label: "Discounts", icon: Percent, module: "fees", target: { tab: "discounts" }, color: C.pink, when: canFees },
+          { key: "m-credits", label: "Student Credits", icon: Wallet, module: "fees", target: { tab: "credits" }, color: C.emerald, when: canFees },
+        ],
+      },
+      {
+        title: "Collections & Cashier",
+        tiles: [
+          { key: "m-portal", label: "Collection Portal", icon: Receipt, module: "cashier", target: { tab: "portal" }, color: C.green, when: canCashier },
+          { key: "m-mycoll", label: "My Collections", icon: HandCoins, module: "cashier", target: { tab: "collections" }, color: C.blue, when: canCashier },
+          { key: "m-summary", label: "Daily Summary", icon: BarChart3, module: "cashier", target: { tab: "summary" }, color: C.purple, when: canCashier },
+          { key: "m-printr", label: "Print Receipts", icon: Printer, module: "cashier", target: { tab: "receipts" }, color: C.orange, when: canCashier },
+          { key: "m-momo", label: "MoMo & Links", icon: SmartphoneNfc, module: "momo", color: C.cyan, when: open("momo") },
+          { key: "m-arrears", label: "Arrears Chase", icon: FileWarning, module: "fees", target: { tab: "arrears" }, color: C.red, when: canFees },
+          { key: "m-trend", label: "14-Day Trend", icon: BarChart3, module: "daily", target: { tab: "trend" }, color: C.amber, when: canDaily },
+        ],
+      },
+      {
+        title: "Daily Services & Transport",
+        tiles: [
+          { key: "m-wallets", label: "Wallets", icon: Wallet, module: "daily", target: { tab: "wallets" }, color: C.blue, when: canDaily },
+          { key: "m-ledger", label: "Ledger & Arrears", icon: ListChecks, module: "daily", target: { tab: "ledger" }, color: C.green, when: canDaily },
+          { key: "m-services", label: "Services & Enrolment", icon: UtensilsCrossed, module: "daily", target: { tab: "services" }, color: C.teal, when: canDaily },
+          { key: "m-rates", label: "Fee Rates", icon: HandCoins, module: "daily", target: { tab: "rates" }, color: C.amber, when: canDaily },
+          { key: "m-recon", label: "Reconciliation", icon: BarChart3, module: "daily", target: { tab: "recon" }, color: C.purple, when: canDaily },
+          { key: "m-transport", label: "Transport", icon: Bus, module: "transport", color: C.cyan, when: open("transport") },
+          { key: "m-boarding", label: "Boarding", icon: BedDouble, module: "boarding", color: C.violet, when: open("boarding") },
+          { key: "m-trend2", label: "14-Day Trend", icon: BarChart3, module: "daily", target: { tab: "trend" }, color: C.pink, when: canDaily },
+          { key: "m-scanatt", label: "Barcode Scanner", icon: ScanLine, module: "attendance", target: { tab: "scanner" }, color: C.gray, when: open("attendance") },
+        ],
+      },
+      {
+        title: "Academics & Exams",
+        tiles: [
+          { key: "m-grade", label: "Manage Marks", icon: ClipboardList, module: "gradebook", color: C.blue, when: open("gradebook") },
+          { key: "m-curr", label: "Lesson Notes", icon: NotebookPen, module: "curriculum", target: { tab: "notes" }, color: C.green, when: open("curriculum") },
+          { key: "m-reports", label: "Reports & Marksheets", icon: GraduationCap, module: "reports", color: C.purple, when: open("reports") },
+          { key: "m-exams", label: "Online Exams", icon: Laptop, module: "exams", color: C.teal, when: open("exams") },
+          { key: "m-library", label: "Library", icon: BookOpen, module: "library", color: C.orange, when: open("library") },
+          { key: "m-tt", label: "Timetable", icon: CalendarDays, module: "classes", target: { tab: "timetable" }, color: C.cyan, when: open("classes") },
+          { key: "m-syll", label: "Syllabus", icon: BookOpen, module: "curriculum", target: { tab: "syllabus" }, color: C.pink, when: open("curriculum") },
+        ],
+      },
+      {
+        title: "Finance & Communication",
+        tiles: [
+          { key: "m-finance", label: "Finance Analytics", icon: PieChart, module: "finance", color: C.green, when: open("finance") },
+          { key: "m-inventory", label: "Point of Sale", icon: Package, module: "inventory", color: C.blue, when: open("inventory") },
+          { key: "m-payroll2", label: "Pay Salaries", icon: Calculator, module: "payroll", color: C.violet, when: open("payroll") },
+          { key: "m-smsc", label: "SMS Automation", icon: MessageSquareText, module: "sms", target: { tab: "automations" }, color: C.cyan, when: open("sms") },
+          { key: "m-ai", label: "AI Assistant", icon: BrainCircuit, module: "ai", color: C.purple, when: open("ai") },
+          { key: "m-settings", label: "System Settings", icon: SettingsIcon, module: "settings", target: { tab: "system" }, color: C.gray, when: open("settings") },
+          { key: "m-cashier-ledger", label: "Student Ledger", icon: ListChecks, module: "cashier", target: { tab: "ledger" }, color: C.teal, when: canCashier },
+        ],
+      },
+    ];
+    return defs
+      .map((d) => ({ title: d.title, tiles: d.tiles.filter((t) => t.when !== false).slice(0, 6) }))
+      .filter((d) => d.tiles.length === 6)
+      .map((d) => ({
+        title: d.title,
+        tiles: d.tiles.map(({ key, label, icon, module: m, target, color }) => ({ id: key, label, icon, module: m, target, color })),
+      }));
+  }, [session?.role, session?.permissions]);
 
   const show = useCallback((m: string) => navItems.some((i) => i.id === m), [navItems]);
 
@@ -622,8 +768,9 @@ export function AppShell() {
           mounted so each open starts fresh. */}
       {metroOpen && (
         <MetroMenu
-          items={navItems}
+          sections={metroSections}
           current={module}
+          currentTarget={navTarget}
           onSelect={(id, t) => setModule(id as ModuleId, t)}
           open={metroOpen}
           onOpenChange={setMetroOpen}

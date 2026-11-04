@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -16,7 +17,7 @@ import { fmtDateShort, initials, avatarColor, fmtCedi } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { CalendarCheck, ChevronLeft, ChevronRight, CloudOff, Save, Users, ScanLine, LogIn, LogOut, Ban, CircleCheck, CircleAlert, OctagonX, Undo2, BarChart3, CalendarDays, CheckCheck, UserX, Download, Printer, ChevronDown, ChevronUp } from "lucide-react";
+import { CalendarCheck, ChevronLeft, ChevronRight, CloudOff, Save, Users, ScanLine, LogIn, LogOut, Ban, CircleCheck, CircleAlert, OctagonX, Undo2, BarChart3, CalendarDays, CheckCheck, UserX, Download, Printer, ChevronDown, ChevronUp, Search } from "lucide-react";
 
 type AttData = {
   classrooms: { id: string; name: string; grade: string; stage?: string }[];
@@ -28,14 +29,14 @@ type AttData = {
 /* iEduPro attendance statuses — SICK kept for backwards compat (legacy sick-bay
    marks); SICK_HOME / SICK_CLINIC / BUSY / EXCUSED are the CI3 register set. */
 const STATUSES = [
-  { key: "PRESENT", label: "Present", cls: "bg-emerald-600 text-white", letter: "P" },
-  { key: "LATE", label: "Late", cls: "bg-amber-500 text-white", letter: "L" },
-  { key: "ABSENT", label: "Absent", cls: "bg-red-600 text-white", letter: "A" },
-  { key: "SICK", label: "Sick", cls: "bg-orange-400 text-white", letter: "S" },
-  { key: "SICK_HOME", label: "Sick @ home", cls: "bg-orange-600 text-white", letter: "SH" },
-  { key: "SICK_CLINIC", label: "Sick @ clinic", cls: "bg-orange-800 text-white", letter: "SC" },
-  { key: "BUSY", label: "Busy", cls: "bg-violet-500 text-white", letter: "B" },
-  { key: "EXCUSED", label: "Excused", cls: "bg-gray-400 text-white", letter: "E" },
+  { key: "PRESENT", label: "Present", cls: "bg-emerald-600 text-white", selectCls: "border-emerald-300 bg-emerald-50 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200", letter: "P" },
+  { key: "LATE", label: "Late", cls: "bg-amber-500 text-white", selectCls: "border-amber-300 bg-amber-50 text-amber-900 dark:bg-amber-950 dark:text-amber-200", letter: "L" },
+  { key: "ABSENT", label: "Absent", cls: "bg-red-600 text-white", selectCls: "border-red-300 bg-red-50 text-red-900 dark:bg-red-950 dark:text-red-200", letter: "A" },
+  { key: "SICK", label: "Sick", cls: "bg-orange-400 text-white", selectCls: "border-orange-300 bg-orange-50 text-orange-900 dark:bg-orange-950 dark:text-orange-200", letter: "S" },
+  { key: "SICK_HOME", label: "Sick @ home", cls: "bg-orange-600 text-white", selectCls: "border-orange-400 bg-orange-100 text-orange-900 dark:bg-orange-950 dark:text-orange-200", letter: "SH" },
+  { key: "SICK_CLINIC", label: "Sick @ clinic", cls: "bg-orange-800 text-white", selectCls: "border-orange-500 bg-orange-200 text-orange-900 dark:bg-orange-900 dark:text-orange-100", letter: "SC" },
+  { key: "BUSY", label: "Busy", cls: "bg-violet-500 text-white", selectCls: "border-violet-300 bg-violet-50 text-violet-900 dark:bg-violet-950 dark:text-violet-200", letter: "B" },
+  { key: "EXCUSED", label: "Excused", cls: "bg-gray-400 text-white", selectCls: "border-pink-300 bg-pink-50 text-pink-900 dark:bg-pink-950 dark:text-pink-200", letter: "E" },
 ];
 const STATUS_BY_KEY: Record<string, (typeof STATUSES)[number]> = Object.fromEntries(STATUSES.map((s) => [s.key, s]));
 
@@ -50,6 +51,10 @@ export function Attendance() {
   const [marks, setMarks] = useState<Record<string, string>>({});
   const [reasons, setReasons] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  /* CI3 mark_attendance partial update: on an already-saved day, each learner
+     card carries an "update" checkbox — uncheck to leave specific learners out */
+  const [updatePicks, setUpdatePicks] = useState<Record<string, boolean>>({});
+  const [cardSearch, setCardSearch] = useState("");
 
   /* iEduPro nested nav: preselect the Scanner tab when arriving from a
      Attendance → Scanner deep link, and preselect the classroom when a deep
@@ -73,6 +78,7 @@ export function Attendance() {
         if (!classId && d.classrooms.length) return; // first load: wait for class pick
         setMarks(Object.fromEntries(d.students.map((s) => [s.id, s.status ?? "PRESENT"])));
         setReasons(Object.fromEntries(d.students.map((s) => [s.id, s.excusedReason ?? ""])));
+        setUpdatePicks(Object.fromEntries(d.students.map((s) => [s.id, true])));
       })
       .catch((e) => toast({ title: "Load failed", description: e.message, variant: "destructive" }));
   };
@@ -114,7 +120,9 @@ export function Attendance() {
     }
     setBusy(true);
     try {
-      const records = students.map((s) => ({
+      const picked = students.filter((s) => !data?.session || updatePicks[s.id] !== false);
+      if (!picked.length) { toast({ title: "Please select at least one learner", variant: "destructive" }); return; }
+      const records = picked.map((s) => ({
         studentId: s.id,
         status: marks[s.id] ?? "PRESENT",
         ...(marks[s.id] === "EXCUSED" ? { excusedReason: (reasons[s.id] ?? "").trim() } : {}),
@@ -127,7 +135,7 @@ export function Attendance() {
       );
       if (res.queued) toast({ title: "Saved offline", description: "Register stored on this device — will sync automatically." });
       else {
-        toast({ title: "Register saved", description: `${records.length} learners marked for ${new Date(date).toLocaleDateString("en-GB")}.` });
+        toast({ title: data?.session ? "Register updated" : "Register saved", description: `${records.length} learner${records.length !== 1 ? "s" : ""} marked for ${new Date(date).toLocaleDateString("en-GB")}.` });
         load(); // refresh the "Taken by" badge + persisted statuses
       }
     } catch (e: any) {
@@ -193,6 +201,38 @@ export function Attendance() {
                 <Card><CardContent className="pt-5 pb-4"><div className="text-xs text-muted-foreground uppercase">Rate</div><div className="text-2xl font-bold text-primary">{stats.total ? Math.round(((stats.present + stats.late) / stats.total) * 100) : 0}%</div></CardContent></Card>
               </div>
 
+              {/* CI3 mark_attendance card grid — sticky filter bar + bulk-select +
+                colour-coded status select per learner, cards dim when excluded */}
+              <Card className="mb-3">
+                <CardContent className="p-3 flex flex-wrap items-center gap-2">
+                  <Select value={classId ?? ""} onValueChange={setClassId}>
+                    <SelectTrigger className="w-56 h-9"><SelectValue placeholder="Select class" /></SelectTrigger>
+                    <SelectContent>{data.classrooms.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
+                  </Select>
+                  <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-36 h-9" />
+                  <div className="relative flex-1 min-w-40">
+                    <Search className="size-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                    <Input value={cardSearch} onChange={(e) => setCardSearch(e.target.value)} placeholder="Type Student Name..." className="h-9 pl-8" />
+                  </div>
+                  {!online && <Badge className="gap-1.5 bg-amber-500 text-white"><CloudOff className="size-3.5" /> Offline — marks will queue</Badge>}
+                  {data.session && <Badge variant="secondary">Taken by {data.session.takenByName}</Badge>}
+                </CardContent>
+              </Card>
+
+              {/* bulk select bar (CI3 amber) — only when records exist */}
+              {data.session && (
+                <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-amber-300 bg-gradient-to-r from-amber-50 to-amber-100 dark:from-amber-950/50 dark:to-amber-900/30 px-3 py-2">
+                  <Checkbox
+                    checked={students.every((s) => updatePicks[s.id] !== false)}
+                    onCheckedChange={(v) => setUpdatePicks(Object.fromEntries(students.map((s) => [s.id, !!v])))}
+                    aria-label="Select all students"
+                  />
+                  <span className="text-sm font-medium text-amber-900 dark:text-amber-200">Select All Students</span>
+                  <span className="text-xs text-amber-700 dark:text-amber-300/80">(uncheck to update specific students only)</span>
+                  <span className="ml-auto text-xs font-semibold text-amber-800 dark:text-amber-200">{students.filter((s) => updatePicks[s.id] !== false).length}/{students.length} included in this save</span>
+                </div>
+              )}
+
               <Card>
                 <CardHeader className="pb-3 flex-row items-center justify-between space-y-0 flex-wrap gap-2">
                   <CardTitle className="text-base">{data.classrooms.find((c) => c.id === classId)?.name} · {new Date(date).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}</CardTitle>
@@ -203,52 +243,75 @@ export function Attendance() {
                     <Button size="sm" variant="outline" className="gap-1.5 text-destructive hover:text-destructive" onClick={() => markAll("ABSENT")} title="Mark every learner Absent">
                       <UserX className="size-4" /> All absent
                     </Button>
-                    <Button size="sm" className="gap-1.5" onClick={save} disabled={busy}><Save className="size-4" /> {busy ? "Saving…" : online ? "Save register" : "Save offline"}</Button>
                   </div>
                 </CardHeader>
-                <CardContent className="p-0">
-                  <div className="overflow-x-auto nice-scroll max-h-[480px]">
-                    <table className="w-full text-sm min-w-[760px]">
-                      <thead className="sticky top-0 bg-secondary/70 backdrop-blur">
-                        <tr className="text-left border-b">
-                          <th className="px-3 py-2.5 font-medium w-14">#</th>
-                          <th className="px-3 py-2.5 font-medium">Learner</th>
-                          {STATUSES.map((s) => <th key={s.key} className="px-3 py-2.5 font-medium text-center text-xs w-16 whitespace-nowrap">{s.label}</th>)}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {students.map((s, i) => (
-                          <tr key={s.id} className="border-b last:border-0">
-                            <td className="px-3 py-2 text-muted-foreground">{s.rollNo ?? i + 1}</td>
-                            <td className="px-3 py-2 font-medium">
-                              <div>{s.name}</div>
-                              {marks[s.id] === "EXCUSED" && (
-                                <Input
-                                  value={reasons[s.id] ?? ""}
-                                  onChange={(e) => setReasons((r) => ({ ...r, [s.id]: e.target.value }))}
-                                  placeholder="Reason (required)"
-                                  className="h-7 mt-1 w-44 text-xs"
-                                  aria-label={`Excuse reason for ${s.name}`}
-                                />
-                              )}
-                            </td>
-                            {STATUSES.map((st) => (
-                              <td key={st.key} className="px-3 py-2 text-center">
-                                <button
-                                  onClick={() => setMarks((m) => ({ ...m, [s.id]: st.key }))}
-                                  className={cn("w-5 h-5 rounded-full border-2 transition-all", marks[s.id] === st.key ? `${st.cls} border-transparent scale-110` : "border-border hover:border-muted-foreground")}
-                                  title={st.label}
-                                  aria-label={`${s.name} ${st.label}`}
-                                />
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                <CardContent className="pb-4">
+                  <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(240px,1fr))]">
+                    {students.filter((s) => !cardSearch.trim() || s.name.toLowerCase().includes(cardSearch.trim().toLowerCase())).map((s, i) => {
+                      const st = STATUS_BY_KEY[marks[s.id] ?? "PRESENT"] ?? STATUSES[0];
+                      const excluded = data.session && updatePicks[s.id] === false;
+                      return (
+                        <div key={s.id} className={cn("rounded-xl border-2 bg-card p-3 transition-all hover:border-primary/50", excluded && "opacity-50", excluded ? "border-transparent" : "border-transparent")}>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="text-sm font-semibold truncate" title={s.name}>{s.name}</div>
+                              <div className="text-[11px] text-muted-foreground">#{s.rollNo ?? i + 1}{s.markedOffline ? " · offline mark" : ""}</div>
+                            </div>
+                            {data.session && (
+                              <Checkbox
+                                checked={updatePicks[s.id] !== false}
+                                onCheckedChange={(v) => setUpdatePicks((p) => ({ ...p, [s.id]: !!v }))}
+                                aria-label={`Update ${s.name}`}
+                                title="Include in this save"
+                              />
+                            )}
+                          </div>
+                          <label className="mt-2 block">
+                            <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Attendance status</span>
+                            <select
+                              value={marks[s.id] ?? "PRESENT"}
+                              onChange={(e) => setMarks((m) => ({ ...m, [s.id]: e.target.value }))}
+                              className={cn("mt-1 w-full rounded-lg border-2 px-2.5 py-1.5 text-sm font-semibold outline-none transition-colors", st.selectCls)}
+                              aria-label={`Attendance status for ${s.name}`}
+                            >
+                              {STATUSES.map((x) => <option key={x.key} value={x.key}>{x.key === "PRESENT" ? "Present (P)" : x.key === "ABSENT" ? "Absent (A)" : x.key === "LATE" ? "Late (L)" : x.key === "SICK_HOME" ? "Sick-Home (S)" : x.key === "SICK_CLINIC" ? "Sick-Clinic (C)" : x.key === "EXCUSED" ? "Excused (E)" : x.label}</option>)}
+                            </select>
+                          </label>
+                          {(marks[s.id] ?? "PRESENT") === "EXCUSED" && (
+                            <div className="mt-2">
+                              <Textarea
+                                rows={2}
+                                value={reasons[s.id] ?? ""}
+                                onChange={(e) => setReasons((r) => ({ ...r, [s.id]: e.target.value }))}
+                                placeholder="Reason for excused absence (required)"
+                                className="text-xs"
+                                aria-label={`Reason for ${s.name}`}
+                              />
+                              <p className="mt-0.5 text-[10px] text-muted-foreground">E.g. medical appointment, family emergency.</p>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {students.length > 0 && !students.filter((s) => !cardSearch.trim() || s.name.toLowerCase().includes(cardSearch.trim().toLowerCase())).length && (
+                      <div className="col-span-full py-8 text-center text-sm text-muted-foreground">No learner matches “{cardSearch}”.</div>
+                    )}
                   </div>
                 </CardContent>
               </Card>
+
+              {/* CI3 save FAB — fixed bottom-right, expands on hover */}
+              <div className="fixed bottom-6 right-6 z-30 group no-print">
+                <button
+                  onClick={save}
+                  disabled={busy || !registerReady}
+                  title="Save attendance"
+                  className="flex items-center gap-2 rounded-full bg-gradient-to-br from-violet-600 to-purple-700 p-4 text-white shadow-xl transition-all hover:pr-5 hover:scale-105 disabled:opacity-50"
+                >
+                  <Save className="size-5" />
+                  <span className="max-w-0 overflow-hidden whitespace-nowrap text-sm font-semibold transition-all group-hover:ml-0.5 group-hover:max-w-32">{busy ? "Saving…" : "Save attendance"}</span>
+                </button>
+              </div>
             </>
           )}
         </TabsContent>

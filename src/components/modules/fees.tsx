@@ -14,8 +14,10 @@ import { StatCard, ModuleHeader, LoadingBlock, StatusBadge, EmptyState, FilterBa
 import { fmtCedi, fmtDate, PAYMENT_LABELS } from "@/lib/format";
 import { canAny } from "@/lib/rbac";
 import { toast } from "@/hooks/use-toast";
-import { Banknote, Receipt, AlertTriangle, CheckCircle2, Plus, Flag, Printer, Wallet, Ticket, Percent, UserPlus, XCircle, ListChecks, Copy as CopyIcon, Eye, Link2, ClipboardList, ShieldCheck, Undo2, PencilLine, Trash2, FileWarning, Ban, Download, History, ArrowRightLeft, PiggyBank, HandCoins, CopyPlus, FileUp } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { Banknote, Receipt, AlertTriangle, CheckCircle2, Plus, Flag, Printer, Wallet, Ticket, Percent, UserPlus, XCircle, ListChecks, Copy as CopyIcon, Eye, Link2, ClipboardList, ShieldCheck, Undo2, PencilLine, Trash2, FileWarning, Ban, Download, History, ArrowRightLeft, PiggyBank, HandCoins, CopyPlus, FileUp, Smartphone } from "lucide-react";
 import { ReceiptDocument, BulkReceiptsDocument, RECEIPT_STYLES, type ReceiptStyle } from "@/components/receipts";
+import { BillItemsTab, CreateInvoicesTab, type BillItemRow, type RosterRow } from "@/components/modules/fees-billing";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { DiscountProfilesTab, DiscountApprovalsTab, type DiscountData } from "@/components/modules/discounts-workspace";
@@ -23,6 +25,9 @@ import { DiscountProfilesTab, DiscountApprovalsTab, type DiscountData } from "@/
 type FeeData = {
   terms: { id: string; name: string; isCurrent: boolean }[];
   termId: string;
+  classrooms: { id: string; name: string; gradeLevel: string; stage?: string | null }[];
+  billItems: BillItemRow[];
+  roster: RosterRow[];
   structures: { id: string; classroom: string; classroomId: string; total: number; items: { name: string; amount: number; optional: boolean }[] }[];
   invoices: {
     id: string; invoiceNo: string; student: string; studentId: string; classroom: string | null; total: number; discount: number;
@@ -77,11 +82,11 @@ export function Fees() {
   const [arrearsResult, setArrearsResult] = useState<any | null>(null);
   const [arrearsBusy, setArrearsBusy] = useState(false);
 
-  /* iEduPro nested nav: open on the deep-linked tab (invoices / receipts / credits / discounts…) */
+  /* iEduPro nested nav: open on the deep-linked tab (bill-items / create / invoices / receipts / credits / discounts…) */
   const [appliedTarget, setAppliedTarget] = useState<any>(null);
   if (navTarget !== appliedTarget) {
     setAppliedTarget(navTarget);
-    if (navTarget?.tab && ["invoices", "receipts", "structures", "discounts", "arrears", "credits", "approvals"].includes(navTarget.tab)) setTab(navTarget.tab);
+    if (navTarget?.tab && ["bill-items", "create", "invoices", "receipts", "structures", "discounts", "arrears", "credits", "approvals"].includes(navTarget.tab)) setTab(navTarget.tab);
   }
   const canManageApprovals = canAny(session?.permissions, ["approvals.manage"]);
   const canRequestMods = canAny(session?.permissions, ["approvals.request", "approvals.manage"]);
@@ -101,6 +106,29 @@ export function Fees() {
   const [invStatus, setInvStatus] = useState("all");
   const [rcpSearch, setRcpSearch] = useState("");
   const [rcpMethod, setRcpMethod] = useState("all");
+  /* CI3 bulk-invoice management: row selection + sticky bulk bar */
+  const [invChecked, setInvChecked] = useState<Set<string>>(new Set());
+  const [bulkSmsOpen, setBulkSmsOpen] = useState(false);
+  const [bulkSmsBody, setBulkSmsBody] = useState("");
+
+  async function sendBulkSms() {
+    if (!currentSchoolId || !invChecked.size) return;
+    const ids = filteredInvoices.filter((i) => invChecked.has(i.id)).map((i) => i.studentId);
+    const unique = [...new Set(ids)];
+    setBulkBusy(true);
+    try {
+      const res = await apiPost<any>(`/api/school/${currentSchoolId}/ops/sms`, { action: "send", audience: `STUDENTS:${unique.join(",")}`, body: bulkSmsBody || undefined, templateId: undefined });
+      toast({ title: `${res.sent} reminder${res.sent !== 1 ? "s" : ""} sent`, description: res.failed ? `${res.failed} failed — check the SMS log.` : undefined });
+      setBulkSmsOpen(false); setBulkSmsBody("");
+    } catch (e: any) { toast({ title: "Send failed", description: e.message, variant: "destructive" }); }
+    finally { setBulkBusy(false); }
+  }
+
+  function copySelectedLinks() {
+    const links = filteredInvoices.filter((i) => invChecked.has(i.id)).map((i) => `${location.origin}/invoice/${i.id}`);
+    navigator.clipboard?.writeText(links.join("\n"));
+    toast({ title: `${links.length} statement link${links.length !== 1 ? "s" : ""} copied`, description: "One per line — paste into WhatsApp or email." });
+  }
 
   /* reprint machinery — full receipt payloads come back from the API */
   async function fetchPayloads(ids: string[]): Promise<any[]> {
@@ -209,8 +237,10 @@ export function Fees() {
       </div>
 
       <Tabs value={tab} onValueChange={setTab} className="mt-5">
-        <TabsList>
-          <TabsTrigger value="invoices">Invoices</TabsTrigger>
+        <TabsList className="flex-wrap">
+          <TabsTrigger value="bill-items" className="gap-1.5"><ListChecks className="size-4" /> Bill items ({data.billItems.length})</TabsTrigger>
+          <TabsTrigger value="create" className="gap-1.5"><ClipboardList className="size-4" /> Create invoices</TabsTrigger>
+          <TabsTrigger value="invoices">Bulk manage ({data.invoices.length})</TabsTrigger>
           <TabsTrigger value="receipts">Receipts ({allPayments.length})</TabsTrigger>
           <TabsTrigger value="structures">Fee structures</TabsTrigger>
           <TabsTrigger value="discounts">Discounts ({discounts?.discounts.length ?? 0})</TabsTrigger>
@@ -221,6 +251,16 @@ export function Fees() {
             {(approvals?.pending.length ?? 0) > 0 && <span className="inline-flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold">{approvals!.pending.length}</span>}
           </TabsTrigger>
         </TabsList>
+
+        {/* CI3 student_payment.php tab 1 — the reusable bill-item catalog */}
+        <TabsContent value="bill-items">
+          <BillItemsTab billItems={data.billItems} classrooms={data.classrooms} onChanged={() => load(termId ?? undefined)} />
+        </TabsContent>
+
+        {/* CI3 tab 2 — mass invoice wizard (single / by class / all students) */}
+        <TabsContent value="create">
+          <CreateInvoicesTab billItems={data.billItems} roster={data.roster} terms={data.terms} termId={data.termId} onChanged={() => load(termId ?? undefined)} />
+        </TabsContent>
 
         <TabsContent value="invoices">
           <div className="space-y-3">
@@ -233,12 +273,31 @@ export function Fees() {
                 { value: "PARTIAL", label: "Partial" }, { value: "PAID", label: "Paid" }, { value: "OVERDUE", label: "Overdue" },
               ]} />
             </FilterBar>
+            {/* CI3 sticky bulk bar — selection drives SMS/export/copy */}
+            {invChecked.size > 0 && (
+              <div className="sticky top-14 z-20 flex flex-wrap items-center gap-2 rounded-lg border border-blue-200 dark:border-blue-900 bg-blue-50/95 dark:bg-blue-950/80 backdrop-blur border-t-2 border-t-blue-500 px-3 py-2 text-sm shadow-sm">
+                <span className="font-medium text-blue-800 dark:text-blue-200">{invChecked.size} invoice{invChecked.size > 1 ? "s" : ""} selected</span>
+                <div className="ml-auto flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={copySelectedLinks}><Link2 className="size-3.5" /> Copy links</Button>
+                  <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={() => setBulkSmsOpen(true)}><Smartphone className="size-3.5" /> SMS reminders</Button>
+                  <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={exportInvoicesCsv}><Download className="size-3.5" /> Export</Button>
+                  <Button size="sm" variant="ghost" className="h-8" onClick={() => setInvChecked(new Set())}>Clear</Button>
+                </div>
+              </div>
+            )}
             <Card>
               <CardContent className="p-0">
                 <div className="overflow-x-auto nice-scroll max-h-[560px]">
                   <table className="w-full text-sm">
                     <thead className="sticky top-0 bg-secondary/70 backdrop-blur">
                       <tr className="text-left border-b">
+                        <th className="px-3 py-2.5 w-8">
+                          <Checkbox
+                            checked={filteredInvoices.length > 0 && filteredInvoices.every((i) => invChecked.has(i.id))}
+                            onCheckedChange={(v) => setInvChecked(v ? new Set(filteredInvoices.map((i) => i.id)) : new Set())}
+                            aria-label="Select all invoices"
+                          />
+                        </th>
                         <th className="px-3 py-2.5 font-medium">Invoice</th>
                         <th className="px-3 py-2.5 font-medium">Learner</th>
                         <th className="px-3 py-2.5 font-medium hidden md:table-cell">Class</th>
@@ -251,7 +310,14 @@ export function Fees() {
                     </thead>
                     <tbody>
                       {filteredInvoices.map((inv) => (
-                      <tr key={inv.id} className="border-b last:border-0 hover:bg-secondary/30">
+                      <tr key={inv.id} className={cn("border-b last:border-0 hover:bg-secondary/30", invChecked.has(inv.id) && "bg-blue-50/50 dark:bg-blue-950/20")}>
+                        <td className="px-3 py-2.5">
+                          <Checkbox
+                            checked={invChecked.has(inv.id)}
+                            onCheckedChange={(v) => setInvChecked((s) => { const n = new Set(s); v ? n.add(inv.id) : n.delete(inv.id); return n; })}
+                            aria-label={`Select ${inv.invoiceNo}`}
+                          />
+                        </td>
                         <td className="px-3 py-2.5 font-mono text-xs">{inv.invoiceNo}</td>
                         <td className="px-3 py-2.5">
                           <div className="font-medium">{inv.student}</div>
@@ -273,7 +339,7 @@ export function Fees() {
                         </td>
                       </tr>
                     ))}
-                      {!filteredInvoices.length && <tr><td colSpan={8}><EmptyState icon={<Receipt className="size-5" />} title="No invoices match" hint="Adjust the class, status or search." /></td></tr>}
+                      {!filteredInvoices.length && <tr><td colSpan={9}><EmptyState icon={<Receipt className="size-5" />} title="No invoices match" hint="Adjust the class, status or search." /></td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -568,6 +634,29 @@ export function Fees() {
               }}
             >
               {arrearsBusy ? "Importing…" : "Import arrears"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* CI3 bulk-invoice SMS — reminders to the guardians of selected invoices */}
+      <Dialog open={bulkSmsOpen} onOpenChange={setBulkSmsOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Smartphone className="size-5 text-primary" /> Send bill reminders</DialogTitle>
+            <DialogDescription>
+              SMS to the guardians of the {invChecked.size} selected invoice{invChecked.size > 1 ? "s" : ""}. Each message renders the learner&rsquo;s name and their current balance.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label>Message</Label>
+            <Textarea rows={3} value={bulkSmsBody} onChange={(e) => setBulkSmsBody(e.target.value)} placeholder="Dear Parent, {student}'s fee balance is {balance}. Kindly settle to avoid interruption. Thank you — {school}." />
+            <p className="text-xs text-muted-foreground">{ "{student}" }, { "{balance}" } and { "{school}" } are replaced per learner. Leave empty to send the default reminder text.</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkSmsOpen(false)}>Cancel</Button>
+            <Button onClick={sendBulkSms} disabled={bulkBusy} className="gap-1.5">
+              {bulkBusy ? "Sending…" : <>Send to {[...new Set(filteredInvoices.filter((i) => invChecked.has(i.id)).map((i) => i.studentId))].length} guardian{[...new Set(filteredInvoices.filter((i) => invChecked.has(i.id)).map((i) => i.studentId))].length !== 1 ? "s" : ""}</>}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1471,7 +1560,6 @@ function DecideDialog({ target, onOpenChange, busy, onConfirm }: {
   );
 }
 
-function cn(...args: any[]) { return args.filter(Boolean).join(" "); }
 
 /* ── CREDITS TAB (prepaid credit wallets from overpayment — CI3 parity) ─── */
 function CreditsTab({ onHistory }: { onHistory: (studentId: string, name: string) => void }) {

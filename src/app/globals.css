@@ -214,3 +214,19 @@
   to { opacity: 1; transform: scale(1); }
 }
 .metro-tile { animation: metro-tile-in 0.45s cubic-bezier(0.2, 0.8, 0.3, 1) both; }
+
+/* ── pointer affordance (CI3 parity): every interactive element gets the hand ── */
+a, button, [role="button"], [role="tab"], [role="menuitem"], [role="menuitemradio"],
+[role="option"], [role="combobox"], [role="switch"], [role="checkbox"], [role="radio"],
+[role="slider"], [role="spinbutton"], label, select, summary, [data-radix-collection-item],
+.clickable, .cursor-pointer {
+  cursor: pointer;
+}
+button:disabled, [role="button"][aria-disabled="true"], [aria-disabled="true"],
+input:disabled, select:disabled, textarea:disabled, [data-disabled] {
+  cursor: not-allowed;
+}
+button:disabled *, [aria-disabled="true"] * { cursor: not-allowed; }
+/* text inputs keep the I-beam (typing affordance), matching native behaviour */
+input[type="text"], input[type="email"], input[type="number"], input[type="tel"],
+input[type="url"], input[type="search"], input[type="password"], textarea { cursor: text; }
