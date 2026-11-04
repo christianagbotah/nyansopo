@@ -8,6 +8,7 @@ import { invoicePaymentReceipt } from "@/lib/receipt-payload";
 import { nextInvoiceNo, nextReceiptNo, nextStudentIndex } from "@/lib/codes";
 import { effectiveValue } from "@/lib/discounts";
 import { storeMedia } from "@/lib/media";
+import { isCurriculumKey } from "@/lib/curricula";
 
 const C = (cedis: number) => Math.round(cedis * 100);
 
@@ -966,8 +967,24 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     // ── SETTINGS ──────────────────────────────────────────
     case "settings": {
       if (action === "update-school") {
-        const { curriculum, motto, phone, email, nasiaStatus, gnacopsStatus } = body;
-        const s = await db.school.update({ where: { id: schoolId }, data: { curriculum: curriculum ?? school.curriculum, motto: motto ?? school.motto, phone: phone ?? school.phone, email: email ?? school.email, nasiaStatus: nasiaStatus ?? school.nasiaStatus, gnacopsStatus: gnacopsStatus ?? school.gnacopsStatus } });
+        const { curriculum, curricula, motto, phone, email, nasiaStatus, gnacopsStatus } = body;
+        // multi-curricula (international schools run GES + Cambridge/IB in parallel):
+        // validate the array; primary curriculum = first entry (kept in sync)
+        let curriculaJson: string | null | undefined = undefined;
+        if (Array.isArray(curricula)) {
+          const valid = curricula.filter((c: unknown): c is string => typeof c === "string" && isCurriculumKey(c));
+          if (!valid.length) return NextResponse.json({ error: "Pick at least one curriculum" }, { status: 400 });
+          curriculaJson = JSON.stringify([...new Set(valid)]);
+        }
+        const s = await db.school.update({
+          where: { id: schoolId },
+          data: {
+            curriculum: (Array.isArray(curricula) ? (curriculaJson ? JSON.parse(curriculaJson)[0] : undefined) : curriculum) ?? school.curriculum,
+            ...(curriculaJson !== undefined ? { curricula: curriculaJson } : {}),
+            motto: motto ?? school.motto, phone: phone ?? school.phone, email: email ?? school.email,
+            nasiaStatus: nasiaStatus ?? school.nasiaStatus, gnacopsStatus: gnacopsStatus ?? school.gnacopsStatus,
+          },
+        });
         return NextResponse.json({ school: s });
       }
       if (action === "update-preferences") {

@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { ModuleHeader, LoadingBlock, StatusBadge, StatCard, EmptyState } from "@/components/ui-helpers";
 import { SCALES_TABLE } from "@/lib/grading-scale";
+import { CURRICULA } from "@/lib/curricula";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {Settings as SettingsIcon, GraduationCap, BookOpen, Users, CalendarRange, Plus, Save, MessageSquareQuote, Sparkles, Trash2, Award, Pencil, Baby, Sigma, PencilLine, ChevronDown, ChevronRight, ImageUp, ReceiptText, ShieldCheck, Banknote} from "lucide-react";
@@ -44,7 +45,7 @@ export function Settings() {
   const [busy, setBusy] = useState(false);
   const [clsOpen, setClsOpen] = useState(false);
   const [tab, setTab] = useState("profile");
-  const [form, setForm] = useState<any>({ motto: "", phone: "", email: "", curriculum: "GES", nasiaStatus: "", gnacopsStatus: "" });
+  const [form, setForm] = useState<any>({ motto: "", phone: "", email: "", curriculum: "GES", curricula: ["GES"], nasiaStatus: "", gnacopsStatus: "" });
   // branding & receipts preferences (SchoolSetting-backed)
   const [branding, setBranding] = useState<{ logoUrl: string | null; signatureUrl: string | null; ssnitLogoUrl: string | null; receiptStyle: string }>({ logoUrl: null, signatureUrl: null, ssnitLogoUrl: null, receiptStyle: "A5" });
   // CI3 system_settings_modern General/Payment/Security fields (system.* KV)
@@ -65,7 +66,7 @@ export function Settings() {
     if (!currentSchoolId) return;
     apiGet<any>(`/api/school/${currentSchoolId}/settings`).then((d) => {
       setData(d);
-      setForm({ motto: d.school.motto ?? "", phone: d.school.phone ?? "", email: d.school.email ?? "", curriculum: d.school.curriculum, nasiaStatus: d.school.nasiaStatus, gnacopsStatus: d.school.gnacopsStatus });
+      setForm({ motto: d.school.motto ?? "", phone: d.school.phone ?? "", email: d.school.email ?? "", curriculum: d.school.curriculum, curricula: (() => { try { const arr = d.school.curricula ? JSON.parse(d.school.curricula) : [d.school.curriculum]; return Array.isArray(arr) && arr.length ? arr : [d.school.curriculum]; } catch { return [d.school.curriculum]; } })(), nasiaStatus: d.school.nasiaStatus, gnacopsStatus: d.school.gnacopsStatus });
       setBranding({ logoUrl: d.branding?.logoUrl ?? null, signatureUrl: d.branding?.signatureUrl ?? null, ssnitLogoUrl: d.branding?.ssnitLogoUrl ?? null, receiptStyle: d.branding?.receiptStyle ?? "A5" });
       setSys((prev: any) => ({ ...prev, ...(d.system ?? {}) }));
       setRates(d.statutory ?? rates);
@@ -80,8 +81,9 @@ export function Settings() {
   async function saveSchool() {
     setBusy(true);
     try {
-      await apiPost(`/api/school/${currentSchoolId}/settings`, { action: "update-school", ...form });
-      toast({ title: "School profile updated", description: form.curriculum !== s.curriculum ? `Curriculum switched to ${form.curriculum}. New grade bands and subjects now apply across the app.` : undefined });
+      await apiPost(`/api/school/${currentSchoolId}/settings`, { action: "update-school", ...form, curriculum: form.curricula?.[0] ?? form.curriculum });
+      const changed = JSON.stringify([...(form.curricula ?? [])].sort()) !== JSON.stringify([...(s.curricula ? JSON.parse(s.curricula) : [s.curriculum])].sort());
+      toast({ title: "School profile updated", description: changed ? `Curricula updated to ${(form.curricula ?? []).join(" + ")}. Grade bands, frameworks and grading now follow the new pathway.` : undefined });
       load();
     } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); }
     finally { setBusy(false); }
@@ -185,29 +187,46 @@ export function Settings() {
             <Card>
               <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><GraduationCap className="size-4" /> Curriculum pathway</CardTitle></CardHeader>
               <CardContent className="space-y-4">
-                <div className="space-y-1.5">
-                  <Label>Curriculum</Label>
-                  <Select value={form.curriculum} onValueChange={(v) => setForm({ ...form, curriculum: v })}>
-                    <SelectTrigger className="w-full"><SelectValue>{form.curriculum === "GES" ? "GES — NaCCA (SBC + CCP)" : form.curriculum === "CAIE" ? "Cambridge — CAIE" : form.curriculum === "IB" ? "IB World School" : form.curriculum}</SelectValue></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="GES">GES — NaCCA Standards-Based & Common Core (BECE)</SelectItem>
-                      <SelectItem value="CAIE">Cambridge — CAIE (Primary → IGCSE → A-Level)</SelectItem>
-                      <SelectItem value="IB">IB World School — PYP / MYP / Diploma</SelectItem>
-                    </SelectContent>
-                  </Select>
+                <div className="space-y-2">
+                  <Label>Curricula offered <span className="text-muted-foreground font-normal">— tap all that apply; the first is the primary track</span></Label>
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    {(["GES", "CAIE", "IB"] as const).map((key, idx) => {
+                      const on = (form.curricula ?? []).includes(key);
+                      const primary = (form.curricula ?? [])[0] === key;
+                      return (
+                        <button
+                          key={key} type="button"
+                          onClick={() => {
+                            const cur = form.curricula ?? [];
+                            let next = on ? cur.filter((c: string) => c !== key) : [...cur, key];
+                            if (!next.length) next = [key]; // always keep one
+                            setForm({ ...form, curricula: next, curriculum: next[0] });
+                          }}
+                          className={cn("rounded-xl border p-3 text-left transition-colors cursor-pointer", on ? "border-primary bg-primary/5" : "hover:border-primary/40")}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-semibold">{CURRICULA[key].label}</span>
+                            {primary && <Badge className="text-[10px]">Primary</Badge>}
+                          </div>
+                          <p className="text-[11px] text-muted-foreground mt-1 leading-snug">{CURRICULA[key].full.split(" — ")[0]}</p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">International schools (Datus, Tema International…) run the national GES track alongside Cambridge or IB — lesson notes and schemes then pick the framework per subject.</p>
                 </div>
-                <div className={`rounded-xl border p-4 ${form.curriculum === s.curriculum ? "" : "border-amber-400 bg-amber-50/50 dark:bg-amber-950/20"}`}>
-                  <div className="font-medium text-sm">{SCALES_TABLE[form.curriculum]?.name}</div>
-                  <p className="text-xs text-muted-foreground mt-1">{SCALES_TABLE[form.curriculum]?.blurb}</p>
+                <div className={`rounded-xl border p-4 ${JSON.stringify(form.curricula ?? []) === JSON.stringify(s.curricula ? JSON.parse(s.curricula) : [s.curriculum]) ? "" : "border-amber-400 bg-amber-50/50 dark:bg-amber-950/20"}`}>
+                  <div className="font-medium text-sm">{SCALES_TABLE[(form.curricula ?? [])[0]]?.name}</div>
+                  <p className="text-xs text-muted-foreground mt-1">{SCALES_TABLE[(form.curricula ?? [])[0]]?.blurb}</p>
                   <div className="mt-3 space-y-1">
-                    {SCALES_TABLE[form.curriculum]?.bands.map((b: any) => (
+                    {SCALES_TABLE[(form.curricula ?? [])[0]]?.bands.map((b: any) => (
                       <div key={b.grade} className="flex justify-between text-xs">
                         <span><b>{b.grade}</b> · {b.label}</span>
                         <span className="text-muted-foreground">≥ {b.min}%</span>
                       </div>
                     ))}
                   </div>
-                  {form.curriculum !== s.curriculum && <div className="text-xs text-amber-700 dark:text-amber-400 mt-3 font-medium">Switching re-labels class stages and applies the new grading scale to generated report cards.</div>}
+                  {JSON.stringify(form.curricula ?? []) !== JSON.stringify(s.curricula ? JSON.parse(s.curricula) : [s.curriculum]) && <div className="text-xs text-amber-700 dark:text-amber-400 mt-3 font-medium">Saving re-labels class stages and applies the primary curriculum's grading scale to generated report cards.</div>}
                 </div>
               </CardContent>
             </Card>
