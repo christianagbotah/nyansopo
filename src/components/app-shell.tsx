@@ -54,6 +54,7 @@ import {
   Download, ChevronDown, ChevronRight, School, MessageSquareText, UtensilsCrossed, Bus, Smartphone, Calculator, Package, PieChart, LayoutList,
   BookOpen, ShieldCheck, Receipt, Route, UserRound, Home, Backpack, Laptop, BedDouble, NotebookPen, Search, LayoutGrid, SmartphoneNfc,
   QrCode, UserPlus, Printer, Wallet, BarChart3, CalendarDays, HandCoins, FileWarning, ListChecks, ScanLine, ClipboardPen, Percent,
+  PanelLeftClose, PanelLeftOpen,
 } from "lucide-react";
 
 type NavLeaf = { id: string; label: string; icon?: any; target?: NavTarget };
@@ -241,6 +242,14 @@ export function AppShell() {
   const [navOpen, setNavOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [metroOpen, setMetroOpen] = useState(false);
+  /* sidebar rail: "auto" collapses on wide modules (Fees billing), "open"/"closed"
+     is the user's manual pin — persisted so the workspace stays how they left it */
+  const [rail, setRail] = useState<"auto" | "open" | "closed">(() => {
+    if (typeof window === "undefined") return "auto";
+    return ((localStorage.getItem("sidebar-rail") as "auto" | "open" | "closed") ?? "auto");
+  });
+  useEffect(() => { localStorage.setItem("sidebar-rail", rail); }, [rail]);
+  const railCollapsed = rail === "closed" || (rail === "auto" && module === "fees");
   /* iEduPro nested navigation: class directory for the level bands
      (Students → level → class; Classes → level → class timetable). Loaded
      from the settings resource of the active school. */
@@ -303,6 +312,7 @@ export function AppShell() {
       { id: "daily-ledger", label: "Ledger & arrears", target: { tab: "ledger" } },
       ...(isTeacher ? [] : [
         { id: "daily-services", label: "Services & enrolment", target: { tab: "services" } },
+        { id: "daily-meals", label: "Meals & opt-ins", target: { tab: "meals" } },
         { id: "daily-rates", label: "Fee rates", target: { tab: "rates" } },
         { id: "daily-recon", label: "Reconciliation", target: { tab: "recon" } },
       ]),
@@ -685,26 +695,60 @@ export function AppShell() {
 
       {/* ── body ── */}
       <div className="flex-1 flex min-h-0">
-        {/* desktop sidebar */}
-        <aside className="hidden lg:flex w-64 flex-col bg-sidebar text-sidebar-foreground sticky top-[61px] self-start h-[calc(100vh-61px)]">
-          <div className="p-4 flex items-center gap-2.5 border-b border-sidebar-border">
+        {/* desktop sidebar — collapses to an icon rail on wide modules (fees billing)
+            or when the user pins it closed; the pin button lives in the rail header */}
+        <aside className={cn(
+          "hidden lg:flex flex-col bg-sidebar text-sidebar-foreground sticky top-[61px] self-start h-[calc(100vh-61px)] transition-all duration-200",
+          railCollapsed ? "w-14" : "w-64",
+        )}>
+          <div className={cn("p-3 flex items-center gap-2.5 border-b border-sidebar-border", railCollapsed && "flex-col px-2")}>
             <LogoMark size={30} />
-            <div>
-              <div className="font-bold leading-none text-sidebar-foreground">Nyansapo</div>
-              <div className="text-[10px] uppercase tracking-widest text-sidebar-foreground/60 mt-1">{roleLabel}</div>
-            </div>
-          </div>
-          <NavList items={navItems} current={module} target={navTarget} onSelect={setModule} />
-          <div className="p-3 border-t border-sidebar-border text-[11px] text-sidebar-foreground/60 leading-relaxed">
-            {currentSchool ? (
-              <div>
-                <div className="font-medium text-sidebar-foreground/80">{currentSchool.town}, {currentSchool.region}</div>
-                <div>{currentSchool.studentsOnRoll} learners · {currentSchool.curriculum} pathway</div>
+            {!railCollapsed && (
+              <div className="min-w-0">
+                <div className="font-bold leading-none text-sidebar-foreground">Nyansapo</div>
+                <div className="text-[10px] uppercase tracking-widest text-sidebar-foreground/60 mt-1">{roleLabel}</div>
               </div>
-            ) : assocScope ? (
-              <div>{session?.title}</div>
-            ) : null}
+            )}
+            <button
+              type="button"
+              title={railCollapsed ? "Expand sidebar" : "Collapse sidebar (auto-collapses on wide pages)"}
+              onClick={() => setRail(railCollapsed ? "open" : "closed")}
+              className={cn("grid place-items-center rounded-md p-1.5 text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground transition-colors", !railCollapsed && "ml-auto")}
+            >
+              {railCollapsed ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
+            </button>
           </div>
+          {railCollapsed ? (
+            <nav className="flex-1 flex flex-col items-center gap-0.5 py-3 overflow-y-auto nice-scroll">
+              {navItems.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <button key={item.id} type="button" title={item.label}
+                    onClick={() => setModule(item.id)}
+                    className={cn(
+                      "grid place-items-center size-9 rounded-lg transition-colors",
+                      module === item.id ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm" : "text-sidebar-foreground/60 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
+                    )}>
+                    {Icon && <Icon className="size-4" />}
+                  </button>
+                );
+              })}
+            </nav>
+          ) : (
+            <>
+              <NavList items={navItems} current={module} target={navTarget} onSelect={setModule} />
+              <div className="p-3 border-t border-sidebar-border text-[11px] text-sidebar-foreground/60 leading-relaxed">
+                {currentSchool ? (
+                  <div>
+                    <div className="font-medium text-sidebar-foreground/80">{currentSchool.town}, {currentSchool.region}</div>
+                    <div>{currentSchool.studentsOnRoll} learners · {currentSchool.curriculum} pathway</div>
+                  </div>
+                ) : assocScope ? (
+                  <div>{session?.title}</div>
+                ) : null}
+              </div>
+            </>
+          )}
         </aside>
 
         {/* module content — permission-guarded */}

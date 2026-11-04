@@ -151,7 +151,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         termId,
         classrooms,
         billItems: billItems.map((b) => ({ id: b.id, title: b.title, category: b.category, classCategory: b.classCategory, specificClassIds: (b.specificClassIds as string[] | null) ?? [], amountCents: b.amountCents, description: b.description, active: b.active, sortOrder: b.sortOrder })),
-        roster: roster.map((e) => ({ id: e.student.id, name: `${e.student.firstName} ${e.student.lastName}`, index: e.student.nyansapoIndex, classroomId: e.classroomId, classroom: e.classroom.name, grade: e.classroom.gradeLevel, guardian: e.student.guardianName, phone: e.student.guardianPhone, muted: false })),
+        roster: roster.map((e) => ({ id: e.student.id, name: `${e.student.firstName} ${e.student.lastName}`, index: e.student.nyansapoIndex, classroomId: e.classroomId, classroom: e.classroom.name, grade: e.classroom.gradeLevel, guardian: e.student.guardianName, phone: e.student.guardianPhone, residence: e.residenceType, muted: false })),
         structures: structures.map((s) => ({ id: s.id, classroom: s.classroom.name, classroomId: s.classroomId, total: s.totalCents, items: s.items.map((i) => ({ name: i.name, amount: i.amountCents, optional: i.isOptional })) })),
         invoices: invoices.map((i) => ({
           id: i.id, invoiceNo: i.invoiceNo, student: `${i.student.firstName} ${i.student.lastName}`, studentId: i.studentId,

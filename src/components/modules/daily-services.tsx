@@ -14,13 +14,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatCard, ModuleHeader, LoadingBlock, EmptyState, FilterBar, FilterSelect, FilterSearch } from "@/components/ui-helpers";
 import { fmtCedi, fmtDate, fmtDateTime, PAYMENT_LABELS } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
-import { UtensilsCrossed, Wallet, CalendarPlus, Plus, TrendingUp, Search, Droplets, BookOpenCheck, Coffee, HandCoins, CheckCircle2, Printer, Percent, Bus, Settings2, CircleDollarSign, ArrowDownToLine, History, BadgeCheck, UserCheck, Landmark, ScrollText, Layers } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { UtensilsCrossed, Wallet, CalendarPlus, Plus, TrendingUp, Search, Droplets, BookOpenCheck, Coffee, HandCoins, CheckCircle2, Printer, Percent, Bus, Settings2, CircleDollarSign, ArrowDownToLine, History, BadgeCheck, UserCheck, Landmark, ScrollText, Layers, Trash2, SplitSquareHorizontal, AlertCircle, ClipboardCheck, X } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ReceiptDocument } from "@/components/receipts";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 type Service = {
   id: string; name: string; category: string; price: number; chargeMode: string; weekdays: string; active: boolean; enrolled: number;
+  optInDaily?: boolean; // optional-by-default (e.g. breakfast) — billed only when the learner opts in for the day
   classRates: { classroomId: string; classroom: string; price: number }[];
   month: { billed: number; collected: number; owed: number; waived: number; count: number };
   today: { billed: number; collected: number; count: number; owedCount: number };
@@ -31,6 +33,7 @@ type PosItem = {
   arrears: number; balance: number;
   today: { amount: number; status: string; usage: string | null } | null;
   weekly: boolean; weeklyBilledThisWeek: boolean; weekdays: string;
+  optedOut?: string | null; // OPT_OUT register status for today: APPROVED | PENDING | null
 };
 type PosStudent = {
   id: string; name: string; classroom: string; classroomId: string; guardianPhone: string;
@@ -43,6 +46,8 @@ type PosStudent = {
   transportFare: { oneway: number; routeName: string; stopName: string | null; routeId: string } | null;
 };
 type WalletTxnRow = { id: string; student: string; wallet: string; item?: string | null; kind: string; amount: number; balanceAfter: number; note: string | null; byName: string | null; at: string };
+// meal opt-in / opt-out register row (dining parity — approved skips are never billed)
+type MealExceptionRow = { id: string; studentId: string; student: string; serviceId: string; service: string; date: string; kind: "OPT_OUT" | "OPT_IN"; status: "PENDING" | "APPROVED" | "DECLINED"; reason: string | null; requestedByName: string | null; decidedByName: string | null; createdAt: string };
 type DailySettings = { collectionMode: "CLASSROOM" | "CASHIER" | "HYBRID"; teacherPerms: { mode: "ALL" | "NONE" | "SELECTIVE"; classroomIds: string[]; serviceIds: string[] }; classrooms: { id: string; name: string }[] };
 type Reconciliation = {
   billed: number; collected: number; waived: number; outstanding: number; counter: number; walletPays: number; variance: number; txns: number;
@@ -78,6 +83,7 @@ type DailyData = {
   settings: DailySettings;
   reconciliation: Reconciliation;
   audit: AuditRow[];
+  mealExceptions?: MealExceptionRow[];
 };
 
 const MODE_LABELS: Record<string, string> = { CLASSROOM: "Classroom only", CASHIER: "Cashier only", HYBRID: "Hybrid (classroom + counter)" };
@@ -118,12 +124,13 @@ export function DailyServices() {
   const [topUpFor, setTopUpFor] = useState<PosStudent | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [auditStudentId, setAuditStudentId] = useState(""); // audit-log learner filter (recon tab)
+  const pendingMeals = (data?.mealExceptions ?? []).filter((m) => m.status === "PENDING").length;
 
   /* iEduPro nested nav: open on the deep-linked tab (POS / wallets / rates…) */
   const [appliedTarget, setAppliedTarget] = useState<any>(null);
   if (navTarget !== appliedTarget) {
     setAppliedTarget(navTarget);
-    if (navTarget?.tab && ["pos", "wallets", "ledger", "services", "rates", "recon", "trend"].includes(navTarget.tab)) setTab(navTarget.tab);
+    if (navTarget?.tab && ["pos", "wallets", "ledger", "services", "rates", "recon", "trend", "meals"].includes(navTarget.tab)) setTab(navTarget.tab);
   }
 
   const isAdmin = session?.role === "SCHOOL_ADMIN" || session?.role === "GROUP_OWNER";
@@ -235,6 +242,7 @@ export function DailyServices() {
           <TabsTrigger value="wallets">Wallets</TabsTrigger>
           <TabsTrigger value="ledger">Ledger & arrears ({data.ledger.length})</TabsTrigger>
           {!isTeacher && <TabsTrigger value="services">Services & enrolment</TabsTrigger>}
+          {!isTeacher && <TabsTrigger value="meals">Meals & opt-ins{pendingMeals ? ` (${pendingMeals})` : ""}</TabsTrigger>}
           {!isTeacher && <TabsTrigger value="rates">Fee rates</TabsTrigger>}
           {!isTeacher && <TabsTrigger value="recon">Reconciliation</TabsTrigger>}
           <TabsTrigger value="trend">14-day trend</TabsTrigger>
@@ -522,6 +530,7 @@ export function DailyServices() {
                       <span className={`size-7 rounded-lg grid place-items-center ${catStyle(s.category)}`}><Icon className="size-3.5" /></span>
                       {s.name}
                       {s.chargeMode === "WEEKLY" && <Badge variant="outline" className="text-[9px] px-1.5 h-4 text-cyan-700 dark:text-cyan-300 border-cyan-500/40">weekly</Badge>}
+                      {s.optInDaily && <Badge variant="outline" className="text-[9px] px-1.5 h-4 text-amber-700 dark:text-amber-300 border-amber-500/40" title="Optional — learners are billed only on days they opt in">opt-in</Badge>}
                     </CardTitle>
                     <div className="flex items-center gap-1.5">
                       {!s.active && <Badge variant="outline">paused</Badge>}
@@ -559,6 +568,12 @@ export function DailyServices() {
               );
             })}
           </div>
+        </TabsContent>
+
+        {/* ── MEALS & OPT-INS (dining register): approve skips of default meals
+            (no charge that day) and daily opt-ins for optional services ── */}
+        <TabsContent value="meals">
+          <MealsTab data={data} date={date} onChanged={() => load(date)} />
         </TabsContent>
 
         {/* ── TREND ── */}
@@ -648,11 +663,16 @@ export function DailyServices() {
   );
 }
 
+type PayPart = { key: string; method: string; amount: string; reference: string };
+const refPlaceholder = (m: string) => (m === "CHEQUE" ? "e.g. 100234" : m.startsWith("MOMO") ? "e.g. MP2401.5533.77" : "Bank / reference no.");
+const refHint = (m: string) => (m === "CHEQUE" ? "Cheque number" : m.startsWith("MOMO") ? "MoMo transaction ID — from the parent's wallet SMS" : "Reference printed on the receipt");
+
 function CollectDialog({ student, date, online, onOpenChange, onDone }: { student: PosStudent | null; date: string; online: boolean; onOpenChange: (o: boolean) => void; onDone: (receipt: any) => void }) {
   const { currentSchoolId } = useStore();
   const [amounts, setAmounts] = useState<Record<string, string>>({}); // serviceId → GH₵ being paid for that item
-  const [method, setMethod] = useState("MOMO_MTN");
-  const [reference, setReference] = useState("");
+  /* payment method rows — one row = a normal collection; several rows record a
+     SPLIT (part cash + part MoMo…) that lands on ONE receipt */
+  const [parts, setParts] = useState<PayPart[]>([{ key: "p1", method: "MOMO_MTN", amount: "", reference: "" }]);
   const [paidOn, setPaidOn] = useState(date);
   const [tendered, setTendered] = useState("");
   const [usage, setUsage] = useState<string>("");
@@ -664,11 +684,12 @@ function CollectDialog({ student, date, online, onOpenChange, onDone }: { studen
   useEffect(() => {
     if (student) {
       // per-item defaults: settle that item's arrears (the iEduPro payment form
-      // pre-fills each fee type with what the learner owes on it)
+      // pre-fills each fee type with what the learner owes on it); approved
+      // meal opt-outs are skipped — the learner is not eating today
       const pre: Record<string, string> = {};
-      student.items.forEach((i) => { if (i.arrears > 0) pre[i.serviceId] = (i.arrears / 100).toFixed(2); });
+      student.items.forEach((i) => { if (i.arrears > 0 && i.optedOut !== "APPROVED") pre[i.serviceId] = (i.arrears / 100).toFixed(2); });
       setAmounts(pre);
-      setReference("");
+      setParts([{ key: "p1", method: "MOMO_MTN", amount: "", reference: "" }]);
       setPaidOn(date);
       setTendered("");
       setMarkPresent(false);
@@ -679,6 +700,10 @@ function CollectDialog({ student, date, online, onOpenChange, onDone }: { studen
   const itemCents = (id: string) => Math.round(parseFloat(amounts[id] || "0") * 100);
   const totalCents = student ? student.items.reduce((s, i) => s + itemCents(i.serviceId), 0) : 0;
   const totalOwed = student?.balance ?? 0;
+  const partCents = (p: PayPart) => Math.round(parseFloat(p.amount || "0") * 100);
+  const allocated = parts.reduce((s, p) => s + partCents(p), 0);
+  const remaining = totalCents - allocated;
+  const hasCash = parts.some((p) => p.method === "CASH");
   const change = Math.max(0, Math.round(parseFloat(tendered || "0") * 100) - totalCents);
   const fmt = (c: number) => `GH₵${(c / 100).toFixed(2)}`;
 
@@ -686,11 +711,24 @@ function CollectDialog({ student, date, online, onOpenChange, onDone }: { studen
     if (!student || !currentSchoolId) return;
     const items = student.items.filter((i) => itemCents(i.serviceId) > 0).map((i) => ({ serviceId: i.serviceId, amountCents: itemCents(i.serviceId) }));
     if (!items.length) { toast({ title: "Enter an amount for at least one item" }); return; }
+    const cleanParts = parts
+      .map((p) => ({ method: p.method, amountCents: partCents(p), reference: p.reference.trim() || undefined }))
+      .filter((p) => p.amountCents > 0);
+    if (!cleanParts.length) { toast({ title: "Pick a payment method and enter the amount" }); return; }
+    const split = cleanParts.length > 1;
+    if (split && cleanParts.reduce((s, p) => s + p.amountCents, 0) !== totalCents) {
+      toast({ title: "Split amounts must add up to the total", description: `Allocated ${fmt(allocated)} of ${fmt(totalCents)} — ${fmt(Math.abs(remaining))} ${remaining > 0 ? "still to allocate" : "over-allocated"}.`, variant: "destructive" });
+      return;
+    }
+    if (split && !online) { toast({ title: "Split collections need a connection", description: "While offline, record each method as its own collection.", variant: "destructive" }); return; }
+    const method = cleanParts[0].method!;
+    const reference = cleanParts[0].reference;
     setBusy(true);
     try {
       const payload = {
         action: "pos-collect", studentId: student.id, items,
-        method, reference: reference || undefined, paidAt: paidOn,
+        ...(split ? { methods: cleanParts } : {}),
+        method, reference, paidAt: paidOn,
         transportUsage: usage || undefined, markPresent, date: paidOn,
       };
       const res = await apiPostQueueable<any>(
@@ -736,6 +774,8 @@ function CollectDialog({ student, date, online, onOpenChange, onDone }: { studen
                     <div className="text-sm font-medium truncate flex items-center gap-1.5">
                       {i.name}
                       {i.weekly && <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 gap-0.5 text-cyan-700 dark:text-cyan-300 border-cyan-500/40"><Droplets className="size-2.5" /> weekly</Badge>}
+                      {i.optedOut === "APPROVED" && <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 gap-0.5 text-amber-700 dark:text-amber-300 border-amber-500/40"><UtensilsCrossed className="size-2.5" /> not eating today</Badge>}
+                      {i.optedOut === "PENDING" && <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 gap-0.5 text-muted-foreground">skip requested</Badge>}
                     </div>
                     <div className="text-[11px] text-muted-foreground flex flex-wrap items-center gap-x-2">
                       <span>rate {fmtCedi(i.price)}{i.weekly ? "/wk" : "/day"}</span>
@@ -747,6 +787,8 @@ function CollectDialog({ student, date, online, onOpenChange, onDone }: { studen
                     type="number" step="0.5" min="0" placeholder="0.00"
                     className="w-24 text-right tabular-nums font-medium"
                     value={amounts[i.serviceId] ?? ""}
+                    disabled={i.optedOut === "APPROVED"}
+                    title={i.optedOut === "APPROVED" ? "Approved meal opt-out — not charged today" : undefined}
                     onChange={(e) => setAmounts({ ...amounts, [i.serviceId]: e.target.value })}
                   />
                 </div>
@@ -780,25 +822,70 @@ function CollectDialog({ student, date, online, onOpenChange, onDone }: { studen
             <Label>Payment date</Label>
             <Input type="date" value={paidOn} onChange={(e) => setPaidOn(e.target.value)} />
           </div>
-          <div className="space-y-1.5">
-            <Label>Method</Label>
-            <Select value={method} onValueChange={setMethod}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {Object.entries(PAYMENT_LABELS).filter(([k]) => k !== "WALLET" && k !== "TRANSPORT_WALLET").map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
-              </SelectContent>
-            </Select>
+          <div className="space-y-2 sm:col-span-2">
+            <div className="flex items-center justify-between">
+              <Label>Payment method{parts.length > 1 ? "s" : ""} *</Label>
+              {parts.length < 3 && (
+                <Button type="button" size="sm" variant="outline" className="h-7 gap-1 text-xs"
+                  onClick={() => setParts((ps) => [...ps, { key: `p${Date.now()}`, method: "CASH", amount: remaining > 0 ? (remaining / 100).toFixed(2) : "", reference: "" }])}>
+                  <SplitSquareHorizontal className="size-3.5" /> Split payment
+                </Button>
+              )}
+            </div>
+            {parts.map((p) => (
+              <div key={p.key} className="flex flex-wrap items-start gap-2">
+                <Select value={p.method} onValueChange={(v) => setParts((ps) => ps.map((x) => (x.key === p.key ? { ...x, method: v } : x)))}>
+                  <SelectTrigger className="w-[150px] shrink-0"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(PAYMENT_LABELS).filter(([k]) => k !== "WALLET" && k !== "TRANSPORT_WALLET").map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <div className="space-y-0.5">
+                  <Input type="number" step="0.5" min="0" placeholder="Amount" value={p.amount}
+                    onChange={(e) => setParts((ps) => ps.map((x) => (x.key === p.key ? { ...x, amount: e.target.value } : x)))}
+                    className="w-28 text-right tabular-nums" />
+                  {parts.length > 1 && <p className="text-[10px] text-muted-foreground w-28">{fmt(partCents(p))}</p>}
+                </div>
+                {p.method !== "CASH" && (
+                  <div className="min-w-[170px] flex-1 space-y-0.5">
+                    <Input placeholder={refPlaceholder(p.method)} value={p.reference}
+                      onChange={(e) => setParts((ps) => ps.map((x) => (x.key === p.key ? { ...x, reference: e.target.value } : x)))} />
+                    <p className="text-[10px] text-muted-foreground">{refHint(p.method)}</p>
+                  </div>
+                )}
+                {parts.length > 1 && (
+                  <Button type="button" size="sm" variant="ghost" className="size-8 p-0 text-destructive hover:text-destructive shrink-0"
+                    onClick={() => setParts((ps) => ps.filter((x) => x.key !== p.key))} title="Remove method">
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                )}
+              </div>
+            ))}
+            {parts.length > 1 && (
+              <div className={`rounded-lg px-3 py-2 text-sm flex flex-wrap items-center justify-between gap-1 ${
+                remaining === 0 ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300"
+                : remaining > 0 ? "bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300"
+                : "bg-destructive/10 text-destructive"}`}>
+                <span className="flex items-center gap-1.5">
+                  {remaining === 0 ? <CheckCircle2 className="size-4" /> : <AlertCircle className="size-4" />}
+                  {remaining === 0 ? "Fully allocated — one receipt, both methods" : remaining > 0 ? `${fmt(remaining)} still to allocate` : `${fmt(-remaining)} over-allocated`}
+                </span>
+                <span className="tabular-nums font-semibold">{fmt(allocated)} / {fmt(totalCents)}</span>
+              </div>
+            )}
+            <p className="text-[11px] text-muted-foreground">
+              Cash needs no transaction ID. Parent paid from their own wallet? Record the MoMo row with the wallet SMS transaction ID.
+              Online checkouts &amp; MoMo prompts are issued from the MoMo &amp; Links module.
+            </p>
           </div>
-          <div className="space-y-1.5">
-            <Label>Tendered (GH₵)</Label>
-            <Input type="number" step="0.5" value={tendered} onChange={(e) => setTendered(e.target.value)} placeholder="e.g. 20.00" />
-            {tendered && change >= 0 && <p className="text-[11px]">Change: <b className="text-emerald-600">{fmtCedi(change)}</b></p>}
-            {tendered && change < 0 && <p className="text-[11px] text-destructive">Short by {fmtCedi(-change)}</p>}
-          </div>
-          <div className="space-y-1.5">
-            <Label>MoMo / reference</Label>
-            <Input placeholder="e.g. MP2401.5533.77" value={reference} onChange={(e) => setReference(e.target.value)} />
-          </div>
+          {hasCash && (
+            <div className="space-y-1.5">
+              <Label>Tendered (GH₵)</Label>
+              <Input type="number" step="0.5" value={tendered} onChange={(e) => setTendered(e.target.value)} placeholder="e.g. 20.00" />
+              {tendered && change >= 0 && <p className="text-[11px]">Change: <b className="text-emerald-600">{fmtCedi(change)}</b></p>}
+              {tendered && change < 0 && <p className="text-[11px] text-destructive">Short by {fmtCedi(-change)}</p>}
+            </div>
+          )}
           {transportItem && (
             <div className="space-y-1.5 sm:col-span-2">
               <Label>Transport usage today</Label>
@@ -833,7 +920,7 @@ function CollectDialog({ student, date, online, onOpenChange, onDone }: { studen
         </p>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={submit} disabled={busy || totalCents <= 0} className="gap-1.5">{busy ? "Recording…" : <><ReceiptIcon /> Record payment</>}</Button>
+          <Button onClick={submit} disabled={busy || totalCents <= 0 || (parts.length > 1 && remaining !== 0)} className="gap-1.5">{busy ? "Recording…" : <><ReceiptIcon /> Record payment</>}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -875,14 +962,15 @@ function ServiceDialog({ service, onOpenChange, onDone }: { service: Service | "
   const [price, setPrice] = useState("");
   const [chargeMode, setChargeMode] = useState("DAILY");
   const [weekdays, setWeekdays] = useState<string[]>(["1", "2", "3", "4", "5"]);
+  const [optInDaily, setOptInDaily] = useState(false);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (service && service !== "new") {
       setName(service.name); setCategory(service.category); setPrice((service.price / 100).toFixed(2));
-      setChargeMode(service.chargeMode); setWeekdays(service.weekdays.split(","));
+      setChargeMode(service.chargeMode); setWeekdays(service.weekdays.split(",")); setOptInDaily(!!service.optInDaily);
     } else if (service === "new") {
-      setName(""); setCategory("MEAL"); setPrice(""); setChargeMode("DAILY"); setWeekdays(["1", "2", "3", "4", "5"]);
+      setName(""); setCategory("MEAL"); setPrice(""); setChargeMode("DAILY"); setWeekdays(["1", "2", "3", "4", "5"]); setOptInDaily(false);
     }
   }, [service]);
 
@@ -895,6 +983,7 @@ function ServiceDialog({ service, onOpenChange, onDone }: { service: Service | "
         id: service && service !== "new" ? service.id : undefined,
         name, category, priceCents: Math.round(parseFloat(price) * 100), chargeMode,
         weekdays: (chargeMode === "WEEKLY" ? weekdays.slice(0, 1) : weekdays).join(","),
+        optInDaily,
       });
       toast({ title: service === "new" ? "Service created" : "Service updated" });
       onDone();
@@ -952,6 +1041,16 @@ function ServiceDialog({ service, onOpenChange, onDone }: { service: Service | "
               ))}
             </div>
           </div>
+          <label className="sm:col-span-2 flex items-start gap-2.5 rounded-lg border p-3 cursor-pointer hover:bg-secondary/40">
+            <input type="checkbox" checked={optInDaily} onChange={(e) => setOptInDaily(e.target.checked)} className="accent-primary mt-0.5" />
+            <span className="text-sm">
+              <b>Optional — learners join per day (opt-in)</b>
+              <span className="block text-xs text-muted-foreground mt-0.5">
+                Leave OFF for default meals like lunch (every enrolled learner is billed unless the school approves an opt-out for that day).
+                Turn ON for optional services like breakfast — a learner is billed only on days they (or their parent) opt in.
+              </span>
+            </span>
+          </label>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
@@ -1507,6 +1606,202 @@ function ReconciliationTab({ data, date, auditStudentId, onAuditStudent }: { dat
           <p className="text-xs text-muted-foreground px-4 pb-4 pt-2">
             Immutable trail (iEduPro daily_fee_audit_log): wallet column shows prepaid + transport credit before → after the event; arrears show unpaid daily charges before → after. Latest 100 events{auditStudentId ? " · filtered to one learner" : ""}.
           </p>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+/* ════════════ MEALS & OPT-INS — the dining register (CI3 dining parity) ════════════
+   Lunch-type meals bill every enrolled learner by default; the school approves
+   per-day skips (no charge that day, existing unpaid charge waived). Services
+   marked opt-in (breakfast) bill only learners who join for the day. Parents
+   request from their portal — those land here as PENDING. */
+function MealsTab({ data, date, onChanged }: { data: DailyData; date: string; onChanged: () => void }) {
+  const { currentSchoolId } = useStore();
+  const [studentId, setStudentId] = useState("");
+  const [serviceId, setServiceId] = useState("");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const mealServices = data.services.filter((s) => s.active && s.category !== "TRANSPORT");
+  const rows = data.mealExceptions ?? [];
+  const pending = rows.filter((r) => r.status === "PENDING");
+  const decided = rows.filter((r) => r.status !== "PENDING");
+
+  async function add() {
+    if (!currentSchoolId || !studentId || !serviceId) { toast({ title: "Pick a learner and a meal" }); return; }
+    const svc = mealServices.find((s) => s.id === serviceId);
+    const kind = svc?.optInDaily ? "OPT_IN" : "OPT_OUT";
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/daily`, { action: "meal-exception-save", studentId, serviceId, date, kind, reason: reason.trim() || undefined });
+      toast({
+        title: kind === "OPT_OUT" ? "Opt-out approved — no charge that day" : "Opt-in approved — billed that day",
+        description: `${data.posStudents.find((s) => s.id === studentId)?.name ?? "Learner"} · ${svc?.name} · ${fmtDate(date)}`,
+      });
+      setStudentId(""); setReason(""); onChanged();
+    } catch (e: any) { toast({ title: "Could not save", description: e.message, variant: "destructive" }); }
+    finally { setBusy(false); }
+  }
+
+  async function decide(id: string, decision: "APPROVED" | "DECLINED") {
+    if (!currentSchoolId) return;
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/daily`, { action: "meal-exception-decide", id, decision });
+      toast({ title: decision === "APPROVED" ? "Request approved" : "Request declined", description: decision === "APPROVED" ? "Any unpaid charge for that meal & day has been waived." : "The parent can see the decision in their portal." });
+      onChanged();
+    } catch (e: any) { toast({ title: "Could not update", description: e.message, variant: "destructive" }); }
+    finally { setBusy(false); }
+  }
+
+  async function removeRow(id: string) {
+    if (!currentSchoolId) return;
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/daily`, { action: "meal-exception-delete", id });
+      toast({ title: "Entry removed", description: "The learner is billed normally again — re-generate the day if a charge is needed." });
+      onChanged();
+    } catch (e: any) { toast({ title: "Could not remove", description: e.message, variant: "destructive" }); }
+    finally { setBusy(false); }
+  }
+
+  const KIND_BADGE: Record<string, { label: string; className: string }> = {
+    OPT_OUT: { label: "Skip meal", className: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border-amber-500/40" },
+    OPT_IN: { label: "Join (opt-in)", className: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border-emerald-500/40" },
+  };
+  const STATUS_BADGE: Record<string, string> = { PENDING: "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300", APPROVED: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300", DECLINED: "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300" };
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border bg-secondary/40 px-3 py-2.5 text-xs text-muted-foreground leading-relaxed">
+        <b className="text-foreground">How meals bill:</b> default meals (lunch) bill every enrolled learner each school day — approve a
+        <b className="text-foreground"> skip</b> for one day and that charge is waived (or never raised). Services marked
+        <b className="text-foreground"> opt-in</b> (e.g. breakfast) bill only learners who join for the day. Parents can request both from their portal.
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        {/* add an exception for the selected day */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2"><UtensilsCrossed className="size-4 text-primary" /> Record a skip / opt-in — {fmtDate(date)}</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label>Learner *</Label>
+                <Select value={studentId} onValueChange={setStudentId}>
+                  <SelectTrigger><SelectValue placeholder="Pick a learner" /></SelectTrigger>
+                  <SelectContent>
+                    {data.posStudents.map((s) => <SelectItem key={s.id} value={s.id}>{s.name} — {s.classroom}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Meal / service *</Label>
+                <Select value={serviceId} onValueChange={setServiceId}>
+                  <SelectTrigger><SelectValue placeholder="Pick the meal" /></SelectTrigger>
+                  <SelectContent>
+                    {mealServices.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>{s.name}{s.optInDaily ? " — opt-in" : ""} · {fmtCedi(s.price)}{s.chargeMode === "WEEKLY" ? "/wk" : "/day"}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Reason <span className="text-muted-foreground font-normal">(optional — shown in the audit trail)</span></Label>
+              <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Travelling, fasting, packed lunch from home" />
+            </div>
+            <Button onClick={add} disabled={busy || !studentId || !serviceId} className="gap-1.5 w-full">
+              <ClipboardCheck className="size-4" /> Approve for {fmtDate(date)}
+            </Button>
+            <p className="text-[11px] text-muted-foreground">
+              Staff entries are approved immediately. If today's charges were already generated, an approved skip waives the unpaid one automatically.
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* pending parent requests */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <CalendarPlus className="size-4 text-primary" /> Requests from parents
+              {pending.length > 0 && <Badge className="bg-blue-600 hover:bg-blue-600">{pending.length} pending</Badge>}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {pending.map((r) => (
+              <div key={r.id} className="rounded-lg border p-3 space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium truncate">{r.student}</div>
+                    <div className="text-[11px] text-muted-foreground">
+                      {r.service} · {fmtDate(r.date)} · asked by {r.requestedByName ?? "parent"} · {fmtDate(r.createdAt)}
+                    </div>
+                  </div>
+                  <span className={cn("inline-block shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold", KIND_BADGE[r.kind]?.className)}>{KIND_BADGE[r.kind]?.label ?? r.kind}</span>
+                </div>
+                {r.reason && <p className="text-xs text-muted-foreground italic">“{r.reason}”</p>}
+                <div className="flex gap-2 pt-1">
+                  <Button size="sm" className="h-7 flex-1 gap-1" onClick={() => decide(r.id, "APPROVED")} disabled={busy}><CheckCircle2 className="size-3.5" /> Approve</Button>
+                  <Button size="sm" variant="outline" className="h-7 flex-1 gap-1" onClick={() => decide(r.id, "DECLINED")} disabled={busy}><X className="size-3.5" /> Decline</Button>
+                </div>
+              </div>
+            ))}
+            {!pending.length && (
+              <EmptyState icon={<CheckCircle2 className="size-5" />} title="No pending requests" hint="Parent requests from the portal land here for approval." />
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* register of decided entries for the day */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">Register for {fmtDate(date)}</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="overflow-x-auto nice-scroll">
+            <table className="w-full text-sm">
+              <thead className="bg-secondary/70">
+                <tr className="text-left border-b">
+                  <th className="px-3 py-2 font-medium">Learner</th>
+                  <th className="px-3 py-2 font-medium">Meal</th>
+                  <th className="px-3 py-2 font-medium">Request</th>
+                  <th className="px-3 py-2 font-medium">Status</th>
+                  <th className="px-3 py-2 font-medium hidden md:table-cell">Reason</th>
+                  <th className="px-3 py-2 font-medium hidden lg:table-cell">Decided by</th>
+                  <th className="px-3 py-2 font-medium text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {decided.map((r) => (
+                  <tr key={r.id} className="border-b last:border-0 hover:bg-secondary/30">
+                    <td className="px-3 py-2 font-medium">{r.student}</td>
+                    <td className="px-3 py-2">{r.service}</td>
+                    <td className="px-3 py-2">
+                      <span className={cn("inline-block rounded-full border px-2 py-0.5 text-[10px] font-semibold", KIND_BADGE[r.kind]?.className)}>{KIND_BADGE[r.kind]?.label ?? r.kind}</span>
+                    </td>
+                    <td className="px-3 py-2">
+                      <span className={cn("inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold", STATUS_BADGE[r.status])}>{r.status.toLowerCase()}</span>
+                    </td>
+                    <td className="px-3 py-2 text-xs text-muted-foreground hidden md:table-cell max-w-[220px] truncate" title={r.reason ?? ""}>{r.reason ?? "—"}</td>
+                    <td className="px-3 py-2 text-xs text-muted-foreground hidden lg:table-cell">{r.decidedByName ?? "—"}</td>
+                    <td className="px-3 py-2 text-right">
+                      <Button size="sm" variant="ghost" className="size-7 p-0 text-destructive hover:text-destructive" title="Remove entry" onClick={() => removeRow(r.id)} disabled={busy}>
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+                {!decided.length && (
+                  <tr><td colSpan={7}><EmptyState icon={<UtensilsCrossed className="size-5" />} title="Nothing recorded for this day" hint="Approve skips or opt-ins above and they appear here." /></td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </CardContent>
       </Card>
     </div>

@@ -10,12 +10,13 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectLabel, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { EmptyState } from "@/components/ui-helpers";
 import { fmtCedi } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { Plus, Save, Trash2, PencilLine, XCircle, ListChecks, Users, Search, CheckSquare, Square, ClipboardPen, FileWarning, Eye, Loader2 } from "lucide-react";
+import { Plus, Save, Trash2, PencilLine, XCircle, ListChecks, Users, Search, CheckSquare, Square, ClipboardPen, FileWarning, Eye, Loader2, ChevronsUpDown, AlertCircle, GraduationCap, Building2 } from "lucide-react";
 
 /* ── CI3 student_payment.php parity — the "Add Billing Item" and
    "Create Invoice" tabs of the Manage Student Invoice page. ── */
@@ -24,7 +25,7 @@ export type BillItemRow = {
   id: string; title: string; category: string; classCategory: string;
   specificClassIds: string[]; amountCents: number; description: string | null; active: boolean;
 };
-export type RosterRow = { id: string; name: string; index: string; classroomId: string; classroom: string; grade: string; guardian: string | null; phone: string | null };
+export type RosterRow = { id: string; name: string; index: string; classroomId: string; classroom: string; grade: string; guardian: string | null; phone: string | null; residence?: string };
 export type ClassRow = { id: string; name: string; gradeLevel: string; stage?: string | null };
 
 const CATEGORIES = ["Tuition", "Exams", "Books", "ICT", "Meals", "Transport", "Sports", "Uniform", "Graduation", "Other"];
@@ -53,6 +54,90 @@ const CATEGORY_TONE: Record<string, string> = {
 type Draft = { title: string; category: string; classCategory: string; specificClassIds: string[]; amount: string; description: string };
 const EMPTY_DRAFT: Draft = { title: "", category: "Tuition", classCategory: "ALL", specificClassIds: [], amount: "", description: "" };
 
+/* inline field validation — red hints under the row, CI3-style required marks */
+function draftErrors(d: Draft): { title?: string; amount?: string } {
+  const errs: { title?: string; amount?: string } = {};
+  if (!d.title.trim()) errs.title = "Item title is required";
+  const c = parseFloat(d.amount);
+  if (!d.amount.trim() || !Number.isFinite(c)) errs.amount = "Enter an amount";
+  else if (c <= 0) errs.amount = "Amount must be above zero";
+  return errs;
+}
+
+/* the six entry fields in ONE row (wraps on narrow screens) — shared by the
+   add form and the edit modal so both always look and validate the same */
+function BillItemFields({ draft, setDraft, errors, classrooms, idPrefix }: {
+  draft: Draft;
+  setDraft: React.Dispatch<React.SetStateAction<Draft>>;
+  errors: { title?: string; amount?: string };
+  classrooms: ClassRow[];
+  idPrefix: string;
+}) {
+  return (
+    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[2.1fr_1.1fr_1fr_1.3fr_1.3fr_1.8fr]">
+      <div className="space-y-1.5">
+        <Label htmlFor={`${idPrefix}-title`}>Bill item title *</Label>
+        <Input id={`${idPrefix}-title`} value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} placeholder="e.g. TUITION FEE" className={cn("uppercase", errors.title && "border-destructive focus-visible:ring-destructive")} aria-invalid={!!errors.title} />
+        {errors.title && <p className="text-[11px] text-destructive flex items-center gap-1"><AlertCircle className="size-3" /> {errors.title}</p>}
+      </div>
+      <div className="space-y-1.5">
+        <Label>Category *</Label>
+        <Select value={draft.category} onValueChange={(v) => setDraft({ ...draft, category: v })}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent>{CATEGORIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor={`${idPrefix}-amount`}>Amount (GH₵) *</Label>
+        <Input id={`${idPrefix}-amount`} type="number" min="0" step="0.01" value={draft.amount} onChange={(e) => setDraft({ ...draft, amount: e.target.value })} placeholder="250.00" className={cn("text-right", errors.amount && "border-destructive focus-visible:ring-destructive")} aria-invalid={!!errors.amount} />
+        {errors.amount && <p className="text-[11px] text-destructive flex items-center gap-1"><AlertCircle className="size-3" /> {errors.amount}</p>}
+      </div>
+      <div className="space-y-1.5">
+        <Label>Class category</Label>
+        <Select value={draft.classCategory} onValueChange={(v) => setDraft({ ...draft, classCategory: v, specificClassIds: v === "ALL" ? [] : draft.specificClassIds })}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent>{CLASS_CATEGORIES.map((c) => <SelectItem key={c.value} value={c.value}>{c.label}{c.value === "ALL" ? " (default)" : ""}</SelectItem>)}</SelectContent>
+        </Select>
+        {draft.specificClassIds.length > 0 && <p className="text-[11px] text-muted-foreground">Overridden by the specific classes</p>}
+      </div>
+      <div className="space-y-1.5">
+        <Label>Specific classes</Label>
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button type="button" variant="outline" className="w-full justify-between font-normal">
+              {draft.specificClassIds.length ? `${draft.specificClassIds.length} class${draft.specificClassIds.length > 1 ? "es" : ""} picked` : "All (optional)"}
+              <ChevronsUpDown className="size-3.5 opacity-60" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-64 p-2" align="start">
+            <div className="max-h-64 overflow-y-auto nice-scroll space-y-0.5">
+              {classrooms.length === 0 && <p className="text-xs text-muted-foreground px-2 py-3">No classes yet</p>}
+              {classrooms.map((c) => {
+                const on = draft.specificClassIds.includes(c.id);
+                return (
+                  <button key={c.id} type="button"
+                    onClick={() => setDraft((d) => ({ ...d, specificClassIds: on ? d.specificClassIds.filter((x) => x !== c.id) : [...d.specificClassIds, c.id] }))}
+                    className={cn("flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors", on ? "bg-primary/10 text-primary font-medium" : "hover:bg-secondary")}>
+                    {on ? <CheckSquare className="size-3.5 shrink-0" /> : <Square className="size-3.5 shrink-0 text-muted-foreground" />}
+                    <span className="truncate">{c.name}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {draft.specificClassIds.length > 0 && (
+              <Button type="button" variant="ghost" size="sm" className="mt-1 w-full h-7 text-xs" onClick={() => setDraft({ ...draft, specificClassIds: [] })}>Clear classes</Button>
+            )}
+          </PopoverContent>
+        </Popover>
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor={`${idPrefix}-desc`}>Description</Label>
+        <Input id={`${idPrefix}-desc`} value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} placeholder="Shown on the invoice next to the item" />
+      </div>
+    </div>
+  );
+}
+
 /* ════════════════ TAB 1 — BILL ITEMS (the reusable fee catalog) ════════════════ */
 export function BillItemsTab({ billItems, classrooms, onChanged }: {
   billItems: BillItemRow[];
@@ -61,9 +146,11 @@ export function BillItemsTab({ billItems, classrooms, onChanged }: {
 }) {
   const { currentSchoolId } = useStore();
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
+  const [touched, setTouched] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [editId, setEditId] = useState<string | null>(null);
-  const [editing, setEditing] = useState<Set<string>>(new Set()); // rows in inline edit mode
+  const [editModal, setEditModal] = useState<BillItemRow | null>(null); // single-row edit → modal
+  const [editDraft, setEditDraft] = useState<Draft>(EMPTY_DRAFT);
+  const [editing, setEditing] = useState<Set<string>>(new Set()); // rows in bulk inline edit mode
   const [edits, setEdits] = useState<Record<string, { title: string; amount: string; category: string }>>({});
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [confirmDelete, setConfirmDelete] = useState<Set<string> | null>(null);
@@ -76,23 +163,49 @@ export function BillItemsTab({ billItems, classrooms, onChanged }: {
     return billItems.filter((b) => `${b.title} ${b.category} ${b.description ?? ""}`.toLowerCase().includes(q));
   }, [billItems, search]);
 
-  function resetForm() { setDraft(EMPTY_DRAFT); setEditId(null); }
+  const addErrors = touched ? draftErrors(draft) : {};
+  const editErrors = editModal ? draftErrors(editDraft) : {};
+
+  function resetForm() { setDraft(EMPTY_DRAFT); setTouched(false); }
 
   async function save() {
     if (!currentSchoolId) return;
-    const amountCents = Math.round(parseFloat(draft.amount || "") * 100);
-    if (!draft.title.trim()) return toast({ title: "Title required", variant: "destructive" });
-    if (!Number.isFinite(amountCents) || amountCents <= 0) return toast({ title: "Enter a valid amount", variant: "destructive" });
+    setTouched(true);
+    const errs = draftErrors(draft);
+    if (Object.keys(errs).length) return toast({ title: "Check the highlighted fields", description: Object.values(errs)[0], variant: "destructive" });
+    const amountCents = Math.round(parseFloat(draft.amount) * 100);
     setBusy(true);
     try {
       await apiPost(`/api/school/${currentSchoolId}/fees`, {
         action: "bill-item-save",
-        id: editId ?? undefined,
         title: draft.title, category: draft.category, classCategory: draft.classCategory,
         specificClassIds: draft.specificClassIds, amountCents, description: draft.description,
       });
-      toast({ title: editId ? "Bill item updated" : "Bill item added", description: `${draft.title.toUpperCase()} — ${fmtCedi(amountCents)}` });
+      toast({ title: "Bill item added", description: `${draft.title.toUpperCase()} — ${fmtCedi(amountCents)}` });
       resetForm();
+      onChanged();
+    } catch (e: any) { toast({ title: "Save failed", description: e.message, variant: "destructive" }); }
+    finally { setBusy(false); }
+  }
+
+  function openEdit(b: BillItemRow) {
+    setEditDraft({ title: b.title, category: b.category, classCategory: b.classCategory, specificClassIds: b.specificClassIds, amount: (b.amountCents / 100).toFixed(2), description: b.description ?? "" });
+    setEditModal(b);
+  }
+
+  async function saveEdit() {
+    if (!currentSchoolId || !editModal) return;
+    const errs = draftErrors(editDraft);
+    if (Object.keys(errs).length) return toast({ title: "Check the highlighted fields", description: Object.values(errs)[0], variant: "destructive" });
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/fees`, {
+        action: "bill-item-save", id: editModal.id,
+        title: editDraft.title, category: editDraft.category, classCategory: editDraft.classCategory,
+        specificClassIds: editDraft.specificClassIds, amountCents: Math.round(parseFloat(editDraft.amount) * 100), description: editDraft.description,
+      });
+      toast({ title: "Bill item updated", description: `${editDraft.title.toUpperCase()} — ${fmtCedi(Math.round(parseFloat(editDraft.amount) * 100))}` });
+      setEditModal(null);
       onChanged();
     } catch (e: any) { toast({ title: "Save failed", description: e.message, variant: "destructive" }); }
     finally { setBusy(false); }
@@ -141,66 +254,24 @@ export function BillItemsTab({ billItems, classrooms, onChanged }: {
 
   return (
     <div className="space-y-4">
-      {/* add / edit form */}
+      {/* one-row add form — every input on the same line, actions right-aligned below */}
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
-            <ListChecks className="size-4 text-primary" /> {editId ? "Edit bill item" : "Add billing item"}
+            <ListChecks className="size-4 text-primary" /> Add billing item
+            <span className="ml-auto text-xs font-normal text-muted-foreground hidden lg:block">Catalog items feed the Create Invoices wizard</span>
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-            <div className="space-y-1.5 lg:col-span-2">
-              <Label>Bill item title *</Label>
-              <Input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} placeholder="e.g. TUITION FEE" className="uppercase" />
+          <BillItemFields draft={draft} setDraft={setDraft} errors={addErrors} classrooms={classrooms} idPrefix="add" />
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            {Object.keys(addErrors).length > 0 && touched && (
+              <span className="text-xs text-destructive flex items-center gap-1"><AlertCircle className="size-3.5" /> Fix the highlighted fields to continue</span>
+            )}
+            <div className="ml-auto flex gap-2">
+              {touched && <Button variant="ghost" onClick={resetForm} disabled={busy}>Clear</Button>}
+              <Button onClick={save} disabled={busy} className="gap-1.5"><Plus className="size-4" /> Add bill item</Button>
             </div>
-            <div className="space-y-1.5">
-              <Label>Category *</Label>
-              <Select value={draft.category} onValueChange={(v) => setDraft({ ...draft, category: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>{CATEGORIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Amount (GH₵) *</Label>
-              <Input type="number" min="0" step="0.01" value={draft.amount} onChange={(e) => setDraft({ ...draft, amount: e.target.value })} placeholder="e.g. 250.00" />
-            </div>
-          </div>
-          <div className="grid gap-3 md:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label>Class category</Label>
-              <Select value={draft.classCategory} onValueChange={(v) => setDraft({ ...draft, classCategory: v, specificClassIds: v === "ALL" ? [] : draft.specificClassIds })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>{CLASS_CATEGORIES.map((c) => <SelectItem key={c.value} value={c.value}>{c.label}{c.value === "ALL" ? " (default)" : ""}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Specific classes <span className="text-muted-foreground font-normal">(optional — overrides category)</span></Label>
-              <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto nice-scroll rounded-lg border p-2">
-                {classrooms.length === 0 && <span className="text-xs text-muted-foreground">No classes yet</span>}
-                {classrooms.map((c) => {
-                  const on = draft.specificClassIds.includes(c.id);
-                  return (
-                    <button
-                      key={c.id}
-                      type="button"
-                      onClick={() => setDraft((d) => ({ ...d, specificClassIds: on ? d.specificClassIds.filter((x) => x !== c.id) : [...d.specificClassIds, c.id] }))}
-                      className={cn("rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors", on ? "border-primary bg-primary text-primary-foreground" : "border-border hover:bg-secondary")}
-                    >
-                      {on ? "✓ " : ""}{c.name}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Description</Label>
-            <Textarea rows={2} value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} placeholder="Shown on the invoice next to the item" />
-          </div>
-          <div className="flex gap-2">
-            <Button onClick={save} disabled={busy} className="gap-1.5"><Plus className="size-4" /> {editId ? "Update bill item" : "Add bill item"}</Button>
-            {editId && <Button variant="outline" onClick={resetForm}>Cancel</Button>}
           </div>
         </CardContent>
       </Card>
@@ -301,7 +372,7 @@ export function BillItemsTab({ billItems, classrooms, onChanged }: {
                         <div className="flex justify-end gap-1">
                           {!isInEdit && (
                             <>
-                              <Button size="sm" variant="ghost" className="size-7 p-0" title="Edit" onClick={() => { setDraft({ title: b.title, category: b.category, classCategory: b.classCategory, specificClassIds: b.specificClassIds, amount: (b.amountCents / 100).toFixed(2), description: b.description ?? "" }); setEditId(b.id); }}>
+                              <Button size="sm" variant="ghost" className="size-7 p-0" title="Edit in a dialog" onClick={() => openEdit(b)}>
                                 <PencilLine className="size-3.5" />
                               </Button>
                               <Button size="sm" variant="ghost" className="size-7 p-0 text-destructive hover:text-destructive" title="Delete" onClick={() => setConfirmDelete(new Set([b.id]))}>
@@ -320,6 +391,21 @@ export function BillItemsTab({ billItems, classrooms, onChanged }: {
           </div>
         </CardContent>
       </Card>
+
+      {/* edit modal — opens from the row's pencil action */}
+      <Dialog open={!!editModal} onOpenChange={(o) => !o && setEditModal(null)}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><PencilLine className="size-4 text-primary" /> Edit bill item{editModal ? ` — ${editModal.title}` : ""}</DialogTitle>
+            <DialogDescription>Change the catalog entry — invoices already billed keep the amounts they were billed with.</DialogDescription>
+          </DialogHeader>
+          <BillItemFields draft={editDraft} setDraft={setEditDraft} errors={editErrors} classrooms={classrooms} idPrefix="edit" />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditModal(null)} disabled={busy}>Cancel</Button>
+            <Button onClick={saveEdit} disabled={busy || Object.keys(editErrors).length > 0} className="gap-1.5"><Save className="size-4" /> Save changes</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!confirmDelete} onOpenChange={(o) => !o && setConfirmDelete(null)}>
         <DialogContent className="max-w-sm">
@@ -348,7 +434,7 @@ export function CreateInvoicesTab({ billItems, roster, terms, termId, onChanged 
   onChanged: () => void;
 }) {
   const { currentSchoolId } = useStore();
-  const [scope, setScope] = useState<string>("CLASS"); // CLASS:<id> | ALL
+  const [scope, setScope] = useState<string>("CLASS"); // CLASS:<id> | ALL | BOARDING | DAY (CI3 students_category)
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
   const [rows, setRows] = useState<ItemRow[]>([{ key: "r1", title: "", amount: "", description: "" }]);
@@ -371,6 +457,8 @@ export function CreateInvoicesTab({ billItems, roster, terms, termId, onChanged 
 
   const candidates = useMemo(() => {
     if (scope === "ALL") return roster;
+    if (scope === "BOARDING") return roster.filter((r) => r.residence === "BOARDING");
+    if (scope === "DAY") return roster.filter((r) => (r.residence ?? "DAY") !== "BOARDING");
     const clsId = scope.startsWith("CLASS:") ? scope.slice(6) : null;
     if (!clsId) return [];
     return roster.filter((r) => r.classroomId === clsId);
@@ -384,6 +472,7 @@ export function CreateInvoicesTab({ billItems, roster, terms, termId, onChanged 
 
   const total = rows.reduce((s, r) => s + Math.round((parseFloat(r.amount || "0") || 0) * 100), 0);
   const rowValid = (r: ItemRow) => r.title.trim() && Number.isFinite(parseFloat(r.amount)) && parseFloat(r.amount) > 0;
+  const [tried, setTried] = useState(false); // show field hints once Create is attempted
 
   function setRow(key: string, patch: Partial<ItemRow>) { setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...patch } : r))); }
 
@@ -406,6 +495,7 @@ export function CreateInvoicesTab({ billItems, roster, terms, termId, onChanged 
       });
       setConfirm(false);
       setPicked(new Set());
+      setTried(false);
       onChanged();
     } catch (e: any) { toast({ title: "Create failed", description: e.message, variant: "destructive" }); }
     finally { setBusy(false); }
@@ -432,10 +522,19 @@ export function CreateInvoicesTab({ billItems, roster, terms, termId, onChanged 
             <Select value={scope} onValueChange={setScope}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="ALL">All Students</SelectItem>
-                {[...classGroups.entries()].map(([clsId, list]) => (
-                  <SelectItem key={clsId} value={`CLASS:${clsId}`}>{list[0].classroom} ({list.length})</SelectItem>
-                ))}
+                <SelectItem value="ALL">All Students ({roster.length})</SelectItem>
+                <SelectItem value="BOARDING">
+                  <span className="flex items-center gap-1.5"><Building2 className="size-3.5" /> All Boarding Students ({roster.filter((r) => r.residence === "BOARDING").length})</span>
+                </SelectItem>
+                <SelectItem value="DAY">
+                  <span className="flex items-center gap-1.5"><GraduationCap className="size-3.5" /> All Day Students ({roster.filter((r) => (r.residence ?? "DAY") !== "BOARDING").length})</span>
+                </SelectItem>
+                <SelectGroup>
+                  <SelectLabel>By class</SelectLabel>
+                  {[...classGroups.entries()].map(([clsId, list]) => (
+                    <SelectItem key={clsId} value={`CLASS:${clsId}`}>{list[0].classroom} ({list.length})</SelectItem>
+                  ))}
+                </SelectGroup>
               </SelectContent>
             </Select>
           </div>
@@ -466,7 +565,10 @@ export function CreateInvoicesTab({ billItems, roster, terms, termId, onChanged 
                     {on ? <CheckSquare className="size-4 text-primary shrink-0" /> : <Square className="size-4 text-muted-foreground shrink-0" />}
                     <span className="min-w-0">
                       <span className="block font-medium truncate">{r.name}</span>
-                      <span className="block text-[11px] text-muted-foreground">{r.classroom} · {r.index}</span>
+                      <span className="block text-[11px] text-muted-foreground flex items-center gap-1.5">
+                        {r.classroom} · {r.index}
+                        {r.residence === "BOARDING" && <Badge variant="outline" className="text-[9px] px-1 py-0 h-3.5 border-amber-500/40 text-amber-700 dark:text-amber-300">Boarder</Badge>}
+                      </span>
                     </span>
                   </button>
                 );
@@ -487,39 +589,50 @@ export function CreateInvoicesTab({ billItems, roster, terms, termId, onChanged 
             <span className="text-sm font-bold tabular-nums">{fmtCedi(total)}<span className="text-xs font-normal text-muted-foreground"> / learner</span></span>
           </CardHeader>
           <CardContent className="space-y-3">
-            {rows.map((r, i) => (
-              <div key={r.key} className="rounded-lg border p-3 space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className="grid size-6 shrink-0 place-items-center rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-[11px] font-bold text-white">{i + 1}</span>
+            {rows.map((r, i) => {
+              const badTitle = !r.title.trim();
+              const amt = parseFloat(r.amount);
+              const badAmount = !r.amount.trim() || !Number.isFinite(amt) || amt <= 0;
+              const dupTitle = rows.filter((x) => x.title.trim().toUpperCase() === r.title.trim().toUpperCase() && x.key !== r.key).length > 0;
+              const anyBad = badTitle || badAmount || dupTitle;
+              return (
+              <div key={r.key} className={cn("rounded-lg border p-3 space-y-2", anyBad && tried && "border-destructive/50")}>
+                <div className="grid gap-2 sm:grid-cols-[1.5fr_1.3fr_120px_auto]">
                   <Select value={r.title} onValueChange={(v) => {
                     const b = billItems.find((x) => x.title === v);
                     setRow(r.key, { title: v, amount: b ? (b.amountCents / 100).toFixed(2) : r.amount, description: b?.description ?? r.description });
                   }}>
-                    <SelectTrigger className="flex-1 h-9"><SelectValue placeholder="Pick a bill item (or type your own below)" /></SelectTrigger>
+                    <SelectTrigger className="h-9"><SelectValue placeholder="Pick a bill item (or type your own below)" /></SelectTrigger>
                     <SelectContent>
                       {billItems.map((b) => <SelectItem key={b.id} value={b.title}>{b.title} — {fmtCedi(b.amountCents)} · {b.category}</SelectItem>)}
                     </SelectContent>
                   </Select>
+                  <div className="space-y-0.5">
+                    <Input value={r.title} onChange={(e) => setRow(r.key, { title: e.target.value })} placeholder="OR TYPE AN ITEM TITLE" className={cn("h-9 text-xs uppercase", tried && badTitle && "border-destructive focus-visible:ring-destructive")} />
+                    {tried && badTitle && <p className="text-[10px] text-destructive">Title is required</p>}
+                    {tried && !badTitle && dupTitle && <p className="text-[10px] text-destructive">Duplicated on another row</p>}
+                  </div>
+                  <div className="space-y-0.5">
+                    <Input type="number" min="0" step="0.01" value={r.amount} onChange={(e) => setRow(r.key, { amount: e.target.value })} placeholder="Amount" className={cn("h-9 text-right text-xs", tried && badAmount && "border-destructive focus-visible:ring-destructive")} />
+                    {tried && badAmount && <p className="text-[10px] text-destructive">Amount must be above zero</p>}
+                  </div>
                   {rows.length > 1 && (
-                    <Button size="sm" variant="ghost" className="size-8 p-0 text-destructive hover:text-destructive shrink-0" onClick={() => setRows((rs) => rs.filter((x) => x.key !== r.key))} title="Remove row">
+                    <Button size="sm" variant="ghost" className="size-9 p-0 text-destructive hover:text-destructive shrink-0 self-start" onClick={() => setRows((rs) => rs.filter((x) => x.key !== r.key))} title="Remove row">
                       <Trash2 className="size-4" />
                     </Button>
                   )}
                 </div>
-                <div className="grid grid-cols-[1fr_130px] gap-2">
-                  <Input value={r.title} onChange={(e) => setRow(r.key, { title: e.target.value })} placeholder="Item title (e.g. TUITION FEE)" className="h-8 text-xs uppercase" />
-                  <Input type="number" min="0" step="0.01" value={r.amount} onChange={(e) => setRow(r.key, { amount: e.target.value })} placeholder="Amount" className="h-8 text-right text-xs" />
-                </div>
-                <Input value={r.description} onChange={(e) => setRow(r.key, { description: e.target.value })} placeholder="Description (optional)" className="h-8 text-xs" />
+                <Input value={r.description} onChange={(e) => setRow(r.key, { description: e.target.value })} placeholder="Description (optional — shown on the invoice)" className="h-8 text-xs" />
               </div>
-            ))}
+              );
+            })}
             <Button variant="outline" className="w-full gap-1.5 border-dashed" onClick={() => setRows((rs) => [...rs, { key: `r${Date.now()}`, title: "", amount: "", description: "" }])}>
               <Plus className="size-4" /> Add another item
             </Button>
             <div className="rounded-lg bg-secondary/60 p-3 text-xs text-muted-foreground leading-relaxed">
               Approved discounts and scholarships apply to each learner individually at creation, and prepaid credit balances are auto-applied to the fresh bill (CI3 parity).
             </div>
-            <Button className="w-full gap-1.5" size="lg" disabled={!picked.size || !rows.some(rowValid) || busy} onClick={() => setConfirm(true)}>
+            <Button className="w-full gap-1.5" size="lg" disabled={!picked.size || !rows.some(rowValid) || busy} onClick={() => { if (!rows.every(rowValid)) { setTried(true); toast({ title: "Fix the highlighted fee items", description: "Every row needs a title and an amount above zero.", variant: "destructive" }); return; } setConfirm(true); }}>
               <ClipboardPen className="size-4" /> Create {picked.size || ""} invoice{picked.size !== 1 ? "s" : ""}
             </Button>
           </CardContent>

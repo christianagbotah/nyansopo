@@ -353,6 +353,15 @@ export function MomoPayments() {
                   <li>Every completed request posts <b>automatically</b>: invoices settle (excess → credit), daily items clear FIFO (excess → item advance), wallets top up, and the receipt SMS goes out if enabled.</li>
                   <li>Failed / cancelled requests never touch the ledgers; use <b>Check</b> to reconcile a missed webhook.</li>
                 </ul>
+                <div className="rounded-lg border bg-secondary/40 p-3">
+                  <div className="text-xs font-semibold mb-1.5">The four ways money reaches the school</div>
+                  <ol className="text-xs text-muted-foreground space-y-1 list-decimal pl-4">
+                    <li><b className="text-foreground">Cash at the counter</b> — receipted in Fees or the POS (no reference needed).</li>
+                    <li><b className="text-foreground">Direct MoMo transfer</b> — the parent sends from their own wallet to the school's merchant account (or the office MoMo line); record it as a MoMo payment with the wallet-SMS transaction ID.</li>
+                    <li><b className="text-foreground">Online checkout (self-service)</b> — the parent pays from this portal or a shared payment link: Hubtel's hosted page takes MoMo, card or bank. Same as a <b>payment link</b> request.</li>
+                    <li><b className="text-foreground">MoMo prompt (assisted)</b> — the accountant enters the parent's number and issues the request; the parent approves the USSD push on their phone. Same as a <b>MoMo prompt</b> request.</li>
+                  </ol>
+                </div>
               </CardContent>
             </Card>
           </div>

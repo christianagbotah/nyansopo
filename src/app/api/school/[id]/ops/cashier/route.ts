@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
+import { paymentMethodLabel, type CollectMethodPart } from "@/lib/daily-billing";
 
 // ── GET /api/school/[id]/ops/cashier — cashier console (iEduPro parity)
 //    period stats, fee-type breakdown (collected vs outstanding),
@@ -27,9 +28,15 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const total = payments.reduce((s, p) => s + p.amountCents, 0);
   const studentsServed = new Set(payments.map((p) => p.studentId)).size;
 
-  // ── method breakdown ──
+  // ── method breakdown (SPLIT payments expand into their parts, e.g. part cash + part MoMo) ──
   const byMethod: Record<string, number> = {};
-  payments.forEach((p) => { byMethod[p.method] = (byMethod[p.method] ?? 0) + p.amountCents; });
+  payments.forEach((p) => {
+    if (p.method === "SPLIT" && Array.isArray(p.splitJson)) {
+      (p.splitJson as CollectMethodPart[]).forEach((m) => { byMethod[m.method] = (byMethod[m.method] ?? 0) + m.amountCents; });
+    } else {
+      byMethod[p.method] = (byMethod[p.method] ?? 0) + p.amountCents;
+    }
+  });
 
   // ── daily-fee type breakdown: collected (linked to a service) vs outstanding (all-time OWED) ──
   const collectedByService: Record<string, number> = {};
@@ -86,7 +93,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     return {
       id: p.id, date: p.paidAt, student: p.student ? `${p.student.firstName} ${p.student.lastName}` : "—",
       classroom: p.student ? (classByStudent.get(p.student.id) ?? "") : "",
-      byService, total: p.amountCents, method: p.method, receiptNo: p.receiptNo,
+      byService, total: p.amountCents, method: paymentMethodLabel(p), receiptNo: p.receiptNo,
       collector: p.receivedByName ?? "Unattributed",
     };
   });
@@ -120,7 +127,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     performance,
     collectors,
     recent: payments.slice(0, 12).map((p) => ({
-      id: p.id, receiptNo: p.receiptNo, amount: p.amountCents, method: p.method, paidAt: p.paidAt,
+      id: p.id, receiptNo: p.receiptNo, amount: p.amountCents, method: paymentMethodLabel(p), paidAt: p.paidAt,
       student: p.student ? `${p.student.firstName} ${p.student.lastName}` : "—",
       category: p.category, receivedByName: p.receivedByName,
     })),
@@ -174,7 +181,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }));
   payments.forEach((p) => rows.push({
     date: p.paidAt.toISOString(), kind: "CREDIT",
-    description: `${p.category === "DAILY" ? "Daily services" : p.category === "POS" ? "Store purchase" : p.category === "TRANSPORT" ? "Transport fare" : "Fees payment"} · ${p.method}`,
+    description: `${p.category === "DAILY" ? "Daily services" : p.category === "POS" ? "Store purchase" : p.category === "TRANSPORT" ? "Transport fare" : "Fees payment"} · ${paymentMethodLabel(p)}`,
     reference: p.receiptNo, amount: p.amountCents, balance: 0,
   }));
   rows.sort((a, b) => (a.date < b.date ? -1 : 1));

@@ -97,6 +97,37 @@ const fmtGH = (cents: number) => `GH₵${(cents / 100).toFixed(2)}`;
 export type CollectItemEntry = { serviceId: string; amountCents: number };
 export type CollectBreakdownRow = { name: string; paid: number; advance: number };
 export type DailyPaymentType = "arrears" | "current" | "advance" | "mixed";
+/** One payment method inside a split collection (e.g. part cash + part MoMo). */
+export type CollectMethodPart = { method: string; amountCents: number; reference?: string | null };
+
+const SPLIT_METHOD_KEYS = new Set(Object.keys(PAYMENT_LABELS).filter((k) => k !== "WALLET" && k !== "TRANSPORT_WALLET"));
+
+/** Sanitise a raw methods[] payload (POS split collection). Returns the clean
+ *  parts or an error — every part must be a known counter method with a
+ *  positive amount, and the parts must add up to the collection total. */
+export function sanitizeMethodParts(raw: unknown, totalCents: number): { error?: string; parts?: CollectMethodPart[] } {
+  if (!Array.isArray(raw) || raw.length === 0) return { error: "methods[] required" };
+  const parts: CollectMethodPart[] = (raw as any[]).map((m) => ({
+    method: String(m?.method ?? ""),
+    amountCents: Math.max(0, Math.round(Number(m?.amountCents) || 0)),
+    reference: m?.reference ? String(m.reference).slice(0, 120) : null,
+  }));
+  if (parts.some((p) => !SPLIT_METHOD_KEYS.has(p.method))) return { error: "Unknown payment method in split" };
+  if (parts.some((p) => p.amountCents <= 0)) return { error: "Every split part needs an amount above zero" };
+  const sum = parts.reduce((s, p) => s + p.amountCents, 0);
+  if (sum !== totalCents) return { error: `Split parts add up to GH₵${(sum / 100).toFixed(2)} — the items total GH₵${(totalCents / 100).toFixed(2)}` };
+  return { parts };
+}
+
+/** Display label for a Payment — expands SPLIT rows into "Cash + MTN MoMo". */
+export function paymentMethodLabel(p: { method: string; splitJson?: unknown }): string {
+  if (p.method === "SPLIT" && Array.isArray(p.splitJson)) {
+    const parts = p.splitJson as CollectMethodPart[];
+    const labels = parts.map((m) => PAYMENT_LABELS[m.method] ?? m.method);
+    return [...new Set(labels)].join(" + ");
+  }
+  return PAYMENT_LABELS[p.method] ?? p.method;
+}
 
 /** Sanitise a raw `items[]` payload (POS dialog / offline queue entry) into
  *  validated per-item entries. Returns `{ error }` when nothing is payable. */
@@ -125,6 +156,8 @@ export async function collectDailyItems(db: PrismaClient, opts: {
   paidAt?: Date;
   offlineQueued?: boolean;
   syncedAt?: Date;
+  /** multi-method collection: parts must sum to the items total (see sanitizeMethodParts) */
+  methods?: CollectMethodPart[];
 }): Promise<{
   payment: Payment;
   breakdown: CollectBreakdownRow[];
@@ -135,12 +168,18 @@ export async function collectDailyItems(db: PrismaClient, opts: {
   arrearsAfter: number;
 }> {
   const owedBefore = await arrearsTotalCents(db, opts.studentId);
-  const payMethod = opts.method ?? "CASH";
   const total = opts.items.reduce((s, i) => s + i.amountCents, 0);
+  // multi-method split: one Payment row carries every part (receipt + method-mix
+  // reports expand splitJson); a single method stays on the legacy column
+  const parts: CollectMethodPart[] = opts.methods?.length ? opts.methods : [{ method: opts.method ?? "CASH", amountCents: total, reference: opts.reference ?? null }];
+  const multi = parts.length > 1;
+  const payMethod = multi ? "SPLIT" : parts[0].method;
+  const splitRef = parts.find((p) => p.reference)?.reference ?? null;
   const payment = await db.payment.create({
     data: {
       receiptNo: await nextReceiptNo(), studentId: opts.studentId, category: "DAILY", schoolId: opts.schoolId,
-      amountCents: total, method: payMethod, reference: opts.reference ?? null,
+      amountCents: total, method: payMethod, reference: splitRef ?? opts.reference ?? null,
+      ...(multi ? { splitJson: parts.map((p) => ({ method: p.method, amountCents: p.amountCents, reference: p.reference })) } : {}),
       receivedByName: opts.receivedByName,
       paidAt: opts.paidAt ?? new Date(),
       offlineQueued: opts.offlineQueued ?? false,
@@ -167,6 +206,9 @@ export async function collectDailyItems(db: PrismaClient, opts: {
   const paymentType: DailyPaymentType = advanceTotal === 0 ? "arrears" : settledTotal === 0 ? "advance" : "mixed";
 
   const arrearsAfter = await arrearsTotalCents(db, opts.studentId);
+  const methodNote = multi
+    ? parts.map((p) => `${PAYMENT_LABELS[p.method] ?? p.method} ${fmtGH(p.amountCents)}${p.reference ? ` (${p.reference})` : ""}`).join(" + ")
+    : PAYMENT_LABELS[payMethod] ?? payMethod;
   await logDailyFeeAudit(db, {
     schoolId: opts.schoolId, studentId: opts.studentId, actionType: "PAYMENT",
     serviceCode: breakdown.length === 1 ? breakdown[0].name : "MULTIPLE",
@@ -174,7 +216,7 @@ export async function collectDailyItems(db: PrismaClient, opts: {
     arrearsBeforeCents: owedBefore, arrearsAfterCents: arrearsAfter,
     performedByName: opts.receivedByName, performedByRole: opts.performedByRole ?? "SYSTEM",
     reference: payment.receiptNo,
-    notes: `${PAYMENT_LABELS[payMethod] ?? payMethod} · ${paymentType} · ${breakdown.map((b) => `${b.name} ${fmtGH(b.paid)}${b.advance ? ` (+${fmtGH(b.advance)} advance)` : ""}`).join(", ")}${opts.reference ? ` · ref ${opts.reference}` : ""}`,
+    notes: `${methodNote} · ${paymentType} · ${breakdown.map((b) => `${b.name} ${fmtGH(b.paid)}${b.advance ? ` (+${fmtGH(b.advance)} advance)` : ""}`).join(", ")}`,
   });
 
   return { payment, breakdown, settledTotal, advanceTotal, paymentType, arrearsBefore: owedBefore, arrearsAfter };
@@ -400,6 +442,13 @@ export async function generateDayCharges(
   });
   const weeklySeen = new Set(weeklyChargesThisWeek.map((c) => `${c.serviceId}:${c.studentId}`));
 
+  // meal opt-in / opt-out for the day (dining register): APPROVED opt-outs skip
+  // (and waive any unpaid charge generated earlier), optInDaily services bill
+  // only learners with an approved opt-in (e.g. optional breakfast)
+  const dayExceptions = await db.dailyMealException.findMany({ where: { schoolId, date: day, status: "APPROVED" } });
+  const optedOut = new Set(dayExceptions.filter((e) => e.kind === "OPT_OUT").map((e) => `${e.serviceId}:${e.studentId}`));
+  const optedIn = new Set(dayExceptions.filter((e) => e.kind === "OPT_IN").map((e) => `${e.serviceId}:${e.studentId}`));
+
   // audit-trail baselines (iEduPro daily_fee_audit_log): per-learner arrears + wallet totals
   const owedAgg = await db.dailyCharge.groupBy({ by: ["studentId"], where: { schoolId, status: "OWED" }, _sum: { amountCents: true } });
   const arrearsByStudent = new Map(owedAgg.map((g) => [g.studentId, g._sum.amountCents ?? 0]));
@@ -414,6 +463,21 @@ export async function generateDayCharges(
     const rates = rateByServiceClass.get(svc.id)!;
     for (const en of enrollments.filter((e) => e.serviceId === svc.id)) {
       if (svc.chargeMode === "WEEKLY" && weeklySeen.has(`${svc.id}:${en.studentId}`)) { skipped++; continue; }
+      // approved opt-out: skip the charge; waive an unpaid charge generated earlier today
+      if (optedOut.has(`${svc.id}:${en.studentId}`)) {
+        const unpaid = await db.dailyCharge.findFirst({ where: { serviceId: svc.id, studentId: en.studentId, date: day, status: "OWED" } });
+        if (unpaid) {
+          await db.dailyCharge.update({ where: { id: unpaid.id }, data: { status: "WAIVED" } });
+          await logDailyFeeAudit(db, {
+            schoolId, studentId: en.studentId, actionType: "CHARGE_REVERSAL", serviceCode: svc.name, amountCents: unpaid.amountCents,
+            performedByName: opts?.performedByName, performedByRole: opts?.performedByRole,
+            reference: unpaid.id, notes: `waived — meal opt-out approved · ${svc.name} · ${day.toISOString().slice(0, 10)}`,
+          });
+        }
+        skipped++; continue;
+      }
+      // optional-by-default service (optInDaily, e.g. breakfast): only opted-in learners are billed
+      if (svc.optInDaily && !optedIn.has(`${svc.id}:${en.studentId}`)) { skipped++; continue; }
       // non-unique index (partial-payment splits): any existing row for the day means the learner was already billed
       const existing = await db.dailyCharge.findFirst({ where: { serviceId: svc.id, studentId: en.studentId, date: day } });
       if (existing) { skipped++; continue; }

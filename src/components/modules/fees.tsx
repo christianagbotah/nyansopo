@@ -740,8 +740,22 @@ function PayDialog({ invoice, onOpenChange, onDone, onCreditHistory }: {
             </Select>
           </div>
           <div className="space-y-1.5 sm:col-span-2">
-            <Label>MoMo / transaction reference</Label>
-            <Input placeholder="e.g. MP2401.5533.77 GCASH" value={reference} onChange={(e) => setReference(e.target.value)} />
+            {method !== "CASH" && (
+              <>
+                <Label>{method === "CHEQUE" ? "Cheque number" : method.startsWith("MOMO") ? "MoMo transaction ID" : "Transaction / bank reference"}</Label>
+                <Input placeholder={method === "CHEQUE" ? "e.g. 100234" : "e.g. MP2401.5533.77 GCASH"} value={reference} onChange={(e) => setReference(e.target.value)} />
+                <p className="text-[11px] text-muted-foreground">
+                  {method.startsWith("MOMO")
+                    ? "The parent sent money from their own wallet to the school — copy the transaction ID from their wallet SMS."
+                    : "Printed on the receipt and the audit trail."}
+                </p>
+              </>
+            )}
+            {method === "CASH" && (
+              <p className="text-[11px] text-muted-foreground rounded-lg bg-secondary/60 px-3 py-2">
+                Cash at the counter — no transaction reference needed. Online checkouts and MoMo prompts are issued from the MoMo &amp; Links module.
+              </p>
+            )}
           </div>
           {creditBal > 0 && (
             <div className="sm:col-span-2 rounded-lg border border-emerald-500/50 bg-emerald-50 dark:bg-emerald-950/40 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300 flex flex-wrap items-center justify-between gap-2">

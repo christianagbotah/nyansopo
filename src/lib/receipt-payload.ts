@@ -1,6 +1,7 @@
 /* Server-side receipt payload builder — shared by fees, daily, POS & transport APIs.
    Returns the exact shape the <ReceiptDocument /> component renders. */
 import { PrismaClient } from "@prisma/client";
+import { paymentMethodLabel } from "@/lib/daily-billing";
 
 export type ReceiptPayload = {
   type: "INVOICE_PAYMENT" | "DAILY_SERVICES" | "POS_SALE" | "TRANSPORT_FARE";
@@ -122,7 +123,7 @@ export async function dailyServicesReceipt(db: PrismaClient, paymentId: string) 
     type: "DAILY_SERVICES" as const,
     receiptNo: p.receiptNo,
     date: p.paidAt.toISOString(),
-    method: p.method,
+    method: paymentMethodLabel(p),
     reference: p.reference,
     cashier: p.receivedByName,
     student: {

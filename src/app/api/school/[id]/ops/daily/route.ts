@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
-import { generateDayCharges, settleDailyCharges, effectivePrice, applyTransportUsage, parseTeacherPerms, DEFAULT_TEACHER_PERMS, collectionAllowed, TRANSPORT_USAGES, logDailyFeeAudit, arrearsTotalCents, creditItemBalance, itemBalanceCents, collectDailyItems, markPresentForDate, type CollectionMode, type TeacherPerms, type TransportUsage } from "@/lib/daily-billing";
+import { generateDayCharges, settleDailyCharges, effectivePrice, applyTransportUsage, parseTeacherPerms, DEFAULT_TEACHER_PERMS, collectionAllowed, TRANSPORT_USAGES, logDailyFeeAudit, arrearsTotalCents, creditItemBalance, itemBalanceCents, collectDailyItems, markPresentForDate, sanitizeMethodParts, paymentMethodLabel, type CollectionMode, type TeacherPerms, type TransportUsage } from "@/lib/daily-billing";
 import { sendAutomated } from "@/lib/sms";
 import { dailyServicesReceipt } from "@/lib/receipt-payload";
 import { nextReceiptNo } from "@/lib/codes";
@@ -74,6 +74,15 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   // POS workspace: today's charges + recent POS payments
   const todayCharges = await db.dailyCharge.findMany({ where: { schoolId, date: { gte: dayStart, lte: dayEnd } }, include: { student: true, service: true } });
   const posPayments = await db.payment.findMany({ where: { schoolId, category: "DAILY" }, orderBy: { paidAt: "desc" }, take: 10, include: { student: true } });
+
+  // meal opt-in / opt-out register for the day (dining parity): the counter and
+  // the meals tab both read this — approved opt-outs must not be charged
+  const mealExceptions = await db.dailyMealException.findMany({
+    where: { schoolId, date: { gte: dayStart, lte: dayEnd } },
+    include: { student: { select: { firstName: true, lastName: true } }, service: { select: { name: true } } },
+    orderBy: { createdAt: "desc" },
+  });
+  const mealOutByStudentSvc = new Map(mealExceptions.filter((e) => e.status === "APPROVED" && e.kind === "OPT_OUT").map((e) => [`${e.studentId}:${e.serviceId}`, e]));
 
   // per-service today stats (iedupro-style category cards)
   const todayByService: Record<string, { billed: number; collected: number; count: number; owedCount: number }> = {};
@@ -179,6 +188,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       weekly: se.service.chargeMode === "WEEKLY",
       weeklyBilledThisWeek: se.service.chargeMode === "WEEKLY" && weekBilled.has(`${r.student.id}:${se.serviceId}`),
       weekdays: se.service.weekdays,
+      optedOut: mealOutByStudentSvc.has(`${r.student.id}:${se.serviceId}`) ? "APPROVED" : ((mealExceptions.find((e) => e.studentId === r.student.id && e.serviceId === se.serviceId && e.kind === "OPT_OUT")?.status ?? null)),
     })),
     balance: (ledger[r.student.id]?.owed ?? 0),
     wallet: walletByStudent[r.student.id] ?? { prepaidCents: 0, transportCents: 0 },
@@ -245,7 +255,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     date: dateStr,
     services: services.map((s) => ({
       id: s.id, name: s.name, category: s.category, price: s.priceCents, chargeMode: s.chargeMode,
-      weekdays: s.weekdays, active: s.active, enrolled: s._count.enrollments,
+      weekdays: s.weekdays, active: s.active, optInDaily: s.optInDaily, enrolled: s._count.enrollments,
       classRates: s.classRates.map((r) => ({ classroomId: r.classroomId, classroom: r.classroom.name, price: r.priceCents })),
       month: byService[s.id] ?? { billed: 0, collected: 0, owed: 0, waived: 0, count: 0 },
       today: todayByService[s.id] ?? { billed: 0, collected: 0, count: 0, owedCount: 0 },
@@ -266,7 +276,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     trend,
     ledger: Object.values(ledger).sort((a, b) => b.owed - a.owed),
     posStudents,
-    posPayments: posPayments.map((p) => ({ id: p.id, receiptNo: p.receiptNo, amount: p.amountCents, method: p.method, paidAt: p.paidAt, student: p.student ? `${p.student.firstName} ${p.student.lastName}` : "—" })),
+    posPayments: posPayments.map((p) => ({ id: p.id, receiptNo: p.receiptNo, amount: p.amountCents, method: paymentMethodLabel(p), paidAt: p.paidAt, student: p.student ? `${p.student.firstName} ${p.student.lastName}` : "—" })),
     wallets: posStudents
       .filter((s) => s.wallet.prepaidCents > 0 || s.wallet.transportCents > 0 || s.balance > 0 || s.items.some((i: any) => i.balance > 0))
       .map((s) => ({
@@ -298,6 +308,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       teacherPerms,
       classrooms: allClassrooms,
     },
+    // meal opt-in / opt-out register for the date (Meals tab + counter badges)
+    mealExceptions: mealExceptions.map((e) => ({
+      id: e.id, studentId: e.studentId, student: `${e.student.firstName} ${e.student.lastName}`,
+      serviceId: e.serviceId, service: e.service.name, kind: e.kind, status: e.status,
+      reason: e.reason, requestedByName: e.requestedByName, decidedByName: e.decidedByName, createdAt: e.createdAt,
+    })),
   });
 }
 
@@ -308,7 +324,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const action: string = body.action;
   // RBAC (iEduPro collection-policy parity): collecting is for teachers & cashiers
   // (daily.collect); configuration, enrolment, wallets & waivers need daily.manage.
-  const MANAGE_ACTIONS = ["save-service", "toggle-service", "enroll", "unenroll", "settings-save", "wallet-adjust", "waive-charge", "waive-student-day", "rate-save", "rate-clear"];
+  const MANAGE_ACTIONS = ["save-service", "toggle-service", "enroll", "unenroll", "settings-save", "wallet-adjust", "waive-charge", "waive-student-day", "rate-save", "rate-clear", "meal-exception-save", "meal-exception-decide", "meal-exception-delete"];
   const auth = await opsAuth(req, schoolId, "POST", {
     perms: MANAGE_ACTIONS.includes(action) ? ["daily.manage"] : ["daily.collect", "daily.manage"],
   });
@@ -316,9 +332,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const user = auth.user;
 
   if (action === "save-service") {
-    const { id, name, category, priceCents, chargeMode, weekdays } = body;
+    const { id, name, category, priceCents, chargeMode, weekdays, optInDaily } = body;
     if (!name || !Number(priceCents)) return NextResponse.json({ error: "Name and price are required" }, { status: 400 });
-    const data = { name, category: category ?? "OTHER", priceCents: Number(priceCents), chargeMode: chargeMode ?? "DAILY", weekdays: weekdays ?? "1,2,3,4,5" };
+    const data = { name, category: category ?? "OTHER", priceCents: Number(priceCents), chargeMode: chargeMode ?? "DAILY", weekdays: weekdays ?? "1,2,3,4,5", optInDaily: !!optInDaily };
     const svc = id ? await db.dailyService.update({ where: { id }, data }) : await db.dailyService.create({ data: { ...data, schoolId } });
     return NextResponse.json({ service: svc });
   }
@@ -384,6 +400,71 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const date = new Date(body.date ?? new Date().toISOString().slice(0, 10));
     const res = await generateDayCharges(db, schoolId, date, { performedByName: user.fullName, performedByRole: user.role });
     return NextResponse.json(res);
+  }
+
+  // ── meal opt-in / opt-out register (dining parity): staff-created exceptions are
+  //    APPROVED immediately; parent portal requests arrive PENDING and are decided here.
+  //    An APPROVED OPT_OUT waives any unpaid charge for that learner/service/day. ──
+  if (action === "meal-exception-save") {
+    const { studentId, serviceId, date, kind, reason } = body;
+    if (!studentId || !serviceId || !date || !"OPT_OUT OPT_IN".includes(kind ?? ""))
+      return NextResponse.json({ error: "studentId, serviceId, date and kind (OPT_OUT | OPT_IN) are required" }, { status: 400 });
+    const svc = await db.dailyService.findUnique({ where: { id: serviceId } });
+    if (!svc || svc.schoolId !== schoolId) return NextResponse.json({ error: "Service not found" }, { status: 404 });
+    if (kind === "OPT_IN" && !svc.optInDaily)
+      return NextResponse.json({ error: `${svc.name} is billed to every enrolled learner by default — opt-in is only for services marked optional (e.g. breakfast).` }, { status: 400 });
+    if (kind === "OPT_OUT" && svc.optInDaily)
+      return NextResponse.json({ error: `${svc.name} is optional — learners without an opt-in are simply not billed. Use OPT_IN to join for a day.` }, { status: 400 });
+    const st = await db.student.findFirst({ where: { id: studentId, enrollments: { some: { schoolId } } } });
+    if (!st) return NextResponse.json({ error: "Learner not found" }, { status: 404 });
+    const d = new Date(date); d.setHours(0, 0, 0, 0);
+    const row = await db.dailyMealException.upsert({
+      where: { studentId_serviceId_date_kind: { studentId, serviceId, date: d, kind } },
+      update: { status: "APPROVED", reason: reason ?? null, decidedByName: user.fullName, decidedAt: new Date() },
+      create: { schoolId, studentId, serviceId, date: d, kind, status: "APPROVED", reason: reason ?? null, requestedByName: user.fullName, decidedByName: user.fullName, decidedAt: new Date() },
+    });
+    // approved opt-out: immediately waive any unpaid charge already generated for that day
+    if (kind === "OPT_OUT") {
+      const dEnd = new Date(d); dEnd.setHours(23, 59, 59, 999);
+      const unpaid = await db.dailyCharge.findFirst({ where: { schoolId, serviceId, studentId, date: { gte: d, lte: dEnd }, status: "OWED" } });
+      if (unpaid) {
+        await db.dailyCharge.update({ where: { id: unpaid.id }, data: { status: "WAIVED" } });
+        await logDailyFeeAudit(db, {
+          schoolId, studentId, actionType: "CHARGE_REVERSAL", serviceCode: svc.name, amountCents: unpaid.amountCents,
+          performedByName: user.fullName, performedByRole: user.role,
+          reference: unpaid.id, notes: `waived — meal opt-out approved · ${svc.name} · ${d.toISOString().slice(0, 10)}`,
+        });
+      }
+    }
+    return NextResponse.json({ exception: row });
+  }
+
+  if (action === "meal-exception-decide") {
+    const { id, decision } = body; // APPROVED | DECLINED
+    if (!id || !"APPROVED DECLINED".includes(decision ?? "")) return NextResponse.json({ error: "id and decision (APPROVED | DECLINED) required" }, { status: 400 });
+    const row = await db.dailyMealException.findFirst({ where: { id, schoolId }, include: { service: true } });
+    if (!row) return NextResponse.json({ error: "Request not found" }, { status: 404 });
+    const updated = await db.dailyMealException.update({ where: { id }, data: { status: decision, decidedByName: user.fullName, decidedAt: new Date() } });
+    if (decision === "APPROVED" && row.kind === "OPT_OUT") {
+      const d = new Date(row.date); const dEnd = new Date(d); dEnd.setHours(23, 59, 59, 999);
+      const unpaid = await db.dailyCharge.findFirst({ where: { schoolId, serviceId: row.serviceId, studentId: row.studentId, date: { gte: d, lte: dEnd }, status: "OWED" } });
+      if (unpaid) {
+        await db.dailyCharge.update({ where: { id: unpaid.id }, data: { status: "WAIVED" } });
+        await logDailyFeeAudit(db, {
+          schoolId, studentId: row.studentId, actionType: "CHARGE_REVERSAL", serviceCode: row.service.name, amountCents: unpaid.amountCents,
+          performedByName: user.fullName, performedByRole: user.role,
+          reference: unpaid.id, notes: `waived — meal opt-out approved · ${row.service.name} · ${d.toISOString().slice(0, 10)}`,
+        });
+      }
+    }
+    return NextResponse.json({ exception: updated });
+  }
+
+  if (action === "meal-exception-delete") {
+    const row = await db.dailyMealException.findFirst({ where: { id: body.id, schoolId } });
+    if (!row) return NextResponse.json({ error: "Request not found" }, { status: 404 });
+    await db.dailyMealException.delete({ where: { id: body.id } });
+    return NextResponse.json({ ok: true });
   }
 
   if (action === "settings-save") {
@@ -540,11 +621,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       });
       if (!gate.ok) return NextResponse.json({ error: gate.reason ?? "Not permitted" }, { status: 403 });
 
+      // multi-method split (e.g. part cash + part MoMo): every part must be a
+      // known counter method and the parts must add up to the items total
+      let methodParts;
+      if (Array.isArray(body.methods) && body.methods.length) {
+        const sp = sanitizeMethodParts(body.methods, total);
+        if (sp.error) return NextResponse.json({ error: sp.error }, { status: 400 });
+        methodParts = sp.parts;
+      }
+
       // shared per-item collection core (also used by the offline queue flush)
       const { payment, breakdown, settledTotal, advanceTotal, paymentType } = await collectDailyItems(db, {
         schoolId, studentId, items: parsed,
         services: svcRows.map((s) => ({ id: s.id, name: s.name })),
         method, reference: reference ?? null,
+        ...(methodParts ? { methods: methodParts } : {}),
         receivedByName: user.fullName, performedByRole: user.role,
         paidAt: paidAt ? new Date(paidAt) : new Date(),
       });

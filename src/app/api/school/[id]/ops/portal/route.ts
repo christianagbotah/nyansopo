@@ -108,11 +108,28 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       where: { schoolId, studentId: { in: user.linkedStudentIds } },
       orderBy: { sentAt: "desc" }, take: 12,
     });
+    // meal opt-in / opt-out: the school's meal services + this family's requests
+    const mealServices = await db.dailyService.findMany({
+      where: { schoolId, active: true, category: { in: ["MEAL", "DRINK"] } },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true, category: true, optInDaily: true, weekdays: true },
+    });
+    const mealRequests = await db.dailyMealException.findMany({
+      where: { schoolId, studentId: { in: user.linkedStudentIds } },
+      include: { student: { select: { firstName: true, lastName: true } }, service: { select: { name: true } } },
+      orderBy: { createdAt: "desc" }, take: 20,
+    });
     const school = await db.school.findUnique({ where: { id: schoolId }, select: { name: true, motto: true, phone: true, town: true, region: true } });
     return NextResponse.json({
       role: "PARENT", school, year: year?.name ?? null, term: term?.name ?? null, children, announcements, messages,
       messagesNote: "Messages sent by the school about your children",
       libraryCatalogue: await loadCatalogue(),
+      mealServices: mealServices.map((s) => ({ id: s.id, name: s.name, category: s.category, optInDaily: s.optInDaily, weekdays: s.weekdays })),
+      mealRequests: mealRequests.map((r) => ({
+        id: r.id, studentId: r.studentId, student: `${r.student.firstName} ${r.student.lastName}`,
+        service: r.service.name, date: r.date, kind: r.kind, status: r.status,
+        reason: r.reason, decidedByName: r.decidedByName, createdAt: r.createdAt,
+      })),
     });
   }
 
@@ -262,6 +279,40 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const duplicate = await db.bookRequest.findFirst({ where: { bookId, studentId, status: "PENDING" } });
     if (duplicate) return NextResponse.json({ error: `There is already a pending request for "${book.title}" — wait for the librarian's decision.` }, { status: 409 });
     const request = await db.bookRequest.create({ data: { schoolId, bookId, studentId, startAt: start, endAt: end } });
+    return NextResponse.json({ request: { id: request.id, status: request.status } });
+  }
+
+  // ── meal opt-in / opt-out request from the parent portal (dining parity):
+  //    a parent asks for their child to skip a meal (e.g. lunch) or join the
+  //    optional breakfast on a given day — the school approves or declines. ──
+  if (body.action === "meal-request.create") {
+    if (user.role !== "PARENT") return NextResponse.json({ error: "Only parent accounts can raise meal requests" }, { status: 403 });
+    const { studentId, serviceId, date, kind, reason } = body;
+    if (!user.linkedStudentIds.includes(studentId)) {
+      return NextResponse.json({ error: "You can only request meal changes for your own children" }, { status: 403 });
+    }
+    if (!serviceId || !date || !"OPT_OUT OPT_IN".includes(kind ?? "")) {
+      return NextResponse.json({ error: "Choose the meal, the day and the request type" }, { status: 400 });
+    }
+    const svc = await db.dailyService.findUnique({ where: { id: serviceId } });
+    if (!svc || svc.schoolId !== schoolId || !svc.active) return NextResponse.json({ error: "Meal service not found" }, { status: 404 });
+    const kindValue = kind as string;
+    if (kindValue === "OPT_IN" && !svc.optInDaily) {
+      return NextResponse.json({ error: `${svc.name} is served to every enrolled learner by default — no opt-in needed.` }, { status: 400 });
+    }
+    if (kindValue === "OPT_OUT" && svc.optInDaily) {
+      return NextResponse.json({ error: `${svc.name} is optional — your child is only billed when you opt in, so there is nothing to skip.` }, { status: 400 });
+    }
+    const d = new Date(date); d.setHours(0, 0, 0, 0);
+    if (isNaN(d.getTime()) || d < new Date(new Date().toDateString())) {
+      return NextResponse.json({ error: "Pick today or a future date" }, { status: 400 });
+    }
+    const dup = await db.dailyMealException.findFirst({ where: { studentId, serviceId, date: d, kind: kindValue, status: { in: ["PENDING", "APPROVED"] } } });
+    if (dup) return NextResponse.json({ error: `There is already a ${dup.status.toLowerCase()} request for ${svc.name} on that day.` }, { status: 409 });
+    const parent = await db.user.findUnique({ where: { id: user.id }, select: { fullName: true } });
+    const request = await db.dailyMealException.create({
+      data: { schoolId, studentId, serviceId, date: d, kind: kindValue, reason: reason ? String(reason).slice(0, 300) : null, requestedByName: parent?.fullName ?? "Parent" },
+    });
     return NextResponse.json({ request: { id: request.id, status: request.status } });
   }
 

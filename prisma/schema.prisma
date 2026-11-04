@@ -124,6 +124,7 @@ model School {
   riskScores           RiskScore[]
   dailyServices        DailyService[]
   dailyCharges         DailyCharge[]
+  dailyMealExceptions  DailyMealException[]
   transportRoutes      TransportRoute[]
   vehicles             Vehicle[]
   drivers              DriverRecord[]
@@ -348,6 +349,7 @@ model Student {
   walletTxns           WalletTxn[]
   serviceBalances      ServiceBalance[]
   dailyCharges         DailyCharge[]
+  dailyMealExceptions  DailyMealException[]
   transportAssignments TransportAssignment[]
   smsMessages          SmsMessage[]
   discountApplications DiscountApplication[]
@@ -509,6 +511,7 @@ model Payment {
   offlineQueued  Boolean       @default(false)
   syncedAt       DateTime?
   voided         Boolean       @default(false)
+  splitJson      Json? // SPLIT collections — [{method, amountCents, reference}] summing to amountCents
   dailyCharges   DailyCharge[]
   appliedRequest PaymentRequest? @relation("HubtelAppliedPayment")
 }
@@ -888,10 +891,12 @@ model DailyService {
   chargeMode  String                   @default("DAILY") // DAILY (every school day) | WEEKLY (once a week, first school day)
   weekdays    String                   @default("1,2,3,4,5") // ISO weekdays the service runs (e.g. "3" = Wednesdays only)
   active      Boolean                  @default(true)
+  optInDaily  Boolean                  @default(false) // optional-by-default service (e.g. breakfast): charged only when the learner opts in for the day
   enrollments DailyServiceEnrollment[]
   charges     DailyCharge[]
   classRates  DailyServiceRate[]
   balances    ServiceBalance[]
+  mealExceptions DailyMealException[]
 }
 
 // ── Per-classroom rate overrides (iedupro daily_fee_rates: rates are set per
@@ -938,6 +943,33 @@ model DailyCharge {
   createdAt   DateTime     @default(now())
 
   @@index([serviceId, studentId, date]) // not unique: partial payments split a day-charge into PAID + remainder rows
+}
+
+// ── Daily meal opt-in / opt-out (dining register parity): a learner skips a
+//    default meal (e.g. lunch) on a given day so no charge is generated, or
+//    joins an optional service (e.g. breakfast — optInDaily) for a day.
+//    Parents request from their portal (PENDING); the school approves.
+//    Staff-created exceptions are APPROVED immediately.
+model DailyMealException {
+  id              String       @id @default(cuid())
+  schoolId        String
+  school          School       @relation(fields: [schoolId], references: [id])
+  studentId       String
+  student         Student      @relation(fields: [studentId], references: [id])
+  serviceId       String
+  service         DailyService @relation(fields: [serviceId], references: [id])
+  date            DateTime
+  kind            String // OPT_OUT (skip a default service) | OPT_IN (join an optInDaily service)
+  status          String       @default("PENDING") // PENDING | APPROVED | DECLINED
+  reason          String?
+  requestedByName String?
+  decidedByName   String?
+  decidedAt       DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@unique([studentId, serviceId, date, kind])
+  @@index([schoolId, date, status])
 }
 
 // ── Daily-fee wallets (iedupro parity): prepaid balance for any daily service,

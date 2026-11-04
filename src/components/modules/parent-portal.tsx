@@ -17,7 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "@/hooks/use-toast";
 import { initials, avatarColor } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { Home, Wallet, CalendarCheck, GraduationCap, Bus, MessageSquareText, Megaphone, Phone, ArrowUpRight, CheckCircle2, AlertTriangle, Receipt, BookOpen, BookPlus, Hourglass, XCircle, Send } from "lucide-react";
+import { Home, Wallet, CalendarCheck, GraduationCap, Bus, MessageSquareText, Megaphone, Phone, ArrowUpRight, CheckCircle2, AlertTriangle, Receipt, BookOpen, BookPlus, Hourglass, XCircle, Send, UtensilsCrossed, Clock } from "lucide-react";
 
 type Invoice = {
   id: string; invoiceNo: string; status: string; dueDate: string | null; createdAt: string;
@@ -53,6 +53,14 @@ type BookRequestLite = {
   handledAt: string | null; handledByName: string | null; createdAt: string; overdue: boolean;
 };
 type CatalogueBook = { id: string; title: string; author: string | null; category: string; available: number };
+// meal opt-in / opt-out (dining register): the school's meal services + this family's requests
+type MealServiceLite = { id: string; name: string; category: string; optInDaily: boolean; weekdays: string };
+type MealRequestLite = { id: string; studentId: string; student: string; service: string; date: string; kind: "OPT_OUT" | "OPT_IN"; status: "PENDING" | "APPROVED" | "DECLINED"; reason: string | null; decidedByName: string | null; createdAt: string };
+const MEAL_REQ_STATUS: Record<string, { label: string; className: string }> = {
+  PENDING: { label: "Waiting for the school", className: "bg-amber-600" },
+  APPROVED: { label: "Approved", className: "bg-emerald-600" },
+  DECLINED: { label: "Declined", className: "bg-destructive" },
+};
 const REQ_STATUS: Record<string, { label: string; className: string; icon: React.ReactNode }> = {
   PENDING: { label: "Waiting for librarian", className: "bg-amber-600", icon: <Hourglass className="size-3" /> },
   ISSUED: { label: "Issued", className: "bg-emerald-600", icon: <CheckCircle2 className="size-3" /> },
@@ -65,6 +73,8 @@ type ParentData = {
   announcements: { id: string; title: string; body: string; postedByName: string; postedAt: string; category: string; priority: string }[];
   messages: { id: string; recipientName: string; recipientPhone: string; body: string; sentAt: string; status: string }[];
   libraryCatalogue: CatalogueBook[];
+  mealServices?: MealServiceLite[];
+  mealRequests?: MealRequestLite[];
 };
 
 const ATT_COLOR: Record<string, string> = { PRESENT: "bg-emerald-600", LATE: "bg-amber-500", ABSENT: "bg-destructive", SICK: "bg-sky-500", EXCUSED: "bg-zinc-400" };
@@ -76,6 +86,11 @@ export function ParentPortal() {
   const [err, setErr] = useState<string | null>(null);
   const [childIdx, setChildIdx] = useState(0);
   const [requestOpen, setRequestOpen] = useState(false);
+  // meal opt-in / opt-out form
+  const [mealDate, setMealDate] = useState(new Date().toISOString().slice(0, 10));
+  const [mealService, setMealService] = useState("");
+  const [mealReason, setMealReason] = useState("");
+  const [mealBusy, setMealBusy] = useState(false);
 
   const load = useCallback(() => {
     if (!currentSchoolId) return;
@@ -180,6 +195,91 @@ export function ParentPortal() {
               <CardContent className="grid gap-3 sm:grid-cols-2">
                 <div className="rounded-lg border p-3"><div className="text-xs text-muted-foreground">Tuck / meals wallet</div><div className="text-xl font-bold tabular-nums">{fmtCedi(child.wallet.prepaid)}</div></div>
                 <div className="rounded-lg border p-3"><div className="text-xs text-muted-foreground">Transport wallet</div><div className="text-xl font-bold tabular-nums">{fmtCedi(child.wallet.transport)}</div></div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* meal opt-in / opt-out — skip lunch on a day or join optional breakfast */}
+          {!!data.mealServices?.length && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base flex items-center gap-2"><UtensilsCrossed className="size-4" /> Meals &amp; dining — {child.name}</CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-4 lg:grid-cols-2">
+                <div className="space-y-3">
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Lunch is served to every learner by default — ask the school to skip it for a day and no charge is made.
+                    Breakfast-style meals marked <b className="text-foreground">opt-in</b> only bill on days you join.
+                  </p>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label>Day</Label>
+                      <Input type="date" min={new Date().toISOString().slice(0, 10)} value={mealDate} onChange={(e) => setMealDate(e.target.value)} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Meal</Label>
+                      <Select value={mealService} onValueChange={setMealService}>
+                        <SelectTrigger><SelectValue placeholder="Pick a meal" /></SelectTrigger>
+                        <SelectContent>
+                          {data.mealServices!.map((s) => (
+                            <SelectItem key={s.id} value={s.id}>{s.name}{s.optInDaily ? " — opt-in" : ""}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Reason <span className="text-muted-foreground font-normal">(optional)</span></Label>
+                    <Input value={mealReason} onChange={(e) => setMealReason(e.target.value)} placeholder="e.g. Packed lunch from home that day" />
+                  </div>
+                  {(() => {
+                    const svc = data.mealServices!.find((s) => s.id === mealService);
+                    const isOptIn = !!svc?.optInDaily;
+                    return (
+                      <Button
+                        disabled={mealBusy || !mealService}
+                        className="gap-1.5"
+                        onClick={async () => {
+                          if (!currentSchoolId || !mealService) return;
+                          setMealBusy(true);
+                          try {
+                            await apiPost(`/api/school/${currentSchoolId}/ops/portal`, {
+                              action: "meal-request.create",
+                              studentId: child.id, serviceId: mealService, date: mealDate,
+                              kind: isOptIn ? "OPT_IN" : "OPT_OUT", reason: mealReason.trim() || undefined,
+                            });
+                            toast({ title: "Request sent to the school", description: `${svc?.name} · ${fmtDate(mealDate)} — you'll see the decision here.` });
+                            setMealReason(""); setMealService("");
+                            load();
+                          } catch (e: any) {
+                            toast({ title: "Could not send request", description: e.message, variant: "destructive" });
+                          } finally { setMealBusy(false); }
+                        }}
+                      >
+                        <Send className="size-4" />
+                        {isOptIn ? `Join ${svc?.name ?? "the meal"} for ${fmtDate(mealDate)}` : `Skip ${svc?.name ?? "the meal"} on ${fmtDate(mealDate)}`}
+                      </Button>
+                    );
+                  })()}
+                </div>
+                <div className="space-y-2">
+                  <div className="text-xs font-medium text-muted-foreground">Your meal requests</div>
+                  {(data.mealRequests ?? []).filter((r) => r.studentId === child.id).slice(0, 6).map((r) => (
+                    <div key={r.id} className="rounded-lg border px-3 py-2 flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium truncate">{r.kind === "OPT_OUT" ? "Skip" : "Join"} {r.service} · {fmtDate(r.date)}</div>
+                        {r.reason && <div className="text-[11px] text-muted-foreground truncate">{r.reason}</div>}
+                      </div>
+                      <Badge className={MEAL_REQ_STATUS[r.status]?.className ?? "bg-secondary"}>
+                        {r.status === "PENDING" && <Clock className="size-3 mr-1" />}
+                        {MEAL_REQ_STATUS[r.status]?.label ?? r.status}
+                      </Badge>
+                    </div>
+                  ))}
+                  {!(data.mealRequests ?? []).filter((r) => r.studentId === child.id).length && (
+                    <div className="rounded-lg border border-dashed px-3 py-6 text-center text-xs text-muted-foreground">No meal requests yet.</div>
+                  )}
+                </div>
               </CardContent>
             </Card>
           )}
