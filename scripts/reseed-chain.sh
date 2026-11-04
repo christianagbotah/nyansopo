@@ -12,6 +12,7 @@ SCRIPTS=(
   prisma/seed-ops-extra.ts
   prisma/seed-credits.ts
   prisma/seed-curriculum.ts
+  prisma/seed-framework.ts
   prisma/seed-attendance-extra.ts
   prisma/seed-creche.ts
   prisma/seed-daily-ext.ts
