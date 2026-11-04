@@ -38,6 +38,12 @@ async function main() {
   const st1 = s1.studentId, st2 = s2.studentId;
   console.log(`fixtures: ${s1.student.firstName} & ${s2.student.firstName} (${s1.classroomId})`);
 
+  // determinism: suspend any pre-existing route assignments for the fixture
+  // learners — seeded demo routes would otherwise race the test's own route in
+  // resolveTransportFare's unordered findFirst (restored in cleanup)
+  const priorAssignments = await db.transportAssignment.findMany({ where: { studentId: { in: [st1, st2] }, active: true } });
+  await db.transportAssignment.updateMany({ where: { id: { in: priorAssignments.map((a) => a.id) } }, data: { active: false } });
+
   // silence receipt SMS during the test (restored in cleanup)
   const origSms = await db.smsSetting.findUnique({ where: { schoolId } });
   await db.smsSetting.upsert({ where: { schoolId }, update: { autoPaymentReceipts: false }, create: { schoolId, autoPaymentReceipts: false } });
@@ -200,6 +206,8 @@ async function main() {
     await db.transportAssignment.deleteMany({ where: { id: { in: [asg1.id, asg2.id] } } });
     await db.transportStop.deleteMany({ where: { routeId: route.id } });
     await db.transportRoute.delete({ where: { id: route.id } });
+    // restore the learners' pre-existing route assignments
+    await db.transportAssignment.updateMany({ where: { id: { in: priorAssignments.map((a) => a.id) } }, data: { active: true } });
     // restore SMS receipts setting
     if (origSms) await db.smsSetting.update({ where: { schoolId }, data: { autoPaymentReceipts: origSms.autoPaymentReceipts } });
     check("test services removed", (await db.dailyService.count({ where: { id: { in: svcIds } } })) === 0);
