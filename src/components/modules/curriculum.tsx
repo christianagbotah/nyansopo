@@ -67,6 +67,17 @@ type Material = {
   title: string; description: string | null; linkUrl: string | null; body: string | null;
   authorStaffId: string; author: string; createdAt: string;
 };
+type FrameworkNode = {
+  id: string; code: string | null; name: string; sortOrder: number;
+  subStrands?: { id: string; code: string | null; name: string; standards?: {
+    id: string; code: string | null; statement: string; indicators?: { id: string; code: string | null; statement: string }[];
+  }[] }[];
+};
+type FrameworkMeta = {
+  enabled: string[]; primary: string;
+  coverage: { curriculum: string; subjectName: string; gradeLevel: string }[];
+  subjects: { id: string; name: string; curriculum: string | null }[];
+};
 
 const WEEKS = Array.from({ length: 15 }, (_, i) => i + 1);
 const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
@@ -111,6 +122,9 @@ export function Curriculum() {
   const [materials, setMaterials] = useState<Material[] | null>(null);
   const [materialForm, setMaterialForm] = useState<Partial<Material> | null>(null);
 
+  // framework manager (canEdit mirrors curriculum-review rights)
+  const fwCanEdit = data?.canReview ?? false;
+
   const load = useCallback(() => {
     if (!currentSchoolId) return;
     apiGet<Overview>(`/api/school/${currentSchoolId}/ops/curriculum`)
@@ -142,7 +156,7 @@ export function Curriculum() {
   useEffect(() => {
     if (navTarget !== appliedTarget) {
       setAppliedTarget(navTarget);
-      if (navTarget?.tab && ["notes", "review", "templates", "syllabus", "materials", "completion"].includes(navTarget.tab)) setTab(navTarget.tab);
+      if (navTarget?.tab && ["notes", "review", "templates", "syllabus", "materials", "completion", "framework"].includes(navTarget.tab)) setTab(navTarget.tab);
       if (navTarget?.classroomId) { setSyllabusClass(navTarget.classroomId); setTab((t) => (t === "notes" ? "syllabus" : t)); }
     }
   }, [navTarget, appliedTarget]);
@@ -171,7 +185,7 @@ export function Curriculum() {
     <div>
       <ModuleHeader
         title="Curriculum & Lesson Notes"
-        description={`GES lesson-note lifecycle — draft from a template, submit weekly, HOD endorses or returns${data.term ? ` · ${data.term.name} (week ${data.term.weeksElapsed} of term)` : ""}.`}
+        description={`Multi-curriculum lesson-note lifecycle — draft from a template, align to the strand / content standard / indicator, submit weekly, HOD endorses or returns${data.term ? ` · ${data.term.name} (week ${data.term.weeksElapsed} of term)` : ""}.`}
         actions={
           <div className="flex gap-2">
             {data.canReview && <Badge className="bg-primary gap-1"><FileCheck2 className="size-3" /> Reviewer</Badge>}
@@ -201,6 +215,7 @@ export function Curriculum() {
           <TabsTrigger value="syllabus">Scheme of learning</TabsTrigger>
           <TabsTrigger value="materials">Study material</TabsTrigger>
           <TabsTrigger value="completion">Completion</TabsTrigger>
+          <TabsTrigger value="framework" className="gap-1.5"><BookMarked className="size-4" /> Framework</TabsTrigger>
         </TabsList>
 
         <NotesTab data={data} onEdit={(n) => setNoteForm({ ...n })} onView={setViewing} onCopy={(n) => setNoteForm({ classroomId: n.classroomId, subjectId: n.subjectId, termId: n.termId, weekNumber: Math.min(15, n.weekNumber + 1), title: n.title, objectives: n.objectives, activities: n.activities, content: n.content, description: n.description, sourceNoteId: n.id, status: "PENDING" })} onDelete={(n) => post({ action: "note.delete", id: n.id }, "Lesson note deleted")} busy={busy} />
@@ -209,6 +224,7 @@ export function Curriculum() {
         <SyllabusTab data={data} syllabusClass={syllabusClass} setSyllabusClass={setSyllabusClass} syllabusSubject={syllabusSubject} setSyllabusSubject={setSyllabusSubject} topics={topics} coverage={coverage} onEdit={(t) => setTopicForm({ ...t })} onNew={(week) => setTopicForm({ weekNumber: week, classroomId: syllabusClass, subjectId: syllabusSubject !== "all" ? syllabusSubject : undefined })} onToggle={async (t, completed) => { await post({ action: "syllabus.save", id: t.id, classroomId: syllabusClass, subjectId: t.subjectId, weekNumber: t.weekNumber, topic: t.topic, completed }, completed ? "Topic marked as taught" : "Topic reopened"); }} onDelete={(t) => post({ action: "syllabus.delete", id: t.id }, "Topic removed")} busy={busy} />
         <MaterialsTab data={data} materials={materials} onNew={() => setMaterialForm({})} onEdit={(m) => setMaterialForm({ ...m })} onDelete={(m) => post({ action: "material.delete", id: m.id }, "Material removed")} busy={busy} />
         <CompletionTab data={data} />
+        <FrameworkTab schoolId={currentSchoolId!} data={data} canEdit={fwCanEdit} />
       </Tabs>
 
       {/* ── note editor ── */}
@@ -1016,5 +1032,328 @@ function Tile({ icon, label, value, sub, tone }: { icon: React.ReactNode; label:
       <div className={`mt-1.5 text-xl font-bold tabular-nums ${tone === "good" ? "text-emerald-600 dark:text-emerald-400" : tone === "warn" ? "text-amber-600 dark:text-amber-400" : ""}`}>{value}</div>
       <div className="text-[11px] text-muted-foreground truncate">{sub}</div>
     </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════
+// Framework manager — enhanced CI3 curriculum_strands.php /
+// curriculum_sub_strands.php / curriculum_content_standards.php /
+// curriculum_learning_indicators.php / curriculum_import.php
+// (four admin pages → one searchable tree + CSV import)
+// ══════════════════════════════════════════════════════════════
+
+const IMPORT_TEMPLATE = `curriculum,subjectName,gradeLevel,strand,strandCode,subStrand,subStrandCode,standard,standardCode,indicator,indicatorCode
+GES,Mathematics,B4,Number,B4.1,"Number Operations (Addition, Subtraction, Multiplication and Division)",B4.1.2,Demonstrate understanding of addition and subtraction of whole numbers,B4.1.2.1,Demonstrate ability to add four-digit numbers with and without regrouping,B4.1.2.1.1
+GES,Science,B5,Systems,B5.3,The human body systems,B5.3.1,Identify the parts of the human digestive system and their functions,B5.3.1.1,Draw and label the human digestive system,B5.3.1.1.1
+CAIE,Mathematics,Stage 4,Number,,Numbers and the number system,,Read and order numbers up to 10000,,Count on and back in steps of different sizes,`;
+
+function FrameworkTab({ schoolId, data, canEdit }: { schoolId: string; data: Overview; canEdit: boolean }) {
+  const { toast } = useToast();
+  const [meta, setMeta] = useState<FrameworkMeta | null>(null);
+  const [curriculum, setCurriculum] = useState<string>("");
+  const [subject, setSubject] = useState<string>("");
+  const [grade, setGrade] = useState<string>("");
+  const [tree, setTree] = useState<FrameworkNode[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [edit, setEdit] = useState<{ level: "strand" | "sub" | "standard" | "indicator"; parentIds: Record<string, string | null>; row: any } | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+
+  // grade options = distinct classroom grade levels + whatever the library covers for this curriculum/subject
+  const gradeOptions = useMemo(() => {
+    const set = new Set<string>(data.classrooms.map((c) => c.gradeLevel.trim()).filter(Boolean));
+    for (const c of meta?.coverage ?? []) if (c.curriculum === curriculum && (!subject || c.subjectName === subject)) set.add(c.gradeLevel);
+    return [...set].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  }, [data.classrooms, meta, curriculum, subject]);
+  const subjectOptions = useMemo(() => {
+    const names = new Set<string>(data.subjects.map((s) => s.name));
+    for (const c of meta?.coverage ?? []) if (c.curriculum === curriculum) names.add(c.subjectName);
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [data.subjects, meta, curriculum]);
+
+  useEffect(() => {
+    apiGet<FrameworkMeta>(`/api/school/${schoolId}/ops/curriculum-framework?meta=1`)
+      .then((m) => {
+        setMeta(m);
+        setCurriculum((c) => c || m.primary || m.enabled[0] || "GES");
+      })
+      .catch((e) => toast({ title: "Could not load framework metadata", description: e.message, variant: "destructive" }));
+  }, [schoolId, toast]);
+
+  const loadTree = useCallback(() => {
+    if (!curriculum || !subject || !grade) { setTree(null); return; }
+    setTree(null);
+    apiGet<{ strands: FrameworkNode[] }>(`/api/school/${schoolId}/ops/curriculum-framework?curriculum=${encodeURIComponent(curriculum)}&subjectName=${encodeURIComponent(subject)}&gradeLevel=${encodeURIComponent(grade)}`)
+      .then((d) => setTree(d.strands))
+      .catch((e) => { toast({ title: "Could not load framework", description: e.message, variant: "destructive" }); setTree([]); });
+  }, [schoolId, curriculum, subject, grade, toast]);
+  useEffect(() => { loadTree(); }, [loadTree]);
+
+  async function fwPost(payload: Record<string, unknown>, okMsg: string) {
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${schoolId}/ops/curriculum-framework`, payload);
+      toast({ title: okMsg });
+      loadTree();
+      return true;
+    } catch (e: any) {
+      toast({ title: "Framework action failed", description: e.message, variant: "destructive" });
+      return false;
+    } finally { setBusy(false); }
+  }
+
+  const counts = useMemo(() => {
+    let subs = 0, standards = 0, indicators = 0;
+    for (const s of tree ?? []) {
+      subs += (s.subStrands ?? []).length;
+      for (const b of s.subStrands ?? []) {
+        standards += (b.standards ?? []).length;
+        for (const st of b.standards ?? []) indicators += (st.indicators ?? []).length;
+      }
+    }
+    return { strands: (tree ?? []).length, subs, standards, indicators };
+  }, [tree]);
+
+  return (
+    <TabsContent value="framework" className="space-y-4">
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex flex-wrap items-center gap-2">
+            <BookMarked className="size-4" /> Curriculum framework library
+            <span className="text-xs font-normal text-muted-foreground">
+              NaCCA strands · content standards · indicators — shared by all schools, extended here
+            </span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid sm:grid-cols-3 gap-3 mb-3">
+            <FormField label="Curriculum">
+              <Select value={curriculum} onValueChange={(v) => { setCurriculum(v); }}>
+                <SelectTrigger><SelectValue placeholder="Curriculum" /></SelectTrigger>
+                <SelectContent>
+                  {(meta?.enabled ?? []).map((c) => <SelectItem key={c} value={c}>{CURRICULA_MAP[c] ?? c}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </FormField>
+            <FormField label="Subject">
+              <Select value={subject} onValueChange={setSubject}>
+                <SelectTrigger><SelectValue placeholder="Choose subject" /></SelectTrigger>
+                <SelectContent>{subjectOptions.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+              </Select>
+            </FormField>
+            <FormField label="Grade / stage">
+              <Select value={grade} onValueChange={setGrade}>
+                <SelectTrigger><SelectValue placeholder="Choose grade" /></SelectTrigger>
+                <SelectContent>{gradeOptions.map((g) => <SelectItem key={g} value={g}>{g}</SelectItem>)}</SelectContent>
+              </Select>
+            </FormField>
+          </div>
+
+          {canEdit && (
+            <div className="flex flex-wrap gap-2 mb-3">
+              <Button size="sm" variant="outline" className="gap-1.5" disabled={!curriculum || !subject || !grade || busy} onClick={() => setEdit({ level: "strand", parentIds: {}, row: null })}>
+                <Plus className="size-4" /> Add strand
+              </Button>
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setImportOpen(true)}>
+                <FileText className="size-4" /> Import CSV
+              </Button>
+              <Button size="sm" variant="outline" className="gap-1.5" disabled={busy} onClick={async () => {
+                await navigator.clipboard.writeText(IMPORT_TEMPLATE).catch(() => {});
+                toast({ title: "Import template copied", description: "Paste it into the CSV import dialog to see the shape." });
+              }}>
+                <Copy className="size-4" /> Copy CSV template
+              </Button>
+            </div>
+          )}
+
+          {!subject || !grade ? (
+            <EmptyState icon={<BookMarked className="size-8" />} title="Pick a subject and grade" hint="The framework is organised per curriculum, subject and grade — e.g. GES Mathematics B4." />
+          ) : tree === null ? (
+            <LoadingBlock label="Loading framework…" />
+          ) : tree.length === 0 ? (
+            <EmptyState icon={<BookMarked className="size-8" />} title={`No strands for ${subject} · ${grade} (${CURRICULA_MAP[curriculum] ?? curriculum})`} hint={canEdit ? "Add the strands manually or import them from a NaCCA / Cambridge export." : "Ask your curriculum lead to add the strands, or import them from CSV."} />
+          ) : (
+            <>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+                <Tile icon={<BookMarked className="size-4" />} label="Strands" value={counts.strands} />
+                <Tile icon={<ListChecks className="size-4" />} label="Sub-strands" value={counts.subs} />
+                <Tile icon={<FileText className="size-4" />} label="Content standards" value={counts.standards} />
+                <Tile icon={<CheckCircle2 className="size-4" />} label="Indicators" value={counts.indicators} />
+              </div>
+              <div className="rounded-xl border divide-y">
+                {tree.map((s) => (
+                  <div key={s.id} className="p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="font-semibold text-sm">{s.code ? <span className="text-muted-foreground mr-1.5 tabular-nums">{s.code}</span> : null}{s.name}</div>
+                        <div className="text-[11px] text-muted-foreground">{(s.subStrands ?? []).length} sub-strand{(s.subStrands ?? []).length === 1 ? "" : "s"}</div>
+                      </div>
+                      <div className="flex gap-1 shrink-0">
+                        {canEdit && (
+                          <>
+                            <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => setEdit({ level: "sub", parentIds: { strandId: s.id }, row: null })}><Plus className="size-3.5" /> Sub-strand</Button>
+                            <Button size="sm" variant="ghost" className="h-7 px-1.5" onClick={() => setEdit({ level: "strand", parentIds: {}, row: s })}><Pencil className="size-3.5" /></Button>
+                            <Button size="sm" variant="ghost" className="h-7 px-1.5 text-destructive" onClick={() => { if (confirm(`Delete strand “${s.name}” and everything under it?`)) fwPost({ action: "strand.delete", id: s.id }, "Strand deleted"); }}><Trash2 className="size-3.5" /></Button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    {(s.subStrands ?? []).length > 0 && (
+                      <div className="mt-2 ml-4 border-l pl-3 space-y-2">
+                        {(s.subStrands ?? []).map((b) => (
+                          <div key={b.id}>
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="text-sm">
+                                <span className="font-medium">{b.code ? <span className="text-muted-foreground mr-1.5 tabular-nums">{b.code}</span> : null}{b.name}</span>
+                                <span className="text-[11px] text-muted-foreground ml-2">{(b.standards ?? []).length} standard{(b.standards ?? []).length === 1 ? "" : "s"}</span>
+                              </div>
+                              <div className="flex gap-1 shrink-0">
+                                {canEdit && (
+                                  <>
+                                    <Button size="sm" variant="ghost" className="h-6 gap-1 text-[11px] px-1.5" onClick={() => setEdit({ level: "standard", parentIds: { strandId: s.id, subStrandId: b.id }, row: null })}><Plus className="size-3" /> Standard</Button>
+                                    <Button size="sm" variant="ghost" className="h-6 px-1" onClick={() => setEdit({ level: "sub", parentIds: { strandId: s.id }, row: b })}><Pencil className="size-3" /></Button>
+                                    <Button size="sm" variant="ghost" className="h-6 px-1 text-destructive" onClick={() => { if (confirm(`Delete sub-strand “${b.name}”?`)) fwPost({ action: "sub.delete", id: b.id }, "Sub-strand deleted"); }}><Trash2 className="size-3" /></Button>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                            {(b.standards ?? []).length > 0 && (
+                              <div className="mt-1.5 ml-3 border-l pl-3 space-y-1.5">
+                                {(b.standards ?? []).map((st) => (
+                                  <div key={st.id}>
+                                    <div className="flex items-start justify-between gap-2">
+                                      <div className="text-[13px]">
+                                        {st.code ? <span className="text-muted-foreground mr-1.5 tabular-nums">{st.code}</span> : null}{st.statement}
+                                      </div>
+                                      <div className="flex gap-1 shrink-0">
+                                        {canEdit && (
+                                          <>
+                                            <Button size="sm" variant="ghost" className="h-6 gap-1 text-[11px] px-1.5" onClick={() => setEdit({ level: "indicator", parentIds: { strandId: s.id, subStrandId: b.id, standardId: st.id }, row: null })}><Plus className="size-3" /> Indicator</Button>
+                                            <Button size="sm" variant="ghost" className="h-6 px-1" onClick={() => setEdit({ level: "standard", parentIds: { subStrandId: b.id }, row: st })}><Pencil className="size-3" /></Button>
+                                            <Button size="sm" variant="ghost" className="h-6 px-1 text-destructive" onClick={() => { if (confirm("Delete this content standard and its indicators?")) fwPost({ action: "standard.delete", id: st.id }, "Content standard deleted"); }}><Trash2 className="size-3" /></Button>
+                                          </>
+                                        )}
+                                      </div>
+                                    </div>
+                                    {(st.indicators ?? []).length > 0 && (
+                                      <ul className="mt-1 ml-4 border-l pl-3 space-y-1">
+                                        {(st.indicators ?? []).map((ind) => (
+                                          <li key={ind.id} className="text-xs flex items-start justify-between gap-2">
+                                            <span>{ind.code ? <span className="text-muted-foreground mr-1.5 tabular-nums">{ind.code}</span> : null}{ind.statement}</span>
+                                            {canEdit && (
+                                              <span className="flex gap-1 shrink-0">
+                                                <Button size="sm" variant="ghost" className="h-5 w-5 p-0" onClick={() => setEdit({ level: "indicator", parentIds: { standardId: st.id }, row: ind })}><Pencil className="size-3" /></Button>
+                                                <Button size="sm" variant="ghost" className="h-5 w-5 p-0 text-destructive" onClick={() => fwPost({ action: "indicator.delete", id: ind.id }, "Indicator deleted")}><Trash2 className="size-3" /></Button>
+                                              </span>
+                                            )}
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── strand / sub / standard / indicator editor ── */}
+      {edit && (
+        <FrameworkEditDialog
+          edit={edit} busy={busy} curriculum={curriculum} subjectName={subject} gradeLevel={grade}
+          onClose={() => setEdit(null)}
+          onSave={async (payload, level) => {
+            const ok = await fwPost({ action: `${level}.save`, ...payload }, "Saved to framework");
+            if (ok) setEdit(null);
+          }}
+        />
+      )}
+
+      {/* ── CSV import ── */}
+      <Dialog open={importOpen} onOpenChange={(o) => !o && setImportOpen(false)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><FileText className="size-4.5" /> Import framework (CSV)</DialogTitle>
+            <DialogDescription>
+              One row per line, upserted into the shared library — blank lower levels are skipped, so strand-only rows, standard-only rows and full indicator rows all import.
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea rows={8} defaultValue={IMPORT_TEMPLATE} className="font-mono text-xs" id="fw-import-csv" />
+          <p className="text-xs text-muted-foreground">
+            Columns: curriculum, subjectName, gradeLevel, strand, strandCode, subStrand, subStrandCode, standard, standardCode, indicator, indicatorCode
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setImportOpen(false)}>Cancel</Button>
+            <Button disabled={busy} onClick={async () => {
+              const csv = (document.getElementById("fw-import-csv") as HTMLTextAreaElement)?.value ?? "";
+              setBusy(true);
+              try {
+                const r = await apiPost<{ imported: number; skipped: number }>(`/api/school/${schoolId}/ops/curriculum-framework`, { action: "framework.import", csv });
+                toast({ title: `Imported ${r.imported} row${r.imported === 1 ? "" : "s"}`, description: r.skipped ? `${r.skipped} skipped (missing curriculum/subject/grade/strand)` : undefined });
+                setImportOpen(false);
+                loadTree();
+              } catch (e: any) {
+                toast({ title: "Import failed", description: e.message, variant: "destructive" });
+              } finally { setBusy(false); }
+            }}>Import rows</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </TabsContent>
+  );
+}
+
+const CURRICULA_MAP: Record<string, string> = { GES: "GES — NaCCA SBC/CCP", CAIE: "Cambridge — CAIE", IB: "IB — PYP/MYP/DP" };
+
+function FrameworkEditDialog({ edit, busy, curriculum, subjectName, gradeLevel, onClose, onSave }: {
+  edit: { level: "strand" | "sub" | "standard" | "indicator"; parentIds: Record<string, string | null>; row: any };
+  busy: boolean; curriculum: string; subjectName: string; gradeLevel: string;
+  onClose: () => void; onSave: (payload: Record<string, unknown>, level: string) => Promise<void>;
+}) {
+  const { level, row, parentIds } = edit;
+  const [f, setF] = useState<Record<string, any>>({
+    name: row?.name ?? "", code: row?.code ?? "", statement: row?.statement ?? "",
+  });
+  const label = level === "strand" ? "Strand" : level === "sub" ? "Sub-strand" : level === "standard" ? "Content standard" : "Learning indicator";
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>{row ? `Edit ${label.toLowerCase()}` : `Add ${label.toLowerCase()}`}</DialogTitle>
+          <DialogDescription>{CURRICULA_MAP[curriculum] ?? curriculum} · {subjectName} · {gradeLevel}</DialogDescription>
+        </DialogHeader>
+        <FormGrid cols={2}>
+          {level === "standard" || level === "indicator" ? (
+            <FormField label={label} required span={2} hint={level === "standard" ? "What learners should know / be able to do" : "A measurable step towards the standard"}>
+              <Textarea rows={3} value={f.statement} onChange={(e) => setF({ ...f, statement: e.target.value })} />
+            </FormField>
+          ) : (
+            <FormField label={label} required span={2}>
+              <Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
+            </FormField>
+          )}
+          <FormField label="Reference code" hint="e.g. B4.1.2.1 — NaCCA / Cambridge reference number">
+            <Input value={f.code ?? ""} onChange={(e) => setF({ ...f, code: e.target.value })} />
+          </FormField>
+        </FormGrid>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button disabled={busy} onClick={() => onSave({
+            ...(row?.id ? { id: row.id } : {}),
+            ...parentIds,
+            curriculum, subjectName, gradeLevel,
+            name: f.name, statement: f.statement, code: f.code,
+          }, level)}>{row ? "Save changes" : `Add ${label.toLowerCase()}`}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
