@@ -189,18 +189,19 @@ async function main() {
         });
         subs++;
         for (const std of sub.standards ?? []) {
+          const stdCode = std.code ? `${fw.gradeLevel}.${s.code}${sub.code ?? ""}${std.code}`.replace(/\.\./g, ".") : null;
           const stdRow = await db.curriculumContentStandard.upsert({
             where: { subStrandId_statement: { subStrandId: subRow.id, statement: std.statement } },
-            create: { subStrandId: subRow.id, statement: std.statement, code: std.code ? `${fw.gradeLevel}.${s.code}${std.code}`.replace(/\.\./g, ".") : null },
-            update: { code: std.code ? `${fw.gradeLevel}.${s.code}${std.code}`.replace(/\.\./g, ".") : null },
+            create: { subStrandId: subRow.id, statement: std.statement, code: stdCode },
+            update: { code: stdCode },
           });
           standards++;
           for (let ii = 0; ii < (std.indicators ?? []).length; ii++) {
             const ind = std.indicators![ii];
             await db.curriculumIndicator.upsert({
               where: { standardId_statement: { standardId: stdRow.id, statement: ind.statement } },
-              create: { standardId: stdRow.id, statement: ind.statement, code: ind.code ? `${stdRow.code ?? ""}${ind.code}` : null, sortOrder: ii },
-              update: { code: ind.code ? `${stdRow.code ?? ""}${ind.code}` : null, sortOrder: ii },
+              create: { standardId: stdRow.id, statement: ind.statement, code: ind.code ? `${stdCode ?? ""}${ind.code}`.replace(/\.\./g, ".") : null, sortOrder: ii },
+              update: { code: ind.code ? `${stdCode ?? ""}${ind.code}`.replace(/\.\./g, ".") : null, sortOrder: ii },
             });
             indicators++;
           }
