@@ -77,7 +77,8 @@ model School {
   name                 String
   code                 String                @unique
   motto                String?
-  curriculum           String // GES | CAIE | IB
+  curriculum           String // GES | CAIE | IB — PRIMARY curriculum (first of curricula)
+  curricula            String? // JSON array — every enabled curriculum, e.g. ["GES","CAIE"] (international schools run several in parallel)
   curriculumStages     String? // JSON: stage labels per curriculum
   category             String // LOW_FEE | MID_TIER | PREMIUM | INTERNATIONAL
   associationNodeId    String
@@ -172,6 +173,63 @@ model School {
   mediaAssets         MediaAsset[]
   billItems           BillItem[]
   serviceBalances     ServiceBalance[]
+}
+
+// ─────────────────────────────────────────────────────────────
+// CURRICULUM FRAMEWORK LIBRARY (NaCCA GES SBC/CCP · Cambridge CAIE · IB PYP)
+// A shared, deduplicated library: strands → sub-strands → content standards
+// → learning indicators, keyed by curriculum + subject name + grade level.
+// International schools running several curricula (e.g. GES + Cambridge)
+// pick the framework matching each subject/lesson — no data duplication.
+model CurriculumStrand {
+  id          String   @id @default(cuid())
+  curriculum  String // GES | CAIE | IB
+  subjectName String // matched case-insensitively against Subject.name
+  gradeLevel  String // "B4" · "B7" · "Stage 4" · "PYP 4" — matches Classroom.gradeLevel
+  code        String? // e.g. "B4.1" — NaCCA reference number
+  name        String // "Number" · "Oral Language" · "Who we are"
+  sortOrder   Int      @default(0)
+  subStrands  CurriculumSubStrand[]
+  lessonNotes LessonNote[] @relation("NoteStrand")
+
+  @@unique([curriculum, subjectName, gradeLevel, name])
+  @@index([curriculum, subjectName, gradeLevel])
+}
+
+model CurriculumSubStrand {
+  id        String             @id @default(cuid())
+  strandId  String
+  strand    CurriculumStrand   @relation(fields: [strandId], references: [id], onDelete: Cascade)
+  code      String? // e.g. "B4.1.1"
+  name      String // "Counting, Representation, Cardinality & Ordinality"
+  sortOrder Int                @default(0)
+  standards CurriculumContentStandard[]
+  lessonNotes LessonNote[]     @relation("NoteSubStrand")
+
+  @@unique([strandId, name])
+}
+
+model CurriculumContentStandard {
+  id          String              @id @default(cuid())
+  subStrandId String
+  subStrand   CurriculumSubStrand @relation(fields: [subStrandId], references: [id], onDelete: Cascade)
+  code        String? // e.g. "B4.1.1.1"
+  statement   String // "Demonstrate understanding of quantities and place value…"
+  indicators  CurriculumIndicator[]
+  lessonNotes LessonNote[]          @relation("NoteStandard")
+
+  @@unique([subStrandId, statement])
+}
+
+model CurriculumIndicator {
+  id        String                  @id @default(cuid())
+  standardId String
+  standard  CurriculumContentStandard @relation(fields: [standardId], references: [id], onDelete: Cascade)
+  code      String? // e.g. "B4.1.1.1.1"
+  statement String // "Model number quantities, place value for multi-digit…"
+  sortOrder Int                     @default(0)
+
+  @@unique([standardId, statement])
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1711,6 +1769,16 @@ model LessonNote {
   templateId      String? // seeded from a LessonNoteTemplate
   title           String
   description     String?
+  strandId        String? // CURRICULUM ALIGNMENT — framework strand/sub-strand/
+  strand          CurriculumStrand?           @relation("NoteStrand", fields: [strandId], references: [id])
+  subStrandId     String? // content standard + chosen indicators (GES SBC,
+  subStrand       CurriculumSubStrand?        @relation("NoteSubStrand", fields: [subStrandId], references: [id])
+  contentStandardId String? // Cambridge unit/objective, IB PYP theme — the
+  contentStandard CurriculumContentStandard?  @relation("NoteStandard", fields: [contentStandardId], references: [id])
+  indicatorIds    String? // JSON array of CurriculumIndicator ids
+  coreCompetencies String? // GES: Communication & Collaboration, Critical Thinking… (newline-separated)
+  tlm             String? // teaching & learning materials
+  assessment      String? // assessment method(s) for the lesson
   weekNumber      Int // 1..15 within the term
   lessonDate      DateTime
   objectives      String    @default("")
