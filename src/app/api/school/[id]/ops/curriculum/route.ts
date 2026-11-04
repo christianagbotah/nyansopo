@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
 import { sendAutomated } from "@/lib/sms";
+import { schoolCurricula } from "@/lib/curricula";
 
 // ── Curriculum & Lesson Notes (iEduPro lesson-note lifecycle parity)
 //    GET  ?tab=overview (default) — catalogues, notes, templates, review queue, completion
@@ -40,11 +41,54 @@ const noteSelect = {
   title: true, description: true, weekNumber: true, lessonDate: true, objectives: true,
   activities: true, content: true, status: true, feedback: true, version: true, sourceNoteId: true,
   submittedAt: true, reviewedAt: true, reviewedByName: true, createdAt: true, updatedAt: true,
+  strandId: true, subStrandId: true, contentStandardId: true, indicatorIds: true,
+  coreCompetencies: true, tlm: true, assessment: true,
+  strand: { select: { id: true, name: true, code: true, curriculum: true, subjectName: true, gradeLevel: true } },
+  subStrand: { select: { id: true, name: true, code: true } },
+  contentStandard: { select: { id: true, code: true, statement: true } },
   staff: { select: { fullName: true } },
   classroom: { select: { name: true, gradeLevel: true } },
   subject: { select: { name: true } },
   reviews: { orderBy: { createdAt: "asc" as const }, select: { id: true, action: true, actorName: true, comment: true, createdAt: true } },
 };
+
+/** Validate + resolve the optional curriculum-alignment chain sent by the note
+ *  editor: strand › sub-strand › content standard › indicators. Each node must
+ *  actually belong to its parent so notes can never point at a mismatched
+ *  framework entry. */
+async function resolveAlignment(schoolId: string, body: any, gradeLevel: string) {
+  const out: { error?: string; strandId?: string; subStrandId?: string; contentStandardId?: string; indicatorIds?: string[] } = {};
+  const strandId = typeof body.strandId === "string" && body.strandId ? body.strandId : null;
+  const subStrandId = typeof body.subStrandId === "string" && body.subStrandId ? body.subStrandId : null;
+  const contentStandardId = typeof body.contentStandardId === "string" && body.contentStandardId ? body.contentStandardId : null;
+  const indicatorIds = Array.isArray(body.indicatorIds) ? body.indicatorIds.filter((v: unknown) => typeof v === "string") : null;
+  if (!strandId) {
+    // clear-alignment saves are allowed (framework is optional)
+    if (!subStrandId && !contentStandardId && (!indicatorIds || !indicatorIds.length)) return out;
+    return { error: "Pick a strand before choosing deeper curriculum alignment" };
+  }
+  const strand = await db.curriculumStrand.findUnique({ where: { id: strandId } });
+  if (!strand) return { error: "Selected strand no longer exists" };
+  out.strandId = strand.id;
+  if (subStrandId) {
+    const sub = await db.curriculumSubStrand.findUnique({ where: { id: subStrandId } });
+    if (!sub || sub.strandId !== strand.id) return { error: "The selected sub-strand does not belong to the selected strand" };
+    out.subStrandId = sub.id;
+    if (contentStandardId) {
+      const std = await db.curriculumContentStandard.findUnique({ where: { id: contentStandardId } });
+      if (!std || std.subStrandId !== sub.id) return { error: "The selected content standard does not belong to the selected sub-strand" };
+      out.contentStandardId = std.id;
+    }
+  }
+  if (indicatorIds?.length) {
+    if (!contentStandardId) return { error: "Indicators attach to a content standard — pick one first" };
+    const inds = await db.curriculumIndicator.findMany({ where: { id: { in: indicatorIds } } });
+    if (inds.length !== indicatorIds.length || inds.some((i) => i.standardId !== contentStandardId))
+      return { error: "One or more selected indicators do not belong to the selected content standard" };
+    out.indicatorIds = inds.map((i) => i.id);
+  }
+  return out;
+}
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: schoolId } = await params;
@@ -98,7 +142,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 
   // ── overview: everything the module needs on load ──
-  const [classrooms, subjects, terms, term] = await Promise.all([
+  const [classrooms, subjects, terms, term, schoolRow] = await Promise.all([
     db.classroom.findMany({ where: { schoolId }, orderBy: { name: "asc" }, select: { id: true, name: true, gradeLevel: true, classTeacherId: true } }),
     db.subject.findMany({ where: { schoolId }, orderBy: { name: "asc" }, select: { id: true, name: true, code: true } }),
     db.term.findMany({
@@ -107,6 +151,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       select: { id: true, name: true, isCurrent: true, startsAt: true, endsAt: true, academicYear: { select: { name: true } } },
     }),
     currentTerm(schoolId),
+    db.school.findUnique({ where: { id: schoolId }, select: { curriculum: true, curricula: true } }),
   ]);
 
   const myStaffId = auth.user.staffId ?? null;
@@ -165,6 +210,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     myStaffId,
     term: term ? { id: term.id, name: term.name, startsAt: term.startsAt, endsAt: term.endsAt, weeksElapsed: weeks } : null,
     classrooms, subjects,
+    curricula: schoolCurricula(schoolRow ?? { curriculum: "GES", curricula: null }),
     terms: terms.map((t) => ({ id: t.id, name: `${t.name} — ${t.academicYear.name}`, isCurrent: t.isCurrent })),
     notes,
     templates: templates.map((t) => ({
@@ -207,6 +253,20 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (!term || term.academicYear.schoolId !== schoolId) return NextResponse.json({ error: "Term not found" }, { status: 404 });
     if (!user.staffId) return NextResponse.json({ error: "This account is not linked to a staff record" }, { status: 403 });
 
+    /* curriculum alignment (optional): validate the framework chain belongs
+       together before linking — strand › sub-strand › standard › indicators */
+    const alignment = await resolveAlignment(schoolId, body, cls.gradeLevel);
+    if (alignment.error) return NextResponse.json({ error: alignment.error }, { status: 400 });
+    const alignmentData = {
+      strandId: alignment.strandId ?? null,
+      subStrandId: alignment.subStrandId ?? null,
+      contentStandardId: alignment.contentStandardId ?? null,
+      indicatorIds: alignment.indicatorIds ? JSON.stringify(alignment.indicatorIds) : null,
+      coreCompetencies: typeof body.coreCompetencies === "string" ? body.coreCompetencies.slice(0, 2000) : null,
+      tlm: typeof body.tlm === "string" ? body.tlm.slice(0, 2000) : null,
+      assessment: typeof body.assessment === "string" ? body.assessment.slice(0, 2000) : null,
+    };
+
     if (id) {
       const existing = await db.lessonNote.findUnique({ where: { id } });
       if (!existing || existing.schoolId !== schoolId) return NextResponse.json({ error: "Lesson note not found" }, { status: 404 });
@@ -223,6 +283,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             objectives: objectives ?? "", activities: activities ?? "", content: content ?? "",
             status: nextStatus,
             version: { increment: 1 },
+            ...alignmentData,
             submittedAt: nextStatus === "PENDING" ? new Date() : existing.submittedAt,
           },
         });
@@ -249,6 +310,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             weekNumber: wk, lessonDate: when,
             objectives: objectives ?? "", activities: activities ?? "", content: content ?? "",
             status: initialStatus,
+            ...alignmentData,
             submittedAt: initialStatus === "PENDING" ? new Date() : null,
           },
         });
@@ -291,6 +353,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           title: body.title ?? `${src.title} (copy)`, description: src.description,
           weekNumber: wk, lessonDate: new Date(), objectives: src.objectives,
           activities: src.activities, content: src.content,
+          strandId: src.strandId, subStrandId: src.subStrandId, contentStandardId: src.contentStandardId,
+          indicatorIds: src.indicatorIds, coreCompetencies: src.coreCompetencies, tlm: src.tlm, assessment: src.assessment,
           status: "DRAFT", sourceNoteId: src.id,
         },
       });

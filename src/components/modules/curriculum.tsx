@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
 import { apiGet, apiPost } from "@/lib/api";
 import { ModuleHeader, LoadingBlock, EmptyState, FilterBar, FormGrid, FormField, downloadCsv } from "@/components/ui-helpers";
+import { cn } from "@/lib/utils";
 import { fmtDate } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,13 +16,15 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { CURRICULA, CurriculumKey, frameworkGrade } from "@/lib/curricula";
 import {
   NotebookPen, BookMarked, ListChecks, LibraryBig, ClipboardCheck, Plus, Pencil, Copy, Trash2,
-  Printer, FileText, CheckCircle2, Undo2, Eye, ExternalLink, FileCheck2,
+  Printer, FileText, CheckCircle2, Undo2, Eye, ExternalLink, FileCheck2, Wand2,
 } from "lucide-react";
 
 // ── types ──────────────────────────────────────────────────────
@@ -30,6 +33,11 @@ type Note = {
   id: string; staffId: string; classroomId: string; subjectId: string; termId: string; templateId: string | null;
   title: string; description: string | null; weekNumber: number; lessonDate: string;
   objectives: string; activities: string; content: string;
+  strandId: string | null; subStrandId: string | null; contentStandardId: string | null;
+  indicatorIds: string | null; coreCompetencies: string | null; tlm: string | null; assessment: string | null;
+  strand: { id: string; name: string; code: string | null; curriculum: string; subjectName: string; gradeLevel: string } | null;
+  subStrand: { id: string; name: string; code: string | null } | null;
+  contentStandard: { id: string; code: string | null; statement: string } | null;
   status: string; feedback: string | null; version: number; sourceNoteId: string | null;
   submittedAt: string | null; reviewedAt: string | null; reviewedByName: string | null;
   createdAt: string; updatedAt: string;
@@ -52,6 +60,7 @@ type Overview = {
   term: { id: string; name: string; weeksElapsed: number } | null;
   classrooms: { id: string; name: string; gradeLevel: string; classTeacherId: string | null }[];
   subjects: { id: string; name: string; code: string }[];
+  curricula: string[];
   terms: { id: string; name: string; isCurrent: boolean }[];
   notes: Note[]; templates: Template[];
   pendingReview: number;
@@ -218,7 +227,7 @@ export function Curriculum() {
           <TabsTrigger value="framework" className="gap-1.5"><BookMarked className="size-4" /> Framework</TabsTrigger>
         </TabsList>
 
-        <NotesTab data={data} onEdit={(n) => setNoteForm({ ...n })} onView={setViewing} onCopy={(n) => setNoteForm({ classroomId: n.classroomId, subjectId: n.subjectId, termId: n.termId, weekNumber: Math.min(15, n.weekNumber + 1), title: n.title, objectives: n.objectives, activities: n.activities, content: n.content, description: n.description, sourceNoteId: n.id, status: "PENDING" })} onDelete={(n) => post({ action: "note.delete", id: n.id }, "Lesson note deleted")} busy={busy} />
+        <NotesTab data={data} onEdit={(n) => setNoteForm({ ...n })} onView={setViewing} onCopy={(n) => setNoteForm({ classroomId: n.classroomId, subjectId: n.subjectId, termId: n.termId, weekNumber: Math.min(15, n.weekNumber + 1), title: n.title, objectives: n.objectives, activities: n.activities, content: n.content, description: n.description, strandId: n.strandId, subStrandId: n.subStrandId, contentStandardId: n.contentStandardId, indicatorIds: n.indicatorIds, coreCompetencies: n.coreCompetencies, tlm: n.tlm, assessment: n.assessment, strand: n.strand, subStrand: n.subStrand, contentStandard: n.contentStandard, sourceNoteId: n.id, status: "PENDING" })} onDelete={(n) => post({ action: "note.delete", id: n.id }, "Lesson note deleted")} busy={busy} />
         {data.canReview && <ReviewTab data={data} onView={setViewing} onReview={setReviewing} />}
         <TemplatesTab data={data} onEdit={(t) => setTemplateForm({ ...t })} onNew={() => setTemplateForm({})} onDelete={(t) => post({ action: "template.delete", id: t.id }, "Template deleted")} busy={busy} onUseTemplate={(t) => setNoteForm({ templateId: t.id, title: t.name, objectives: t.objectives, activities: t.activities, content: t.content, description: t.description, weekNumber: data.term?.weeksElapsed ?? 1, lessonDate: today(), status: "PENDING" })} />
         <SyllabusTab data={data} syllabusClass={syllabusClass} setSyllabusClass={setSyllabusClass} syllabusSubject={syllabusSubject} setSyllabusSubject={setSyllabusSubject} topics={topics} coverage={coverage} onEdit={(t) => setTopicForm({ ...t })} onNew={(week) => setTopicForm({ weekNumber: week, classroomId: syllabusClass, subjectId: syllabusSubject !== "all" ? syllabusSubject : undefined })} onToggle={async (t, completed) => { await post({ action: "syllabus.save", id: t.id, classroomId: syllabusClass, subjectId: t.subjectId, weekNumber: t.weekNumber, topic: t.topic, completed }, completed ? "Topic marked as taught" : "Topic reopened"); }} onDelete={(t) => post({ action: "syllabus.delete", id: t.id }, "Topic removed")} busy={busy} />
@@ -661,13 +670,35 @@ function NoteDialogForm({ data, form, busy, onClose, onSave }: {
   data: Overview; form: NoteFormShape; busy: boolean;
   onClose: () => void; onSave: (payload: Record<string, unknown>, submit: boolean) => void;
 }) {
+  const { toast } = useToast();
+  const schoolId = useStore().currentSchoolId;
   const [f, setF] = useState<Record<string, any>>(() => ({
     classroomId: form.classroomId ?? "", subjectId: form.subjectId ?? "", termId: form.termId ?? data.terms.find((t) => t.isCurrent)?.id ?? data.terms[0]?.id ?? "",
     weekNumber: form.weekNumber ?? data.term?.weeksElapsed ?? 1, lessonDate: form.lessonDate ? form.lessonDate.slice(0, 10) : today(),
     title: form.title ?? "", description: form.description ?? "", objectives: form.objectives ?? "", activities: form.activities ?? "", content: form.content ?? "",
+    fwCurriculum: form.strand?.curriculum ?? data.curricula[0] ?? "GES",
+    strandId: form.strandId ?? "", subStrandId: form.subStrandId ?? "", contentStandardId: form.contentStandardId ?? "",
+    indicatorIds: (() => { try { return form.indicatorIds ? (JSON.parse(form.indicatorIds) as string[]) : []; } catch { return []; } })(),
+    coreCompetencies: form.coreCompetencies ?? "", tlm: form.tlm ?? "", assessment: form.assessment ?? "",
   }));
   const editing = !!form.id;
   const termId = f.termId || data.terms.find((t) => t.isCurrent)?.id || data.terms[0]?.id || "";
+
+  /* ── curriculum framework for the chosen class+subject+curriculum ── */
+  const fwSubjectName = data.subjects.find((s) => s.id === f.subjectId)?.name ?? "";
+  const fwGrade = data.classrooms.find((c) => c.id === f.classroomId)?.gradeLevel ?? "";
+  const [fwTree, setFwTree] = useState<FrameworkNode[] | null>(null);
+  useEffect(() => {
+    if (!schoolId || !fwSubjectName || !fwGrade) { setFwTree(null); return; }
+    let live = true;
+    apiGet<{ strands: FrameworkNode[] }>(`/api/school/${schoolId}/ops/curriculum-framework?curriculum=${encodeURIComponent(f.fwCurriculum)}&subjectName=${encodeURIComponent(fwSubjectName)}&gradeLevel=${encodeURIComponent(frameworkGrade(f.fwCurriculum, fwGrade))}`)
+      .then((d) => { if (live) setFwTree(d.strands); })
+      .catch(() => { if (live) setFwTree([]); });
+    return () => { live = false; };
+  }, [schoolId, f.fwCurriculum, f.subjectId, f.classroomId, fwSubjectName, fwGrade]);
+  const fwStrand = (fwTree ?? []).find((s) => s.id === f.strandId) ?? null;
+  const fwSub = fwStrand?.subStrands?.find((b) => b.id === f.subStrandId) ?? null;
+  const fwStandard = fwSub?.standards?.find((st) => st.id === f.contentStandardId) ?? null;
 
   const applyTemplate = (templateId: string) => {
     const t = data.templates.find((x) => x.id === templateId);
@@ -675,9 +706,39 @@ function NoteDialogForm({ data, form, busy, onClose, onSave }: {
     setF({
       ...f, templateId,
       title: f.title || t.name, objectives: t.objectives, activities: t.activities, content: t.content,
-      description: t.description ?? "",
+      description: t.description ?? "", strand: t.strand, subStrand: t.subStrand, contentStandard: t.contentStandard,
     });
   };
+
+  const toggleCompetency = (name: string) => {
+    const list = (f.coreCompetencies || "").split("\n").map((x: string) => x.trim()).filter(Boolean);
+    const next = list.includes(name) ? list.filter((x: string) => x !== name) : [...list, name];
+    setF({ ...f, coreCompetencies: next.join("\n") });
+  };
+  const selectedCompetencies = (f.coreCompetencies || "").split("\n").map((x: string) => x.trim()).filter(Boolean);
+  const competencies = CURRICULA[f.fwCurriculum as CurriculumKey]?.competencies ?? [];
+
+  const toggleIndicator = (id: string) => {
+    const set = new Set<string>(f.indicatorIds);
+    if (set.has(id)) set.delete(id); else set.add(id);
+    setF({ ...f, indicatorIds: [...set] });
+  };
+  /* one-click: pour the chosen indicators into the objectives box (GES format) */
+  const indicatorsToObjectives = () => {
+    const lines = (fwStandard?.indicators ?? []).filter((i) => f.indicatorIds.includes(i.id))
+      .map((i) => `${i.code ? `${i.code} — ` : ""}${i.statement}`);
+    if (!lines.length) { toast({ title: "Select at least one indicator first" }); return; }
+    setF({ ...f, objectives: f.objectives ? `${f.objectives}\n${lines.join("\n")}` : `By the end of the lesson, learners will be able to:\n${lines.join("\n")}` });
+  };
+
+  const payload = () => ({
+    id: form.id, classroomId: f.classroomId, subjectId: f.subjectId, termId,
+    weekNumber: f.weekNumber, lessonDate: f.lessonDate, title: f.title, description: f.description,
+    objectives: f.objectives, activities: f.activities, content: f.content,
+    templateId: f.templateId && f.templateId !== "none" ? f.templateId : null,
+    strandId: f.strandId || null, subStrandId: f.subStrandId || null, contentStandardId: f.contentStandardId || null,
+    indicatorIds: f.indicatorIds, coreCompetencies: f.coreCompetencies || null, tlm: f.tlm || null, assessment: f.assessment || null,
+  });
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -685,7 +746,7 @@ function NoteDialogForm({ data, form, busy, onClose, onSave }: {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><NotebookPen className="size-4.5" /> {editing ? `Edit lesson note — v${form.version}` : form.sourceNoteId ? "Copy lesson note to a new week" : "New lesson note"}</DialogTitle>
           <DialogDescription>
-            {editing ? "Endorsed notes are immutable; a returned note goes back to the review queue when you save." : "Draft from a template, then submit it to your HOD / head for endorsement."}
+            {editing ? "Endorsed notes are immutable; a returned note goes back to the review queue when you save." : "Draft from a template, align to the curriculum framework, then submit to your HOD / head for endorsement."}
           </DialogDescription>
         </DialogHeader>
         <FormGrid cols={3}>
@@ -731,6 +792,72 @@ function NoteDialogForm({ data, form, busy, onClose, onSave }: {
           <FormField label="Description" span={3} hint="One-line summary for the scheme-of-learning tracker">
             <Input value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} />
           </FormField>
+        </FormGrid>
+
+        {/* ── curriculum alignment (framework pickers) ── */}
+        <div className="rounded-xl border bg-muted/30 p-3 space-y-3">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Curriculum alignment</div>
+            {fwTree && fwTree.length > 0 && <span className="text-[11px] text-muted-foreground">{fwTree.length} strands available</span>}
+          </div>
+          <FormGrid cols={3}>
+            <FormField label="Curriculum">
+              <Select value={f.fwCurriculum} onValueChange={(v) => setF({ ...f, fwCurriculum: v, strandId: "", subStrandId: "", contentStandardId: "", indicatorIds: [] })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>{(data.curricula.length ? data.curricula : ["GES"]).map((c) => <SelectItem key={c} value={c}>{CURRICULA_MAP[c] ?? c}</SelectItem>)}</SelectContent>
+              </Select>
+            </FormField>
+            <FormField label={CURRICULA[f.fwCurriculum as CurriculumKey]?.hierarchy.strand ?? "Strand"}>
+              <Select value={f.strandId} onValueChange={(v) => setF({ ...f, strandId: v, subStrandId: "", contentStandardId: "", indicatorIds: [] })}>
+                <SelectTrigger><SelectValue placeholder={fwTree === null ? "Choose class & subject first" : "Not aligned"} /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Not aligned</SelectItem>
+                  {(fwTree ?? []).map((s) => <SelectItem key={s.id} value={s.id}>{s.code ? `${s.code} · ` : ""}{s.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </FormField>
+            <FormField label={CURRICULA[f.fwCurriculum as CurriculumKey]?.hierarchy.subStrand ?? "Sub-strand"}>
+              <Select value={f.subStrandId} onValueChange={(v) => setF({ ...f, subStrandId: v, contentStandardId: "", indicatorIds: [] })} disabled={!fwStrand}>
+                <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">—</SelectItem>
+                  {(fwStrand?.subStrands ?? []).map((b) => <SelectItem key={b.id} value={b.id}>{b.code ? `${b.code} · ` : ""}{b.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </FormField>
+          </FormGrid>
+          {fwSub && (fwSub.standards ?? []).length > 0 && (
+            <div className="space-y-3">
+              <FormField label={CURRICULA[f.fwCurriculum as CurriculumKey]?.hierarchy.standard ?? "Content standard"}>
+                <Select value={f.contentStandardId} onValueChange={(v) => setF({ ...f, contentStandardId: v, indicatorIds: [] })}>
+                  <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">—</SelectItem>
+                    {(fwSub.standards ?? []).map((st) => <SelectItem key={st.id} value={st.id}>{st.code ? `${st.code} · ` : ""}{st.statement.length > 90 ? `${st.statement.slice(0, 90)}…` : st.statement}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </FormField>
+              {fwStandard && (fwStandard.indicators ?? []).length > 0 && (
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs font-medium">{CURRICULA[f.fwCurriculum as CurriculumKey]?.hierarchy.indicator ?? "Indicators"} <span className="text-muted-foreground">— tick what this lesson covers</span></span>
+                    <Button type="button" size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={indicatorsToObjectives}><Wand2 className="size-3" /> Use as objectives</Button>
+                  </div>
+                  <div className="max-h-36 overflow-y-auto nice-scroll rounded-lg border bg-background divide-y">
+                    {(fwStandard.indicators ?? []).map((ind) => (
+                      <label key={ind.id} className="flex items-start gap-2 p-2 text-xs cursor-pointer hover:bg-muted/50">
+                        <Checkbox className="mt-0.5" checked={f.indicatorIds.includes(ind.id)} onCheckedChange={() => toggleIndicator(ind.id)} />
+                        <span>{ind.code ? <b className="tabular-nums text-muted-foreground mr-1">{ind.code}</b> : null}{ind.statement}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <FormGrid cols={3}>
           <FormField label="Lesson objectives" span={3} hint="By the end of the lesson learners can…">
             <Textarea rows={3} value={f.objectives} onChange={(e) => setF({ ...f, objectives: e.target.value })} />
           </FormField>
@@ -741,13 +868,46 @@ function NoteDialogForm({ data, form, busy, onClose, onSave }: {
             <Textarea rows={5} value={f.content} onChange={(e) => setF({ ...f, content: e.target.value })} />
           </FormField>
         </FormGrid>
+
+        {/* ── competencies + TLM + assessment (GES lesson-plan fields) ── */}
+        <div className="rounded-xl border bg-muted/30 p-3 space-y-3">
+          <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{competencies.length ? CURRICULA[f.fwCurriculum as CurriculumKey]?.competenciesLabel ?? "Competencies" : "Competencies"} · materials · assessment</div>
+          {competencies.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {competencies.map((name) => {
+                const on = selectedCompetencies.includes(name);
+                return (
+                  <button
+                    key={name} type="button" onClick={() => toggleCompetency(name)}
+                    className={cn("rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors cursor-pointer",
+                      on ? "bg-primary text-primary-foreground border-primary" : "bg-background text-muted-foreground hover:border-primary/50")}
+                  >
+                    {name}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          <FormGrid cols={3}>
+            <FormField label="Teaching & learning materials" hint="TLMs — manipulatives, charts, devices…">
+              <Textarea rows={2} value={f.tlm} onChange={(e) => setF({ ...f, tlm: e.target.value })} placeholder="Number cards, bundle of sticks, place-value chart" />
+            </FormField>
+            <FormField label="Assessment" hint="How learning is checked">
+              <Textarea rows={2} value={f.assessment} onChange={(e) => setF({ ...f, assessment: e.target.value })} placeholder="Q&A, exercise 3 on p.42, peer marking" />
+            </FormField>
+            <FormField label="Custom competencies" hint="Anything beyond the ticks above (one per line)">
+              <Textarea rows={2} value={selectedCompetencies.filter((c) => !competencies.includes(c)).join("\n") || ""} onChange={(e) => setF({ ...f, coreCompetencies: [...selectedCompetencies.filter((c) => competencies.includes(c)), ...e.target.value.split("\n").filter(Boolean)].join("\n") })} />
+            </FormField>
+          </FormGrid>
+        </div>
+
         <DialogFooter className="gap-2 sm:justify-between">
           <div className="text-xs text-muted-foreground">
             {editing && form.status === "REVISION_REQUIRED" && form.feedback ? <span className="text-destructive">Reviewer: “{form.feedback}”</span> : "\u00A0"}
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" disabled={busy} onClick={() => onSave({ id: form.id, classroomId: f.classroomId, subjectId: f.subjectId, termId, weekNumber: f.weekNumber, lessonDate: f.lessonDate, title: f.title, description: f.description, objectives: f.objectives, activities: f.activities, content: f.content, templateId: f.templateId && f.templateId !== "none" ? f.templateId : null }, false)}>Save draft</Button>
-            <Button disabled={busy} onClick={() => onSave({ id: form.id, classroomId: f.classroomId, subjectId: f.subjectId, termId, weekNumber: f.weekNumber, lessonDate: f.lessonDate, title: f.title, description: f.description, objectives: f.objectives, activities: f.activities, content: f.content, templateId: f.templateId && f.templateId !== "none" ? f.templateId : null }, true)}>
+            <Button variant="outline" disabled={busy} onClick={() => onSave(payload(), false)}>Save draft</Button>
+            <Button disabled={busy} onClick={() => onSave(payload(), true)}>
               <FileCheck2 className="size-4" /> {editing ? "Save & resubmit" : "Submit for review"}
             </Button>
           </div>
@@ -769,11 +929,25 @@ function NoteViewDialog({ note, onClose }: { note: Note | null; onClose: () => v
                   <div className="font-bold text-lg">{note.classroom.name} — {note.subject.name}</div>
                   <div className="text-sm font-medium">{note.title}</div>
                   <div className="text-xs text-muted-foreground">Week {note.weekNumber} · {fmtDate(note.lessonDate)} · v{note.version}</div>
+                  {note.strand && (
+                    <div className="text-[11px] text-muted-foreground mt-1">
+                      {CURRICULA_MAP[note.strand.curriculum] ?? note.strand.curriculum} · {note.strand.code ? `${note.strand.code} ` : ""}{note.strand.name}
+                      {note.subStrand ? ` › ${note.subStrand.name}` : ""}
+                      {note.contentStandard ? ` · ${note.contentStandard.code ?? ""}` : ""}
+                    </div>
+                  )}
                 </div>
               </div>
               <Section title="Lesson objectives"><p className="whitespace-pre-line text-sm">{note.objectives || "—"}</p></Section>
               <Section title="Learning activities"><p className="whitespace-pre-line text-sm">{note.activities || "—"}</p></Section>
               <Section title="Lesson content / core points"><p className="whitespace-pre-line text-sm">{note.content || "—"}</p></Section>
+              {(note.coreCompetencies || note.tlm || note.assessment) && (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-2">
+                  <div className="border rounded-lg p-2.5"><div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">Competencies</div><p className="text-xs whitespace-pre-line">{note.coreCompetencies || "—"}</p></div>
+                  <div className="border rounded-lg p-2.5"><div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">TLMs</div><p className="text-xs whitespace-pre-line">{note.tlm || "—"}</p></div>
+                  <div className="border rounded-lg p-2.5"><div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">Assessment</div><p className="text-xs whitespace-pre-line">{note.assessment || "—"}</p></div>
+                </div>
+              )}
               <div className="mt-4 border rounded-lg p-3 grid grid-cols-2 gap-3 text-sm">
                 <div><span className="text-muted-foreground text-xs block">Teacher</span>{note.staff.fullName}</div>
                 <div><span className="text-muted-foreground text-xs block">Status</span><Badge className={STATUS_BADGE[note.status]?.cls ?? ""}>{STATUS_BADGE[note.status]?.label ?? note.status}</Badge></div>
