@@ -4,11 +4,13 @@ import { cn } from "@/lib/utils";
 import { X, Search, LayoutGrid } from "lucide-react";
 
 /* ── Metro Start screen (iEduPro metro_menu.php parity — the Windows-8 Start
-   menu CI3 users know). CI3 layout rules reproduced exactly:
-   • every tile is a SQUARE (150×150; 120×120 on small screens)
+   menu CI3 users know). CI3 layout rules reproduced EXACTLY (metro_menu.php
+   .metro-tile / .metro-tiles / @media 768px):
+   • every tile is a FIXED 150×150 square (120×120 ≤768px), never fluid
+   • icon 60px (45px mobile), label 12px semibold (10px mobile)
    • every group holds EXACTLY 6 tiles (2 columns × 3 rows, 10px gaps) —
      no section is longer or shorter than the others
-   • groups flow as columns on a minmax(340px, 1fr) grid
+   • groups flow as columns on a repeat(auto-fit, minmax(320px, 1fr)) grid
    • flat MS-Metro palette, uppercase group titles at 60% white,
      staggered scale-in animation sorted by on-screen position, live search. ── */
 
@@ -96,11 +98,13 @@ export function MetroMenu({ sections, current, currentTarget, onSelect, open, on
           {/* tile groups — CI3 metro-start-content: column blocks of exactly
               6 SQUARE tiles each (2 cols × 3 rows). Sections with a filtered
               count still render a uniform 2-column grid. */}
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-8">
+          {/* CI3 .metro-start-content: repeat(auto-fit, minmax(320px, 1fr)) / 30px gap */}
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(320px,1fr))] gap-[30px] max-md:grid-cols-[repeat(auto-fill,minmax(280px,1fr))] max-sm:grid-cols-1">
             {visible.map((s) => (
               <section key={s.title} aria-label={s.title}>
                 <h2 className="mb-3 text-sm font-semibold uppercase tracking-[0.1em] text-white/60">{s.title}</h2>
-                <div className="grid grid-cols-2 gap-2.5">
+                {/* CI3 .metro-tiles: repeat(2, 150px), 10px gap — FIXED tile width */}
+                <div className="grid grid-cols-[repeat(2,150px)] gap-2.5 max-md:grid-cols-[repeat(2,120px)] max-sm:grid-cols-[repeat(2,minmax(0,150px))] max-sm:justify-items-start">
                   {s.tiles.map((t) => {
                     const Icon = t.icon;
                     const active = t.module === current && (
@@ -113,14 +117,14 @@ export function MetroMenu({ sections, current, currentTarget, onSelect, open, on
                         onClick={() => { onSelect(t.module, t.target); onOpenChange(false); }}
                         style={{ backgroundColor: t.color, animationDelay: `${delay}ms` }}
                         className={cn(
-                          "metro-tile group relative flex aspect-square w-full flex-col items-center justify-center gap-2 overflow-hidden p-3 text-white",
+                          "metro-tile group relative flex size-[150px] flex-col items-center justify-center gap-2 overflow-hidden p-[15px] text-white max-md:size-[120px] max-md:p-3",
                           "transition-transform duration-150 hover:scale-[1.05] active:scale-[0.97]",
                           active && "ring-2 ring-white/80 ring-offset-2 ring-offset-transparent",
                         )}
                         title={t.label}
                       >
-                        <Icon className="size-10 sm:size-12 opacity-90 transition-transform duration-200 group-hover:scale-110" strokeWidth={1.4} />
-                        <span className="line-clamp-2 text-center text-xs font-semibold leading-tight">{t.label}</span>
+                        <Icon className="size-[60px] opacity-90 transition-transform duration-200 group-hover:scale-110 max-md:size-[45px]" strokeWidth={1.4} />
+                        <span className="line-clamp-2 text-center text-xs font-semibold leading-tight max-md:mt-0 max-md:text-[10px]">{t.label}</span>
                         {active && <span className="absolute right-2 top-2 size-2 rounded-full bg-white/80" />}
                       </button>
                     );
