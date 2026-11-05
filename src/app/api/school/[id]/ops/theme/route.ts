@@ -6,7 +6,8 @@ import { normalizeTheme, DEFAULT_THEME, THEME_PRESETS } from "@/lib/theme";
 
 /* ── CI3 Admin.php theme_settings parity ──
    GET  → the school's current theme (every signed-in member needs it to paint the shell)
-   POST → apply_theme (preset) | save_custom (three pickers) — settings.manage only ── */
+   POST → apply_theme (preset) | save_custom (three pickers) — settings.theme only:
+          the colour scheme is the school's super admin / proprietor's call ── */
 
 const THEME_PRESET_MAP = Object.fromEntries(THEME_PRESETS.map((p) => [p.key, p]));
 
@@ -29,8 +30,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { id } = await params;
   if (!(await canOperateSchool(user, id))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  if (!canAny(user.permissions, ["settings.manage"])) {
-    return NextResponse.json({ error: "Forbidden — your role does not include settings.manage" }, { status: 403 });
+  if (!canAny(user.permissions, ["settings.theme"])) {
+    return NextResponse.json({ error: "Forbidden — only the school's super admin can change the colour scheme" }, { status: 403 });
   }
 
   const body = await req.json().catch(() => ({}));

@@ -74,6 +74,7 @@ export const PERMISSIONS: PermDef[] = [
   { id: "approvals.manage", label: "Approve or reject modification requests", group: "System" },
   // System
   { id: "settings.manage", label: "School & statutory settings", group: "System" },
+  { id: "settings.theme", label: "Set the school colour scheme (Theme tab)", group: "System" },
   { id: "rbac.manage", label: "Manage users, roles & permissions", group: "System" },
   { id: "ai.use", label: "AI assistant", group: "System" },
   // Self-service portals
@@ -110,8 +111,10 @@ const minus = (ids: string[], drop: string[]) => ids.filter((x) => !drop.include
 export const ROLE_DEFAULTS: Record<string, string[] | "*"> = {
   SUPER_ADMIN: minus(ALL_PERM_IDS, ["portal.self", "campus.self"]),
   GROUP_OWNER: minus(ALL_PERM_IDS, ["portal.self", "campus.self"]),
-  // iEduPro: only level-1 admins adjudicate receipt/invoice modifications
-  SCHOOL_ADMIN: minus(ALL_PERM_IDS, ["rbac.manage", "approvals.manage", "portal.self", "campus.self"]),
+  // iEduPro: only level-1 admins adjudicate receipt/invoice modifications;
+  // the school colour scheme is the proprietor/super-admin's call, not every
+  // head of school (per the user: "customizable by the school's super admin")
+  SCHOOL_ADMIN: minus(ALL_PERM_IDS, ["rbac.manage", "approvals.manage", "settings.theme", "portal.self", "campus.self"]),
   ACCOUNTANT: [
     "students.view", "admissions.manage",
     "fees.view", "fees.manage", "fees.collect", "payments.momo", "discounts.manage", "cashier.reports",

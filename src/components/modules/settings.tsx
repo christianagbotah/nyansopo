@@ -41,7 +41,10 @@ function imageToDataUrl(file: File, maxW: number, maxH: number): Promise<string>
 }
 
 export function Settings() {
-  const { currentSchoolId, navTarget } = useStore();
+  const { currentSchoolId, navTarget, session } = useStore();
+  // the colour scheme is the school's super admin / proprietor's call —
+  // other admins still see every other tab, just not Theme (settings.theme)
+  const canTheme = !!session?.permissions?.includes("settings.theme");
   const [data, setData] = useState<any | null>(null);
   const [busy, setBusy] = useState(false);
   const [clsOpen, setClsOpen] = useState(false);
@@ -63,7 +66,7 @@ export function Settings() {
   const [appliedTarget, setAppliedTarget] = useState<any>(null);
   if (navTarget !== appliedTarget) {
     setAppliedTarget(navTarget);
-    if (navTarget?.tab && ["profile", "system", "branding", "theme", "classes", "subjects", "calendar", "staff", "grading", "earlyyears", "sba", "waec", "reportlib", "statutory"].includes(navTarget.tab)) setTab(navTarget.tab);
+    if (navTarget?.tab && ["profile", "system", "branding", ...(canTheme ? ["theme"] : []), "classes", "subjects", "calendar", "staff", "grading", "earlyyears", "sba", "waec", "reportlib", "statutory"].includes(navTarget.tab)) setTab(navTarget.tab);
   }
 
   const load = () => {
@@ -162,7 +165,7 @@ export function Settings() {
           <TabsTrigger value="profile">Profile & curriculum</TabsTrigger>
           <TabsTrigger value="system" className="gap-1.5"><SettingsIcon className="size-4" /> System</TabsTrigger>
           <TabsTrigger value="branding" className="gap-1.5"><ReceiptText className="size-4" /> Branding &amp; logos</TabsTrigger>
-          <TabsTrigger value="theme" className="gap-1.5"><Palette className="size-4" /> Theme</TabsTrigger>
+          {canTheme && <TabsTrigger value="theme" className="gap-1.5"><Palette className="size-4" /> Theme</TabsTrigger>}
           <TabsTrigger value="statutory" className="gap-1.5"><ShieldCheck className="size-4" /> Statutory (SSNIT)</TabsTrigger>
           <TabsTrigger value="classes">Classes ({data.classrooms.length})</TabsTrigger>
           <TabsTrigger value="subjects">Subjects ({data.subjects.length})</TabsTrigger>
@@ -446,7 +449,9 @@ export function Settings() {
         </TabsContent>
 
         {/* ── Theme (CI3 theme_settings.php parity): preset swatch cards +
-             custom pickers — applies instantly, every member sees it next load ── */}
+             custom pickers — applies instantly, every member sees it next load.
+             Super-admin-only: the school's colour scheme is their call ── */}
+        {canTheme && (
         <TabsContent value="theme">
           <Card>
             <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><Palette className="size-4" /> Theme customization</CardTitle></CardHeader>
@@ -511,6 +516,7 @@ export function Settings() {
             </CardContent>
           </Card>
         </TabsContent>
+        )}
 
         {/* ── Statutory rates (CI3 payroll_statutory_settings parity) ── */}
         <TabsContent value="statutory">

@@ -52,5 +52,29 @@
   topbar/sidebar, Ocean Blue live re-skin, gradient modal header (New admission inquiry), themed
   card headers + fee rails in Fees & Billing. Screenshots shot-theme-{dashboard,tab,ocean,modal,fees}.png.
 
+## 11.4 Follow-up — theme is the Super Admin's call (user clarification)
+The user refined the ask: "it is going to be customizable by the school's super admin. to select
+his school's color scheme." The original wave shipped the Theme tab gated by `settings.manage`,
+which SCHOOL_ADMIN and ACCOUNTANT also hold — they could re-skin the whole school.
+- New **`settings.theme`** permission ("Set the school colour scheme (Theme tab)", System group).
+  Default holders: **SUPER_ADMIN + GROUP_OWNER only** (SCHOOL_ADMIN now excludes it via minus();
+  ACCOUNTANT's explicit list never had it). A custom role can still be granted it in the RBAC matrix.
+- `ops/theme` POST now requires `settings.theme` (403 for head/bursar/teacher); GET stays
+  member-wide (everyone needs the colours to paint the shell).
+- Settings → Theme tab (trigger, content AND the deep-link tab list) renders only when the session
+  holds `settings.theme`; other admins keep every other tab. Deep-linking `?tab=theme` without the
+  permission safely falls back to the profile tab (no blank panel).
+- PAGE_INDEX "Theme & Colours" re-gated → hidden from the Start-screen search for non-super-admins
+  (head@ sees 92 pages / "Nothing matches theme"; super@ sees 95 + the entry).
+- smoke-theme now 15/15 (added school-admin + accountant 403 negatives; positive POSTs moved to
+  super@nyansapo.gh). Full regression 23/23 after re-provisioning the recycled sandbox (fresh
+  cluster needed the seed-bill-items / seed-curriculum / seed-framework / seed-creche /
+  seed-credits / seed-momo / seed-discount-profiles / seed-attendance-extra / seed-parity-extras
+  chain — now recorded in scripts/pg/README.md so future recycles include them).
+- Browser: super@ — Theme tab renders, Ocean Blue applies live (toast + CSS vars verified), search
+  finds "Theme & Colours"; head@ — no Theme tab, no search hit, deep-link falls back to profile.
+  Screenshots shot-theme-super-{ocean,search}.png + shot-theme-head-hidden.png.
+
 ## Commits
 feat(theme+cards): CI3 theming engine, compact right-railed cards, gradient surfaces (this commit)
+feat(theme): colour scheme restricted to the school's super admin — settings.theme permission (follow-up)

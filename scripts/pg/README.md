@@ -73,5 +73,8 @@ npx prisma db push --accept-data-loss
 for s in prisma/seed.ts prisma/seed-classes.ts prisma/seed-ops.ts prisma/seed-ops-extra.ts \
          prisma/seed-rbac.ts prisma/seed-daily-ext.ts prisma/seed-exams.ts \
          prisma/seed-fare-parity.ts prisma/seed-parity2.ts \
-         scripts/seed-jhs3-bece.ts scripts/seed-pos-sales.ts; do bun "$s"; done
+         prisma/seed-bill-items.ts prisma/seed-curriculum.ts prisma/seed-framework.ts \
+         prisma/seed-creche.ts prisma/seed-credits.ts prisma/seed-momo.ts \
+         prisma/seed-discount-profiles.ts prisma/seed-attendance-extra.ts \
+         scripts/seed-jhs3-bece.ts scripts/seed-parity-extras.ts scripts/seed-pos-sales.ts; do bun "$s"; done
 ```
