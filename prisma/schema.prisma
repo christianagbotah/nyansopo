@@ -72,6 +72,32 @@ model SchoolGroup {
   users          User[]
 }
 
+// ── Role configuration (wave 10): the school tunes WHAT EACH ROLE MAY DO.
+//    One row per (school, role). System roles (CASHIER, TEACHER…) override the
+//    code defaults; `isCustom` rows are brand-new roles minted by the admin
+//    (e.g. "Bursar Assistant", "Front Desk"). Absent/inactive row → the role
+//    falls back to ROLE_DEFAULTS in src/lib/rbac.ts. iEduPro parity: CI3 had
+//    four competing permission systems; this is the one canonical model. ──
+model RoleConfig {
+  id            String   @id @default(cuid())
+  schoolId      String
+  school        School   @relation(fields: [schoolId], references: [id])
+  role          String // "CASHIER" | custom slug e.g. "BURSAR_ASSISTANT"
+  label         String // display: "Bursar Assistant"
+  level         Int? // admin-ladder level for badges (null = non-ladder staff)
+  permissions   String // JSON string[] — this role's permission set at this school
+  isCustom      Boolean  @default(false) // custom roles are deletable; system rows are overrides
+  active        Boolean  @default(true) // inactive = fall back to code defaults
+  landingModule String? // where users of the role land after login (custom roles; default "dashboard")
+  note          String?
+  updatedByName String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([schoolId, role])
+  @@index([schoolId])
+}
+
 model School {
   id                   String                @id @default(cuid())
   name                 String
@@ -134,6 +160,7 @@ model School {
   remarkTemplates      RemarkTemplate[]
   conductItems         ConductItem[]
   discountProfiles     DiscountProfile[]
+  roleConfigs          RoleConfig[]
   smsSetting           SmsSetting?
   smsTemplates         SmsTemplate[]
   smsAutomations       SmsAutomation[]

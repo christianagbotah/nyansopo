@@ -167,6 +167,17 @@ export function parseOverrides(json?: string | null): PermOverrides {
   }
 }
 
+/** Parse the permissions JSON stored on a RoleConfig row. */
+export function parseRolePerms(json?: string | null): string[] | null {
+  if (!json) return null;
+  try {
+    const v = JSON.parse(json);
+    return Array.isArray(v) ? v.filter((x) => typeof x === "string") : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Action permissions imply their view permission (e.g. granting "enter marks"
  *  also shows the Gradebook module). Explicit denials still win over implications. */
 export const PERM_IMPLIES: Record<string, string[]> = {
@@ -196,16 +207,19 @@ export const PERM_IMPLIES: Record<string, string[]> = {
   "library.manage": ["library.view"],
 };
 
-/** Effective permission list for a user (role defaults + extra grants − denials,
- *  with action→view implications expanded so granted permissions are usable). */
-export function effectivePermissions(role: string, overridesJson?: string | null): string[] {
-  const base = ROLE_DEFAULTS[role] ?? [];
+/** Effective permission list for a user. Resolution order (wave 10):
+ *  1. BASE — the school's RoleConfig for this role when one is active
+ *     (`configPerms`, which may be an explicit empty list = this role may do
+ *     nothing at this school), else the code ROLE_DEFAULTS.
+ *  2. EXPAND — action ⇒ view implications, unless the view is denied.
+ *  3. OVERRIDES — per-user extra grants and denials always win last. */
+export function effectivePermissions(role: string, overridesJson?: string | null, configPerms?: string[] | null): string[] {
+  const configBase = Array.isArray(configPerms) ? configPerms : null;
+  const base = configBase ?? (ROLE_DEFAULTS[role] ?? []);
   const { extra = [], denied = [] } = parseOverrides(overridesJson);
-  if (base === "*") {
-    return minus([...ALL_PERM_IDS, ...extra], denied);
-  }
+  const baseList = base === "*" ? ALL_PERM_IDS : base;
   const deniedSet = new Set(denied);
-  const set = new Set([...base, ...extra]);
+  const set = new Set([...baseList, ...extra]);
   // expand implications (action ⇒ view) — unless the view is explicitly denied
   for (const p of Array.from(set)) {
     for (const impl of PERM_IMPLIES[p] ?? []) {
@@ -214,6 +228,20 @@ export function effectivePermissions(role: string, overridesJson?: string | null
   }
   deniedSet.forEach((d) => set.delete(d));
   return ALL_PERM_IDS.filter((p) => set.has(p)); // stable catalogue order
+}
+
+/** The base permission list a role starts from at this school — the RoleConfig
+ *  set when active, otherwise the code defaults. Used by the per-user matrix
+ *  editor so it shows the school's actual role base, not the hardcoded one. */
+export function roleBasePerms(role: string, configPerms?: string[] | null): string[] {
+  const configBase = Array.isArray(configPerms) ? configPerms : null;
+  const base = configBase ?? (ROLE_DEFAULTS[role] ?? []);
+  return base === "*" ? ALL_PERM_IDS : [...base];
+}
+
+/** Landing module for a role — config override, then the static map. */
+export function landingFor(role: string, configLanding?: string | null): string {
+  return configLanding ?? LANDING_MODULE[role] ?? "dashboard";
 }
 
 export const can = (perms: string[] | undefined | null, perm: string) => !!perms && perms.includes(perm);
@@ -279,6 +307,17 @@ export function canModule(role: string | undefined | null, perms: string[] | und
   const need = MODULE_PERMS[m];
   if (!need) return true;
   return canAny(perms, need);
+}
+
+/** Role used for module gating: custom backoffice roles (wave 10) behave like
+ *  SCHOOL_ADMIN for the hard role gates (dashboard yes; portal/campus no) —
+ *  every other module is still gated by the permission list. */
+export function gateRole(session: { role: string; roleBackoffice?: boolean } | null | undefined): string | null {
+  if (!session) return null;
+  if (session.roleBackoffice && !DASHBOARD_ROLES.includes(session.role) && !session.role.startsWith("ASSOCIATION_")) {
+    return "SCHOOL_ADMIN";
+  }
+  return session.role;
 }
 
 /** Back-office roles may call school operations APIs (parents/students use the portal API only). */

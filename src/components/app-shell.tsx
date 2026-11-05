@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useStore, hasSchoolScope, isAssociationRole, ROLE_LABELS, ModuleId, NavTarget } from "@/lib/store";
-import { canModule, canAny, ROLE_LEVELS, ROLE_LEVEL_LABELS } from "@/lib/rbac";
+import { canModule, canAny, gateRole, ROLE_LEVELS, ROLE_LEVEL_LABELS } from "@/lib/rbac";
 import { apiGet } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +19,7 @@ import { flushQueue } from "@/lib/api";
 import { NotificationBell } from "@/components/notification-bell";
 import { CommandPalette } from "@/components/command-palette";
 import { MetroMenu, MetroEdgeTrigger } from "@/components/metro-menu";
+import { PAGE_INDEX, type PageEntry } from "@/lib/page-index";
 import { Dashboard } from "@/components/modules/dashboard";
 import { Students } from "@/components/modules/students";
 import { Admissions } from "@/components/modules/admissions";
@@ -266,7 +267,10 @@ export function AppShell() {
   const currentSchool = useMemo(() => schools.find((s) => s.id === currentSchoolId) ?? null, [schools, currentSchoolId]);
   const assocScope = isAssociationRole(session?.role);
   const isGroupOwner = session?.role === "GROUP_OWNER";
-  const roleLevel = session ? ROLE_LEVELS[session.role] : undefined;
+  const roleLevel = session ? (session.roleLevel ?? ROLE_LEVELS[session.role]) : undefined;
+  /* module-gating role: custom backoffice roles behave like SCHOOL_ADMIN for
+     the hard role gates (dashboard) — everything else is permission-list-gated */
+  const gatingRole = gateRole(session);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
@@ -377,7 +381,7 @@ export function AppShell() {
     // permission-gated school modules
     for (const item of SCHOOL_NAV) {
       if (item.id === "branches") continue;
-      if (!canModule(session?.role, session?.permissions, item.id)) continue;
+      if (!canModule(gatingRole, session?.permissions, item.id)) continue;
       const enriched: NavItem = { ...item };
       if (item.id === "students" && classGroups.length) enriched.children = studentChildren;
       if (item.id === "classes" && classGroups.length) enriched.children = classChildren;
@@ -397,7 +401,7 @@ export function AppShell() {
     }
     // parent & learner portals
     for (const item of PORTAL_NAV) {
-      if (canModule(session?.role, session?.permissions, item.id)) items.push(item);
+      if (canModule(gatingRole, session?.permissions, item.id)) items.push(item);
     }
     return items;
   }, [assocScope, isGroupOwner, session?.role, session?.permissions, classrooms]);
@@ -412,8 +416,28 @@ export function AppShell() {
      6 square tiles — candidates are permission-filtered, first 6 allowed win,
      and a section with fewer than 6 reachable tiles is skipped entirely so no
      section is ever longer or shorter than another. ── */
+  /* ── Metro page catalogue (wave 10): every page in the app, permission-filtered
+     for this session — searched by the Start screen so a user can find any page. ── */
+  const metroPages = useMemo(() => {
+    const role = gateRole(session);
+    const perms = session?.permissions;
+    return PAGE_INDEX.filter((p) => {
+      if (p.roles) {
+        // hard role lists gate the REAL role (PARENT/STUDENT/GROUP_OWNER/association);
+        // a custom backoffice role never matches portal lists
+        if (p.roles.includes("PARENT") || p.roles.includes("STUDENT") || p.roles.includes("GROUP_OWNER") || p.roles.some((r) => r.startsWith("ASSOCIATION_"))) {
+          return p.roles.includes(session?.role as string);
+        }
+        return false;
+      }
+      if (!canModule(role, perms, p.module)) return false;
+      if (p.perm && !canAny(perms, p.perm)) return false;
+      return true;
+    }) as PageEntry[];
+  }, [session, gatingRole]);
+
   const metroSections = useMemo(() => {
-    const open = (m: string) => canModule(session?.role, session?.permissions, m);
+    const open = (m: string) => canModule(gatingRole, session?.permissions, m);
     const canFees = open("fees");
     const canDaily = open("daily");
     const canCashier = open("cashier");
@@ -518,7 +542,7 @@ export function AppShell() {
         title: d.title,
         tiles: d.tiles.map(({ key, label, icon, module: m, target, color }) => ({ id: key, label, icon, module: m, target, color })),
       }));
-  }, [session?.role, session?.permissions]);
+  }, [gatingRole, session?.permissions]);
 
   const show = useCallback((m: string) => navItems.some((i) => i.id === m), [navItems]);
 
@@ -529,7 +553,7 @@ export function AppShell() {
     if (res.failed) toast({ title: `${res.failed} failed`, description: res.messages.join(" · "), variant: "destructive" });
   }
 
-  const roleLabel = session ? (ROLE_LABELS[session.role] ?? session.role) : "Staff";
+  const roleLabel = session ? (session.roleLabel ?? ROLE_LABELS[session.role] ?? session.role) : "Staff";
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
@@ -813,6 +837,7 @@ export function AppShell() {
       {metroOpen && (
         <MetroMenu
           sections={metroSections}
+          pages={metroPages}
           current={module}
           currentTarget={navTarget}
           onSelect={(id, t) => setModule(id as ModuleId, t)}

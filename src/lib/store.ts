@@ -7,8 +7,11 @@ export type SessionUser = {
   id: string; email: string; fullName: string; phone: string | null;
   role: string; title: string | null;
   associationNodeId: string | null; schoolGroupId: string | null; schoolId: string | null;
-  permissions: string[]; // effective RBAC permissions (role defaults + overrides)
+  permissions: string[]; // effective RBAC permissions (role config + overrides)
   landingModule?: string;
+  roleLabel?: string | null; // custom-role display label (wave 10)
+  roleLevel?: number | null; // admin-ladder level (config or static)
+  roleBackoffice?: boolean; // custom backoffice roles see the school shell
 };
 
 export type SchoolLite = {

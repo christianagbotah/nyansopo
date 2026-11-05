@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { effectivePermissions, LANDING_MODULE } from "@/lib/rbac";
+import { effectivePermissions, parseRolePerms, landingFor, ROLE_LEVELS } from "@/lib/rbac";
 
 export async function POST(req: NextRequest) {
   try {
@@ -13,6 +13,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "This account is suspended. Contact your administrator." }, { status: 403 });
     }
     await db.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+
+    // role configuration for this school (wave 10): tuned system roles + custom roles
+    const cfg = user.schoolId ? await db.roleConfig.findFirst({ where: { schoolId: user.schoolId, role: user.role, active: true } }) : null;
+    const configPerms = cfg ? parseRolePerms(cfg.permissions) : null;
+
     return NextResponse.json({
       user: {
         id: user.id, email: user.email, fullName: user.fullName, phone: user.phone,
@@ -22,8 +27,11 @@ export async function POST(req: NextRequest) {
         associationNodeName: user.associationNode?.name ?? null,
         schoolName: user.school?.name ?? null,
         groupName: user.schoolGroup?.name ?? null,
-        permissions: effectivePermissions(user.role, user.permissionsJson),
-        landingModule: LANDING_MODULE[user.role] ?? "dashboard",
+        permissions: effectivePermissions(user.role, user.permissionsJson, configPerms),
+        roleLabel: cfg?.label ?? null,
+        roleLevel: cfg?.level ?? ROLE_LEVELS[user.role] ?? null,
+        roleBackoffice: cfg?.isCustom ? true : undefined,
+        landingModule: landingFor(user.role, cfg?.landingModule ?? null),
         staffId: user.staffId ?? null,
         studentId: user.studentId ?? null,
       },
