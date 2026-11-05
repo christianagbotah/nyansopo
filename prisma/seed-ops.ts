@@ -89,17 +89,17 @@ async function main() {
 
   // ── 2. DAILY SERVICES ──────────────────────────────────────
   console.log("🍽  Daily services…");
-  type SvcDef = { name: string; category: string; price: number; mode: string; weekdays: string };
+  type SvcDef = { name: string; category: string; price: number; mode: string; weekdays: string; optIn?: boolean };
   const svcFor = (code: string): SvcDef[] => {
     if (code === "GEA") return [
       { name: "Lunch (canteen)", category: "MEAL", price: 8, mode: "DAILY", weekdays: "1,2,3,4,5" },
-      { name: "Breakfast (optional)", category: "MEAL", price: 5, mode: "DAILY", weekdays: "1,2,3,4,5" },
+      { name: "Breakfast (optional)", category: "MEAL", price: 5, mode: "DAILY", weekdays: "1,2,3,4,5", optIn: true },
       { name: "Sachet Water", category: "DRINK", price: 5, mode: "WEEKLY", weekdays: "3" },
       { name: "Extra Classes (remedial)", category: "CLASS", price: 3, mode: "DAILY", weekdays: "2,4" },
     ];
     if (code === "GKA") return [
       { name: "Lunch (canteen)", category: "MEAL", price: 7, mode: "DAILY", weekdays: "1,2,3,4,5" },
-      { name: "Breakfast (optional)", category: "MEAL", price: 4.5, mode: "DAILY", weekdays: "1,2,3,4,5" },
+      { name: "Breakfast (optional)", category: "MEAL", price: 4.5, mode: "DAILY", weekdays: "1,2,3,4,5", optIn: true },
       { name: "Sachet Water", category: "DRINK", price: 1, mode: "WEEKLY", weekdays: "5" },
     ];
     if (code === "SGI") return [
@@ -120,7 +120,7 @@ async function main() {
     const defs = svcFor(s.code);
     const created: { id: string }[] = [];
     for (const d of defs) {
-      const svc = await db.dailyService.create({ data: { schoolId: s.id, name: d.name, category: d.category, priceCents: C(d.price), chargeMode: d.mode, weekdays: d.weekdays } });
+      const svc = await db.dailyService.create({ data: { schoolId: s.id, name: d.name, category: d.category, priceCents: C(d.price), chargeMode: d.mode, weekdays: d.weekdays, optInDaily: !!d.optIn } });
       created.push({ id: svc.id, ...d });
     }
     svcIds[s.code] = created.map((c) => c.id);
