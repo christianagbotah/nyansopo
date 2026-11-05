@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useStore } from "@/lib/store";
 import { apiGet, apiPost } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,20 +12,31 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { StatCard, ModuleHeader, LoadingBlock, EmptyState } from "@/components/ui-helpers";
 import { fmtCedi, fmtDate, PAYMENT_LABELS } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
-import { Bus, Plus, Phone, MapPin, UserPlus, ClipboardCheck, Banknote, Users, Pencil, Trash2, ArrowRight, HandCoins, CheckCircle2, Printer } from "lucide-react";
+import { Bus, Plus, Phone, MapPin, UserPlus, ClipboardCheck, Banknote, Users, Pencil, Trash2, ArrowRight, HandCoins, CheckCircle2, Printer, Car, FileSpreadsheet, Download, IdCard, ShieldCheck, AlertTriangle } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ReceiptDocument } from "@/components/receipts";
 
 type Rider = { id: string; studentId: string; student: string; classroom: string | null; pickupStop: string | null; dropStop: string | null; fareOverride: number | null; onewayFare?: number; stopFare?: number | null; guardianPhone: string; farePaid: number };
 type Trip = { id: string; date: string; morning: number | null; evening: number | null; notes: string | null; recordedByName: string | null };
 type StopRec = { name: string; fareCents: number | null };
+type Compliance = "OK" | "DUE_SOON" | "EXPIRED" | "UNKNOWN";
+type DriverRec = { id: string; name: string; phone: string | null; licenseNo: string | null; licenseExpiry: string | null; status: string; routes: string[]; licenseCompliance: Compliance };
+type VehicleRec = { id: string; regNumber: string; model: string | null; capacity: number; insuranceExpiry: string | null; roadworthyExpiry: string | null; status: string; notes: string | null; routes: string[]; insuranceCompliance: Compliance; roadworthyCompliance: Compliance };
 type Route = {
   id: string; name: string; vehicleReg: string; vehicleModel: string | null; driverName: string; driverPhone: string;
+  driverId?: string | null; vehicleId?: string | null;
+  linkedDriver?: { id: string; name: string; phone: string | null; licenseExpiry: string | null; licenseCompliance: Compliance } | null;
+  linkedVehicle?: { id: string; regNumber: string; model: string | null; insuranceExpiry: string | null; roadworthyExpiry: string | null; insuranceCompliance: Compliance; roadworthyCompliance: Compliance } | null;
   capacity: number; fare: number; farePerTrip?: number; stops: string[]; stopRecords?: StopRec[]; active: boolean; riders: Rider[]; utilisation: number; fareRevenue: number; fareCollected: number; trips: Trip[];
 };
 type TransportData = {
   termLabel: string;
   routes: Route[];
+  drivers: DriverRec[];
+  vehicles: VehicleRec[];
   unassigned: { id: string; name: string; classroom: string; guardianPhone: string }[];
   summary: { routes: number; learners: number; capacity: number; fareRevenue: number; fareCollected: number };
 };
@@ -39,6 +50,7 @@ export function Transportation() {
   const [fareFor, setFareFor] = useState<{ rider: Rider; route: Route } | null>(null);
   const [receipt, setReceipt] = useState<any | null>(null);
   const [busy, setBusy] = useState(false);
+  const [tab, setTab] = useState("routes");
 
   const load = () => {
     if (!currentSchoolId) return;
@@ -81,9 +93,17 @@ export function Transportation() {
         <StatCard icon={<ClipboardCheck className="size-4" />} label="Trips logged" value={data.routes.reduce((a, r) => a + r.trips.length, 0)} sub="recent runs" />
       </div>
 
-      {data.routes.length === 0 && <Card className="mt-5"><CardContent><EmptyState icon={<Bus className="size-5" />} title="No routes yet" hint="Create your first bus route to start assigning learners." /></CardContent></Card>}
+      <Tabs value={tab} onValueChange={setTab} className="mt-5">
+        <TabsList className="flex-wrap">
+          <TabsTrigger value="routes">Routes</TabsTrigger>
+          <TabsTrigger value="fleet" className="gap-1.5"><Car className="size-4" /> Fleet &amp; compliance</TabsTrigger>
+          <TabsTrigger value="fares" className="gap-1.5"><FileSpreadsheet className="size-4" /> Fare report</TabsTrigger>
+        </TabsList>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-5">
+        <TabsContent value="routes">
+      {data.routes.length === 0 && <Card className="mt-0"><CardContent><EmptyState icon={<Bus className="size-5" />} title="No routes yet" hint="Create your first bus route to start assigning learners." /></CardContent></Card>}
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-1">
         {data.routes.map((r) => (
           <Card key={r.id} className={r.active ? "" : "opacity-60"}>
             <CardHeader className="pb-3 flex-row items-start justify-between space-y-0">
@@ -175,8 +195,17 @@ export function Transportation() {
           </Card>
         ))}
       </div>
+        </TabsContent>
 
-      <RouteDialog route={routeDialog} onOpenChange={(o) => !o && setRouteDialog(null)} onDone={() => { setRouteDialog(null); load(); }} />
+        <TabsContent value="fleet">
+          <FleetTab data={data} onRefresh={load} />
+        </TabsContent>
+        <TabsContent value="fares">
+          <FareReportTab routes={data.routes} />
+        </TabsContent>
+      </Tabs>
+
+      <RouteDialog route={routeDialog} drivers={data.drivers} vehicles={data.vehicles} onOpenChange={(o) => !o && setRouteDialog(null)} onDone={() => { setRouteDialog(null); load(); }} />
       <AssignDialog route={assignFor} unassigned={data.unassigned} onOpenChange={(o) => !o && setAssignFor(null)} onDone={() => { setAssignFor(null); load(); }} />
       <TripDialog route={tripFor} onOpenChange={(o) => !o && setTripFor(null)} onDone={() => { setTripFor(null); load(); }} />
       <FareDialog ctx={fareFor} termLabel={data.termLabel} onOpenChange={(o) => !o && setFareFor(null)} onDone={(rc) => { setFareFor(null); if (rc) setReceipt(rc); load(); }} />
@@ -196,13 +225,15 @@ export function Transportation() {
   );
 }
 
-function RouteDialog({ route, onOpenChange, onDone }: { route: Route | "new" | null; onOpenChange: (o: boolean) => void; onDone: () => void }) {
+function RouteDialog({ route, drivers, vehicles, onOpenChange, onDone }: { route: Route | "new" | null; drivers: DriverRec[]; vehicles: VehicleRec[]; onOpenChange: (o: boolean) => void; onDone: () => void }) {
   const { currentSchoolId } = useStore();
   const [name, setName] = useState("");
   const [vehicleReg, setVehicleReg] = useState("");
   const [vehicleModel, setVehicleModel] = useState("");
   const [driverName, setDriverName] = useState("");
   const [driverPhone, setDriverPhone] = useState("");
+  const [driverId, setDriverId] = useState("none");
+  const [vehicleId, setVehicleId] = useState("none");
   const [capacity, setCapacity] = useState("15");
   const [fare, setFare] = useState("");
   const [farePerTrip, setFarePerTrip] = useState("");
@@ -213,11 +244,12 @@ function RouteDialog({ route, onOpenChange, onDone }: { route: Route | "new" | n
     if (route && route !== "new") {
       setName(route.name); setVehicleReg(route.vehicleReg); setVehicleModel(route.vehicleModel ?? "");
       setDriverName(route.driverName); setDriverPhone(route.driverPhone);
+      setDriverId(route.driverId ?? "none"); setVehicleId(route.vehicleId ?? "none");
       setCapacity(String(route.capacity)); setFare((route.fare / 100).toFixed(0)); setFarePerTrip(route.farePerTrip ? (route.farePerTrip / 100).toFixed(2) : "");
       const recs = route.stopRecords ?? route.stops.map((s) => ({ name: s, fareCents: null as number | null }));
       setStops(recs.length ? recs.map((s) => ({ name: s.name, fare: s.fareCents != null ? (s.fareCents / 100).toFixed(2) : "" })) : [{ name: "", fare: "" }]);
     } else if (route === "new") {
-      setName(""); setVehicleReg(""); setVehicleModel(""); setDriverName(""); setDriverPhone(""); setCapacity("15"); setFare(""); setFarePerTrip(""); setStops([{ name: "", fare: "" }]);
+      setName(""); setVehicleReg(""); setVehicleModel(""); setDriverName(""); setDriverPhone(""); setDriverId("none"); setVehicleId("none"); setCapacity("15"); setFare(""); setFarePerTrip(""); setStops([{ name: "", fare: "" }]);
     }
   }, [route]);
 
@@ -232,6 +264,7 @@ function RouteDialog({ route, onOpenChange, onDone }: { route: Route | "new" | n
         action: "save-route",
         id: route && route !== "new" ? route.id : undefined,
         name, vehicleReg, vehicleModel, driverName, driverPhone,
+        driverId: driverId === "none" ? null : driverId, vehicleId: vehicleId === "none" ? null : vehicleId,
         capacity: Number(capacity), farePerTermCents: Math.round(parseFloat(fare) * 100),
         farePerTripCents: farePerTrip === "" ? 0 : Math.round(parseFloat(farePerTrip) * 100),
         stopRecords, stops: stopRecords.map((s) => s.name),
@@ -256,6 +289,26 @@ function RouteDialog({ route, onOpenChange, onDone }: { route: Route | "new" | n
           <div className="space-y-1.5"><Label>Vehicle model</Label><Input value={vehicleModel} onChange={(e) => setVehicleModel(e.target.value)} placeholder="Toyota Hiace" /></div>
           <div className="space-y-1.5"><Label>Driver *</Label><Input value={driverName} onChange={(e) => setDriverName(e.target.value)} placeholder="Kwesi Anane" /></div>
           <div className="space-y-1.5"><Label>Driver phone</Label><Input value={driverPhone} onChange={(e) => setDriverPhone(e.target.value)} placeholder="+233 24 551 7708" /></div>
+          <div className="space-y-1.5">
+            <Label>Link driver record</Label>
+            <Select value={driverId} onValueChange={setDriverId}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Not linked</SelectItem>
+                {drivers.map((d) => <SelectItem key={d.id} value={d.id}>{d.name}{d.licenseNo ? ` · ${d.licenseNo}` : ""}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Link vehicle record</Label>
+            <Select value={vehicleId} onValueChange={setVehicleId}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Not linked</SelectItem>
+                {vehicles.map((v) => <SelectItem key={v.id} value={v.id}>{v.regNumber}{v.model ? ` · ${v.model}` : ""}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
           <div className="space-y-1.5"><Label>Capacity (seats)</Label><Input type="number" value={capacity} onChange={(e) => setCapacity(e.target.value)} /></div>
           <div className="space-y-1.5"><Label>Fare per term (GH₵) *</Label><Input type="number" value={fare} onChange={(e) => setFare(e.target.value)} placeholder="450" /></div>
           <div className="space-y-1.5 sm:col-span-2">
@@ -495,5 +548,342 @@ function FareDialog({ ctx, termLabel, onOpenChange, onDone }: { ctx: { rider: Ri
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/* ── Fleet & compliance (CI3 drivers / vehicles / insurance parity) ──
+    Driver and vehicle registries with DVLA license, insurance and
+    roadworthy expiry tracking (expired / due-in-30-days / ok). */
+const COMPLIANCE_CHIP: Record<Compliance, { cls: string; label: string }> = {
+  OK: { cls: "bg-emerald-100 text-emerald-700", label: "valid" },
+  DUE_SOON: { cls: "bg-amber-100 text-amber-700", label: "due <30d" },
+  EXPIRED: { cls: "bg-red-100 text-red-700", label: "EXPIRED" },
+  UNKNOWN: { cls: "bg-zinc-100 text-zinc-500", label: "not recorded" },
+};
+function ComplianceChip({ c, expiry }: { c: Compliance; expiry: string | null }) {
+  const chip = COMPLIANCE_CHIP[c];
+  return (
+    <span className={cn("inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full", chip.cls)} title={expiry ? `expires ${fmtDate(expiry)}` : "no expiry recorded"}>
+      {c === "EXPIRED" && <AlertTriangle className="size-2.5" />}
+      {chip.label}{expiry ? ` · ${fmtDate(expiry)}` : ""}
+    </span>
+  );
+}
+
+function FleetTab({ data, onRefresh }: { data: TransportData; onRefresh: () => void }) {
+  const { currentSchoolId } = useStore();
+  const [driverDlg, setDriverDlg] = useState<DriverRec | "new" | null>(null);
+  const [vehicleDlg, setVehicleDlg] = useState<VehicleRec | "new" | null>(null);
+
+  async function act(body: any, ok: string) {
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/transport`, body);
+      toast({ title: ok });
+      onRefresh();
+    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); }
+  }
+
+  const expiredCount = (arr: Compliance[]) => arr.filter((c) => c === "EXPIRED").length;
+  const dueSoonCount = (arr: Compliance[]) => arr.filter((c) => c === "DUE_SOON").length;
+  const driverCompliance = data.drivers.map((d) => d.licenseCompliance);
+  const vehicleCompliance = data.vehicles.flatMap((v) => [v.insuranceCompliance, v.roadworthyCompliance]);
+
+  return (
+    <div className="space-y-4 mt-1">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatCard icon={<IdCard className="size-4" />} label="Drivers" value={data.drivers.length} sub={`${data.drivers.filter((d) => d.status === "ACTIVE").length} active`} />
+        <StatCard icon={<Car className="size-4" />} label="Vehicles" value={data.vehicles.length} sub={`${data.vehicles.filter((v) => v.status === "ACTIVE").length} on the road`} tone="primary" />
+        <StatCard icon={<AlertTriangle className="size-4" />} label="Expired documents" value={expiredCount([...driverCompliance, ...vehicleCompliance])} tone={expiredCount([...driverCompliance, ...vehicleCompliance]) ? "danger" : "default"} sub="license / insurance / roadworthy" />
+        <StatCard icon={<ShieldCheck className="size-4" />} label="Due within 30 days" value={dueSoonCount([...driverCompliance, ...vehicleCompliance])} tone="gold" sub="renew before they lapse" />
+      </div>
+
+      <Card>
+        <CardHeader className="pb-3 flex-row items-center justify-between space-y-0">
+          <CardTitle className="text-base flex items-center gap-2"><IdCard className="size-4 text-primary" /> Drivers</CardTitle>
+          <Button size="sm" className="h-8 gap-1.5" onClick={() => setDriverDlg("new")}><Plus className="size-3.5" /> Add driver</Button>
+        </CardHeader>
+        <CardContent>
+          {data.drivers.length ? (
+            <Table>
+              <TableHeader><TableRow>
+                <TableHead>Driver</TableHead><TableHead>Phone</TableHead><TableHead>License</TableHead>
+                <TableHead className="hidden md:table-cell">Routes</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
+              </TableRow></TableHeader>
+              <TableBody>
+                {data.drivers.map((d) => (
+                  <TableRow key={d.id} className={d.status !== "ACTIVE" ? "opacity-60" : ""}>
+                    <TableCell className="font-medium">{d.name}</TableCell>
+                    <TableCell>{d.phone ? <a className="text-primary hover:underline" href={`tel:${d.phone}`}>{d.phone}</a> : "—"}</TableCell>
+                    <TableCell>
+                      <div className="text-xs">{d.licenseNo ?? "—"}</div>
+                      <ComplianceChip c={d.licenseCompliance} expiry={d.licenseExpiry} />
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell text-xs text-muted-foreground">{d.routes.length ? d.routes.join(", ") : "—"}</TableCell>
+                    <TableCell><Badge variant={d.status === "ACTIVE" ? "secondary" : "outline"} className="text-[10px]">{d.status.toLowerCase()}</Badge></TableCell>
+                    <TableCell className="text-right">
+                      <Button size="sm" variant="ghost" className="h-7" onClick={() => setDriverDlg(d)}><Pencil className="size-3.5" /></Button>
+                      <Button size="sm" variant="ghost" className="h-7 text-destructive"
+                        onClick={() => act({ action: "driver-delete", id: d.id }, "Driver removed")}><Trash2 className="size-3.5" /></Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : <EmptyState title="No drivers registered" hint="Keep DVLA license numbers and expiries here — routes can link to a driver record." />}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-3 flex-row items-center justify-between space-y-0">
+          <CardTitle className="text-base flex items-center gap-2"><Car className="size-4 text-primary" /> Vehicles</CardTitle>
+          <Button size="sm" className="h-8 gap-1.5" onClick={() => setVehicleDlg("new")}><Plus className="size-3.5" /> Add vehicle</Button>
+        </CardHeader>
+        <CardContent>
+          {data.vehicles.length ? (
+            <Table>
+              <TableHeader><TableRow>
+                <TableHead>Registration</TableHead><TableHead>Model</TableHead><TableHead>Insurance</TableHead>
+                <TableHead>Roadworthy</TableHead><TableHead className="hidden md:table-cell">Routes</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
+              </TableRow></TableHeader>
+              <TableBody>
+                {data.vehicles.map((v) => (
+                  <TableRow key={v.id} className={v.status !== "ACTIVE" ? "opacity-60" : ""}>
+                    <TableCell className="font-mono font-semibold text-xs">{v.regNumber}</TableCell>
+                    <TableCell className="text-sm">{v.model ?? "—"} <span className="text-muted-foreground">· {v.capacity} seats</span></TableCell>
+                    <TableCell><ComplianceChip c={v.insuranceCompliance} expiry={v.insuranceExpiry} /></TableCell>
+                    <TableCell><ComplianceChip c={v.roadworthyCompliance} expiry={v.roadworthyExpiry} /></TableCell>
+                    <TableCell className="hidden md:table-cell text-xs text-muted-foreground">{v.routes.length ? v.routes.join(", ") : "—"}</TableCell>
+                    <TableCell><Badge variant={v.status === "ACTIVE" ? "secondary" : "outline"} className="text-[10px]">{v.status.toLowerCase()}</Badge></TableCell>
+                    <TableCell className="text-right">
+                      <Button size="sm" variant="ghost" className="h-7" onClick={() => setVehicleDlg(v)}><Pencil className="size-3.5" /></Button>
+                      <Button size="sm" variant="ghost" className="h-7 text-destructive"
+                        onClick={() => act({ action: "vehicle-delete", id: v.id }, "Vehicle removed")}><Trash2 className="size-3.5" /></Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : <EmptyState title="No vehicles registered" hint="Track insurance and roadworthy expiries per bus — routes can link to a vehicle record." />}
+        </CardContent>
+      </Card>
+
+      <DriverDialog driver={driverDlg} onOpenChange={(o) => !o && setDriverDlg(null)} onDone={() => { setDriverDlg(null); onRefresh(); }} />
+      <VehicleDialog vehicle={vehicleDlg} onOpenChange={(o) => !o && setVehicleDlg(null)} onDone={() => { setVehicleDlg(null); onRefresh(); }} />
+    </div>
+  );
+}
+
+function DriverDialog({ driver, onOpenChange, onDone }: { driver: DriverRec | "new" | null; onOpenChange: (o: boolean) => void; onDone: () => void }) {
+  const { currentSchoolId } = useStore();
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [licenseNo, setLicenseNo] = useState("");
+  const [licenseExpiry, setLicenseExpiry] = useState("");
+  const [status, setStatus] = useState("ACTIVE");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (driver && driver !== "new") {
+      setName(driver.name); setPhone(driver.phone ?? ""); setLicenseNo(driver.licenseNo ?? "");
+      setLicenseExpiry(driver.licenseExpiry ? driver.licenseExpiry.slice(0, 10) : ""); setStatus(driver.status);
+    } else if (driver === "new") { setName(""); setPhone(""); setLicenseNo(""); setLicenseExpiry(""); setStatus("ACTIVE"); }
+  }, [driver]);
+
+  async function submit() {
+    if (!name.trim()) { toast({ title: "Driver name is required" }); return; }
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/transport`, {
+        action: "driver-save", id: driver && driver !== "new" ? driver.id : undefined,
+        name, phone, licenseNo, licenseExpiry: licenseExpiry || null, status,
+      });
+      toast({ title: driver === "new" ? "Driver added" : "Driver updated" });
+      onDone();
+    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
+  }
+
+  return (
+    <Dialog open={!!driver} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader><DialogTitle>{driver === "new" ? "Add driver" : "Edit driver"}</DialogTitle>
+          <DialogDescription>DVLA license tracking keeps you ahead of renewals.</DialogDescription></DialogHeader>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5 sm:col-span-2"><Label>Full name *</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Kwesi Anane" /></div>
+          <div className="space-y-1.5"><Label>Phone</Label><Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+233 24 551 7708" /></div>
+          <div className="space-y-1.5"><Label>License number</Label><Input value={licenseNo} onChange={(e) => setLicenseNo(e.target.value)} placeholder="DVLA-000000" /></div>
+          <div className="space-y-1.5"><Label>License expiry</Label><Input type="date" value={licenseExpiry} onChange={(e) => setLicenseExpiry(e.target.value)} /></div>
+          <div className="space-y-1.5"><Label>Status</Label>
+            <Select value={status} onValueChange={setStatus}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>{["ACTIVE", "SUSPENDED", "RETIRED"].map((x) => <SelectItem key={x} value={x}>{x.toLowerCase()}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={submit} disabled={busy}>{busy ? "Saving…" : "Save driver"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function VehicleDialog({ vehicle, onOpenChange, onDone }: { vehicle: VehicleRec | "new" | null; onOpenChange: (o: boolean) => void; onDone: () => void }) {
+  const { currentSchoolId } = useStore();
+  const [regNumber, setRegNumber] = useState("");
+  const [model, setModel] = useState("");
+  const [capacity, setCapacity] = useState("15");
+  const [insuranceExpiry, setInsuranceExpiry] = useState("");
+  const [roadworthyExpiry, setRoadworthyExpiry] = useState("");
+  const [status, setStatus] = useState("ACTIVE");
+  const [notes, setNotes] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (vehicle && vehicle !== "new") {
+      setRegNumber(vehicle.regNumber); setModel(vehicle.model ?? ""); setCapacity(String(vehicle.capacity));
+      setInsuranceExpiry(vehicle.insuranceExpiry ? vehicle.insuranceExpiry.slice(0, 10) : "");
+      setRoadworthyExpiry(vehicle.roadworthyExpiry ? vehicle.roadworthyExpiry.slice(0, 10) : "");
+      setStatus(vehicle.status); setNotes(vehicle.notes ?? "");
+    } else if (vehicle === "new") { setRegNumber(""); setModel(""); setCapacity("15"); setInsuranceExpiry(""); setRoadworthyExpiry(""); setStatus("ACTIVE"); setNotes(""); }
+  }, [vehicle]);
+
+  async function submit() {
+    if (!regNumber.trim()) { toast({ title: "Registration number is required" }); return; }
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/transport`, {
+        action: "vehicle-save", id: vehicle && vehicle !== "new" ? vehicle.id : undefined,
+        regNumber, model, capacity: Number(capacity), insuranceExpiry: insuranceExpiry || null,
+        roadworthyExpiry: roadworthyExpiry || null, status, notes,
+      });
+      toast({ title: vehicle === "new" ? "Vehicle added" : "Vehicle updated" });
+      onDone();
+    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
+  }
+
+  return (
+    <Dialog open={!!vehicle} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader><DialogTitle>{vehicle === "new" ? "Add vehicle" : "Edit vehicle"}</DialogTitle>
+          <DialogDescription>Insurance and roadworthy expiries flag themselves before they lapse.</DialogDescription></DialogHeader>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5"><Label>Registration *</Label><Input value={regNumber} onChange={(e) => setRegNumber(e.target.value)} placeholder="GR 4521-21" /></div>
+          <div className="space-y-1.5"><Label>Model</Label><Input value={model} onChange={(e) => setModel(e.target.value)} placeholder="Toyota Hiace" /></div>
+          <div className="space-y-1.5"><Label>Capacity (seats)</Label><Input type="number" value={capacity} onChange={(e) => setCapacity(e.target.value)} /></div>
+          <div className="space-y-1.5"><Label>Status</Label>
+            <Select value={status} onValueChange={setStatus}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>{["ACTIVE", "MAINTENANCE", "RETIRED"].map((x) => <SelectItem key={x} value={x}>{x.toLowerCase()}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5"><Label>Insurance expiry</Label><Input type="date" value={insuranceExpiry} onChange={(e) => setInsuranceExpiry(e.target.value)} /></div>
+          <div className="space-y-1.5"><Label>Roadworthy expiry</Label><Input type="date" value={roadworthyExpiry} onChange={(e) => setRoadworthyExpiry(e.target.value)} /></div>
+          <div className="space-y-1.5 sm:col-span-2"><Label>Notes</Label><Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional — e.g. serviced Sept 2026" /></div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={submit} disabled={busy}>{busy ? "Saving…" : "Save vehicle"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ── Fare report (CI3 transport_fare_report parity) ──
+    Boarding-based collections over a date range with route filter, stats
+    and CSV export. */
+type FareReport = {
+  range: { from: string; to: string };
+  rows: { date: string; student: string; classroom: string | null; route: string; direction: string; fareCents: number; paidCents: number; recordedByName: string | null }[];
+  stats: { count: number; totalFareCents: number; totalPaidCents: number; outstandingCents: number; bothWays: number; oneWay: number };
+};
+
+function FareReportTab({ routes }: { routes: Route[] }) {
+  const { currentSchoolId } = useStore();
+  const [from, setFrom] = useState(() => new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10));
+  const [to, setTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const [routeId, setRouteId] = useState("all");
+  const [data, setData] = useState<FareReport | null>(null);
+
+  const load = useCallback(() => {
+    if (!currentSchoolId) return;
+    apiGet<FareReport>(`/api/school/${currentSchoolId}/ops/transport?tab=fares&from=${from}&to=${to}${routeId !== "all" ? `&routeId=${routeId}` : ""}`)
+      .then(setData)
+      .catch((e) => toast({ title: "Load failed", description: e.message, variant: "destructive" }));
+  }, [currentSchoolId, from, to, routeId]);
+  useEffect(() => { load(); }, [load]);
+
+  const DIR_LABEL: Record<string, string> = { IN: "Morning", OUT: "Afternoon", BOTH: "Both ways", NONE: "Not riding" };
+
+  return (
+    <div className="space-y-4 mt-1">
+      <Card>
+        <CardContent className="pt-4 flex flex-wrap gap-2 items-end">
+          <div className="space-y-1"><Label className="text-xs">From</Label><Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-9 w-40" /></div>
+          <div className="space-y-1"><Label className="text-xs">To</Label><Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-9 w-40" /></div>
+          <div className="space-y-1">
+            <Label className="text-xs">Route</Label>
+            <Select value={routeId} onValueChange={setRouteId}>
+              <SelectTrigger className="h-9 w-52"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All routes</SelectItem>
+                {routes.map((r) => <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <Button size="sm" className="h-9" onClick={load}>Apply</Button>
+          <Button size="sm" variant="outline" className="h-9 gap-1.5" disabled={!data?.rows.length}
+            onClick={() => {
+              const esc = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
+              const csv = [["Date", "Student", "Class", "Route", "Direction", "Fare (GHS)", "Paid (GHS)", "Recorded by"], ...data!.rows.map((r) => [
+                r.date.slice(0, 10), r.student, r.classroom ?? "", r.route, DIR_LABEL[r.direction] ?? r.direction,
+                (r.fareCents / 100).toFixed(2), (r.paidCents / 100).toFixed(2), r.recordedByName ?? "",
+              ])].map((r) => r.map(esc).join(",")).join("\n");
+              const url = URL.createObjectURL(new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" }));
+              const a = document.createElement("a"); a.href = url; a.download = `transport_fare_report_${from}_${to}.csv`; a.click();
+              URL.revokeObjectURL(url);
+            }}><Download className="size-3.5" /> Export Excel (CSV)</Button>
+        </CardContent>
+      </Card>
+
+      {data ? (
+        <>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <StatCard icon={<ClipboardCheck className="size-4" />} label="Boardings" value={data.stats.count} sub={`${data.stats.bothWays} both ways · ${data.stats.oneWay} one way`} />
+            <StatCard icon={<Banknote className="size-4" />} label="Fares charged" value={fmtCedi(data.stats.totalFareCents, { compact: true })} sub="over the range" />
+            <StatCard icon={<HandCoins className="size-4" />} label="Collected" value={fmtCedi(data.stats.totalPaidCents, { compact: true })} tone="primary" sub="cash + wallet" />
+            <StatCard icon={<AlertTriangle className="size-4" />} label="Owing" value={fmtCedi(data.stats.outstandingCents, { compact: true })} tone={data.stats.outstandingCents > 0 ? "danger" : "default"} sub="charged but unpaid" />
+          </div>
+          <Card>
+            <CardHeader className="pb-3"><CardTitle className="text-base">Collections</CardTitle></CardHeader>
+            <CardContent>
+              {data.rows.length ? (
+                <div className="max-h-[480px] overflow-y-auto nice-scroll">
+                  <Table>
+                    <TableHeader><TableRow>
+                      <TableHead>Date</TableHead><TableHead>Learner</TableHead><TableHead className="hidden md:table-cell">Route</TableHead>
+                      <TableHead>Direction</TableHead><TableHead className="text-right">Fare</TableHead><TableHead className="text-right">Paid</TableHead>
+                    </TableRow></TableHeader>
+                    <TableBody>
+                      {data.rows.map((r, i) => (
+                        <TableRow key={i}>
+                          <TableCell className="text-xs">{fmtDate(r.date)}</TableCell>
+                          <TableCell className="font-medium text-sm">{r.student}<span className="text-xs text-muted-foreground"> · {r.classroom ?? "—"}</span></TableCell>
+                          <TableCell className="hidden md:table-cell text-xs">{r.route}</TableCell>
+                          <TableCell><Badge variant="outline" className="text-[10px]">{DIR_LABEL[r.direction] ?? r.direction}</Badge></TableCell>
+                          <TableCell className="text-right tabular-nums text-sm">{fmtCedi(r.fareCents)}</TableCell>
+                          <TableCell className={cn("text-right tabular-nums text-sm font-medium", r.paidCents >= r.fareCents ? "text-emerald-600" : "text-red-600")}>{fmtCedi(r.paidCents)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              ) : <EmptyState title="No boardings in this range" hint="Conductor boardings and counter collections appear here." />}
+            </CardContent>
+          </Card>
+        </>
+      ) : <LoadingBlock label="Loading fare report…" />}
+    </div>
   );
 }

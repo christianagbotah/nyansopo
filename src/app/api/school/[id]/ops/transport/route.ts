@@ -8,14 +8,68 @@ import { nextReceiptNo } from "@/lib/codes";
 // ── GET /api/school/[id]/ops/transport — routes, assignments, trips ──
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: schoolId } = await params;
+  const url = new URL(req.url);
+  const tab = url.searchParams.get("tab");
   const auth = await opsAuth(req, schoolId, "GET", { perms: ["transport.view"] });
   if (!auth.ok) return auth.res;
 
+  /* ── fare report (CI3 transport_fare_report parity): boarding-based
+     collections over a date range, filterable by route, with stats ── */
+  if (tab === "fares") {
+    const fromStr = url.searchParams.get("from") ?? new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
+    const toStr = url.searchParams.get("to") ?? new Date().toISOString().slice(0, 10);
+    const routeId = url.searchParams.get("routeId");
+    const from = new Date(`${fromStr}T00:00:00.000Z`);
+    const to = new Date(`${toStr}T23:59:59.999Z`);
+    const boardings = await db.transportBoarding.findMany({
+      where: { route: { schoolId }, date: { gte: from, lte: to }, ...(routeId ? { routeId } : {}) },
+      include: { assignment: { include: { student: { include: { enrollments: { where: { status: "ACTIVE" }, take: 1, include: { classroom: true } } } } } }, route: true },
+      orderBy: { date: "desc" },
+    });
+    let totalFare = 0, totalPaid = 0, bothWays = 0, oneWay = 0;
+    const rows = boardings.map((b) => {
+      totalFare += b.fareCents; totalPaid += b.paidCents;
+      if (b.direction === "BOTH") bothWays++; else if (b.direction !== "NONE") oneWay++;
+      return {
+        date: b.date, student: `${b.assignment.student.firstName} ${b.assignment.student.lastName}`,
+        classroom: b.assignment.student.enrollments[0]?.classroom?.name ?? null,
+        route: b.route.name, direction: b.direction, fareCents: b.fareCents, paidCents: b.paidCents,
+        recordedByName: b.recordedByName,
+      };
+    });
+    return NextResponse.json({
+      range: { from: fromStr, to: toStr },
+      rows,
+      stats: { count: rows.length, totalFareCents: totalFare, totalPaidCents: totalPaid, outstandingCents: totalFare - totalPaid, bothWays, oneWay },
+    });
+  }
+
   const routes = await db.transportRoute.findMany({
     where: { schoolId },
-    include: { assignments: { where: { active: true }, include: { student: { include: { enrollments: { where: { status: "ACTIVE" }, take: 1, include: { classroom: true } } } } } }, stopRecords: { orderBy: { sortOrder: "asc" } } },
+    include: { assignments: { where: { active: true }, include: { student: { include: { enrollments: { where: { status: "ACTIVE" }, take: 1, include: { classroom: true } } } } } }, stopRecords: { orderBy: { sortOrder: "asc" } }, driver: true, vehicle: true },
     orderBy: { name: "asc" },
   });
+
+  /* fleet registries (CI3 drivers/vehicles/insurance parity) with expiry compliance */
+  const DAY = 864e5;
+  const compliance = (d: Date | null | undefined) =>
+    !d ? "UNKNOWN" : d.getTime() < Date.now() ? "EXPIRED" : d.getTime() < Date.now() + 30 * DAY ? "DUE_SOON" : "OK";
+  const [driverRows, vehicleRows] = await Promise.all([
+    db.driverRecord.findMany({ where: { schoolId }, include: { routes: { select: { id: true, name: true } } }, orderBy: { name: "asc" } }),
+    db.vehicle.findMany({ where: { schoolId }, include: { routes: { select: { id: true, name: true } } }, orderBy: { regNumber: "asc" } }),
+  ]);
+  const drivers = driverRows.map((d) => ({
+    id: d.id, name: d.name, phone: d.phone, licenseNo: d.licenseNo, licenseExpiry: d.licenseExpiry,
+    status: d.status, routes: d.routes.map((r) => r.name),
+    licenseCompliance: compliance(d.licenseExpiry),
+  }));
+  const vehicles = vehicleRows.map((v) => ({
+    id: v.id, regNumber: v.regNumber, model: v.model, capacity: v.capacity,
+    insuranceExpiry: v.insuranceExpiry, roadworthyExpiry: v.roadworthyExpiry, status: v.status, notes: v.notes,
+    routes: v.routes.map((r) => r.name),
+    insuranceCompliance: compliance(v.insuranceExpiry),
+    roadworthyCompliance: compliance(v.roadworthyExpiry),
+  }));
 
   const trips = await db.transportTrip.findMany({
     where: { route: { schoolId } },
@@ -63,7 +117,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         : r.stops.split(",").map((s) => s.trim()).filter(Boolean).map((name) => ({ name, fareCents: null as number | null }));
       return {
       id: r.id, name: r.name, vehicleReg: r.vehicleReg, vehicleModel: r.vehicleModel,
-      driverName: r.driverName, driverPhone: r.driverPhone, capacity: r.capacity,
+      driverName: r.driverName, driverPhone: r.driverPhone, driverId: r.driverId, vehicleId: r.vehicleId,
+      linkedDriver: r.driver ? { id: r.driver.id, name: r.driver.name, phone: r.driver.phone, licenseExpiry: r.driver.licenseExpiry, licenseCompliance: compliance(r.driver.licenseExpiry) } : null,
+      linkedVehicle: r.vehicle ? { id: r.vehicle.id, regNumber: r.vehicle.regNumber, model: r.vehicle.model, insuranceExpiry: r.vehicle.insuranceExpiry, roadworthyExpiry: r.vehicle.roadworthyExpiry, insuranceCompliance: compliance(r.vehicle.insuranceExpiry), roadworthyCompliance: compliance(r.vehicle.roadworthyExpiry) } : null,
+      capacity: r.capacity,
       fare: r.farePerTermCents, farePerTrip: r.farePerTripCents, stops: stopList.map((s) => s.name), stopRecords: stopList, active: r.active,
       riders: r.assignments.map((a) => {
         // resolved one-way fare for this rider: stop fare → route fare (iEduPro §resolve)
@@ -85,6 +142,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       trips: (tripByRoute[r.id] ?? []).slice(0, 10).map((t) => ({ id: t.id, date: t.date, morning: t.morningCount, evening: t.eveningCount, notes: t.notes, recordedByName: t.recordedByName })),
       };
     }),
+    drivers, vehicles,
     unassigned: unassigned.map((e) => ({ id: e.studentId, name: `${e.student.firstName} ${e.student.lastName}`, classroom: e.classroom.name, guardianPhone: e.student.guardianPhone })),
     summary: {
       routes: routes.length,
@@ -109,8 +167,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!auth.ok) return auth.res;
 
   if (action === "save-route") {
-    const { id, name, vehicleReg, vehicleModel, driverName, driverPhone, capacity, farePerTermCents, farePerTripCents, stops, stopRecords } = body;
+    const { id, name, vehicleReg, vehicleModel, driverName, driverPhone, capacity, farePerTermCents, farePerTripCents, stops, stopRecords, driverId, vehicleId } = body;
     if (!name || !driverName) return NextResponse.json({ error: "Route name and driver are required" }, { status: 400 });
+    // optional registry links — driver/vehicle must belong to this school
+    const [drv, veh] = await Promise.all([
+      driverId ? db.driverRecord.findFirst({ where: { id: driverId, schoolId } }) : Promise.resolve(null),
+      vehicleId ? db.vehicle.findFirst({ where: { id: vehicleId, schoolId } }) : Promise.resolve(null),
+    ]);
+    if (driverId && !drv) return NextResponse.json({ error: "Driver not found" }, { status: 404 });
+    if (vehicleId && !veh) return NextResponse.json({ error: "Vehicle not found" }, { status: 404 });
     // stops arrive either as plain names (legacy string/array) or structured
     // records [{ name, fareCents }] — per-stop one-way fares (iEduPro
     // transport_stops.fare_from_stop: the pickup point sets the fare)
@@ -119,6 +184,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       : (Array.isArray(stops) ? stops : String(stops ?? "").split(",")).map((s: any) => ({ name: String(s).trim(), fareCents: null })).filter((s) => s.name);
     const data = {
       name, vehicleReg: vehicleReg ?? "", vehicleModel: vehicleModel ?? null, driverName, driverPhone: driverPhone ?? "",
+      driverId: drv?.id ?? null, vehicleId: veh?.id ?? null,
       capacity: Number(capacity) || 15, farePerTermCents: Number(farePerTermCents) || 0,
       farePerTripCents: Math.max(0, Math.round(Number(farePerTripCents) || 0)),
       stops: parsedStops.map((s) => s.name).join(", "),
@@ -130,6 +196,54 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       await db.transportStop.create({ data: { routeId: route.id, name: s.name, fareCents: s.fareCents, sortOrder: i } });
     }
     return NextResponse.json({ route });
+  }
+
+  /* ── fleet registries (CI3 drivers/vehicles/insurance parity) ── */
+  if (action === "driver-save") {
+    const { id, name, phone, licenseNo, licenseExpiry, status } = body;
+    if (!name?.trim()) return NextResponse.json({ error: "Driver name is required" }, { status: 400 });
+    const data = {
+      name: name.trim(), phone: phone?.trim() || null, licenseNo: licenseNo?.trim() || null,
+      licenseExpiry: licenseExpiry ? new Date(licenseExpiry) : null,
+      status: ["ACTIVE", "SUSPENDED", "RETIRED"].includes(status) ? status : "ACTIVE",
+    };
+    const driver = id
+      ? await db.driverRecord.update({ where: { id }, data }).catch(() => null)
+      : await db.driverRecord.create({ data: { ...data, schoolId } });
+    if (!driver) return NextResponse.json({ error: "Driver not found" }, { status: 404 });
+    return NextResponse.json({ driver });
+  }
+  if (action === "driver-delete") {
+    const d = await db.driverRecord.findFirst({ where: { id: body.id, schoolId } });
+    if (!d) return NextResponse.json({ error: "Driver not found" }, { status: 404 });
+    // detach from routes, then remove
+    await db.transportRoute.updateMany({ where: { driverId: d.id }, data: { driverId: null } });
+    await db.driverRecord.delete({ where: { id: d.id } });
+    return NextResponse.json({ ok: true });
+  }
+  if (action === "vehicle-save") {
+    const { id, regNumber, model, capacity, insuranceExpiry, roadworthyExpiry, status, notes } = body;
+    if (!regNumber?.trim()) return NextResponse.json({ error: "Registration number is required" }, { status: 400 });
+    const data = {
+      regNumber: regNumber.trim().toUpperCase(), model: model?.trim() || null,
+      capacity: Number(capacity) || 15,
+      insuranceExpiry: insuranceExpiry ? new Date(insuranceExpiry) : null,
+      roadworthyExpiry: roadworthyExpiry ? new Date(roadworthyExpiry) : null,
+      status: ["ACTIVE", "MAINTENANCE", "RETIRED"].includes(status) ? status : "ACTIVE",
+      notes: notes?.trim() || null,
+    };
+    const vehicle = id
+      ? await db.vehicle.update({ where: { id }, data }).catch(() => null)
+      : await db.vehicle.create({ data: { ...data, schoolId } });
+    if (!vehicle) return NextResponse.json({ error: "Vehicle not found" }, { status: 404 });
+    return NextResponse.json({ vehicle });
+  }
+  if (action === "vehicle-delete") {
+    const v = await db.vehicle.findFirst({ where: { id: body.id, schoolId } });
+    if (!v) return NextResponse.json({ error: "Vehicle not found" }, { status: 404 });
+    await db.transportRoute.updateMany({ where: { vehicleId: v.id }, data: { vehicleId: null } });
+    await db.vehicle.delete({ where: { id: v.id } });
+    return NextResponse.json({ ok: true });
   }
 
   if (action === "toggle-route") {
