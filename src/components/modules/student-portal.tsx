@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
 import { apiGet, apiPost } from "@/lib/api";
 import { ModuleHeader, LoadingBlock, EmptyState } from "@/components/ui-helpers";
@@ -455,13 +455,14 @@ function Mini({ label, value, tone }: { label: string; value: React.ReactNode; t
   );
 }
 
-/* ── Online exams tab — the learner sits published MCQ papers for their class
-    (iEduPro online_exam parity; auto-marked against the answer key) ── */
+/* ── Online exams tab — the learner sits published papers for their class
+    (iEduPro online_exam parity; MCQ + true/false + fill-in-the-blanks,
+    auto-marked against the answer key; a countdown auto-submits) ── */
 type PortalExam = {
   id: string; title: string; subjectName: string; description: string | null;
   classroom: string | null; classroomId: string | null; durationMins: number;
   status: string; questionCount: number; totalMarks: number;
-  questions: { id: string; prompt: string; optionA: string; optionB: string; optionC: string; optionD: string }[];
+  questions: { id: string; type: string; prompt: string; optionA: string | null; optionB: string | null; optionC: string | null; optionD: string | null }[];
   attempts: { studentId: string; score: number | null; max: number }[];
 };
 
@@ -470,7 +471,10 @@ function StudentExams({ studentId, classroomId }: { studentId: string; classroom
   const [exams, setExams] = useState<PortalExam[] | null>(null);
   const [sitting, setSitting] = useState<PortalExam | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [blankInputs, setBlankInputs] = useState<Record<string, string>>({});
   const [justScored, setJustScored] = useState<{ score: number; max: number } | null>(null);
+  const [secsLeft, setSecsLeft] = useState<number | null>(null);
+  const submittedRef = useRef(false);
 
   const load = () => {
     if (!currentSchoolId) return;
@@ -480,22 +484,65 @@ function StudentExams({ studentId, classroomId }: { studentId: string; classroom
   };
   useEffect(() => { load(); }, [currentSchoolId]);
 
-  if (!exams) return <LoadingBlock label="Loading exams…" />;
-  const forMe = exams.filter((e) => e.status === "PUBLISHED" && (!e.classroomId || e.classroomId === classroomId));
-  const myAttempts = new Map(exams.flatMap((e) => e.attempts).map((a) => [a.studentId, a]));
+  /** open the paper: tell the server (live-monitor signal) and start the countdown */
+  async function openPaper(e: PortalExam) {
+    setSitting(e); setAnswers({}); setBlankInputs({}); setJustScored(null);
+    submittedRef.current = false;
+    setSecsLeft(e.durationMins * 60);
+    apiPost(`/api/school/${currentSchoolId}/ops/exams`, { action: "start-attempt", examId: e.id, studentId }).catch(() => {});
+  }
 
-  async function submit() {
-    if (!sitting) return;
+  /** assemble fill-blank inputs (one per blank) into comma-joined answer strings */
+  function assembled(): Record<string, string> {
+    const out = { ...answers };
+    for (const q of sitting?.questions ?? []) {
+      if (q.type !== "FILL_BLANKS") continue;
+      const idx = String(sitting!.questions.indexOf(q));
+      const blanks = q.prompt.split("-").length - 1;
+      const words: string[] = [];
+      for (let b = 0; b < blanks; b++) {
+        const v = blankInputs[`${idx}:${b}`]?.trim();
+        if (v) words.push(v);
+      }
+      out[idx] = words.join(",");
+    }
+    return out;
+  }
+
+  async function submit(auto = false) {
+    if (!sitting || submittedRef.current) return;
+    submittedRef.current = true;
     try {
       const res = await apiPost<any>(`/api/school/${currentSchoolId}/ops/exams`, {
-        action: "submit-attempt", examId: sitting.id, studentId, answers,
+        action: "submit-attempt", examId: sitting.id, studentId, answers: assembled(),
       });
       setJustScored({ score: res.score, max: res.max });
       setSitting(null);
-      setAnswers({});
+      setAnswers({}); setBlankInputs({}); setSecsLeft(null);
+      if (auto) toast({ title: "Time is up — your paper was submitted automatically" });
       load();
-    } catch (e: any) { toast({ title: "Submit failed", description: e.message, variant: "destructive" }); }
+    } catch (e: any) {
+      submittedRef.current = false;
+      toast({ title: "Submit failed", description: e.message, variant: "destructive" });
+    }
   }
+
+  /* countdown — auto-submits at zero (iEduPro modal_time_out parity) */
+  useEffect(() => {
+    if (secsLeft == null || !sitting) return;
+    const t = setTimeout(() => {
+      if (secsLeft <= 0) submit(true);
+      else setSecsLeft((s) => (s == null ? null : s - 1));
+    }, 1000);
+    return () => clearTimeout(t);
+  }, [secsLeft, sitting]);
+
+  if (!exams) return <LoadingBlock label="Loading exams…" />;
+  const forMe = exams.filter((e) => e.status === "PUBLISHED" && (!e.classroomId || e.classroomId === classroomId));
+  const answeredCount = () => {
+    const a = assembled();
+    return (sitting?.questions ?? []).filter((q, i) => a[String(i)] !== undefined && a[String(i)] !== "").length;
+  };
 
   return (
     <div className="space-y-4">
@@ -503,20 +550,21 @@ function StudentExams({ studentId, classroomId }: { studentId: string; classroom
         <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><Laptop className="size-4" /> Open exams</CardTitle></CardHeader>
         <CardContent className="space-y-2">
           {forMe.length ? forMe.map((e) => {
-            const done = myAttempts.has(studentId);
+            const att = e.attempts[0];
+            const done = att && att.score != null;
             return (
               <div key={e.id} className="rounded-xl border p-3 flex flex-wrap items-center justify-between gap-2">
                 <div className="min-w-0">
                   <div className="font-medium">{e.title}</div>
                   <div className="text-[11px] text-muted-foreground">
-                    {e.subjectName} · {e.classroom ?? "all classes"} · {e.questionCount} questions · {e.durationMins} min
+                    {e.subjectName} · {e.classroom ?? "all classes"} · {e.questionCount} questions · {e.totalMarks} marks · {e.durationMins} min
                     {e.description ? ` · ${e.description}` : ""}
                   </div>
                 </div>
                 {done ? (
-                  <Badge variant="secondary" className="gap-1"><CheckCircle2 className="size-3" /> submitted — {myAttempts.get(studentId)!.score}/{myAttempts.get(studentId)!.max}</Badge>
+                  <Badge variant="secondary" className="gap-1"><CheckCircle2 className="size-3" /> submitted — {att!.score}/{att!.max}</Badge>
                 ) : (
-                  <Button size="sm" className="gap-1.5" onClick={() => { setSitting(e); setAnswers({}); setJustScored(null); }}><Send className="size-3.5" /> Sit exam</Button>
+                  <Button size="sm" className="gap-1.5" onClick={() => openPaper(e)}><Send className="size-3.5" /> {att ? "Continue" : "Sit exam"}</Button>
                 )}
               </div>
             );
@@ -531,43 +579,96 @@ function StudentExams({ studentId, classroomId }: { studentId: string; classroom
           </CardContent>
         </Card>
       )}
-      <Dialog open={!!sitting} onOpenChange={(o) => { if (!o) { setSitting(null); setAnswers({}); } }}>
+      <Dialog open={!!sitting} onOpenChange={(o) => { if (!o) { setSitting(null); setAnswers({}); setBlankInputs({}); setSecsLeft(null); } }}>
         <DialogContent className="max-w-xl max-h-[92vh] overflow-y-auto nice-scroll">
           <DialogHeader>
-            <DialogTitle>{sitting?.title}</DialogTitle>
+            <DialogTitle className="flex items-center justify-between gap-2 pr-8">
+              <span className="truncate">{sitting?.title}</span>
+              {secsLeft != null && (
+                <span className={cn("text-xs font-bold tabular-nums px-2 py-1 rounded-full", secsLeft <= 60 ? "bg-red-100 text-red-700 animate-pulse" : "bg-secondary")}>
+                  {Math.floor(secsLeft / 60)}:{String(secsLeft % 60).padStart(2, "0")}
+                </span>
+              )}
+            </DialogTitle>
             <DialogDescription>
-              {sitting?.subjectName} · {sitting?.questionCount} questions · {sitting?.durationMins} minutes · pick one option each.
+              {sitting?.subjectName} · {sitting?.questionCount} questions · {sitting?.totalMarks} marks · {sitting?.durationMins} minutes.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             {(sitting?.questions ?? []).map((q, i) => (
               <div key={q.id} className="rounded-xl border p-3">
-                <div className="font-medium text-sm mb-2">{i + 1}. {q.prompt}</div>
-                <div className="grid grid-cols-2 gap-2">
-                  {(["A", "B", "C", "D"] as const).map((L) => {
-                    const opt = (q as any)[`option${L}`] as string;
-                    const picked = answers[String(i)] === L;
-                    return (
-                      <button
-                        key={L}
-                        onClick={() => setAnswers((a) => ({ ...a, [String(i)]: L }))}
-                        className={cn(
-                          "rounded-lg border p-2 text-left text-sm transition-colors",
-                          picked ? "border-primary bg-primary/10 font-medium" : "hover:bg-secondary/50",
-                        )}
-                      >
-                        <b className="mr-1.5">{L}.</b>{opt}
-                      </button>
-                    );
-                  })}
-                </div>
+                {q.type === "FILL_BLANKS" ? (
+                  <>
+                    <div className="font-medium text-sm mb-2">
+                      {i + 1}.{" "}
+                      {q.prompt.split("-").map((part, j, all) => (
+                        <span key={j}>
+                          {part}
+                          {j < all.length - 1 && (
+                            <input
+                              value={blankInputs[`${i}:${j}`] ?? ""}
+                              onChange={(e) => setBlankInputs((b) => ({ ...b, [`${i}:${j}`]: e.target.value }))}
+                              className="inline-block w-24 border-b-2 border-primary bg-transparent px-1 mx-1 text-center focus:outline-none"
+                              placeholder="…"
+                            />
+                          )}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="text-[11px] text-muted-foreground">Fill each blank — spelling counts, capital letters don't.</div>
+                  </>
+                ) : q.type === "TRUE_FALSE" ? (
+                  <>
+                    <div className="font-medium text-sm mb-2">{i + 1}. {q.prompt}</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(["TRUE", "FALSE"] as const).map((v) => {
+                        const picked = answers[String(i)] === v;
+                        return (
+                          <button
+                            key={v}
+                            onClick={() => setAnswers((a) => ({ ...a, [String(i)]: v }))}
+                            className={cn(
+                              "rounded-lg border p-2 text-left text-sm transition-colors",
+                              picked ? "border-primary bg-primary/10 font-medium" : "hover:bg-secondary/50",
+                            )}
+                          >
+                            {v === "TRUE" ? "True" : "False"}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="font-medium text-sm mb-2">{i + 1}. {q.prompt}</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(["A", "B", "C", "D"] as const).map((L) => {
+                        const opt = (q as any)[`option${L}`] as string | null;
+                        if (!opt) return null;
+                        const picked = answers[String(i)] === L;
+                        return (
+                          <button
+                            key={L}
+                            onClick={() => setAnswers((a) => ({ ...a, [String(i)]: L }))}
+                            className={cn(
+                              "rounded-lg border p-2 text-left text-sm transition-colors",
+                              picked ? "border-primary bg-primary/10 font-medium" : "hover:bg-secondary/50",
+                            )}
+                          >
+                            <b className="mr-1.5">{L}.</b>{opt}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
               </div>
             ))}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setSitting(null); setAnswers({}); }}>Cancel</Button>
-            <Button className="gap-1.5" onClick={submit} disabled={Object.keys(answers).length !== (sitting?.questions.length ?? 0)}>
-              Submit {Object.keys(answers).length}/{sitting?.questions.length ?? 0}
+            <Button variant="outline" onClick={() => { setSitting(null); setAnswers({}); setBlankInputs({}); setSecsLeft(null); }}>Cancel</Button>
+            <Button className="gap-1.5" onClick={() => submit()} disabled={answeredCount() !== (sitting?.questions.length ?? 0)}>
+              Submit {answeredCount()}/{sitting?.questions.length ?? 0}
             </Button>
           </DialogFooter>
         </DialogContent>

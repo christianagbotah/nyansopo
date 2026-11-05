@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
 import { apiGet, apiPost } from "@/lib/api";
 import { ModuleHeader, LoadingBlock, EmptyState, StatCard } from "@/components/ui-helpers";
@@ -14,30 +14,38 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { Laptop, Plus, Send, Lock, Trash2, PencilLine, Users, Trophy, Clock, ChevronLeft, ChevronRight, CheckCircle2 } from "lucide-react";
+import { Laptop, Plus, Send, Lock, Trash2, PencilLine, Users, Trophy, Clock, CheckCircle2, Printer, Radio, Eye, EyeOff } from "lucide-react";
 
-type Question = { id?: string; prompt: string; optionA: string; optionB: string; optionC: string; optionD: string; correctOption: string; marks: number };
-type Attempt = { id: string; studentId: string; student: string; score: number | null; max: number; submittedAt: string };
+type Question = {
+  id?: string; type: string; prompt: string;
+  optionA?: string | null; optionB?: string | null; optionC?: string | null; optionD?: string | null;
+  correctOption: string; blankAnswers?: string | null; marks: number;
+};
+type Attempt = { id: string; studentId: string; student: string; score: number | null; max: number; startedAt?: string | null; submittedAt: string };
 type Exam = {
   id: string; title: string; subjectName: string; description: string | null;
   classroom: string | null; classroomId: string | null; durationMins: number; scheduledAt: string | null;
   status: string; createdByName: string | null; createdAt: string;
   questionCount: number; totalMarks: number; avgScore: number | null;
-  questions: { id: string; prompt: string; optionA: string; optionB: string; optionC: string; optionD: string; correctOption: string; marks: number }[];
+  questions: { id: string; type: string; prompt: string; optionA: string | null; optionB: string | null; optionC: string | null; optionD: string | null; correctOption: string; blankAnswers: string | null; marks: number }[];
   attempts: Attempt[];
 };
 
-const STATUS_STYLE: Record<string, string> = {
-  DRAFT: "bg-zinc-500",
-  PUBLISHED: "bg-emerald-600",
-  CLOSED: "bg-slate-600",
-};
+const STATUS_STYLE: Record<string, string> = { DRAFT: "bg-zinc-500", PUBLISHED: "bg-emerald-600", CLOSED: "bg-slate-600" };
+const TYPE_LABEL: Record<string, string> = { MCQ: "Multiple choice", TRUE_FALSE: "True / False", FILL_BLANKS: "Fill in the blanks" };
+
+/** render a fill-blanks prompt: "-" → underline gaps */
+export function renderBlanks(prompt: string): (string | { blank: true })[] {
+  return prompt.split("-").map((part, i, all) => (i === 0 ? part : [{ blank: true as const }, part])).flat();
+}
 
 export function OnlineExams() {
   const { currentSchoolId, session } = useStore();
   const [exams, setExams] = useState<Exam[] | null>(null);
   const [edit, setEdit] = useState<Exam | "new" | null>(null);
   const [resultsFor, setResultsFor] = useState<Exam | null>(null);
+  const [printFor, setPrintFor] = useState<Exam | null>(null);
+  const [monitorFor, setMonitorFor] = useState<Exam | null>(null);
 
   const load = useCallback(() => {
     if (!currentSchoolId) return;
@@ -63,7 +71,7 @@ export function OnlineExams() {
     <div>
       <ModuleHeader
         title="Online Exams"
-        description="Publish MCQ papers to a class, let learners sit them from the student portal, and auto-mark against the answer key — iEduPro online_exam parity."
+        description="Publish MCQ, true/false and fill-in-the-blanks papers to a class, watch learners sit them live, print the question paper, and auto-mark — iEduPro online_exam parity."
         actions={<Button size="sm" className="gap-1.5 h-8" onClick={() => setEdit("new")}><Plus className="size-4" /> Create exam</Button>}
       />
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
@@ -106,6 +114,7 @@ export function OnlineExams() {
                     <TableCell className="tabular-nums">{e.avgScore != null ? `${Math.round((e.avgScore / Math.max(1, e.totalMarks)) * 100)}%` : "—"}</TableCell>
                     <TableCell className="text-right">
                       <div className="inline-flex gap-1">
+                        <Button size="sm" variant="ghost" className="h-7 gap-1" title="Print question paper" onClick={() => setPrintFor(e)}><Printer className="size-3.5" /></Button>
                         {e.status === "DRAFT" && (
                           <>
                             <Button size="sm" variant="ghost" className="h-7 gap-1" onClick={() => setEdit(e)}><PencilLine className="size-3.5" /> Edit</Button>
@@ -115,6 +124,7 @@ export function OnlineExams() {
                         )}
                         {e.status === "PUBLISHED" && (
                           <>
+                            <Button size="sm" variant="ghost" className="h-7 gap-1 text-violet-600" onClick={() => setMonitorFor(e)}><Radio className="size-3.5" /> Monitor</Button>
                             <Button size="sm" variant="ghost" className="h-7 gap-1" onClick={() => setResultsFor(e)}>Results</Button>
                             <Button size="sm" variant="ghost" className="h-7 gap-1" onClick={() => act({ action: "close", id: e.id }, "Exam closed")}><Lock className="size-3.5" /> Close</Button>
                           </>
@@ -131,20 +141,21 @@ export function OnlineExams() {
           </CardContent>
         </Card>
       ) : (
-        <EmptyState icon={<Laptop className="size-8" />} title="No online exams yet" hint="Create one — add MCQ questions, publish it to a class, and learners sit it from the student portal." />
+        <EmptyState icon={<Laptop className="size-8" />} title="No online exams yet" hint="Create one — add questions of any type, publish it to a class, and learners sit it from the student portal." />
       )}
 
-      <ExamEditor
-        exam={edit}
-        onOpenChange={(o) => !o && setEdit(null)}
-        onDone={() => { setEdit(null); load(); }}
-      />
+      <ExamEditor exam={edit} onOpenChange={(o) => !o && setEdit(null)} onDone={() => { setEdit(null); load(); }} />
       <ResultsDialog exam={resultsFor} onOpenChange={(o) => !o && setResultsFor(null)} />
+      <PrintPaperDialog exam={printFor} onOpenChange={(o) => !o && setPrintFor(null)} />
+      <MonitorDialog exam={monitorFor} onOpenChange={(o) => !o && setMonitorFor(null)} />
     </div>
   );
 }
 
-const blankQuestion = (): Question => ({ prompt: "", optionA: "", optionB: "", optionC: "", optionD: "", correctOption: "A", marks: 1 });
+const blankQuestion = (type = "MCQ"): Question =>
+  type === "MCQ" ? { type, prompt: "", optionA: "", optionB: "", optionC: "", optionD: "", correctOption: "A", marks: 1 }
+  : type === "TRUE_FALSE" ? { type, prompt: "", correctOption: "TRUE", marks: 1 }
+  : { type, prompt: "", correctOption: "-", blankAnswers: "", marks: 1 };
 
 function ExamEditor({ exam, onOpenChange, onDone }: { exam: Exam | "new" | null; onOpenChange: (o: boolean) => void; onDone: () => void }) {
   const { currentSchoolId } = useStore();
@@ -166,7 +177,10 @@ function ExamEditor({ exam, onOpenChange, onDone }: { exam: Exam | "new" | null;
     if (exam && exam !== "new") {
       setTitle(exam.title); setSubject(exam.subjectName); setDescription(exam.description ?? "");
       setClassroomId(exam.classroomId ?? "all"); setDuration(String(exam.durationMins));
-      setQuestions(exam.questions.map((q) => ({ ...q })));
+      setQuestions(exam.questions.map((q) => ({
+        ...q,
+        blankAnswers: q.blankAnswers ? (JSON.parse(q.blankAnswers) as string[]).join(", ") : "",
+      })));
     } else if (exam === "new") {
       setTitle(""); setSubject(""); setDescription(""); setClassroomId("all"); setDuration("30"); setQuestions([blankQuestion()]);
     }
@@ -174,6 +188,9 @@ function ExamEditor({ exam, onOpenChange, onDone }: { exam: Exam | "new" | null;
 
   function setQ(i: number, patch: Partial<Question>) {
     setQuestions((qs) => qs.map((q, j) => (j === i ? { ...q, ...patch } : q)));
+  }
+  function switchType(i: number, type: string) {
+    setQuestions((qs) => qs.map((q, j) => (j === i ? { ...blankQuestion(type), prompt: q.prompt, marks: q.marks } : q)));
   }
 
   async function save() {
@@ -197,7 +214,7 @@ function ExamEditor({ exam, onOpenChange, onDone }: { exam: Exam | "new" | null;
       <DialogContent className="max-w-2xl max-h-[92vh] overflow-y-auto nice-scroll">
         <DialogHeader>
           <DialogTitle>{exam && exam !== "new" ? "Edit exam" : "Create online exam"}</DialogTitle>
-          <DialogDescription>MCQ paper — learners pick one option per question; marking is automatic.</DialogDescription>
+          <DialogDescription>Multiple choice, true/false and fill-in-the-blanks questions — marking is automatic.</DialogDescription>
         </DialogHeader>
         <div className="grid sm:grid-cols-2 gap-3">
           <div className="space-y-1.5">
@@ -232,33 +249,80 @@ function ExamEditor({ exam, onOpenChange, onDone }: { exam: Exam | "new" | null;
             <Label className="text-sm font-semibold">Questions ({questions.length})</Label>
             <Button size="sm" variant="outline" className="h-7 gap-1" onClick={() => setQuestions((qs) => [...qs, blankQuestion()])}><Plus className="size-3.5" /> Add</Button>
           </div>
-          {questions.map((q, i) => (
-            <div key={i} className="rounded-xl border p-3 space-y-2">
-              <div className="flex items-start gap-2">
-                <span className="mt-2 text-xs font-bold text-muted-foreground">Q{i + 1}</span>
-                <div className="flex-1 space-y-2">
-                  <Input value={q.prompt} onChange={(e) => setQ(i, { prompt: e.target.value })} placeholder="Question prompt…" />
-                  <div className="grid grid-cols-2 gap-2">
-                    {(["A", "B", "C", "D"] as const).map((L) => (
-                      <Input key={L} value={(q as any)[`option${L}`]} onChange={(e) => setQ(i, { [`option${L}`]: e.target.value } as any)} placeholder={`Option ${L}`} className="h-8" />
-                    ))}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground">Correct</span>
-                    <Select value={q.correctOption} onValueChange={(v) => setQ(i, { correctOption: v })}>
-                      <SelectTrigger className="h-8 w-20"><SelectValue /></SelectTrigger>
-                      <SelectContent>{["A", "B", "C", "D"].map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}</SelectContent>
-                    </Select>
-                    <span className="text-xs text-muted-foreground">Marks</span>
-                    <Input type="number" min={1} value={q.marks} onChange={(e) => setQ(i, { marks: Number(e.target.value) || 1 })} className="h-8 w-16" />
-                    {questions.length > 1 && (
-                      <Button size="sm" variant="ghost" className="h-8 ml-auto text-destructive" onClick={() => setQuestions((qs) => qs.filter((_, j) => j !== i))}><Trash2 className="size-3.5" /></Button>
+          {questions.map((q, i) => {
+            const blanks = q.prompt ? q.prompt.split("-").length - 1 : 0;
+            const words = (q.blankAnswers ?? "").split(",").map((w) => w.trim()).filter(Boolean).length;
+            return (
+              <div key={i} className="rounded-xl border p-3 space-y-2">
+                <div className="flex items-start gap-2">
+                  <span className="mt-2 text-xs font-bold text-muted-foreground">Q{i + 1}</span>
+                  <div className="flex-1 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Select value={q.type} onValueChange={(v) => switchType(i, v)}>
+                        <SelectTrigger className="h-8 w-44"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="MCQ">{TYPE_LABEL.MCQ}</SelectItem>
+                          <SelectItem value="TRUE_FALSE">{TYPE_LABEL.TRUE_FALSE}</SelectItem>
+                          <SelectItem value="FILL_BLANKS">{TYPE_LABEL.FILL_BLANKS}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <div className="ml-auto flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground">Marks</span>
+                        <Input type="number" min={1} value={q.marks} onChange={(e) => setQ(i, { marks: Number(e.target.value) || 1 })} className="h-8 w-16" />
+                        {questions.length > 1 && (
+                          <Button size="sm" variant="ghost" className="h-8 text-destructive" onClick={() => setQuestions((qs) => qs.filter((_, j) => j !== i))}><Trash2 className="size-3.5" /></Button>
+                        )}
+                      </div>
+                    </div>
+                    <Input value={q.prompt} onChange={(e) => setQ(i, { prompt: e.target.value })}
+                      placeholder={q.type === "FILL_BLANKS" ? "The capital of Ghana is - and it lies on the - coast." : "Question prompt…"} />
+                    {q.type === "MCQ" && (
+                      <>
+                        <div className="grid grid-cols-2 gap-2">
+                          {(["A", "B", "C", "D"] as const).map((L) => (
+                            <Input key={L} value={(q as any)[`option${L}`] ?? ""} onChange={(e) => setQ(i, { [`option${L}`]: e.target.value } as any)} placeholder={`Option ${L}`} className="h-8" />
+                          ))}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground">Correct</span>
+                          <Select value={q.correctOption} onValueChange={(v) => setQ(i, { correctOption: v })}>
+                            <SelectTrigger className="h-8 w-20"><SelectValue /></SelectTrigger>
+                            <SelectContent>{["A", "B", "C", "D"].map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}</SelectContent>
+                          </Select>
+                        </div>
+                      </>
+                    )}
+                    {q.type === "TRUE_FALSE" && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground">Correct answer</span>
+                        {(["TRUE", "FALSE"] as const).map((v) => (
+                          <Button key={v} size="sm" variant={q.correctOption === v ? "default" : "outline"} className="h-8"
+                            onClick={() => setQ(i, { correctOption: v })}>{v === "TRUE" ? "True" : "False"}</Button>
+                        ))}
+                      </div>
+                    )}
+                    {q.type === "FILL_BLANKS" && (
+                      <>
+                        <Input value={q.blankAnswers ?? ""} onChange={(e) => setQ(i, { blankAnswers: e.target.value })}
+                          placeholder="Accepted words, comma-separated, in blank order — e.g. Accra, Gulf" className="h-8" />
+                        <div className="text-[11px] flex items-center gap-2">
+                          <span className={cn("font-medium", blanks === 0 ? "text-amber-600" : words === blanks ? "text-emerald-600" : "text-amber-600")}>
+                            {blanks} blank{blanks === 1 ? "" : "s"} in prompt · {words} answer word{words === 1 ? "" : "s"}
+                          </span>
+                          <span className="text-muted-foreground">— mark each blank with a hyphen “-”; matching is case-insensitive.</span>
+                        </div>
+                        <div className="rounded-md bg-secondary/50 px-3 py-1.5 text-sm">
+                          {renderBlanks(q.prompt || "The capital of Ghana is - …").map((part, j) =>
+                            typeof part === "string" ? <span key={j}>{part}</span> : <span key={j} className="inline-block w-16 border-b border-foreground/60 mx-1 align-baseline">&nbsp;</span>
+                          )}
+                        </div>
+                      </>
                     )}
                   </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
@@ -301,6 +365,191 @@ function ResultsDialog({ exam, onOpenChange }: { exam: Exam | null; onOpenChange
             </TableBody>
           </Table>
         ) : <EmptyState title="No attempts yet" hint="Learners submit from the student portal once the exam is published." />}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Printable question paper — CI3 online_exam_questions_print_view parity. */
+function PrintPaperDialog({ exam, onOpenChange }: { exam: Exam | null; onOpenChange: (o: boolean) => void }) {
+  const { currentSchoolId } = useStore();
+  const [withAnswers, setWithAnswers] = useState(false);
+  const [schoolName, setSchoolName] = useState("");
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!currentSchoolId || !exam) return;
+    apiGet<any>(`/api/school/${currentSchoolId}/settings`)
+      .then((d) => { setSchoolName(d.school?.name ?? ""); setLogoUrl(d.branding?.logoUrl ?? null); })
+      .catch(() => {});
+  }, [currentSchoolId, exam]);
+
+  if (!exam) return <Dialog open={false} onOpenChange={onOpenChange}><DialogContent /></Dialog>;
+  const blankWords = (q: { blankAnswers: string | null }) =>
+    q.blankAnswers ? (JSON.parse(q.blankAnswers) as string[]).join(", ") : "";
+
+  return (
+    <Dialog open={!!exam} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-3xl max-h-[92vh] overflow-y-auto nice-scroll">
+        <DialogHeader className="no-print">
+          <DialogTitle>Print question paper</DialogTitle>
+          <DialogDescription>{exam.title} · {exam.questionCount} questions · {exam.totalMarks} marks</DialogDescription>
+        </DialogHeader>
+
+        <div className="no-print flex items-center justify-between rounded-lg border bg-secondary/30 px-3 py-2">
+          <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={() => setWithAnswers((v) => !v)}>
+            {withAnswers ? <><EyeOff className="size-3.5" /> Without answers</> : <><Eye className="size-3.5" /> With answers</>}
+          </Button>
+          <Button size="sm" className="h-8 gap-1.5" onClick={() => window.print()}><Printer className="size-3.5" /> Print</Button>
+        </div>
+
+        {/* ── printable paper ── */}
+        <div className="print-area rounded-lg border p-6 text-black bg-white" style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}>
+          <div className="text-center border-b-2 border-black pb-3 mb-4">
+            {logoUrl && <img src={logoUrl} alt="" className="h-16 mx-auto mb-2" />}
+            <div className="text-xl font-bold tracking-widest uppercase">{schoolName || "School"}</div>
+            <div className="mt-2 inline-block bg-black text-white px-4 py-1 rounded-full text-sm font-semibold">{exam.title}</div>
+            <div className="mt-2 text-sm">
+              Class: {exam.classroom ?? "All classes"} &nbsp;·&nbsp; Subject: {exam.subjectName}
+            </div>
+            <div className="text-sm">
+              Total marks: {exam.totalMarks} &nbsp;·&nbsp; Time: {exam.durationMins} minutes
+            </div>
+            {exam.description && <div className="mt-2 text-xs italic">Instructions: {exam.description}</div>}
+          </div>
+
+          {exam.questions.map((q, i) => (
+            <div key={q.id} className="mb-5">
+              <div className="flex justify-between gap-4">
+                <div className="flex-1">
+                  <span className="font-semibold">{i + 1}.</span>{" "}
+                  {q.type === "FILL_BLANKS"
+                    ? renderBlanks(q.prompt).map((part, j) =>
+                        typeof part === "string" ? <span key={j}>{part}</span> : <span key={j} className="inline-block w-24 border-b-2 border-black mx-1 align-baseline">&nbsp;</span>
+                      )
+                    : <span>{q.prompt}</span>}
+                </div>
+                <div className="text-sm font-semibold tabular-nums">[{q.marks}]</div>
+              </div>
+              <div className="ml-5 mt-1">
+                {q.type === "MCQ" && (
+                  <ul className="list-disc ml-4 text-sm space-y-0.5">
+                    {(["A", "B", "C", "D"] as const).map((L) => {
+                      const text = (q as any)[`option${L}`];
+                      if (!text) return null;
+                      const isCorrect = withAnswers && q.correctOption === L;
+                      return <li key={L} className={isCorrect ? "font-bold underline" : ""}>{L}. {text}{isCorrect ? " ✓" : ""}</li>;
+                    })}
+                  </ul>
+                )}
+                {q.type === "TRUE_FALSE" && (
+                  <div className="text-sm">
+                    <span className="mr-3">☐ True</span><span>☐ False</span>
+                    {withAnswers && <span className="ml-3 italic font-bold">[correct answer — {q.correctOption === "TRUE" ? "True" : "False"}]</span>}
+                  </div>
+                )}
+                {q.type === "FILL_BLANKS" && withAnswers && (
+                  <div className="text-sm italic font-bold">[correct answers — {blankWords(q)}]</div>
+                )}
+              </div>
+              <div className="mt-3 border-b border-dotted border-black/30" />
+            </div>
+          ))}
+
+          <div className="mt-6 text-center text-xs italic">Good luck! End of paper.</div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+type MonitorRow = { studentId: string; name: string; state: string; startedAt: string | null; submittedAt: string | null; score: number | null; max: number };
+
+/** Live monitor — polls every 5 s while open: who has started, who is still
+ *  writing, who submitted (CI3 left this a static placeholder; ours is real). */
+function MonitorDialog({ exam, onOpenChange }: { exam: Exam | null; onOpenChange: (o: boolean) => void }) {
+  const { currentSchoolId } = useStore();
+  const [rows, setRows] = useState<MonitorRow[] | null>(null);
+  const [examMeta, setExamMeta] = useState<{ title: string; status: string; totalMarks: number } | null>(null);
+  const [auto, setAuto] = useState(true);
+  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const poll = useCallback(async () => {
+    if (!currentSchoolId || !exam) return;
+    try {
+      const d = await apiGet<any>(`/api/school/${currentSchoolId}/ops/exams?monitor=${exam.id}`);
+      setRows(d.roster); setExamMeta(d.exam);
+    } catch (e: any) { toast({ title: "Monitor failed", description: e.message, variant: "destructive" }); }
+  }, [currentSchoolId, exam]);
+
+  useEffect(() => {
+    if (!exam) return;
+    if (timer.current) clearInterval(timer.current);
+    // first poll runs off the sync path, then every 5 s while auto-refresh is on
+    timer.current = setInterval(() => { if (auto) poll(); }, 5000);
+    const first = setTimeout(poll, 0);
+    return () => { if (timer.current) clearInterval(timer.current); clearTimeout(first); };
+  }, [exam, auto, poll]);
+
+  if (!exam) return <Dialog open={false} onOpenChange={onOpenChange}><DialogContent /></Dialog>;
+  const counts = { not: 0, prog: 0, done: 0 };
+  for (const r of rows ?? []) { if (r.state === "NOT_STARTED") counts.not++; else if (r.state === "IN_PROGRESS") counts.prog++; else counts.done++; }
+
+  const STATE_CHIP: Record<string, string> = {
+    NOT_STARTED: "bg-zinc-100 text-zinc-600",
+    IN_PROGRESS: "bg-amber-100 text-amber-700",
+    SUBMITTED: "bg-emerald-100 text-emerald-700",
+  };
+
+  return (
+    <Dialog open={!!exam} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[92vh] overflow-y-auto nice-scroll">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><Radio className="size-4 text-violet-600" /> Live — {exam.title}</DialogTitle>
+          <DialogDescription>
+            {examMeta?.status === "PUBLISHED" ? "Refreshes every 5 seconds while the exam is open." : "Exam is closed — final states."}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid grid-cols-3 gap-3">
+          <div className="rounded-lg border p-3 text-center"><div className="text-2xl font-bold tabular-nums">{counts.not}</div><div className="text-xs text-muted-foreground">not started</div></div>
+          <div className="rounded-lg border p-3 text-center bg-amber-50"><div className="text-2xl font-bold tabular-nums text-amber-700">{counts.prog}</div><div className="text-xs text-muted-foreground">writing now</div></div>
+          <div className="rounded-lg border p-3 text-center bg-emerald-50"><div className="text-2xl font-bold tabular-nums text-emerald-700">{counts.done}</div><div className="text-xs text-muted-foreground">submitted</div></div>
+        </div>
+
+        {rows === null ? <LoadingBlock label="Loading monitor…" /> : rows.length === 0 ? (
+          <EmptyState title="No class roster" hint="This exam targets all classes — the monitor lists learners once they start (from the student portal)." />
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Learner</TableHead>
+                <TableHead>State</TableHead>
+                <TableHead className="hidden sm:table-cell">Started</TableHead>
+                <TableHead className="text-right">Score</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((r) => (
+                <TableRow key={r.studentId}>
+                  <TableCell className="font-medium">{r.name}</TableCell>
+                  <TableCell><span className={cn("text-[11px] font-semibold px-2 py-0.5 rounded-full", STATE_CHIP[r.state])}>
+                    {r.state === "NOT_STARTED" ? "Not started" : r.state === "IN_PROGRESS" ? "Writing…" : "Submitted"}
+                  </span></TableCell>
+                  <TableCell className="hidden sm:table-cell text-xs text-muted-foreground">{r.startedAt ? new Date(r.startedAt).toLocaleTimeString() : "—"}</TableCell>
+                  <TableCell className="text-right tabular-nums">{r.score != null ? `${r.score}/${r.max}` : "—"}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+
+        <div className="flex items-center justify-between">
+          <label className="text-xs text-muted-foreground flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> auto-refresh
+          </label>
+          <Button size="sm" variant="outline" className="h-8" onClick={poll}>Refresh now</Button>
+        </div>
       </DialogContent>
     </Dialog>
   );
