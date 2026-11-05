@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { StatCard, ModuleHeader, LoadingBlock, SeverityBadge, StatusBadge } from "@/components/ui-helpers";
 import { fmtCedi, fmtDate, PAYMENT_LABELS, FLAG_LABELS, fmtDateShort } from "@/lib/format";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell } from "recharts";
-import { Banknote, CalendarCheck, Flag, TrendingUp, Users, AlertTriangle, ArrowLeftRight, Inbox, UtensilsCrossed, Calculator, Package, Smartphone, Bus, Droplets, BookOpen, Baby, UserPlus, ClipboardList, MessageSquareText, BellRing, HandCoins, PiggyBank, Receipt } from "lucide-react";
+import { Banknote, CalendarCheck, Flag, TrendingUp, Users, AlertTriangle, ArrowLeftRight, Inbox, UtensilsCrossed, Calculator, Package, Smartphone, Bus, Droplets, BookOpen, Baby, UserPlus, ClipboardList, MessageSquareText, BellRing, HandCoins, PiggyBank, Receipt, LayoutList } from "lucide-react";
 
 type Dash = {
   school: any; year: { name: string } | null; term: any;
@@ -45,7 +45,7 @@ const SERVICE_ICONS: Record<string, React.ReactNode> = {
   OTHER: <Package className="size-4 text-muted-foreground" />,
 };
 
-const GENDER_COLORS = { boys: "#0e5f3f", girls: "#c05621" };
+const GENDER_COLORS = { boys: "var(--chart-1)", girls: "var(--chart-2)" };
 
 export function Dashboard() {
   const { currentSchoolId, setModule, session } = useStore();
@@ -110,27 +110,29 @@ export function Dashboard() {
 
       {!isTeacher && (
         <>
-          {/* ── CI3 key metrics — every card links into its module ── */}
+          {/* ── CI3 key metrics — every card links into its module. Duplicates the
+              top KPI row never: roll/attendance live up top, so this row shows
+              people + today's cash + classes (CI3 dashboard tile set) ── */}
           <div className="mt-4 grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-            <button onClick={() => setModule("students")} className="rounded-xl border border-l-4 border-l-blue-500 bg-card p-4 text-left hover:bg-secondary/40 transition-colors">
-              <div className="flex items-center justify-between"><span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Total students</span><Users className="size-4 text-blue-500" /></div>
-              <div className="mt-1 text-2xl font-bold tabular-nums">{stats.students}</div>
-              <div className="text-[11px] text-muted-foreground">Currently enrolled</div>
-            </button>
-            <button onClick={() => setModule("staffhub")} className="rounded-xl border border-l-4 border-l-pink-500 bg-card p-4 text-left hover:bg-secondary/40 transition-colors">
+            <button onClick={() => setModule("staffhub")} className="rounded-xl border border-r-4 border-r-pink-500 bg-card p-4 text-left hover:bg-secondary/40 transition-colors">
               <div className="flex items-center justify-between"><span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Active teachers</span><ClipboardList className="size-4 text-pink-500" /></div>
               <div className="mt-1 text-2xl font-bold tabular-nums">{stats.teacherCount ?? "—"}</div>
               <div className="text-[11px] text-muted-foreground">Teaching staff</div>
             </button>
-            <button onClick={() => setModule("sms", { tab: "compose" })} className="rounded-xl border border-l-4 border-l-sky-500 bg-card p-4 text-left hover:bg-secondary/40 transition-colors">
+            <button onClick={() => setModule("sms", { tab: "compose" })} className="rounded-xl border border-r-4 border-r-sky-500 bg-card p-4 text-left hover:bg-secondary/40 transition-colors">
               <div className="flex items-center justify-between"><span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Registered parents</span><MessageSquareText className="size-4 text-sky-500" /></div>
               <div className="mt-1 text-2xl font-bold tabular-nums">{stats.parentCount ?? "—"}</div>
               <div className="text-[11px] text-muted-foreground">Guardians with portal logins</div>
             </button>
-            <button onClick={() => setModule("attendance")} className="rounded-xl border border-l-4 border-l-amber-500 bg-card p-4 text-left hover:bg-secondary/40 transition-colors">
-              <div className="flex items-center justify-between"><span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Present today</span><CalendarCheck className="size-4 text-amber-500" /></div>
-              <div className="mt-1 text-2xl font-bold tabular-nums">{stats.attendanceRate !== null ? `${stats.attendanceRate}%` : "—"}</div>
-              <div className="text-[11px] text-muted-foreground">Attendance rate (recent)</div>
+            <button onClick={() => setModule("cashier", { tab: "portal" })} className="rounded-xl border border-r-4 border-r-emerald-500 bg-card p-4 text-left hover:bg-secondary/40 transition-colors">
+              <div className="flex items-center justify-between"><span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Cash today</span><HandCoins className="size-4 text-emerald-500" /></div>
+              <div className="mt-1 text-2xl font-bold tabular-nums">{ops ? fmtCedi(ops.daily.todayCollected, { compact: true }) : "—"}</div>
+              <div className="text-[11px] text-muted-foreground">Counter + wallets collected today</div>
+            </button>
+            <button onClick={() => setModule("classes")} className="rounded-xl border border-r-4 border-r-amber-500 bg-card p-4 text-left hover:bg-secondary/40 transition-colors">
+              <div className="flex items-center justify-between"><span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Classes</span><LayoutList className="size-4 text-amber-500" /></div>
+              <div className="mt-1 text-2xl font-bold tabular-nums">{stats.classes}</div>
+              <div className="text-[11px] text-muted-foreground">Active classrooms</div>
             </button>
           </div>
 
@@ -272,14 +274,14 @@ export function Dashboard() {
                 <AreaChart data={attData} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
                   <defs>
                     <linearGradient id="attGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#0e5f3f" stopOpacity={0.35} />
-                      <stop offset="100%" stopColor="#0e5f3f" stopOpacity={0.02} />
+                      <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.35} />
+                      <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0.02} />
                     </linearGradient>
                   </defs>
                   <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="#888" />
                   <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} stroke="#888" unit="%" />
                   <Tooltip formatter={(v: any) => [`${v}%`, "Present"]} contentStyle={{ borderRadius: 10, border: "1px solid #e7ddc8" }} />
-                  <Area type="monotone" dataKey="rate" stroke="#0e5f3f" strokeWidth={2.2} fill="url(#attGrad)" />
+                  <Area type="monotone" dataKey="rate" stroke="var(--chart-1)" strokeWidth={2.2} fill="url(#attGrad)" />
                 </AreaChart>
               </ResponsiveContainer>
             ) : (

@@ -172,7 +172,7 @@ export function CashierConsole() {
           {/* CI3 fee-collection portal KPI strip — one colourful card per fee type + total */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
             {Object.entries(data.report.serviceTotals).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([svc, amt]) => (
-              <div key={svc} className="rounded-xl border-l-4 border bg-card p-3" style={{ borderColor: undefined }}>
+              <div key={svc} className="rounded-xl border-r-4 border bg-card p-3">
                 <div className="flex items-center gap-1.5 text-xs font-semibold">{SERVICE_ICON[svc] ?? <Wallet className="size-4" />} {svc}</div>
                 <div className="mt-1 text-lg font-bold tabular-nums">{fmtCedi(amt, { compact: true })}</div>
                 <div className="text-[11px] text-muted-foreground">{fmtDate(data.period.from)}{data.period.from !== data.period.to ? ` → ${fmtDate(data.period.to)}` : ""}</div>
@@ -1052,7 +1052,7 @@ function MyCollectionsTab({ data, collector }: { data: CashierData | null; colle
       {/* per-fee-type summary cards + grand total (CI3 summary cards) */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 print-area">
         {Object.entries(totals).filter(([k]) => k !== "grand").sort((a, b) => b[1] - a[1]).slice(0, 5).map(([svc, amt]) => (
-          <div key={svc} className={`rounded-xl border-l-4 bg-card p-3 ${SERVICE_TONE[svc] ? "" : "border-border"}`} style={{ borderLeftColor: undefined }}>
+          <div key={svc} className={`rounded-xl border-r-4 bg-card p-3 ${SERVICE_TONE[svc] ? "" : "border-border"}`}>
             <div className="flex items-center gap-1.5 text-xs font-semibold">{SERVICE_ICON[svc] ?? <Wallet className="size-4" />} {svc}</div>
             <div className="mt-1 text-lg font-bold tabular-nums">{fmtCedi(amt, { compact: true })}</div>
           </div>

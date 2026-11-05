@@ -230,3 +230,93 @@ button:disabled *, [aria-disabled="true"] * { cursor: not-allowed; }
 /* text inputs keep the I-beam (typing affordance), matching native behaviour */
 input[type="text"], input[type="email"], input[type="number"], input[type="tel"],
 input[type="url"], input[type="search"], input[type="password"], textarea { cursor: text; }
+
+/* ══ School theming (CI3 app_theme / header.php parity) ═══════════════
+   applyThemeToDOM() (src/lib/theme.ts) sets --theme-primary/-secondary/-accent
+   on <html>; the surfaces below re-paint exactly like iEduPro's dynamic block:
+   linear-gradient(135deg, primary → secondary) on the top bar, sidebar and
+   every modal header, accent hovers, and a theme-tinted card header. */
+:root {
+  --theme-primary: #0e5f3f;
+  --theme-secondary: #1b4d38;
+  --theme-accent: #d9a521;
+}
+
+/* CI3 #top (top bar) + .sidebar-menu */
+.theme-topbar {
+  background: linear-gradient(135deg, var(--theme-primary) 0%, var(--theme-secondary) 100%) !important;
+  border-bottom-color: color-mix(in srgb, var(--theme-accent) 35%, transparent) !important;
+  color: #fffdf4;
+}
+/* everything inside the gradient bar flips to light ink (CI3 top bar) */
+.theme-topbar .text-foreground,
+.theme-topbar .text-muted-foreground,
+.theme-topbar .text-sidebar-foreground { color: rgb(255 253 244 / 0.92) !important; }
+.theme-topbar .text-muted-foreground { color: rgb(255 253 244 / 0.65) !important; }
+.theme-topbar .border-border, .theme-topbar .border-sidebar-border { border-color: rgb(255 253 244 / 0.18) !important; }
+.theme-topbar [data-slot="badge"].bg-background { background: rgb(255 253 244 / 0.15) !important; color: #fffdf4 !important; border-color: rgb(255 253 244 / 0.3) !important; }
+.theme-topbar button:hover { background: rgb(255 253 244 / 0.12); }
+.theme-topbar [data-slot="select-trigger"], .theme-topbar [data-slot="button"].bg-secondary { background: rgb(255 253 244 / 0.12) !important; color: #fffdf4 !important; border-color: rgb(255 253 244 / 0.25) !important; }
+.theme-sidebar {
+  background: linear-gradient(160deg, var(--theme-primary) 0%, var(--theme-secondary) 100%) !important;
+}
+/* CI3 #main-menu li.active / a:hover — accent-tinted hover + active rail */
+.theme-sidebar .text-sidebar-foreground\/70:hover { color: #fff !important; }
+
+/* CI3 .modern-modal-header — every dialog & sheet header wears the gradient */
+[data-slot="dialog-header"],
+[data-slot="alert-dialog-header"] {
+  background: linear-gradient(135deg, var(--theme-primary) 0%, var(--theme-secondary) 100%);
+  color: #fffdf4;
+  padding: 1rem 1.5rem;
+  margin: -1.5rem -1.5rem 0 -1.5rem;
+  border-radius: calc(var(--radius) - 0.35rem) calc(var(--radius) - 0.35rem) 0 0;
+}
+[data-slot="sheet-header"] {
+  background: linear-gradient(135deg, var(--theme-primary) 0%, var(--theme-secondary) 100%);
+  color: #fffdf4;
+  padding: 1rem 3rem 1rem 1.25rem;
+}
+[data-slot="dialog-header"] [data-slot="dialog-title"],
+[data-slot="alert-dialog-header"] [data-slot="alert-dialog-title"],
+[data-slot="sheet-header"] [data-slot="sheet-title"] {
+  color: #fffdf4;
+}
+[data-slot="dialog-header"] [data-slot="dialog-description"],
+[data-slot="alert-dialog-header"] [data-slot="alert-dialog-description"],
+[data-slot="sheet-header"] [data-slot="sheet-description"] {
+  color: rgb(255 253 244 / 0.78);
+}
+/* the X sits on the gradient header — flip it light (content-scoped via :has) */
+[data-slot="dialog-content"]:has([data-slot="dialog-header"]) > [data-slot="dialog-close"],
+[data-slot="alert-dialog-content"]:has([data-slot="alert-dialog-header"]) > [data-slot="alert-dialog-close"],
+[data-slot="sheet-content"]:has([data-slot="sheet-header"]) > button {
+  color: rgb(255 253 244 / 0.85);
+}
+[data-slot="dialog-content"]:has([data-slot="dialog-header"]) > [data-slot="dialog-close"]:hover,
+[data-slot="alert-dialog-content"]:has([data-slot="alert-dialog-header"]) > [data-slot="alert-dialog-close"]:hover,
+[data-slot="sheet-content"]:has([data-slot="sheet-header"]) > button:hover {
+  color: #fffdf4;
+  background: rgb(255 255 255 / 0.12);
+  opacity: 1;
+}
+
+/* CI3 panel headings — card headers carry a gentle theme tint + accent rail */
+[data-slot="card-header"] {
+  background: color-mix(in srgb, var(--theme-primary) 5%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--theme-primary) 14%, transparent);
+  border-radius: calc(var(--radius) - 0.3rem) calc(var(--radius) - 0.3rem) 0 0;
+}
+[data-slot="card-header"] [data-slot="card-title"] { color: color-mix(in srgb, var(--theme-primary) 82%, var(--foreground)); }
+
+/* compact KPI cards: the CI3 stat-tile look — small body, coloured right rail */
+.stat-card {
+  padding-block: 0.9rem !important;
+  gap: 0 !important;
+  border-right-width: 4px;
+  border-right-color: var(--stat-accent, var(--theme-primary));
+  border-radius: 0.75rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+.stat-card:hover { box-shadow: 0 3px 10px color-mix(in srgb, var(--stat-accent, var(--theme-primary)) 22%, transparent); }
+.stat-card [data-slot="card-content"] { padding-inline: 1rem !important; }

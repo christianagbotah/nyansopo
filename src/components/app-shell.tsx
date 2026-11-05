@@ -20,6 +20,7 @@ import { NotificationBell } from "@/components/notification-bell";
 import { CommandPalette } from "@/components/command-palette";
 import { MetroMenu, MetroEdgeTrigger } from "@/components/metro-menu";
 import { PAGE_INDEX, type PageEntry } from "@/lib/page-index";
+import { applyThemeToDOM, type SchoolTheme } from "@/lib/theme";
 import { Dashboard } from "@/components/modules/dashboard";
 import { Students } from "@/components/modules/students";
 import { Admissions } from "@/components/modules/admissions";
@@ -276,6 +277,16 @@ export function AppShell() {
     document.documentElement.classList.toggle("dark", theme === "dark");
     localStorage.setItem("theme", theme);
   }, [theme]);
+
+  /* ── school theming (CI3 app_theme parity): load the school's colours and
+     paint the whole shell — top bar, sidebar, buttons, modal headers, charts.
+     Falls back to the Nyansapo brand when no theme row exists. ── */
+  useEffect(() => {
+    if (!currentSchoolId || !session) return;
+    apiGet<{ theme: SchoolTheme }>(`/api/school/${currentSchoolId}/ops/theme`)
+      .then((d) => { if (d?.theme) applyThemeToDOM(d.theme); })
+      .catch(() => null);
+  }, [currentSchoolId, session?.id]);
 
   useEffect(() => {
     const handler = (e: any) => { e.preventDefault(); setInstallEvent(e); };
@@ -580,7 +591,7 @@ export function AppShell() {
   return (
     <div className="min-h-screen flex flex-col bg-background">
       {/* ── top bar ── */}
-      <header className="sticky top-0 z-40 bg-card border-b border-border">
+      <header className="theme-topbar sticky top-0 z-40 bg-card border-b border-border">
         <div className="h-14 px-3 sm:px-5 flex items-center gap-3">
           {/* mobile nav */}
           <Sheet open={navOpen} onOpenChange={setNavOpen}>
@@ -744,7 +755,7 @@ export function AppShell() {
         {/* desktop sidebar — collapses to an icon rail on wide modules (fees billing)
             or when the user pins it closed; the pin button lives in the rail header */}
         <aside className={cn(
-          "hidden lg:flex flex-col bg-sidebar text-sidebar-foreground sticky top-[61px] self-start h-[calc(100vh-61px)] transition-all duration-200",
+          "theme-sidebar hidden lg:flex flex-col bg-sidebar text-sidebar-foreground sticky top-[61px] self-start h-[calc(100vh-61px)] transition-all duration-200",
           railCollapsed ? "w-14" : "w-64",
         )}>
           <div className={cn("p-3 flex items-center gap-2.5 border-b border-sidebar-border", railCollapsed && "flex-col px-2")}>

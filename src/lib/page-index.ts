@@ -14,7 +14,7 @@ import {
   BedDouble, Calculator, Package, PieChart, Settings as SettingsIcon, ShieldCheck, BrainCircuit,
   Landmark, Building2, Route, Smartphone, MessageSquareText, FileSpreadsheet, BadgeCheck, Layers,
   Armchair, BookMarked, Network, UsersRound, HeartPulse, ScrollText, Wrench, Timer, Stethoscope,
-  Flag, Trees, Sparkles, Scale, FileSearch, ShoppingBasket, GalleryHorizontal, Rows3, Banknote as Bank,
+  Flag, Trees, Sparkles, Scale, FileSearch, ShoppingBasket, GalleryHorizontal, Rows3, Banknote as Bank, Palette,
 } from "lucide-react";
 
 export type PageEntry = {
@@ -144,7 +144,8 @@ export const PAGE_INDEX: PageEntry[] = [
   // ── System & Administration ──
   { id: "pg-set-profile", label: "School Profile", section: S.system, module: "settings", target: { tab: "profile" }, perm: ["settings.manage"], icon: SettingsIcon, keywords: ["name", "logo", "curricula", "ges cambridge ib"] },
   { id: "pg-set-system", label: "System Settings", section: S.system, module: "settings", target: { tab: "system" }, perm: ["settings.manage"], icon: SettingsIcon, keywords: ["currency", "receipts", "defaults"] },
-  { id: "pg-set-branding", label: "Branding & Logos", section: S.system, module: "settings", target: { tab: "branding" }, perm: ["settings.manage"], icon: Sparkles, keywords: ["theme", "colours", "kente"] },
+  { id: "pg-set-branding", label: "Branding & Logos", section: S.system, module: "settings", target: { tab: "branding" }, perm: ["settings.manage"], icon: Sparkles, keywords: ["logo", "signature", "ssnit logo", "kente"] },
+  { id: "pg-set-theme", label: "Theme & Colours", section: S.system, module: "settings", target: { tab: "theme" }, perm: ["settings.manage"], icon: Palette, keywords: ["theme", "colour scheme", "primary color", "secondary", "accent", "skin", "branding colors", "app_theme"] },
   { id: "pg-set-classes", label: "Classrooms", section: S.system, module: "settings", target: { tab: "classes" }, perm: ["settings.manage"], icon: BookOpen, keywords: ["streams", "sections", "levels"] },
   { id: "pg-set-subjects", label: "Subjects", section: S.system, module: "settings", target: { tab: "subjects" }, perm: ["settings.manage"], icon: BookMarked, keywords: ["courses", "maths", "english"] },
   { id: "pg-set-calendar", label: "Calendar & Terms", section: S.system, module: "settings", target: { tab: "calendar" }, perm: ["settings.manage"], icon: CalendarDays, keywords: ["terms", "sessions", "vacation"] },

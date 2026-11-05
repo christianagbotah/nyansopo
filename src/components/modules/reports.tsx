@@ -980,7 +980,7 @@ function ResultsControlTab() {
       {data.rows.length ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {data.rows.map((r) => (
-            <Card key={r.classroomId} className={cn("border-l-4", STATUS_STYLE[r.status]?.split(" ").find((x) => x.startsWith("border-")) ?? "border-zinc-300")}>
+            <Card key={r.classroomId} className={cn("border-r-4", STATUS_STYLE[r.status]?.split(" ").find((x) => x.startsWith("border-")) ?? "border-zinc-300")}>
               <CardContent className="pt-4 space-y-3">
                 <div className="flex items-start justify-between gap-2">
                   <div>

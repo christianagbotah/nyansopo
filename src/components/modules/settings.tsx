@@ -14,9 +14,10 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { ModuleHeader, LoadingBlock, StatusBadge, StatCard, EmptyState } from "@/components/ui-helpers";
 import { SCALES_TABLE } from "@/lib/grading-scale";
 import { CURRICULA } from "@/lib/curricula";
+import { THEME_PRESETS, DEFAULT_THEME, applyThemeToDOM, type SchoolTheme } from "@/lib/theme";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import {Settings as SettingsIcon, GraduationCap, BookOpen, Users, CalendarRange, Plus, Save, MessageSquareQuote, Sparkles, Trash2, Award, Pencil, Baby, Sigma, PencilLine, ChevronDown, ChevronRight, ImageUp, ReceiptText, ShieldCheck, Banknote} from "lucide-react";
+import {Settings as SettingsIcon, GraduationCap, BookOpen, Users, CalendarRange, Plus, Save, MessageSquareQuote, Sparkles, Trash2, Award, Pencil, Baby, Sigma, PencilLine, ChevronDown, ChevronRight, ImageUp, ReceiptText, ShieldCheck, Banknote, Palette, CheckCircle2} from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 
@@ -50,6 +51,9 @@ export function Settings() {
   const [branding, setBranding] = useState<{ logoUrl: string | null; signatureUrl: string | null; ssnitLogoUrl: string | null; receiptStyle: string }>({ logoUrl: null, signatureUrl: null, ssnitLogoUrl: null, receiptStyle: "A5" });
   // CI3 system_settings_modern General/Payment/Security fields (system.* KV)
   const [sys, setSys] = useState<any>({ slogan: "", address: "", boxNumber: "", digitalAddress: "", website: "", ssnitNumber: "", currency: "GHS", halfPaymentBy: "First Week", fullPaymentBy: "", momoAccountName: "", momoAccountNumber: "", autoLock: false });
+  // school theme (CI3 app_theme / theme_settings parity)
+  const [themeState, setThemeState] = useState<SchoolTheme>(DEFAULT_THEME);
+  const [customTheme, setCustomTheme] = useState<{ primary: string; secondary: string; accent: string }>({ primary: DEFAULT_THEME.primary, secondary: DEFAULT_THEME.secondary, accent: DEFAULT_THEME.accent });
   // statutory rates (OpsSetting — shared with payroll runs)
   const [rates, setRates] = useState<any>({ ssnitTier1Employee: 5, ssnitTier1Employer: 13, ssnitTier2: 5, getfund: 2.5, nhil: 2.5 });
   // per-term "days opened" edits (termId → value as typed)
@@ -59,7 +63,7 @@ export function Settings() {
   const [appliedTarget, setAppliedTarget] = useState<any>(null);
   if (navTarget !== appliedTarget) {
     setAppliedTarget(navTarget);
-    if (navTarget?.tab && ["profile", "system", "branding", "classes", "subjects", "calendar", "staff", "grading", "earlyyears", "sba", "waec", "reportlib", "statutory"].includes(navTarget.tab)) setTab(navTarget.tab);
+    if (navTarget?.tab && ["profile", "system", "branding", "theme", "classes", "subjects", "calendar", "staff", "grading", "earlyyears", "sba", "waec", "reportlib", "statutory"].includes(navTarget.tab)) setTab(navTarget.tab);
   }
 
   const load = () => {
@@ -69,6 +73,11 @@ export function Settings() {
       setForm({ motto: d.school.motto ?? "", phone: d.school.phone ?? "", email: d.school.email ?? "", curriculum: d.school.curriculum, curricula: (() => { try { const arr = d.school.curricula ? JSON.parse(d.school.curricula) : [d.school.curriculum]; return Array.isArray(arr) && arr.length ? arr : [d.school.curriculum]; } catch { return [d.school.curriculum]; } })(), nasiaStatus: d.school.nasiaStatus, gnacopsStatus: d.school.gnacopsStatus });
       setBranding({ logoUrl: d.branding?.logoUrl ?? null, signatureUrl: d.branding?.signatureUrl ?? null, ssnitLogoUrl: d.branding?.ssnitLogoUrl ?? null, receiptStyle: d.branding?.receiptStyle ?? "A5" });
       setSys((prev: any) => ({ ...prev, ...(d.system ?? {}) }));
+      const t: SchoolTheme | null = d.theme ?? null;
+      const resolved = t && t.primary && t.secondary && t.accent ? t : DEFAULT_THEME;
+      setThemeState(resolved);
+      setCustomTheme({ primary: resolved.primary, secondary: resolved.secondary, accent: resolved.accent });
+      applyThemeToDOM(resolved);
       setRates(d.statutory ?? rates);
       setDaysEdits({});
     }).catch((e) => toast({ title: "Load failed", description: e.message, variant: "destructive" }));
@@ -97,6 +106,23 @@ export function Settings() {
       load();
     } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); }
     finally { setBusy(false); }
+  }
+
+  /* CI3 theme_settings apply_theme / save_custom — live-paints the shell (no reload) */
+  async function applyTheme(payload: { action: "preset" | "custom"; theme?: string; primary?: string; secondary?: string; accent?: string; name?: string }) {
+    setBusy(true);
+    try {
+      const d = await apiPost<{ theme: SchoolTheme; message: string }>(`/api/school/${currentSchoolId}/ops/theme`, payload);
+      setThemeState(d.theme);
+      setCustomTheme({ primary: d.theme.primary, secondary: d.theme.secondary, accent: d.theme.accent });
+      applyThemeToDOM(d.theme);
+      toast({ title: d.message, description: "Every page, button, modal and chart now wears the new colours." });
+    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); }
+    finally { setBusy(false); }
+  }
+
+  function previewCustom() {
+    applyThemeToDOM({ name: "Custom preview", ...customTheme });
   }
 
   /* CI3 system_settings do_update — General + Payment + Security in one save */
@@ -136,6 +162,7 @@ export function Settings() {
           <TabsTrigger value="profile">Profile & curriculum</TabsTrigger>
           <TabsTrigger value="system" className="gap-1.5"><SettingsIcon className="size-4" /> System</TabsTrigger>
           <TabsTrigger value="branding" className="gap-1.5"><ReceiptText className="size-4" /> Branding &amp; logos</TabsTrigger>
+          <TabsTrigger value="theme" className="gap-1.5"><Palette className="size-4" /> Theme</TabsTrigger>
           <TabsTrigger value="statutory" className="gap-1.5"><ShieldCheck className="size-4" /> Statutory (SSNIT)</TabsTrigger>
           <TabsTrigger value="classes">Classes ({data.classrooms.length})</TabsTrigger>
           <TabsTrigger value="subjects">Subjects ({data.subjects.length})</TabsTrigger>
@@ -414,6 +441,73 @@ export function Settings() {
               <Button className="gap-1.5" disabled={busy} onClick={() => savePreferences({ logoUrl: branding.logoUrl, signatureUrl: branding.signatureUrl, ssnitLogoUrl: branding.ssnitLogoUrl, receiptStyle: branding.receiptStyle })}>
                 <Save className="size-4" /> {busy ? "Saving&hellip;" : "Save branding &amp; receipts"}
               </Button>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ── Theme (CI3 theme_settings.php parity): preset swatch cards +
+             custom pickers — applies instantly, every member sees it next load ── */}
+        <TabsContent value="theme">
+          <Card>
+            <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><Palette className="size-4" /> Theme customization</CardTitle></CardHeader>
+            <CardContent className="space-y-6">
+              <p className="text-xs text-muted-foreground">Pick the colour scheme for your system — the top bar, sidebar, buttons, modal headers, cards and charts all follow it. Choose a predefined theme below or mix your own with the custom pickers (CI3 app_theme parity). Applies instantly for everyone at next sign-in.</p>
+
+              <div>
+                <h3 className="mb-3 text-sm font-semibold flex items-center gap-1.5"><Sparkles className="size-4 text-primary" /> Predefined themes</h3>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                  {THEME_PRESETS.map((p) => {
+                    const active = themeState.primary.toLowerCase() === p.primary.toLowerCase() && themeState.secondary.toLowerCase() === p.secondary.toLowerCase();
+                    return (
+                      <button
+                        key={p.key}
+                        onClick={() => applyTheme({ action: "preset", theme: p.key })}
+                        disabled={busy}
+                        className={cn(
+                          "rounded-xl border-2 overflow-hidden text-left transition-all hover:-translate-y-0.5 hover:shadow-md",
+                          active ? "border-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.15)]" : "border-border",
+                        )}
+                        title={`Apply ${p.name}`}
+                      >
+                        <div className="relative h-20" style={{ background: `linear-gradient(135deg, ${p.primary} 0%, ${p.secondary} 100%)` }}>
+                          <div className="absolute bottom-2 left-2 right-2 h-4 rounded" style={{ background: p.accent }} />
+                        </div>
+                        <div className="flex items-center justify-between px-2.5 py-2 bg-secondary/40">
+                          <span className="text-xs font-semibold">{p.name}</span>
+                          {active && <CheckCircle2 className="size-4 text-emerald-500" />}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="border-t pt-5">
+                <h3 className="mb-3 text-sm font-semibold flex items-center gap-1.5"><Pencil className="size-4 text-primary" /> Custom theme</h3>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="space-y-1.5">
+                    <Label>Primary colour</Label>
+                    <input type="color" value={customTheme.primary} onChange={(e) => { setCustomTheme({ ...customTheme, primary: e.target.value }); previewCustom(); }} className="h-11 w-full cursor-pointer rounded-lg border bg-card p-1" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Secondary colour</Label>
+                    <input type="color" value={customTheme.secondary} onChange={(e) => { setCustomTheme({ ...customTheme, secondary: e.target.value }); previewCustom(); }} className="h-11 w-full cursor-pointer rounded-lg border bg-card p-1" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Accent colour</Label>
+                    <input type="color" value={customTheme.accent} onChange={(e) => { setCustomTheme({ ...customTheme, accent: e.target.value }); previewCustom(); }} className="h-11 w-full cursor-pointer rounded-lg border bg-card p-1" />
+                  </div>
+                </div>
+                <div className="mt-4 flex items-center gap-2 flex-wrap">
+                  <Button className="gap-1.5" disabled={busy} onClick={() => applyTheme({ action: "custom", ...customTheme, name: "Custom" })}>
+                    <Save className="size-4" /> {busy ? "Applying&hellip;" : "Apply custom theme"}
+                  </Button>
+                  <Button variant="outline" className="gap-1.5" onClick={previewCustom} disabled={busy}>
+                    <Sparkles className="size-4" /> Preview (reloads on sign-in if not saved)
+                  </Button>
+                  <span className="text-xs text-muted-foreground">Current: <b>{themeState.name}</b> — {themeState.primary} / {themeState.secondary} / {themeState.accent}</span>
+                </div>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

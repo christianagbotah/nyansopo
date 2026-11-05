@@ -245,6 +245,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       const daysOpened = await db.schoolSetting.findMany({ where: { schoolId, key: { startsWith: "term.daysOpened:" } } });
       // CI3 system_settings_modern General/Payment/Security tabs (system.* KV)
       const systemSettings = await db.schoolSetting.findMany({ where: { schoolId, key: { startsWith: "system." } } });
+      // CI3 app_theme / theme_primary parity (school branding colours)
+      const themeRow = await db.schoolSetting.findUnique({ where: { schoolId_key: { schoolId, key: "theme" } } });
+      let theme: unknown = null;
+      try { theme = themeRow ? JSON.parse(themeRow.value) : null; } catch { theme = null; }
       const sys: Record<string, any> = {};
       for (const row of systemSettings) {
         try { sys[row.key.slice("system.".length)] = JSON.parse(row.value); } catch { sys[row.key.slice("system.".length)] = row.value; }
@@ -270,6 +274,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         remarkTemplates: remarkTemplates.map((t) => ({ id: t.id, category: t.category, minPercent: t.minPercent, maxPercent: t.maxPercent, text: t.text, active: t.active })),
         conductItems: conductItems.map((c) => ({ id: c.id, name: c.name, kind: c.kind, active: c.active })),
         branding: { logoUrl: pref("branding.logoUrl"), signatureUrl: pref("branding.signatureUrl"), ssnitLogoUrl: pref("branding.ssnitLogoUrl"), receiptStyle: pref("receipts.style") ?? "A5" },
+        theme,
         daysOpened: daysMap,
         system: sys,
         statutory: {

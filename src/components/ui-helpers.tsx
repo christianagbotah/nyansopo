@@ -1,5 +1,5 @@
 "use client";
-import { ReactNode } from "react";
+import { ReactNode, type CSSProperties } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -10,22 +10,27 @@ import { STATUS_COLORS } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Filter, Search, X } from "lucide-react";
 
+/* CI3 stat-tile parity: compact card with a coloured right rail (wave 11 —
+   "make all the cards like the second row with a touch of coloured right
+   border"). The rail hue follows the card tone; the theme rail defaults to
+   the school's primary colour. */
 export function StatCard({ icon, label, value, sub, tone = "default" }: { icon?: ReactNode; label: string; value: ReactNode; sub?: ReactNode; tone?: "default" | "primary" | "gold" | "danger" }) {
   const tones = {
-    default: "text-foreground",
-    primary: "text-primary",
-    gold: "text-[#a97c0b] dark:text-[#e5b83b]",
-    danger: "text-destructive",
+    default: { value: "text-foreground", rail: "color-mix(in srgb, var(--theme-primary) 55%, var(--border))" },
+    primary: { value: "text-primary", rail: "var(--theme-primary)" },
+    gold: { value: "text-[#a97c0b] dark:text-[#e5b83b]", rail: "var(--gold)" },
+    danger: { value: "text-destructive", rail: "var(--destructive)" },
   };
+  const t = tones[tone];
   return (
-    <Card>
-      <CardContent className="pt-5 pb-5">
+    <Card className="stat-card" style={{ "--stat-accent": t.rail } as CSSProperties}>
+      <CardContent>
         <div className="flex items-center justify-between">
           <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</span>
           {icon && <span className="text-muted-foreground">{icon}</span>}
         </div>
-        <div className={cn("mt-2 text-2xl font-bold tabular-nums", tones[tone])}>{value}</div>
-        {sub && <div className="mt-1 text-xs text-muted-foreground">{sub}</div>}
+        <div className={cn("mt-1.5 text-2xl font-bold tabular-nums", t.value)}>{value}</div>
+        {sub && <div className="mt-0.5 text-[11px] text-muted-foreground">{sub}</div>}
       </CardContent>
     </Card>
   );
@@ -49,9 +54,11 @@ export function SeverityBadge({ severity }: { severity: string }) {
 export function ModuleHeader({ title, description, actions }: { title: string; description?: string; actions?: ReactNode }) {
   return (
     <div className="flex flex-wrap items-start justify-between gap-3 mb-5">
-      <div>
+      <div className="min-w-0">
         <h1 className="text-xl font-bold tracking-tight">{title}</h1>
         {description && <p className="text-sm text-muted-foreground mt-0.5 max-w-2xl">{description}</p>}
+        {/* CI3 panel-heading accent — a slim theme-coloured rail under the page title */}
+        <div className="h-[3px] w-16 rounded-full mt-2" style={{ background: "linear-gradient(90deg, var(--theme-primary), var(--theme-accent))" }} />
       </div>
       {actions && <div className="flex items-center gap-2 flex-wrap">{actions}</div>}
     </div>
