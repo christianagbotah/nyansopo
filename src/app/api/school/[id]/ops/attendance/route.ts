@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
 import { sendAutomated } from "@/lib/sms";
+import { applyAttendanceChargeRule, applyTransportUsage, collectDailyItems, resolveTransportFare, effectivePrice, TRANSPORT_USAGES, type TransportUsage } from "@/lib/daily-billing";
+import { canAny } from "@/lib/rbac";
 
 // ── Attendance ops (iEduPro CI3 register parity) ──────────────
 //    GET  ?action=register&classId=&date=YYYY-MM-DD   — daily register payload
@@ -171,21 +173,92 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   const term = await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId } } });
   const session = await db.attendanceSession.findFirst({ where: { classroomId: classId, date }, include: { records: { include: { student: true } } } });
-  if (!session) {
-    const enrolled = await db.enrollment.findMany({ where: { classroomId: classId, status: "ACTIVE" }, include: { student: true }, orderBy: { rollNo: "asc" } });
-    return NextResponse.json({
-      classrooms: classrooms.map((c) => ({ id: c.id, name: c.name, grade: c.gradeLevel, stage: c.stageLabel })),
-      session: null, date: dateStr, termId: term?.id,
-      students: enrolled.map((e) => ({ id: e.student.id, name: `${e.student.firstName} ${e.student.lastName}`, rollNo: e.rollNo, status: null })),
+
+  // CI3 mark page shape: the FULL class roll — enrolled learners get their
+  // persisted status (null when unmarked); records without an enrollment row
+  // (left the roll) are still shown so their marks are not lost.
+  const enrolled = await db.enrollment.findMany({ where: { classroomId: classId, status: "ACTIVE" }, include: { student: true }, orderBy: { rollNo: "asc" } });
+  const byStudent = new Map<string, { id: string; name: string; rollNo: number | null; status: string | null; markedOffline?: boolean; excusedReason?: string | null }>();
+  for (const e of enrolled) {
+    byStudent.set(e.student.id, { id: e.student.id, name: `${e.student.firstName} ${e.student.lastName}`, rollNo: e.rollNo, status: null });
+  }
+  if (session) {
+    for (const r of session.records) {
+      byStudent.set(r.studentId, {
+        id: r.studentId,
+        name: `${r.student.firstName} ${r.student.lastName}`,
+        rollNo: byStudent.get(r.studentId)?.rollNo ?? null,
+        status: r.status, markedOffline: r.markedOffline, excusedReason: r.excusedReason,
+      });
+    }
+  }
+  const students = Array.from(byStudent.values()).sort((a, b) => a.name.localeCompare(b.name));
+
+  /* fee collection block on the register (CI3 save_attendance_and_fees):
+     per-learner item state + transport fare, only when the session may view
+     daily services — the register UI gates the inputs on daily.collect. */
+  let fees: null | {
+    studentId: string;
+    items: { serviceId: string; name: string; category: string; rateCents: number; arrearsCents: number; prepaidCents: number; optional: boolean; optedOut: boolean; optedIn: boolean; weekly: boolean; weeklyBilled: boolean; chargedToday: boolean }[];
+    transport: { routeName: string; stopName: string | null; onewayCents: number } | null;
+  }[] = null;
+  if (canAny(auth.user.permissions, ["daily.view"])) {
+    const day = new Date(date); day.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(day); dayEnd.setHours(23, 59, 59, 999);
+    const weekStart = new Date(day); weekStart.setDate(day.getDate() - ((day.getDay() + 6) % 7));
+    const weekEnd = new Date(weekStart); weekEnd.setDate(weekStart.getDate() + 7); weekEnd.setMilliseconds(-1);
+    const ids = students.map((s) => s.id);
+    const enrollRows = await db.dailyServiceEnrollment.findMany({
+      where: { studentId: { in: ids }, active: true, service: { schoolId, active: true, category: { not: "TRANSPORT" } } },
+      include: { service: { include: { classRates: true } } },
+    });
+    const exceptions = await db.dailyMealException.findMany({ where: { studentId: { in: ids }, date: { gte: day, lte: dayEnd }, status: "APPROVED" } });
+    const owedRows = await db.dailyCharge.findMany({ where: { studentId: { in: ids }, status: "OWED" } });
+    const weekCharges = await db.dailyCharge.findMany({ where: { studentId: { in: ids }, date: { gte: weekStart, lte: weekEnd } }, include: { service: true } });
+    const todayCharges = weekCharges.filter((c) => c.date >= day && c.date <= dayEnd);
+    const balances = await db.serviceBalance.findMany({ where: { studentId: { in: ids } } });
+    const fares = await Promise.all(ids.map((sid) => resolveTransportFare(db, sid)));
+
+    fees = ids.map((sid, i) => {
+      const items = enrollRows
+        .filter((e) => e.studentId === sid)
+        .map((e) => {
+          const svc = e.service;
+          const classRate = svc.classRates.find((r) => r.classroomId === classId)?.priceCents ?? null;
+          const optedOut = exceptions.some((x) => x.studentId === sid && x.serviceId === svc.id && x.kind === "OPT_OUT");
+          const optedIn = exceptions.some((x) => x.studentId === sid && x.serviceId === svc.id && x.kind === "OPT_IN");
+          const weekly = svc.chargeMode === "WEEKLY";
+          const weeklyBilled = weekly && weekCharges.some((c) => c.studentId === sid && c.serviceId === svc.id && c.service.chargeMode === "WEEKLY");
+          return {
+            serviceId: svc.id,
+            name: svc.name,
+            category: svc.category,
+            rateCents: effectivePrice(svc, e, classRate),
+            arrearsCents: owedRows.filter((c) => c.studentId === sid && c.serviceId === svc.id).reduce((a, c) => a + c.amountCents, 0),
+            prepaidCents: balances.find((b) => b.studentId === sid && b.serviceId === svc.id)?.prepaidCents ?? 0,
+            optional: svc.optInDaily,
+            optedOut,
+            optedIn,
+            weekly,
+            weeklyBilled,
+            chargedToday: todayCharges.some((c) => c.studentId === sid && c.serviceId === svc.id),
+          };
+        });
+      const fare = fares[i];
+      return {
+        studentId: sid,
+        items,
+        transport: fare ? { routeName: fare.routeName, stopName: fare.stopName, onewayCents: fare.onewayCents } : null,
+      };
     });
   }
+
   return NextResponse.json({
     classrooms: classrooms.map((c) => ({ id: c.id, name: c.name, grade: c.gradeLevel, stage: c.stageLabel })),
-    session: { id: session.id, takenByName: session.takenByName },
-    date: dateStr, termId: session.termId,
-    students: session.records
-      .map((r) => ({ id: r.student.id, name: `${r.student.firstName} ${r.student.lastName}`, rollNo: null, status: r.status, markedOffline: r.markedOffline, excusedReason: r.excusedReason }))
-      .sort((a, b) => a.name.localeCompare(b.name)),
+    session: session ? { id: session.id, takenByName: session.takenByName } : null,
+    date: dateStr, termId: session?.termId ?? term?.id ?? null,
+    students,
+    ...(fees ? { fees } : {}),
   });
 }
 
@@ -200,7 +273,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const action: string = body.action;
   if (action !== "save-register") return NextResponse.json({ error: "Unknown action" }, { status: 404 });
 
-  const { classroomId, date, records, offline, clientId } = body;
+  const { classroomId, date, records, fees, offline, clientId } = body;
   if (!classroomId || typeof classroomId !== "string") return NextResponse.json({ error: "classroomId is required" }, { status: 400 });
   if (typeof date !== "string" || !DATE_RE.test(date)) return NextResponse.json({ error: "date must be YYYY-MM-DD" }, { status: 400 });
   if (!Array.isArray(records) || !records.length) return NextResponse.json({ error: "records[] is required" }, { status: 400 });
@@ -222,6 +295,24 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
   const finalRecords = Array.from(byStudent.values());
 
+  // fee collection rides on the register (CI3 save_attendance_and_fees): each
+  // entry carries per-item amounts + optional transport usage. Permission split:
+  // attendance.save registers the roll; daily.collect takes money.
+  const canCollect = canAny(user.permissions, ["daily.collect", "daily.manage"]);
+  let feeEntries: { studentId: string; items: { serviceId: string; amountCents: number }[]; transportUsage?: string }[] = [];
+  if (Array.isArray(fees) && fees.length) {
+    if (!canCollect) return NextResponse.json({ error: "Forbidden — collecting daily fees needs the daily.collect permission" }, { status: 403 });
+    for (const f of fees) {
+      if (!f || typeof f.studentId !== "string") continue;
+      const items = Array.isArray(f.items)
+        ? f.items.map((i: any) => ({ serviceId: String(i?.serviceId ?? ""), amountCents: Math.max(0, Math.round(Number(i?.amountCents) || 0)) })).filter((i: any) => i.serviceId && i.amountCents > 0)
+        : [];
+      const usage = typeof f.transportUsage === "string" && TRANSPORT_USAGES.includes(f.transportUsage as any) ? f.transportUsage : undefined;
+      if (items.length || usage) feeEntries.push({ studentId: f.studentId, items, transportUsage: usage });
+    }
+    feeEntries = feeEntries.filter((f) => byStudent.has(f.studentId) || true); // allow fee-only rows too
+  }
+
   // offline-queue idempotency (SYNC: clientId marker, same as the legacy resource)
   if (clientId) {
     const existing = await db.attendanceSession.findFirst({ where: { classroomId, date: new Date(date), takenByName: { contains: `SYNC:${clientId}` } } });
@@ -231,12 +322,65 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const term = await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId } } });
   if (!term) return NextResponse.json({ error: "No current term for this school" }, { status: 400 });
 
-  // find-or-create the session for (classroom, date), then replace its records
-  let session = await db.attendanceSession.findFirst({ where: { classroomId, date: new Date(date) } });
-  if (session) await db.attendanceRecord.deleteMany({ where: { sessionId: session.id } });
-  else session = await db.attendanceSession.create({ data: { classroomId, schoolId, termId: term.id, date: new Date(date), takenByName: `${user.fullName}${clientId ? ` (SYNC:${clientId})` : ""}` } });
+  // find-or-create the session; records are UPSERTED per learner (CI3 partial
+  // update — a re-save touches only the learners sent, the rest keep their marks)
+  let session: any = await db.attendanceSession.findFirst({ where: { classroomId, date: new Date(date) }, include: { records: true } });
+  if (!session) {
+    session = await db.attendanceSession.create({
+      data: { classroomId, schoolId, termId: term.id, date: new Date(date), takenByName: `${user.fullName}${clientId ? ` (SYNC:${clientId})` : ""}` },
+    });
+    session.records = [];
+  }
+  const before = new Map<string, string | null>(session.records.map((r: any) => [r.studentId, r.status]));
+  const priorById = new Map<string, any>(session.records.map((r: any) => [r.studentId, r]));
+
+  const chargeOutcomes: { studentId: string; waived: number; credited: number; reinstated: number; created: number }[] = [];
   for (const r of finalRecords) {
-    await db.attendanceRecord.create({ data: { sessionId: session.id, studentId: r.studentId, status: r.status, excusedReason: r.excusedReason, markedOffline: !!offline } });
+    const existing = priorById.get(r.studentId);
+    if (existing) {
+      await db.attendanceRecord.update({
+        where: { id: existing.id },
+        data: { status: r.status, excusedReason: r.excusedReason, markedOffline: !!offline },
+      });
+    } else {
+      await db.attendanceRecord.create({
+        data: { sessionId: session.id, studentId: r.studentId, status: r.status, excusedReason: r.excusedReason, markedOffline: !!offline },
+      });
+    }
+    // CI3 status-change charge rule (save_attendance_and_fees 158–300)
+    if (!offline) {
+      const outcome = await applyAttendanceChargeRule(db, {
+        schoolId, studentId: r.studentId, date: new Date(date),
+        from: before.get(r.studentId) ?? null, to: r.status,
+        byName: user.fullName, byRole: user.role,
+      });
+      if (outcome.waived || outcome.credited || outcome.reinstated || outcome.created) chargeOutcomes.push({ studentId: r.studentId, ...outcome });
+    }
+  }
+
+  // fee collection on the register (CI3): per-item amounts settle that item's
+  // arrears FIFO, excess banks as the item's prepaid advance
+  const receipts: { studentId: string; receiptNo: string; amountCents: number }[] = [];
+  if (!offline && feeEntries.length) {
+    const svcRows = feeEntries.flatMap((f) => f.items.map((i) => i.serviceId));
+    const services = svcRows.length ? await db.dailyService.findMany({ where: { schoolId, id: { in: svcRows } } }) : [];
+    for (const f of feeEntries) {
+      if (f.transportUsage) {
+        const applied = await applyTransportUsage(db, schoolId, f.studentId, new Date(date), f.transportUsage as TransportUsage, { performedByName: user.fullName, performedByRole: user.role });
+        if (f.transportUsage !== "NOT_USING" && !applied) {
+          return NextResponse.json({ error: "One of the learners has no active transport assignment" }, { status: 400 });
+        }
+      }
+      if (f.items.length) {
+        const { payment } = await collectDailyItems(db, {
+          schoolId, studentId: f.studentId, items: f.items,
+          services: services.map((s) => ({ id: s.id, name: s.name })),
+          method: "CASH", receivedByName: user.fullName, performedByRole: user.role,
+          paidAt: new Date(date),
+        });
+        receipts.push({ studentId: f.studentId, receiptNo: payment.receiptNo, amountCents: payment.amountCents });
+      }
+    }
   }
 
   // auto absence alerts to guardians (legacy semantics: online saves, ABSENT
@@ -258,5 +402,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
   }
 
-  return NextResponse.json({ session: { id: session.id }, saved: finalRecords.length });
+  return NextResponse.json({
+    session: { id: session.id },
+    saved: finalRecords.length,
+    chargeOutcomes,
+    receipts,
+  });
 }

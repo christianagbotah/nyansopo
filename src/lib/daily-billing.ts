@@ -287,6 +287,148 @@ export function effectivePrice(
   return enrollment?.priceCentsOverride ?? classRateCents ?? svc.priceCents;
 }
 
+// ── CI3 save_attendance_and_fees charge rule (model 158–300 parity) ──
+//  Marking a learner out of the chargeable set (PRESENT/LATE → ABSENT / SICK /
+//  SICK_HOME / SICK_CLINIC / EXCUSED / BUSY) reverses the day's non-transport
+//  charges: OWED rows are WAIVED, PAID rows are WAIVED with the settled money
+//  held on that item as prepaid credit (iEduPro: "payments are kept forever as
+//  wallet prepaid"). Marking back INTO the chargeable set re-instates them
+//  (WAIVED → OWED, or the row is created when the day was never charged).
+const CHARGEABLE_STATUSES = new Set(["PRESENT", "LATE"]);
+
+export type AttendanceChargeOutcome = { waived: number; credited: number; reinstated: number; created: number };
+
+/** Waive the day's non-transport charges for one learner (status → non-chargeable). */
+export async function waiveDayChargesForStudent(
+  db: PrismaClient,
+  opts: { schoolId: string; studentId: string; date: Date; byName?: string; byRole?: string },
+): Promise<{ waived: number; credited: number }> {
+  const day = new Date(opts.date); day.setHours(0, 0, 0, 0);
+  const dayEnd = new Date(day); dayEnd.setHours(23, 59, 59, 999);
+  const rows = await db.dailyCharge.findMany({
+    where: { studentId: opts.studentId, date: { gte: day, lte: dayEnd }, status: { in: ["OWED", "PAID"] }, service: { category: { not: "TRANSPORT" } } },
+    include: { service: true },
+  });
+  let waived = 0;
+  let credited = 0;
+  for (const c of rows) {
+    if (c.status === "OWED") {
+      await db.dailyCharge.update({ where: { id: c.id }, data: { status: "WAIVED" } });
+      waived += c.amountCents;
+      await logDailyFeeAudit(db, {
+        schoolId: opts.schoolId, studentId: opts.studentId, actionType: "CHARGE_REVERSAL", serviceCode: c.service.name, amountCents: c.amountCents,
+        performedByName: opts.byName, performedByRole: opts.byRole, reference: c.id,
+        notes: `attendance reversal — learner marked out; unpaid charge waived · ${day.toISOString().slice(0, 10)}`,
+      });
+    } else {
+      // PAID: the money stays with the school as that item's prepaid credit
+      // (iEduPro: the payment row is never deleted — it becomes wallet balance)
+      await db.dailyCharge.update({ where: { id: c.id }, data: { status: "WAIVED" } });
+      credited += c.amountCents;
+      if (c.amountCents > 0) {
+        await creditItemBalance(db, {
+          schoolId: opts.schoolId, studentId: opts.studentId, serviceId: c.serviceId,
+          amountCents: c.amountCents, kind: "ADJUST",
+          note: `attendance reversal — payment held as prepaid · ${day.toISOString().slice(0, 10)}`,
+          byName: opts.byName,
+        });
+      }
+      await logDailyFeeAudit(db, {
+        schoolId: opts.schoolId, studentId: opts.studentId, actionType: "CHARGE_REVERSAL", serviceCode: c.service.name, amountCents: c.amountCents,
+        performedByName: opts.byName, performedByRole: opts.byRole, reference: c.id,
+        notes: `attendance reversal — settled charge waived; GH₵${(c.amountCents / 100).toFixed(2)} held as item prepaid · ${day.toISOString().slice(0, 10)}`,
+      });
+    }
+  }
+  return { waived, credited };
+}
+
+/** Ensure the day's non-transport charges exist for one learner (status → chargeable):
+ *  creates missing rows (weekday + opt-out + opt-in + weekly-dedup aware) and
+ *  re-instates rows waived by an earlier absence. */
+export async function ensureDayChargesForStudent(
+  db: PrismaClient,
+  opts: { schoolId: string; studentId: string; date: Date; byName?: string; byRole?: string },
+): Promise<{ reinstated: number; created: number }> {
+  const day = new Date(opts.date); day.setHours(0, 0, 0, 0);
+  const dayEnd = new Date(day); dayEnd.setHours(23, 59, 59, 999);
+  const weekday = day.getDay();
+  const enrollRows = await db.dailyServiceEnrollment.findMany({
+    where: { studentId: opts.studentId, active: true, service: { schoolId: opts.schoolId, active: true, category: { not: "TRANSPORT" } } },
+    include: { service: { include: { classRates: true } } },
+  });
+  const enrollment = await db.enrollment.findFirst({ where: { studentId: opts.studentId, status: "ACTIVE", schoolId: opts.schoolId } });
+  const exceptions = await db.dailyMealException.findMany({
+    where: { studentId: opts.studentId, date: { gte: day, lte: dayEnd }, status: "APPROVED" },
+  });
+  const optedOut = new Set(exceptions.filter((e) => e.kind === "OPT_OUT").map((e) => e.serviceId));
+  const optedIn = new Set(exceptions.filter((e) => e.kind === "OPT_IN").map((e) => e.serviceId));
+  // weekly dedup: any charge this ISO week means the weekly item is settled
+  const weekStart = new Date(day); weekStart.setDate(day.getDate() - ((day.getDay() + 6) % 7));
+  const weekEnd = new Date(weekStart); weekEnd.setDate(weekStart.getDate() + 7); weekEnd.setMilliseconds(-1);
+  const weekCharges = await db.dailyCharge.findMany({ where: { studentId: opts.studentId, date: { gte: weekStart, lte: weekEnd } }, include: { service: true } });
+
+  let reinstated = 0;
+  let created = 0;
+  for (const en of enrollRows) {
+    const svc = en.service;
+    const days = svc.weekdays.split(",").map(Number);
+    if (!days.includes(weekday)) continue;
+    if (optedOut.has(svc.id)) continue; // admin approved the skip — stays waived
+    if (svc.optInDaily && !optedIn.has(svc.id)) continue; // optional item not opted in today
+    if (svc.chargeMode === "WEEKLY" && weekCharges.some((c) => c.service.chargeMode === "WEEKLY" && c.serviceId === svc.id && c.date <= dayEnd)) continue;
+    const existing = weekCharges.find((c) => c.serviceId === svc.id && c.date >= day && c.date <= dayEnd)
+      ?? (await db.dailyCharge.findFirst({ where: { serviceId: svc.id, studentId: opts.studentId, date: { gte: day, lte: dayEnd } } }));
+    if (existing) {
+      if (existing.status === "WAIVED") {
+        // re-instating a charge waived by the earlier absence mark
+        await db.dailyCharge.update({ where: { id: existing.id }, data: { status: "OWED" } });
+        const covered = await autoDeductFromItemBalance(db, existing, { byName: opts.byName });
+        reinstated += existing.amountCents;
+        await logDailyFeeAudit(db, {
+          schoolId: opts.schoolId, studentId: opts.studentId, actionType: "CHARGE", serviceCode: svc.name, amountCents: existing.amountCents,
+          performedByName: opts.byName, performedByRole: opts.byRole, reference: existing.id,
+          notes: `attendance re-marked chargeable — waived charge reinstated${covered > 0 ? ` · GH₵${(covered / 100).toFixed(2)} auto-deducted from item balance` : ""} · ${day.toISOString().slice(0, 10)}`,
+        });
+      }
+      continue;
+    }
+    const classRate = enrollment ? svc.classRates.find((r) => r.classroomId === enrollment.classroomId)?.priceCents ?? null : null;
+    const amount = effectivePrice(svc, en, classRate);
+    if (amount <= 0) continue;
+    const charge = await db.dailyCharge.create({ data: { serviceId: svc.id, studentId: opts.studentId, schoolId: opts.schoolId, date: day, amountCents: amount } });
+    created++;
+    const covered = await autoDeductFromItemBalance(db, charge, { byName: opts.byName });
+    await logDailyFeeAudit(db, {
+      schoolId: opts.schoolId, studentId: opts.studentId, actionType: "CHARGE", serviceCode: svc.name, amountCents: amount,
+      performedByName: opts.byName, performedByRole: opts.byRole, reference: charge.id,
+      notes: `attendance charge (register) · ${svc.name} · ${day.toISOString().slice(0, 10)}${covered > 0 ? ` · GH₵${(covered / 100).toFixed(2)} auto-deducted from item balance` : ""}`,
+    });
+  }
+  return { reinstated, created };
+}
+
+/** The full CI3 status-change rule for ONE learner on ONE date.
+ *  `from` = the persisted status before this save (null = not yet marked). */
+export async function applyAttendanceChargeRule(
+  db: PrismaClient,
+  opts: { schoolId: string; studentId: string; date: Date; from: string | null; to: string; byName?: string; byRole?: string },
+): Promise<AttendanceChargeOutcome> {
+  const toChargeable = CHARGEABLE_STATUSES.has(opts.to);
+  const fromChargeable = opts.from ? CHARGEABLE_STATUSES.has(opts.from) : null;
+  if (toChargeable && (fromChargeable === null || fromChargeable === false)) {
+    // → PRESENT/LATE (first mark, or back from absent/sick/excused)
+    const { reinstated, created } = await ensureDayChargesForStudent(db, opts);
+    return { waived: 0, credited: 0, reinstated, created };
+  }
+  if (!toChargeable && (fromChargeable === null || fromChargeable === true)) {
+    // PRESENT/LATE → ABSENT/SICK/EXCUSED (or first mark straight to non-chargeable)
+    const { waived, credited } = await waiveDayChargesForStudent(db, opts);
+    return { waived, credited, reinstated: 0, created: 0 };
+  }
+  return { waived: 0, credited: 0, reinstated: 0, created: 0 };
+}
+
 // ── Daily-fee audit log (iEduPro daily_fee_audit_log parity) ──
 //  Every wallet/charge event writes an immutable audit row: action type, the
 //  service it relates to, amount, wallet balance before/after, arrears

@@ -14,7 +14,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const { id: schoolId } = await params;
   const url = new URL(req.url);
   const action = url.searchParams.get("action") ?? "";
-  const auth = await opsAuth(req, schoolId, "GET", { perms: ["cashier.reports", "fees.collect", "daily.collect"] });
+  // split (wave 10): the console report needs cashier.reports; the collection
+  // portal's student-info accepts any collecting permission (daily.collect
+  // covers classroom teachers — CI3 hybrid mode)
+  const need = action === "student-info" ? ["cashier.reports", "fees.collect", "daily.collect"] : ["cashier.reports"];
+  const auth = await opsAuth(req, schoolId, "GET", { perms: need });
   if (!auth.ok) return auth.res;
 
   if (action === "student-info") return studentInfo(req, schoolId, url);

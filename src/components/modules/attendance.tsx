@@ -14,16 +14,24 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { ModuleHeader, LoadingBlock, EmptyState } from "@/components/ui-helpers";
 import { fmtDateShort, initials, avatarColor, fmtCedi } from "@/lib/format";
+import { canAny } from "@/lib/rbac";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { CalendarCheck, ChevronLeft, ChevronRight, CloudOff, Save, Users, ScanLine, LogIn, LogOut, Ban, CircleCheck, CircleAlert, OctagonX, Undo2, BarChart3, CalendarDays, CheckCheck, UserX, Download, Printer, ChevronDown, ChevronUp, Search } from "lucide-react";
+import { CalendarCheck, ChevronLeft, ChevronRight, CloudOff, Save, Users, ScanLine, LogIn, LogOut, Ban, CircleCheck, CircleAlert, OctagonX, Undo2, BarChart3, CalendarDays, CheckCheck, UserX, Download, Printer, ChevronDown, ChevronUp, Search, Bus } from "lucide-react";
 
 type AttData = {
   classrooms: { id: string; name: string; grade: string; stage?: string }[];
   session: { id: string; takenByName: string } | null;
   students: { id: string; name: string; rollNo: number | null; status: string | null; markedOffline?: boolean; excusedReason?: string | null }[];
   termId: string;
+  /* CI3 save_attendance_and_fees: per-learner fee state rides the register
+     payload when the session may view daily services */
+  fees?: {
+    studentId: string;
+    items: { serviceId: string; name: string; category: string; rateCents: number; arrearsCents: number; prepaidCents: number; optional: boolean; optedOut: boolean; optedIn: boolean; weekly: boolean; weeklyBilled: boolean; chargedToday: boolean }[];
+    transport: { routeName: string; stopName: string | null; onewayCents: number } | null;
+  }[];
 };
 
 /* iEduPro attendance statuses — SICK kept for backwards compat (legacy sick-bay
@@ -43,7 +51,7 @@ const STATUS_BY_KEY: Record<string, (typeof STATUSES)[number]> = Object.fromEntr
 const OPS = "/ops/attendance"; // attendance ops endpoint (register save + analytics + monthly)
 
 export function Attendance() {
-  const { currentSchoolId, online, navTarget } = useStore();
+  const { currentSchoolId, online, navTarget, session } = useStore();
   const [tab, setTab] = useState("register");
   const [data, setData] = useState<AttData | null>(null);
   const [classId, setClassId] = useState<string | null>(null);
@@ -55,6 +63,13 @@ export function Attendance() {
      card carries an "update" checkbox — uncheck to leave specific learners out */
   const [updatePicks, setUpdatePicks] = useState<Record<string, boolean>>({});
   const [cardSearch, setCardSearch] = useState("");
+  /* CI3 fee collection inputs on the register (save_attendance_and_fees):
+     per-learner item amounts + optional toggles + transport usage. Rendered
+     only when this session may collect daily fees. */
+  const canCollectFees = canAny(session?.permissions, ["daily.collect", "daily.manage"]);
+  const [feeAmts, setFeeAmts] = useState<Record<string, string>>({}); // `${studentId}:${serviceId}` → GH₵
+  const [feeToggles, setFeeToggles] = useState<Record<string, boolean>>({}); // optional items ON/OFF
+  const [feeUsage, setFeeUsage] = useState<Record<string, string>>({}); // studentId → MORNING|AFTERNOON|BOTH
 
   /* iEduPro nested nav: preselect the Scanner tab when arriving from a
      Attendance → Scanner deep link, and preselect the classroom when a deep
@@ -76,9 +91,28 @@ export function Attendance() {
       .then((d) => {
         setData(d);
         if (!classId && d.classrooms.length) return; // first load: wait for class pick
-        setMarks(Object.fromEntries(d.students.map((s) => [s.id, s.status ?? "PRESENT"])));
+        // CI3 mark_attendance: the unmarked default on the form is ABSENT (2)
+        setMarks(Object.fromEntries(d.students.map((s) => [s.id, s.status ?? "ABSENT"])));
         setReasons(Object.fromEntries(d.students.map((s) => [s.id, s.excusedReason ?? ""])));
         setUpdatePicks(Object.fromEntries(d.students.map((s) => [s.id, true])));
+        // CI3 fee inputs: prefill each item with what the learner owes on it;
+        // optional items start ON only when approved opt-in exists for the day
+        const pre: Record<string, string> = {};
+        const tg: Record<string, boolean> = {};
+        for (const f of d.fees ?? []) {
+          for (const it of f.items) {
+            if (it.optedOut) continue; // admin approved the skip — no charge today
+            if (it.optional) {
+              tg[`${f.studentId}:${it.serviceId}`] = it.optedIn;
+              if (it.optedIn && it.arrearsCents > 0) pre[`${f.studentId}:${it.serviceId}`] = (it.arrearsCents / 100).toFixed(2);
+              continue;
+            }
+            if (it.arrearsCents > 0) pre[`${f.studentId}:${it.serviceId}`] = (it.arrearsCents / 100).toFixed(2);
+          }
+        }
+        setFeeAmts(pre);
+        setFeeToggles(tg);
+        setFeeUsage({});
       })
       .catch((e) => toast({ title: "Load failed", description: e.message, variant: "destructive" }));
   };
@@ -124,18 +158,47 @@ export function Attendance() {
       if (!picked.length) { toast({ title: "Please select at least one learner", variant: "destructive" }); return; }
       const records = picked.map((s) => ({
         studentId: s.id,
-        status: marks[s.id] ?? "PRESENT",
+        status: marks[s.id] ?? "ABSENT",
         ...(marks[s.id] === "EXCUSED" ? { excusedReason: (reasons[s.id] ?? "").trim() } : {}),
       }));
-      const payload = { action: "save-register", classroomId: classId, date, records };
+      /* CI3 fee inputs ride the same save (save_attendance_and_fees): only the
+         picked learners, only non-optional items or toggled-ON optionals, and
+         only riders when a bus direction was chosen */
+      const fees = canCollectFees && (data?.fees?.length ?? 0) > 0
+        ? picked
+            .map((s) => {
+              const f = data!.fees!.find((x) => x.studentId === s.id);
+              if (!f) return null;
+              const items = f.items
+                .filter((it) => {
+                  if (it.optedOut) return false;
+                  if (it.optional) return !!feeToggles[`${s.id}:${it.serviceId}`];
+                  return true;
+                })
+                .map((it) => ({ serviceId: it.serviceId, amountCents: Math.round(parseFloat(feeAmts[`${s.id}:${it.serviceId}`] || "0") * 100) || 0 }))
+                .filter((it) => it.amountCents > 0);
+              const usage = feeUsage[s.id];
+              return items.length || usage ? { studentId: s.id, items, ...(usage ? { transportUsage: usage } : {}) } : null;
+            })
+            .filter(Boolean)
+        : undefined;
+      const payload = { action: "save-register", classroomId: classId, date, records, ...(fees?.length ? { fees } : {}) };
       const res = await apiPostQueueable<any>(
         `${OPS_BASE(currentSchoolId)}`, "attendance", payload,
         `Attendance ${data?.classrooms.find((c) => c.id === classId)?.name} · ${date}`,
-        (p, clientId) => ({ schoolId: currentSchoolId, classroomId: classId, date, records, clientId })
+        (p, clientId) => ({ schoolId: currentSchoolId, classroomId: classId, date, records, ...(fees?.length ? { fees } : {}), clientId })
       );
       if (res.queued) toast({ title: "Saved offline", description: "Register stored on this device — will sync automatically." });
       else {
-        toast({ title: data?.session ? "Register updated" : "Register saved", description: `${records.length} learner${records.length !== 1 ? "s" : ""} marked for ${new Date(date).toLocaleDateString("en-GB")}.` });
+        const out = res.data ?? {};
+        const reversals = (out.chargeOutcomes ?? []).reduce((n: number, o: any) => n + (o.waived || o.credited ? 1 : 0), 0);
+        const collected = (out.receipts ?? []).reduce((n: number, r: any) => n + r.amountCents, 0);
+        toast({
+          title: data?.session ? "Register updated" : "Register saved",
+          description: `${records.length} learner${records.length !== 1 ? "s" : ""} marked for ${new Date(date).toLocaleDateString("en-GB")}`
+            + (reversals ? ` · ${reversals} charge${reversals > 1 ? "s" : ""} reversed (money held as prepaid)` : "")
+            + (collected ? ` · ${fmtCedi(collected)} collected` : ""),
+        });
         load(); // refresh the "Taken by" badge + persisted statuses
       }
     } catch (e: any) {
@@ -248,7 +311,7 @@ export function Attendance() {
                 <CardContent className="pb-4">
                   <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(240px,1fr))]">
                     {students.filter((s) => !cardSearch.trim() || s.name.toLowerCase().includes(cardSearch.trim().toLowerCase())).map((s, i) => {
-                      const st = STATUS_BY_KEY[marks[s.id] ?? "PRESENT"] ?? STATUSES[0];
+                      const st = STATUS_BY_KEY[marks[s.id] ?? "ABSENT"] ?? STATUSES[0];
                       const excluded = data.session && updatePicks[s.id] === false;
                       return (
                         <div key={s.id} className={cn("rounded-xl border-2 bg-card p-3 transition-all hover:border-primary/50", excluded && "opacity-50", excluded ? "border-transparent" : "border-transparent")}>
@@ -269,7 +332,7 @@ export function Attendance() {
                           <label className="mt-2 block">
                             <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Attendance status</span>
                             <select
-                              value={marks[s.id] ?? "PRESENT"}
+                              value={marks[s.id] ?? "ABSENT"}
                               onChange={(e) => setMarks((m) => ({ ...m, [s.id]: e.target.value }))}
                               className={cn("mt-1 w-full rounded-lg border-2 px-2.5 py-1.5 text-sm font-semibold outline-none transition-colors", st.selectCls)}
                               aria-label={`Attendance status for ${s.name}`}
@@ -277,7 +340,7 @@ export function Attendance() {
                               {STATUSES.map((x) => <option key={x.key} value={x.key}>{x.key === "PRESENT" ? "Present (P)" : x.key === "ABSENT" ? "Absent (A)" : x.key === "LATE" ? "Late (L)" : x.key === "SICK_HOME" ? "Sick-Home (S)" : x.key === "SICK_CLINIC" ? "Sick-Clinic (C)" : x.key === "EXCUSED" ? "Excused (E)" : x.label}</option>)}
                             </select>
                           </label>
-                          {(marks[s.id] ?? "PRESENT") === "EXCUSED" && (
+                          {(marks[s.id] ?? "ABSENT") === "EXCUSED" && (
                             <div className="mt-2">
                               <Textarea
                                 rows={2}
@@ -290,6 +353,99 @@ export function Attendance() {
                               <p className="mt-0.5 text-[10px] text-muted-foreground">E.g. medical appointment, family emergency.</p>
                             </div>
                           )}
+
+                          {/* CI3 fee collection inputs (save_attendance_and_fees):
+                              per-item amounts for chargeable learners, optional
+                              items toggle, riders pick the bus direction */}
+                          {(() => {
+                            const feeRow = canCollectFees ? (data.fees?.find((f) => f.studentId === s.id) ?? null) : null;
+                            if (!feeRow || !feeRow.items.length) return null;
+                            if (!["PRESENT", "LATE"].includes(marks[s.id] ?? "ABSENT")) return null; // not chargeable today
+                            return (
+                              <div className="mt-2 rounded-lg border bg-secondary/30 p-2 space-y-1.5">
+                                <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Daily fees</div>
+                                {feeRow.items.map((it) => {
+                                  const key = `${s.id}:${it.serviceId}`;
+                                  if (it.optedOut) {
+                                    return (
+                                      <div key={it.serviceId} className="flex items-center justify-between text-[11px] text-muted-foreground">
+                                        <span className="line-through">{it.name}</span>
+                                        <Badge variant="outline" className="text-[9px] px-1.5 text-amber-700 dark:text-amber-300 border-amber-400/50">opt-out approved</Badge>
+                                      </div>
+                                    );
+                                  }
+                                  const optionalOn = it.optional ? !!feeToggles[key] : true;
+                                  const amt = feeAmts[key] ?? "";
+                                  return (
+                                    <div key={it.serviceId} className="flex items-center gap-1.5">
+                                      {it.optional && (
+                                        <input
+                                          type="checkbox"
+                                          className="accent-primary size-3.5 shrink-0"
+                                          checked={optionalOn}
+                                          title="Opt in for today"
+                                          onChange={(e) => {
+                                            setFeeToggles((t) => ({ ...t, [key]: e.target.checked }));
+                                            if (e.target.checked && !feeAmts[key]) {
+                                              setFeeAmts((a) => ({ ...a, [key]: ((it.arrearsCents > 0 ? it.arrearsCents : it.rateCents) / 100).toFixed(2) }));
+                                            }
+                                          }}
+                                        />
+                                      )}
+                                      <span className={`text-[11px] truncate flex-1 ${it.optional && !optionalOn ? "text-muted-foreground line-through" : ""}`} title={`${it.name} — rate ${fmtCedi(it.rateCents)} · arrears ${fmtCedi(it.arrearsCents)} · prepaid ${fmtCedi(it.prepaidCents)}`}>
+                                        {it.name}
+                                        {it.weekly && <span className="text-cyan-700 dark:text-cyan-400"> ·wk</span>}
+                                        {it.chargedToday && <span className="text-emerald-700 dark:text-emerald-400"> ✓</span>}
+                                        {it.arrearsCents > 0 && <span className="text-destructive"> ·{fmtCedi(it.arrearsCents, { compact: true })}</span>}
+                                      </span>
+                                      {(it.optional ? optionalOn : true) && (
+                                        <Input
+                                          type="number" min="0" step="0.5" placeholder="0.00"
+                                          className="h-7 w-20 px-1.5 text-right tabular-nums text-xs"
+                                          value={amt}
+                                          onChange={(e) => setFeeAmts((a) => ({ ...a, [key]: e.target.value }))}
+                                        />
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                                {feeRow.transport && (
+                                  <div className="flex items-center gap-1.5 pt-1 border-t">
+                                    <Bus className="size-3.5 text-emerald-600 shrink-0" />
+                                    <span className="text-[11px] text-muted-foreground truncate flex-1" title={`${feeRow.transport.routeName} — one-way ${fmtCedi(feeRow.transport.onewayCents)}${feeRow.transport.stopName ? ` · ${feeRow.transport.stopName}` : ""}`}>
+                                      {feeRow.transport.routeName}
+                                    </span>
+                                    <select
+                                      value={feeUsage[s.id] ?? ""}
+                                      onChange={(e) => setFeeUsage((u) => ({ ...u, [s.id]: e.target.value }))}
+                                      className="h-7 rounded-md border bg-card px-1.5 text-[11px]"
+                                      aria-label={`Bus usage for ${s.name}`}
+                                    >
+                                      <option value="">no bus</option>
+                                      <option value="MORNING">AM · {fmtCedi(feeRow.transport.onewayCents, { compact: true })}</option>
+                                      <option value="AFTERNOON">PM · {fmtCedi(feeRow.transport.onewayCents, { compact: true })}</option>
+                                      <option value="BOTH">Both · {fmtCedi(feeRow.transport.onewayCents * 2, { compact: true })}</option>
+                                    </select>
+                                  </div>
+                                )}
+                                {(() => {
+                                  const totalCents = feeRow.items
+                                    .filter((it) => !it.optedOut && (it.optional ? !!feeToggles[`${s.id}:${it.serviceId}`] : true))
+                                    .reduce((n, it) => n + (Math.round(parseFloat(feeAmts[`${s.id}:${it.serviceId}`] || "0") * 100) || 0), 0);
+                                  if (totalCents <= 0) return null;
+                                  const settle = feeRow.items
+                                    .filter((it) => !it.optedOut && (it.optional ? !!feeToggles[`${s.id}:${it.serviceId}`] : true))
+                                    .reduce((n, it) => n + Math.min(Math.round(parseFloat(feeAmts[`${s.id}:${it.serviceId}`] || "0") * 100) || 0, it.arrearsCents), 0);
+                                  return (
+                                    <div className="pt-1 border-t flex items-center justify-between text-[11px]">
+                                      <span className="text-muted-foreground">collecting <b className="text-foreground">{fmtCedi(totalCents)}</b></span>
+                                      <span className="text-muted-foreground">settles {fmtCedi(settle)} · advance {fmtCedi(Math.max(0, totalCents - settle))}</span>
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+                            );
+                          })()}
                         </div>
                       );
                     })}

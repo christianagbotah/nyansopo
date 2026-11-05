@@ -75,7 +75,7 @@ const SERVICE_TONE: Record<string, string> = {
 };
 
 export function CashierConsole() {
-  const { currentSchoolId, setModule, navTarget, session } = useStore();
+  const { currentSchoolId, setModule, navTarget, session, online } = useStore();
   const [from, setFrom] = useState(todayStr());
   const [to, setTo] = useState(todayStr());
   const [collector, setCollector] = useState("all");
@@ -101,11 +101,14 @@ export function CashierConsole() {
 
   const load = useCallback(() => {
     if (!currentSchoolId) return;
+    // report tabs only — the collection portal (Collect tab) loads its own
+    // learner search via the students endpoint and never needs this payload
+    if (!canReport) { setLoading(false); setData(null); return; }
     apiGet<CashierData>(`/api/school/${currentSchoolId}/ops/cashier?from=${from}&to=${to}&collector=${encodeURIComponent(collector)}`)
       .then(setData)
       .catch((e) => toast({ title: "Could not load collections", description: e.message, variant: "destructive" }))
       .finally(() => setLoading(false));
-  }, [currentSchoolId, from, to, collector]);
+  }, [currentSchoolId, from, to, collector, canReport]);
   useEffect(() => { load(); }, [load]);
 
   // first permitted tab when the stored tab is out of reach
@@ -159,7 +162,7 @@ export function CashierConsole() {
             the same item's prepaid account) ── */}
         {canCollect && (
           <TabsContent value="collect" className="mt-4">
-            <CollectTab data={data} canInvoice={canInvoice} onDone={load} />
+            <CollectTab canInvoice={canInvoice} online={online} onDone={load} />
           </TabsContent>
         )}
 
@@ -384,17 +387,29 @@ const USAGE_OPTIONS = [
   { value: "BOTH", label: "Both ways (2×)" },
 ];
 
-function CollectTab({ data, canInvoice, onDone }: {
-  data: CashierData | null;
+function CollectTab({ canInvoice, online, onDone }: {
   canInvoice: boolean;
+  online: boolean;
   onDone: () => void;
 }) {
-  const { currentSchoolId, online } = useStore();
+  const { currentSchoolId } = useStore();
   const [query, setQuery] = useState("");
   const [picked, setPicked] = useState<string | null>(null);
   const [info, setInfo] = useState<PortalInfo | null>(null);
   const [infoLoading, setInfoLoading] = useState(false);
   const [date, setDate] = useState(todayStr());
+  /* learner picker: server-side search over the student directory (students.view
+     holders — every collecting role), debounced like CI3's select2 */
+  const [matches, setMatches] = useState<{ id: string; name: string; nyansapoIndex: string; classroom: string }[]>([]);
+  useEffect(() => {
+    if (!currentSchoolId || !query.trim()) { setMatches([]); return; }
+    const t = setTimeout(() => {
+      apiGet<{ students: { id: string; name: string; nyansapoIndex: string; classroom: string }[] }>(`/api/school/${currentSchoolId}/students?search=${encodeURIComponent(query.trim())}`)
+        .then((d) => setMatches((d.students ?? []).slice(0, 8)))
+        .catch(() => setMatches([]));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [query, currentSchoolId]);
 
   // the collection form
   const [amounts, setAmounts] = useState<Record<string, string>>({}); // serviceId → GH₵
@@ -442,16 +457,6 @@ function CollectTab({ data, canInvoice, onDone }: {
   }, [currentSchoolId, canInvoice]);
 
   useEffect(() => { if (picked) loadInfo(picked, date); else setInfo(null); }, [picked, date, loadInfo]);
-
-  /* search matches over the roster */
-  const matches = useMemo(() => {
-    if (!data?.roster) return [];
-    const q = query.trim().toLowerCase();
-    if (!q) return [];
-    return data.roster
-      .filter((r) => `${r.name} ${r.index} ${r.classroom}`.toLowerCase().includes(q))
-      .slice(0, 8);
-  }, [data?.roster, query]);
 
   /* live totals for the payment rail */
   const itemTotal = info ? info.cards.reduce((s, c) => {
@@ -572,7 +577,7 @@ function CollectTab({ data, canInvoice, onDone }: {
                 <button key={m.id} className="w-full flex items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left text-sm hover:bg-accent"
                   onClick={() => { setPicked(m.id); setQuery(""); }}>
                   <span className="font-medium truncate">{m.name}</span>
-                  <span className="text-xs text-muted-foreground shrink-0">{m.index} · {m.classroom}</span>
+                  <span className="text-xs text-muted-foreground shrink-0">{m.nyansapoIndex} · {m.classroom}</span>
                 </button>
               ))}
             </div>
