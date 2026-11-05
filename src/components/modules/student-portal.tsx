@@ -6,7 +6,7 @@ import { ModuleHeader, LoadingBlock, EmptyState } from "@/components/ui-helpers"
 import { fmtCedi, fmtDate } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { DateField } from "@/components/date-field";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -417,11 +417,11 @@ function BookRequestDialog({ open, onOpenChange, catalogue, studentId, schoolId,
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Issue date</Label>
-              <Input type="date" value={startAt} onChange={(e) => setStartAt(e.target.value)} />
+              <DateField value={startAt} onChange={(v) => setStartAt(v ?? "")} />
             </div>
             <div className="space-y-1.5">
               <Label>Return by</Label>
-              <Input type="date" value={endAt} onChange={(e) => setEndAt(e.target.value)} />
+              <DateField value={endAt} onChange={(v) => setEndAt(v ?? "")} />
             </div>
           </div>
         </div>

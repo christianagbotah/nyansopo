@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { DateField } from "@/components/date-field";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatCard, ModuleHeader, LoadingBlock, EmptyState, StatusBadge } from "@/components/ui-helpers";
 import { fmtCedi, fmtDate, PAYMENT_LABELS } from "@/lib/format";
@@ -926,7 +927,7 @@ function PoDialog({ open, items, suppliers, onOpenChange, onDone }: { open: bool
           </div>
           <div className="space-y-1.5">
             <Label>Expected delivery</Label>
-            <Input type="date" value={expectedDate} onChange={(e) => setExpectedDate(e.target.value)} />
+            <DateField value={expectedDate} onChange={(v) => setExpectedDate(v ?? "")} />
           </div>
         </div>
         <div className="space-y-1.5">

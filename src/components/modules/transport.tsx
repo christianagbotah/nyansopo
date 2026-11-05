@@ -9,6 +9,7 @@ import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { DateField } from "@/components/date-field";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { StatCard, ModuleHeader, LoadingBlock, EmptyState } from "@/components/ui-helpers";
 import { fmtCedi, fmtDate, PAYMENT_LABELS } from "@/lib/format";
@@ -476,7 +477,7 @@ function TripDialog({ route, onOpenChange, onDone }: { route: Route | null; onOp
           <DialogDescription>Boarding counts keep parents and the association confident in the service.</DialogDescription>
         </DialogHeader>
         <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1.5"><Label>Date</Label><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
+          <div className="space-y-1.5"><Label>Date</Label><DateField value={date} onChange={(v) => setDate(v ?? "")} /></div>
           <div className="space-y-1.5"><Label>Onboard (AM)</Label><Input type="number" value={morning} onChange={(e) => setMorning(e.target.value)} placeholder={String(route?.riders.length ?? 0)} /></div>
           <div className="space-y-1.5"><Label>Onboard (PM)</Label><Input type="number" value={evening} onChange={(e) => setEvening(e.target.value)} placeholder={String(route?.riders.length ?? 0)} /></div>
           <div className="space-y-1.5 sm:col-span-2"><Label>Notes</Label><Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. Light traffic, 10 mins late" /></div>
@@ -711,7 +712,7 @@ function DriverDialog({ driver, onOpenChange, onDone }: { driver: DriverRec | "n
           <div className="space-y-1.5 sm:col-span-2"><Label>Full name *</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Kwesi Anane" /></div>
           <div className="space-y-1.5"><Label>Phone</Label><Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+233 24 551 7708" /></div>
           <div className="space-y-1.5"><Label>License number</Label><Input value={licenseNo} onChange={(e) => setLicenseNo(e.target.value)} placeholder="DVLA-000000" /></div>
-          <div className="space-y-1.5"><Label>License expiry</Label><Input type="date" value={licenseExpiry} onChange={(e) => setLicenseExpiry(e.target.value)} /></div>
+          <div className="space-y-1.5"><Label>License expiry</Label><DateField value={licenseExpiry} onChange={(v) => setLicenseExpiry(v ?? "")} /></div>
           <div className="space-y-1.5"><Label>Status</Label>
             <Select value={status} onValueChange={setStatus}>
               <SelectTrigger><SelectValue /></SelectTrigger>
@@ -777,8 +778,8 @@ function VehicleDialog({ vehicle, onOpenChange, onDone }: { vehicle: VehicleRec 
               <SelectContent>{["ACTIVE", "MAINTENANCE", "RETIRED"].map((x) => <SelectItem key={x} value={x}>{x.toLowerCase()}</SelectItem>)}</SelectContent>
             </Select>
           </div>
-          <div className="space-y-1.5"><Label>Insurance expiry</Label><Input type="date" value={insuranceExpiry} onChange={(e) => setInsuranceExpiry(e.target.value)} /></div>
-          <div className="space-y-1.5"><Label>Roadworthy expiry</Label><Input type="date" value={roadworthyExpiry} onChange={(e) => setRoadworthyExpiry(e.target.value)} /></div>
+          <div className="space-y-1.5"><Label>Insurance expiry</Label><DateField value={insuranceExpiry} onChange={(v) => setInsuranceExpiry(v ?? "")} /></div>
+          <div className="space-y-1.5"><Label>Roadworthy expiry</Label><DateField value={roadworthyExpiry} onChange={(v) => setRoadworthyExpiry(v ?? "")} /></div>
           <div className="space-y-1.5 sm:col-span-2"><Label>Notes</Label><Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional — e.g. serviced Sept 2026" /></div>
         </div>
         <DialogFooter>
@@ -820,8 +821,8 @@ function FareReportTab({ routes }: { routes: Route[] }) {
     <div className="space-y-4 mt-1">
       <Card>
         <CardContent className="pt-4 flex flex-wrap gap-2 items-end">
-          <div className="space-y-1"><Label className="text-xs">From</Label><Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-9 w-40" /></div>
-          <div className="space-y-1"><Label className="text-xs">To</Label><Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-9 w-40" /></div>
+          <div className="space-y-1"><Label className="text-xs">From</Label><DateField value={from} onChange={(v) => setFrom(v ?? "")} className="h-9 w-40" /></div>
+          <div className="space-y-1"><Label className="text-xs">To</Label><DateField value={to} onChange={(v) => setTo(v ?? "")} className="h-9 w-40" /></div>
           <div className="space-y-1">
             <Label className="text-xs">Route</Label>
             <Select value={routeId} onValueChange={setRouteId}>

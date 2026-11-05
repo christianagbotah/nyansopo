@@ -178,7 +178,34 @@
   .print-sheet:last-child { page-break-after: auto; break-after: auto; }
   .print-page { page-break-before: always; break-before: page; }
   .print-page:first-child { page-break-before: auto; break-before: auto; }
-  @page { size: A4; margin: 10mm; }
+
+  /* the paper SIZE follows the print dialog's selection (A4, Letter, A5,
+     Legal, thermal rolls…) — only margins are forced, so the same sheet
+     fills whatever paper the user picks. Landscape sheets still inject
+     their own @page rule at print time. */
+  @page { margin: 10mm; }
+
+  /* full-bleed colour — kente strips, gradient headers and tinted surfaces
+     must survive printing (browsers drop backgrounds by default) */
+  * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+
+  /* the sheet fills the entire paper: its last block (kente footer /
+     signature row) is pinned to the bottom edge of the page instead of
+     hanging under the body — footer-to-the-floor, CI3 parity. Thermal
+     rolls keep their natural content height (paper is auto-length). */
+  .print-area > *:only-child:not(.thermal-sheet) {
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+  .print-area > *:only-child:not(.thermal-sheet) > :last-child { margin-top: auto; }
+  /* the print-area itself is the sheet (single Card registers / reports) */
+  .print-area:not(:has(.print-sheet)):not([class*="space-y"]) {
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+  .print-area:not(:has(.print-sheet)):not([class*="space-y"]) > :last-child { margin-top: auto; }
 }
 @media print {
   .a5-sheet { width: 148mm; }
@@ -257,6 +284,17 @@ input[type="url"], input[type="search"], input[type="password"], textarea { curs
 .theme-topbar [data-slot="badge"].bg-background { background: rgb(255 253 244 / 0.15) !important; color: #fffdf4 !important; border-color: rgb(255 253 244 / 0.3) !important; }
 .theme-topbar button:hover { background: rgb(255 253 244 / 0.12); }
 .theme-topbar [data-slot="select-trigger"], .theme-topbar [data-slot="button"].bg-secondary { background: rgb(255 253 244 / 0.12) !important; color: #fffdf4 !important; border-color: rgb(255 253 244 / 0.25) !important; }
+/* outline chips (Install app / Search / Start) and the ⌘K kbd used to render
+   light-on-light on the gradient bar — their labels were invisible. Give them
+   the same translucent-light treatment as the other top-bar chips. */
+.theme-topbar [data-slot="button"].bg-background,
+.theme-topbar kbd.bg-muted {
+  background: rgb(255 253 244 / 0.16) !important;
+  color: #fffdf4 !important;
+  border-color: rgb(255 253 244 / 0.32) !important;
+}
+.theme-topbar [data-slot="button"].bg-background:hover,
+.theme-topbar kbd.bg-muted:hover { background: rgb(255 253 244 / 0.26) !important; }
 .theme-sidebar {
   background: linear-gradient(160deg, var(--theme-primary) 0%, var(--theme-secondary) 100%) !important;
 }

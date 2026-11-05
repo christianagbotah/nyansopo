@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { DateField } from "@/components/date-field";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
@@ -228,7 +229,7 @@ export function Attendance() {
             actions={
               <div className="flex items-center gap-2">
                 <Button size="sm" variant="outline" className="size-8 p-0" onClick={() => shiftDate(-1)}><ChevronLeft className="size-4" /></Button>
-                <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-36" />
+                <DateField value={date} onChange={(v) => setDate(v ?? "")} className="w-36" />
                 <Button size="sm" variant="outline" className="size-8 p-0" onClick={() => shiftDate(1)}><ChevronRight className="size-4" /></Button>
               </div>
             }
@@ -272,7 +273,7 @@ export function Attendance() {
                     <SelectTrigger className="w-56 h-9"><SelectValue placeholder="Select class" /></SelectTrigger>
                     <SelectContent>{data.classrooms.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
                   </Select>
-                  <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-36 h-9" />
+                  <DateField value={date} onChange={(v) => setDate(v ?? "")} className="w-36 h-9" />
                   <div className="relative flex-1 min-w-40">
                     <Search className="size-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
                     <Input value={cardSearch} onChange={(e) => setCardSearch(e.target.value)} placeholder="Type Student Name..." className="h-9 pl-8" />
@@ -577,9 +578,9 @@ function AnalyticsPanel({ schoolId }: { schoolId: string }) {
             {data.classrooms.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-36" aria-label="From date" />
+        <DateField value={from} onChange={(v) => setFrom(v ?? "")} className="w-36" aria-label="From date" />
         <span className="text-xs text-muted-foreground">to</span>
-        <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-36" aria-label="To date" />
+        <DateField value={to} onChange={(v) => setTo(v ?? "")} className="w-36" aria-label="To date" />
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-3 mb-4">
@@ -712,7 +713,7 @@ function MonthlyPanel({ schoolId }: { schoolId: string }) {
       />
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
-        <Input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="w-40" aria-label="Month" />
+        <DateField mode="month" value={month} onChange={(v) => setMonth(v ?? "")} className="w-40" aria-label="Month" />
         <Select value={classId ?? ""} onValueChange={setClassId}>
           <SelectTrigger className="w-64"><SelectValue placeholder="Select a class" /></SelectTrigger>
           <SelectContent>{data.classrooms.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
@@ -1072,7 +1073,7 @@ function ScannerPanel({ schoolId }: { schoolId: string }) {
       <Card className="mt-4">
         <CardHeader className="pb-3 flex-row items-center justify-between space-y-0">
           <CardTitle className="text-base">Today's scans</CardTitle>
-          <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-36" aria-label="Scan log date" />
+          <DateField value={date} onChange={(v) => setDate(v ?? "")} className="w-36" aria-label="Scan log date" />
         </CardHeader>
         <CardContent className="p-0">
           {!data?.recentScans?.length ? (

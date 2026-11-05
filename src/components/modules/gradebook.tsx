@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { DateField } from "@/components/date-field";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ModuleHeader, LoadingBlock, EmptyState } from "@/components/ui-helpers";
 import { toast } from "@/hooks/use-toast";
@@ -470,7 +471,7 @@ function PortfolioTab({ classId }: { classId: string | null }) {
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Week (Mon–Fri)</Label>
-              <Input type="week" className="w-44" value={week} onChange={(e) => setWeek(e.target.value)} aria-label="ISO week" />
+              <DateField mode="week" className="w-44" value={week} onChange={(v) => setWeek(v ?? "")} aria-label="ISO week" />
             </div>
             {boot?.portfolioEnabled && (
               <Badge className="gap-1 bg-emerald-600 hover:bg-emerald-600"><ShieldCheck className="size-3.5" /> Portfolio SBA enabled</Badge>
@@ -1041,7 +1042,7 @@ function AddAssessmentDialog({ open, onOpenChange, classId, subjects, onDone }: 
           </div>
           <div className="space-y-1.5 sm:col-span-2"><Label>Title</Label><Input placeholder="e.g. Class Exercise 3 — Fractions" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></div>
           <div className="space-y-1.5"><Label>Max score</Label><Input type="number" value={form.maxScore} onChange={(e) => setForm({ ...form, maxScore: e.target.value })} /></div>
-          <div className="space-y-1.5"><Label>Date</Label><Input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></div>
+          <div className="space-y-1.5"><Label>Date</Label><DateField value={form.date} onChange={(v) => setForm({ ...form, date: v ?? "" })} /></div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>

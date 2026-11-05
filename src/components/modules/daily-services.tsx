@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { DateField } from "@/components/date-field";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatCard, ModuleHeader, LoadingBlock, EmptyState, FilterBar, FilterSelect, FilterSearch } from "@/components/ui-helpers";
 import { fmtCedi, fmtDate, fmtDateTime, PAYMENT_LABELS } from "@/lib/format";
@@ -218,7 +219,7 @@ export function DailyServices() {
         actions={
           <div className="flex items-center gap-2 flex-wrap">
             {data && <Badge variant="secondary" className="gap-1 h-8 px-2.5"><Landmark className="size-3.5" /> {MODE_LABELS[data.settings.collectionMode]}</Badge>}
-            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-40" />
+            <DateField value={date} onChange={(v) => setDate(v ?? "")} className="w-40" />
             <Button size="sm" className="h-8 gap-1.5" onClick={generateDay} disabled={busy}>
               <CalendarPlus className="size-4" /> {data?.today.generated ? "Re-generate day" : "Generate day charges"}
             </Button>
@@ -830,7 +831,7 @@ function CollectDialog({ student, date, online, onOpenChange, onDone }: { studen
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label>Payment date</Label>
-            <Input type="date" value={paidOn} onChange={(e) => setPaidOn(e.target.value)} />
+            <DateField value={paidOn} onChange={(v) => setPaidOn(v ?? "")} />
           </div>
           <div className="space-y-2 sm:col-span-2">
             <div className="flex items-center justify-between">

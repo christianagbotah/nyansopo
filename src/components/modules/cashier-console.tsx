@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { DateField } from "@/components/date-field";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -126,11 +127,11 @@ export function CashierConsole() {
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-1.5">
               <Label className="text-xs text-muted-foreground hidden sm:block">From</Label>
-              <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-8 w-36" />
+              <DateField value={from} onChange={(v) => setFrom(v ?? "")} className="h-8 w-36" />
             </div>
             <div className="flex items-center gap-1.5">
               <Label className="text-xs text-muted-foreground hidden sm:block">To</Label>
-              <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-8 w-36" />
+              <DateField value={to} onChange={(v) => setTo(v ?? "")} className="h-8 w-36" />
             </div>
             {data && data.collectors.length > 0 && (
               <Select value={collector} onValueChange={setCollector}>
@@ -585,7 +586,7 @@ function CollectTab({ canInvoice, online, onDone }: {
         </div>
         <div className="flex items-center gap-1.5">
           <Label className="text-xs text-muted-foreground">Date</Label>
-          <Input type="date" value={date} max={todayStr()} onChange={(e) => setDate(e.target.value)} className="w-36" />
+          <DateField value={date} max={todayStr()} onChange={(v) => setDate(v ?? "")} className="w-36" />
         </div>
         {info && (
           <Button variant="outline" size="sm" className="gap-1.5" onClick={() => { setPicked(null); setInfo(null); }}>
@@ -1429,7 +1430,7 @@ function SummaryHandoverTab() {
         <CardContent className="p-4 flex flex-wrap items-end gap-3">
           <div className="space-y-1.5">
             <Label className="text-xs"><CalendarDays className="size-3 inline mr-1" /> Summary date</Label>
-            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-40 h-9" />
+            <DateField value={date} onChange={(v) => setDate(v ?? "")} className="w-40 h-9" />
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs">Cashier</Label>

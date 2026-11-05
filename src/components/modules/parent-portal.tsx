@@ -7,6 +7,7 @@ import { fmtCedi, fmtDate, PAYMENT_LABELS } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DateField } from "@/components/date-field";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -214,7 +215,7 @@ export function ParentPortal() {
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div className="space-y-1.5">
                       <Label>Day</Label>
-                      <Input type="date" min={new Date().toISOString().slice(0, 10)} value={mealDate} onChange={(e) => setMealDate(e.target.value)} />
+                      <DateField min={new Date().toISOString().slice(0, 10)} value={mealDate} onChange={(v) => setMealDate(v ?? "")} />
                     </div>
                     <div className="space-y-1.5">
                       <Label>Meal</Label>
@@ -627,11 +628,11 @@ function BookRequestDialog({ open, onOpenChange, catalogue, studentId, studentNa
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Issue date</Label>
-              <Input type="date" value={startAt} onChange={(e) => setStartAt(e.target.value)} />
+              <DateField value={startAt} onChange={(v) => setStartAt(v ?? "")} />
             </div>
             <div className="space-y-1.5">
               <Label>Return by</Label>
-              <Input type="date" value={endAt} onChange={(e) => setEndAt(e.target.value)} />
+              <DateField value={endAt} onChange={(v) => setEndAt(v ?? "")} />
             </div>
           </div>
         </div>

@@ -109,6 +109,9 @@ export function ThermalReceipt({ data }: { data: ReceiptData }) {
   const school = data.school;
   return (
     <div className="print-sheet thermal-sheet mx-auto bg-card text-card-foreground border shadow-sm overflow-hidden" style={{ width: "302px" }}>
+      {/* 80mm roll: tight print margins (paper width follows the printer's
+          roll — the global @page only needs narrower margins for the roll) */}
+      <style>{"@media print { @page { margin: 2mm; } }"}</style>
       <div className="px-4 py-3 font-mono text-[11px] leading-snug relative">
         <ReceiptWatermark data={data} />
         <div className="text-center">

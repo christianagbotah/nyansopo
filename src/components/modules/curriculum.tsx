@@ -15,6 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { DateField } from "@/components/date-field";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
@@ -775,7 +776,7 @@ function NoteDialogForm({ data, form, busy, onClose, onSave }: {
             </Select>
           </FormField>
           <FormField label="Lesson date" required>
-            <Input type="date" value={f.lessonDate} onChange={(e) => setF({ ...f, lessonDate: e.target.value })} />
+            <DateField value={f.lessonDate} onChange={(v) => setF({ ...f, lessonDate: v ?? "" })} />
           </FormField>
           <FormField label="Start from template" hint="Prefills objectives, activities & content">
             <Select value={f.templateId ?? "none"} onValueChange={applyTemplate}>

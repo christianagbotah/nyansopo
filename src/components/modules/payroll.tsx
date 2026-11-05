@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { DateField } from "@/components/date-field";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatCard, ModuleHeader, LoadingBlock, StatusBadge, EmptyState, FilterSearch, FormGrid, FormField } from "@/components/ui-helpers";
@@ -87,7 +88,7 @@ export function Payroll() {
         description="Monthly payroll with Ghana-compliant maths — SSNIT Tier 1 (5% employee / 13% employer), Tier 2 (5% employer) and progressive PAYE — statutory rates configurable, payslips print-ready."
         actions={
           <div className="flex gap-2 flex-wrap items-center">
-            <Input type="month" value={newPeriod} onChange={(e) => setNewPeriod(e.target.value)} className="w-40" />
+            <DateField mode="month" value={newPeriod} onChange={(v) => setNewPeriod(v ?? "")} className="w-40" />
             <Button size="sm" className="gap-1.5" disabled={!newPeriod || busy} onClick={() => act("create-run", { period: newPeriod })}><Plus className="size-4" /> Run payroll</Button>
           </div>
         }
@@ -556,7 +557,7 @@ function StaffDialog({ staff, onOpenChange, onDone }: { staff: StaffRow | null; 
           </div>
           <div className="space-y-1.5">
             <Label>Birthday</Label>
-            <Input type="date" value={f.birthday} onChange={(e) => setF({ ...f, birthday: e.target.value })} />
+            <DateField value={f.birthday} onChange={(v) => setF({ ...f, birthday: v ?? "" })} />
           </div>
           <div className="space-y-1.5">
             <Label>Ghana Card</Label>
@@ -588,7 +589,7 @@ function StaffDialog({ staff, onOpenChange, onDone }: { staff: StaffRow | null; 
           </div>
           <div className="space-y-1.5">
             <Label>Hired on</Label>
-            <Input type="date" value={f.hiredAt} onChange={(e) => setF({ ...f, hiredAt: e.target.value })} />
+            <DateField value={f.hiredAt} onChange={(v) => setF({ ...f, hiredAt: v ?? "" })} />
           </div>
           <Separator className="sm:col-span-2 my-1" />
           <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold sm:col-span-2">Ghana statutory & payout</div>
@@ -751,7 +752,7 @@ function NewStaffDialog({ open, onOpenChange, onDone, providers }: { open: boole
             </Select>
           </FormField>
           <FormField label="Birthday">
-            <Input type="date" value={f.birthday} onChange={(e) => setF({ ...f, birthday: e.target.value })} />
+            <DateField value={f.birthday} onChange={(v) => setF({ ...f, birthday: v ?? "" })} />
           </FormField>
           <FormField label="Staff code" required span={2} hint="TCR- teaching · NTS- non-teaching · ADM- administration — 5-digit sequence, unique per school.">
             <div className="flex gap-2">
@@ -849,7 +850,7 @@ function NewStaffDialog({ open, onOpenChange, onDone, providers }: { open: boole
             <Input type="number" value={f.salary} onChange={(e) => setF({ ...f, salary: e.target.value })} placeholder="1600" />
           </FormField>
           <FormField label="Hired on">
-            <Input type="date" value={f.hiredAt} onChange={(e) => setF({ ...f, hiredAt: e.target.value })} />
+            <DateField value={f.hiredAt} onChange={(v) => setF({ ...f, hiredAt: v ?? "" })} />
           </FormField>
 
           {/* ── Login (optional) ── */}
@@ -1068,7 +1069,7 @@ function SsnitReportsTab({ defaultPeriod }: { defaultPeriod?: string }) {
         <CardContent className="p-4 flex flex-wrap items-end gap-3">
           <div className="space-y-1.5">
             <Label className="text-xs">Payroll month</Label>
-            <Input type="month" value={period} onChange={(e) => setPeriod(e.target.value)} className="w-40 h-9" />
+            <DateField mode="month" value={period} onChange={(v) => setPeriod(v ?? "")} className="w-40 h-9" />
           </div>
           <div className="flex rounded-lg border overflow-hidden h-9">
             {(["T1", "T2"] as const).map((t) => (
@@ -1080,7 +1081,7 @@ function SsnitReportsTab({ defaultPeriod }: { defaultPeriod?: string }) {
           </div>
           <div className="flex gap-2 ml-auto">
             <Button size="sm" variant="outline" className="gap-1.5 h-9" disabled={!report} onClick={exportCsv}><Download className="size-4" /> Export CSV</Button>
-            <Button size="sm" className="gap-1.5 h-9" disabled={!report} onClick={() => window.print()}><Printer className="size-4" /> Print (A4)</Button>
+            <Button size="sm" className="gap-1.5 h-9" disabled={!report} onClick={() => window.print()}><Printer className="size-4" /> Print</Button>
           </div>
         </CardContent>
       </Card>

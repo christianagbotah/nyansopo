@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { DateField } from "@/components/date-field";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -272,7 +273,7 @@ export function AdmissionWizard({ schoolId, onAdmitted }: { schoolId: string; on
                   </div>
                   <div className="space-y-1.5">
                     <Label>Date of birth</Label>
-                    <Input type="date" value={dateOfBirth} onChange={(e) => setDateOfBirth(e.target.value)} />
+                    <DateField value={dateOfBirth} onChange={(v) => setDateOfBirth(v ?? "")} />
                   </div>
                   <div className="space-y-1.5">
                     <Label>Hometown</Label>

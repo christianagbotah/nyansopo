@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { DateField } from "@/components/date-field";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -745,8 +746,8 @@ function CashierTab() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1"><Label className="text-xs">From</Label><Input type="date" className="h-8 text-xs" value={from} onChange={(e) => setFrom(e.target.value)} /></div>
-            <div className="space-y-1"><Label className="text-xs">To</Label><Input type="date" className="h-8 text-xs" value={to} onChange={(e) => setTo(e.target.value)} /></div>
+            <div className="space-y-1"><Label className="text-xs">From</Label><DateField className="h-8 text-xs" value={from} onChange={(v) => setFrom(v ?? "")} /></div>
+            <div className="space-y-1"><Label className="text-xs">To</Label><DateField className="h-8 text-xs" value={to} onChange={(v) => setTo(v ?? "")} /></div>
             <div className="space-y-1"><Label className="text-xs">Class</Label>
               <Select value={classroomId} onValueChange={setClassroomId}>
                 <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
@@ -1119,8 +1120,8 @@ function AdvancedReportsTab() {
     <div className="space-y-4">
       <Card>
         <CardContent className="pt-4 flex flex-wrap gap-2 items-end">
-          <div className="space-y-1"><Label className="text-xs">From</Label><Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-9 w-40" /></div>
-          <div className="space-y-1"><Label className="text-xs">To</Label><Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-9 w-40" /></div>
+          <div className="space-y-1"><Label className="text-xs">From</Label><DateField value={from} onChange={(v) => setFrom(v ?? "")} className="h-9 w-40" /></div>
+          <div className="space-y-1"><Label className="text-xs">To</Label><DateField value={to} onChange={(v) => setTo(v ?? "")} className="h-9 w-40" /></div>
           <div className="space-y-1">
             <Label className="text-xs">Learner profile (optional)</Label>
             <Select value={studentId || "none"} onValueChange={setStudentId}>

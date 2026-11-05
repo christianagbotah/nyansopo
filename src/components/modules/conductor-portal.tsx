@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { DateField } from "@/components/date-field";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "@/hooks/use-toast";
@@ -117,7 +118,7 @@ export function ConductorPortal() {
         actions={
           <div className="flex items-center gap-2">
             <Label className="text-xs text-muted-foreground">Date</Label>
-            <Input type="date" value={date} max={todayStr()} onChange={(e) => setDate(e.target.value || todayStr())} className="h-8 w-40" />
+            <DateField value={date} max={todayStr()} onChange={(v) => setDate(v || todayStr())} className="h-8 w-40" />
           </div>
         }
       />

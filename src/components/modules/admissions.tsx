@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { DateField } from "@/components/date-field";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -414,7 +415,7 @@ function InquiryDialog({ open, onOpenChange, onDone, onLookup }: { open: boolean
             </Select>
           </FormField>
           <FormField label="Date of birth">
-            <Input type="date" value={form.dateOfBirth} onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })} />
+            <DateField value={form.dateOfBirth} onChange={(v) => setForm({ ...form, dateOfBirth: v ?? "" })} />
           </FormField>
           <FormField label="Guardian name">
             <Input value={form.guardianName} onChange={(e) => setForm({ ...form, guardianName: e.target.value })} />

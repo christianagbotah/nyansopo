@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
 import { apiGet, apiPost, apiPostQueueable } from "@/lib/api";
 import { Input } from "@/components/ui/input";
+import { DateField } from "@/components/date-field";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -541,7 +542,7 @@ function EnrolDialog({ open, onOpenChange, classrooms, onDone }: { open: boolean
               <SelectContent><SelectItem value="M">Boy</SelectItem><SelectItem value="F">Girl</SelectItem></SelectContent>
             </Select>
           </div>
-          <div className="space-y-1.5"><Label>Date of birth</Label><Input type="date" value={form.dateOfBirth} onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })} /></div>
+          <div className="space-y-1.5"><Label>Date of birth</Label><DateField value={form.dateOfBirth} onChange={(v) => setForm({ ...form, dateOfBirth: v ?? "" })} /></div>
           <div className="space-y-1.5"><Label>Guardian name *</Label><Input value={form.guardianName} onChange={(e) => setForm({ ...form, guardianName: e.target.value })} /></div>
           <div className="space-y-1.5"><Label>Guardian MoMo *</Label><Input placeholder="+233 24 000 0000" value={form.guardianPhone} onChange={(e) => setForm({ ...form, guardianPhone: e.target.value })} /></div>
           <div className="space-y-1.5"><Label>Occupation</Label><Input value={form.guardianOccupation} onChange={(e) => setForm({ ...form, guardianOccupation: e.target.value })} /></div>

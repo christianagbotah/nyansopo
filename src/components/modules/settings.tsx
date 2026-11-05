@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { DateField } from "@/components/date-field";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -371,7 +372,7 @@ export function Settings() {
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="space-y-1.5"><Label>Full payment expected by</Label><Input type="date" value={sys.fullPaymentBy ? String(sys.fullPaymentBy).slice(0, 10) : ""} onChange={(e) => setSys({ ...sys, fullPaymentBy: e.target.value })} /></div>
+                    <div className="space-y-1.5"><Label>Full payment expected by</Label><DateField value={sys.fullPaymentBy ? String(sys.fullPaymentBy).slice(0, 10) : ""} onChange={(v) => setSys({ ...sys, fullPaymentBy: v ?? "" })} /></div>
                   </div>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div className="space-y-1.5"><Label>Mobile money account name</Label><Input value={sys.momoAccountName ?? ""} onChange={(e) => setSys({ ...sys, momoAccountName: e.target.value })} placeholder="Golden Excellence Academy" /></div>
