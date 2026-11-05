@@ -554,3 +554,137 @@ export function CrecheSheet({ d }: { d: CrecheSheetData }) {
     </div>
   );
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   WAEC-STYLE JHS STATEMENT OF RESULTS (CI3 Examination::waec_result
+   parity) — the formal double-border BECE (mock) statement: core and
+   elective subject tables, aggregate = best 4 core + best 2 electives
+   on the WAEC 1–9 scale (lower is better), grading key, stamps.
+   ═══════════════════════════════════════════════════════════════ */
+
+/** WASSC/BECE grading scale: grade → point + interpretation (WAEC standard). */
+const WAEC_SCALE: { grade: string; point: number; from: number; to: number; interpretation: string }[] = [
+  { grade: "A1", point: 1, from: 80, to: 100, interpretation: "Excellent" },
+  { grade: "B2", point: 2, from: 70, to: 79, interpretation: "Very Good" },
+  { grade: "B3", point: 3, from: 65, to: 69, interpretation: "Good" },
+  { grade: "C4", point: 4, from: 60, to: 64, interpretation: "Credit" },
+  { grade: "C5", point: 5, from: 55, to: 59, interpretation: "Credit" },
+  { grade: "C6", point: 6, from: 50, to: 54, interpretation: "Credit" },
+  { grade: "D7", point: 7, from: 45, to: 49, interpretation: "Pass" },
+  { grade: "E8", point: 8, from: 40, to: 44, interpretation: "Pass" },
+  { grade: "F9", point: 9, from: 0, to: 39, interpretation: "Fail" },
+];
+const waecGrade = (total: number) => WAEC_SCALE.find((b) => total >= b.from && total <= b.to) ?? WAEC_SCALE[WAEC_SCALE.length - 1];
+
+export function WaecStatement({ d }: { d: SheetData }) {
+  const core = d.results.filter((r) => r.isCore).map((r) => ({ ...r, waec: waecGrade(r.total) }));
+  const elective = d.results.filter((r) => !r.isCore).map((r) => ({ ...r, waec: waecGrade(r.total) }));
+  // BECE aggregate: best 4 core + best 2 elective grade points (lower is better)
+  const bestCore = [...core].sort((a, b) => a.waec.point - b.waec.point).slice(0, 4);
+  const bestElective = [...elective].sort((a, b) => a.waec.point - b.waec.point).slice(0, 2);
+  const aggregate = [...bestCore, ...bestElective].reduce((s, r) => s + r.waec.point, 0);
+  const year = new Date().getFullYear();
+
+  const table = (rows: typeof core) => (
+    <table className="w-full border-collapse text-[11px]">
+      <thead>
+        <tr className="bg-black text-white">
+          <th className="border border-black px-2 py-1 text-left">SUBJECT</th>
+          <th className="border border-black px-2 py-1 w-32">GRADE</th>
+          <th className="border border-black px-2 py-1 text-left w-40">INTERPRETATION</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r, i) => (
+          <tr key={i}>
+            <td className="border border-black px-2 py-1">{r.subject}{r.code ? <span className="text-black/50"> ({r.code})</span> : null}</td>
+            <td className="border border-black px-2 py-1 text-center font-bold">{r.waec.grade}</td>
+            <td className="border border-black px-2 py-1">{r.waec.interpretation}</td>
+          </tr>
+        ))}
+        {!rows.length && (
+          <tr><td className="border border-black px-2 py-1 text-black/50" colSpan={3}>None recorded</td></tr>
+        )}
+      </tbody>
+    </table>
+  );
+
+  return (
+    <div className="bg-white text-black mx-auto max-w-[820px] p-2" style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}>
+      <div className="border-[3px] double border-black p-4">
+        {/* header */}
+        <div className="flex items-center gap-4 border-b-2 border-black pb-3">
+          <div className="shrink-0 w-16 h-16 rounded-full border-2 border-black flex items-center justify-center text-[8px] text-center font-bold leading-tight">SCHOOL<br />LOGO</div>
+          <div className="flex-1 text-center">
+            <div className="text-lg font-bold uppercase tracking-wide">{d.school.name}</div>
+            <div className="text-[11px]">
+              {d.school.town ? `${d.school.town}, ` : ""}{d.school.region ?? ""}
+              {d.school.phone ? ` · Tel: ${d.school.phone}` : ""}
+            </div>
+            <div className="mt-1.5 inline-block border border-black px-3 py-0.5 text-[11px] font-bold tracking-wide">
+              JUNIOR HIGH SCHOOL STATEMENT OF RESULTS
+            </div>
+            <div className="text-[10px] italic mt-0.5">(BASIC EDUCATION CERTIFICATE EXAMINATION — MOCK)</div>
+          </div>
+        </div>
+
+        {/* candidate */}
+        <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-[12px] mt-3">
+          <div><b>Candidate Name:</b> <span className="uppercase">{d.student.name}</span></div>
+          <div><b>Index Number:</b> {d.student.index ?? "—"}</div>
+          <div><b>Exam Session:</b> {d.termName}</div>
+          <div><b>Year:</b> {year}</div>
+        </div>
+
+        {/* core / elective tables */}
+        <div className="mt-3 space-y-3">
+          <div>
+            <div className="bg-zinc-200 border border-black px-2 py-0.5 text-[11px] font-bold">CORE SUBJECTS</div>
+            {table(core)}
+          </div>
+          {elective.length > 0 && (
+            <div>
+              <div className="bg-zinc-200 border border-black px-2 py-0.5 text-[11px] font-bold">ELECTIVE SUBJECTS</div>
+              {table(elective)}
+            </div>
+          )}
+        </div>
+
+        {/* aggregate */}
+        <div className="mt-3 border-2 border-yellow-600 bg-yellow-50 px-3 py-2 flex items-center justify-between">
+          <div className="text-[11px]">
+            <div className="font-bold">AGGREGATE — BEST 4 CORE + BEST 2 ELECTIVES</div>
+            <div className="text-black/70">
+              Core: {bestCore.map((r) => r.waec.grade).join(", ") || "—"} · Elective: {bestElective.map((r) => r.waec.grade).join(", ") || "—"}
+            </div>
+          </div>
+          <div className="text-right">
+            <div className="text-[10px] font-semibold">AGGREGATE SCORE</div>
+            <div className="text-4xl font-bold leading-none tabular-nums">{aggregate}</div>
+          </div>
+        </div>
+
+        {/* grading key */}
+        <div className="mt-3 text-[10px] border border-black/40 px-2 py-1.5">
+          <b>GRADE KEY:</b>{" "}
+          {WAEC_SCALE.map((b) => `${b.grade} ${b.from}–${b.to}`).join("  ·  ")}
+          <span className="ml-2 text-black/60">(1–3 Highly Proficient · 4–6 Proficient · 7–8 Basic · 9 Unsatisfactory)</span>
+        </div>
+
+        {/* footer */}
+        <div className="mt-4 flex items-end justify-between text-[11px]">
+          <div className="w-40 border border-dashed border-black h-16 flex items-center justify-center text-[9px] text-black/50">SCHOOL STAMP</div>
+          <div className="text-center">
+            <div className="border-t border-black px-4 pt-0.5">__________________________</div>
+            <div className="mt-0.5">Head of School</div>
+            <div className="text-black/60 text-[10px]">Date: {new Date().toLocaleDateString("en-GB")}</div>
+          </div>
+          <div className="w-40 border border-dashed border-black h-16 flex items-center justify-center text-[9px] text-black/50">OFFICE STAMP</div>
+        </div>
+        <div className="mt-2 text-center text-[9px] italic text-black/60">
+          This is an official document. Any alteration renders it invalid. · Generated on {new Date().toLocaleString("en-GB")}
+        </div>
+      </div>
+    </div>
+  );
+}

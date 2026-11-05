@@ -25,6 +25,34 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const monthStart = new Date(date.getFullYear(), date.getMonth(), 1);
   const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59);
 
+  /* ── DINING COUPONS (CI3 Dining_coupon parity): the printable sheet of
+     learners charged a meal/drink service on the date — 20 slips per page,
+     payment type resolved (direct payment / prepaid wallet / owing). ── */
+  if (q("tab") === "coupons") {
+    const serviceId = q("serviceId");
+    const classroomId = q("classroomId");
+    if (!serviceId) return NextResponse.json({ error: "serviceId is required" }, { status: 400 });
+    const svc = await db.dailyService.findFirst({ where: { id: serviceId, schoolId } });
+    if (!svc) return NextResponse.json({ error: "Service not found" }, { status: 404 });
+    const dayCharges = await db.dailyCharge.findMany({
+      where: { schoolId, serviceId, date: { gte: dayStart, lte: dayEnd }, status: { not: "WAIVED" } },
+      include: { student: { include: { enrollments: { where: { status: "ACTIVE" }, take: 1, include: { classroom: true } } } }, payment: true },
+      orderBy: [{ student: { firstName: "asc" } }],
+    });
+    const rows = dayCharges
+      .filter((c) => !classroomId || c.student.enrollments[0]?.classroomId === classroomId)
+      .map((c) => ({
+        student: `${c.student.firstName} ${c.student.lastName}`,
+        studentCode: c.student.nyansapoIndex ?? "",
+        classroom: c.student.enrollments[0]?.classroom?.name ?? null,
+        amountCents: c.amountCents,
+        paymentType: c.status === "PAID"
+          ? (c.payment ? "Direct payment" : "Prepaid wallet")
+          : c.status === "OWED" ? "Owing" : "Prepaid wallet",
+      }));
+    return NextResponse.json({ date: dateStr, service: { id: svc.id, name: svc.name, category: svc.category }, rows });
+  }
+
   const services = await db.dailyService.findMany({
     where: { schoolId },
     include: { _count: { select: { enrollments: { where: { active: true } } } }, classRates: { include: { classroom: { select: { id: true, name: true } } } } },

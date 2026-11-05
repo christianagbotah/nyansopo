@@ -15,7 +15,7 @@ import { StatCard, ModuleHeader, LoadingBlock, EmptyState, FilterBar, FilterSele
 import { fmtCedi, fmtDate, fmtDateTime, PAYMENT_LABELS } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { UtensilsCrossed, Wallet, CalendarPlus, Plus, TrendingUp, Search, Droplets, BookOpenCheck, Coffee, HandCoins, CheckCircle2, Printer, Percent, Bus, Settings2, CircleDollarSign, ArrowDownToLine, History, BadgeCheck, UserCheck, Landmark, ScrollText, Layers, Trash2, SplitSquareHorizontal, AlertCircle, ClipboardCheck, X } from "lucide-react";
+import { UtensilsCrossed, Wallet, CalendarPlus, Plus, TrendingUp, Search, Droplets, BookOpenCheck, Coffee, HandCoins, CheckCircle2, Printer, Percent, Bus, Settings2, CircleDollarSign, ArrowDownToLine, History, BadgeCheck, UserCheck, Landmark, ScrollText, Layers, Trash2, SplitSquareHorizontal, AlertCircle, ClipboardCheck, X, Ticket } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ReceiptDocument } from "@/components/receipts";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -206,6 +206,8 @@ export function DailyServices() {
     } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
   }
 
+  const [couponsOpen, setCouponsOpen] = useState(false);
+
   if (!data) return <LoadingBlock label="Loading daily services…" />;
 
   return (
@@ -223,6 +225,11 @@ export function DailyServices() {
             {isAdmin && data && (
               <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={() => setSettingsOpen(true)}>
                 <Settings2 className="size-4" /> Collection policy
+              </Button>
+            )}
+            {!isTeacher && (
+              <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={() => setCouponsOpen(true)}>
+                <Ticket className="size-4" /> Dining coupons
               </Button>
             )}
           </div>
@@ -644,6 +651,9 @@ export function DailyServices() {
         onOpenChange={(o) => !o && setSettingsOpen(false)}
         onDone={() => { setSettingsOpen(false); load(date); }}
       />
+
+      {/* dining coupons (CI3 dining_coupon parity) */}
+      <CouponsDialog open={couponsOpen} date={date} services={data.services.filter((x) => x.category === "MEAL" || x.category === "DRINK")} onOpenChange={setCouponsOpen} />
 
       {/* service dialog */}
       <ServiceDialog
@@ -1805,5 +1815,92 @@ function MealsTab({ data, date, onChanged }: { data: DailyData; date: string; on
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+/* ── Dining coupons (CI3 dining_coupon parity) ──
+    Printable sheet of every learner charged a meal/drink service on the
+    date — 20 slips per page in a 4×5 grid, colour-keyed per service,
+    valid until 5:00 PM. Payment type: direct / prepaid wallet / owing. */
+const COUPON_COLORS: Record<string, string> = { MEAL: "#10b981", DRINK: "#06b6d4" };
+type CouponRow = { student: string; studentCode: string; classroom: string | null; amountCents: number; paymentType: string };
+
+function CouponsDialog({ open, date, services, onOpenChange }: { open: boolean; date: string; services: Service[]; onOpenChange: (o: boolean) => void }) {
+  const { currentSchoolId } = useStore();
+  const [pickedId, setPickedId] = useState<string>("");
+  const [data, setData] = useState<{ service: { name: string; category: string }; rows: CouponRow[] } | null>(null);
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  const serviceId = pickedId || services[0]?.id || "";
+  const key = `${date}:${serviceId}`;
+
+  useEffect(() => {
+    if (!open || !currentSchoolId || !serviceId) return;
+    apiGet<{ service: { name: string; category: string }; rows: CouponRow[] }>(`/api/school/${currentSchoolId}/ops/daily?tab=coupons&date=${date}&serviceId=${serviceId}`)
+      .then((d) => { setData(d); setLoadedKey(key); })
+      .catch((e) => toast({ title: "Load failed", description: e.message, variant: "destructive" }));
+  }, [open, currentSchoolId, date, serviceId, key]);
+  const loading = open && !!serviceId && loadedKey !== key;
+
+  const pages: CouponRow[][] = [];
+  for (let i = 0; i < (data?.rows.length ?? 0); i += 20) pages.push(data!.rows.slice(i, i + 20));
+  const color = COUPON_COLORS[data?.service.category ?? "MEAL"] ?? "#667eea";
+  const today = new Date(date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-4xl max-h-[92vh] overflow-y-auto nice-scroll">
+        <DialogHeader className="no-print">
+          <DialogTitle className="flex items-center gap-2"><Ticket className="size-4" /> Dining coupons — {today}</DialogTitle>
+          <DialogDescription>
+            Everyone charged <b>{data?.service.name ?? "…"}</b> on this date, 20 slips per page. Print and let the kitchen tick names off.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="no-print flex flex-wrap gap-2 items-end">
+          <div className="space-y-1">
+            <Label className="text-xs">Service</Label>
+            <Select value={serviceId} onValueChange={setPickedId}>
+              <SelectTrigger className="h-9 w-56"><SelectValue placeholder={services.length ? "Pick a service" : "No meal/drink services"} /></SelectTrigger>
+              <SelectContent>
+                {services.map((x) => <SelectItem key={x.id} value={x.id}>{x.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          {data && <Badge variant="secondary">{data.rows.length} coupon{data.rows.length === 1 ? "" : "s"}</Badge>}
+          <Button size="sm" className="h-9 gap-1.5 ml-auto" disabled={!data?.rows.length} onClick={() => window.print()}>
+            <Printer className="size-4" /> Print {data?.rows.length ?? 0} slips
+          </Button>
+        </div>
+
+        {loading ? <LoadingBlock label="Preparing coupons…" /> : !data ? null : data.rows.length === 0 ? (
+          <EmptyState title="No charges for this service on this date" hint="Generate the day charges first, or pick another service." />
+        ) : (
+          <div className="print-area space-y-4">
+            {pages.map((page, pi) => (
+              <div key={pi} className="print-sheet grid grid-cols-2 sm:grid-cols-4 gap-2" style={{ color: "#111" }}>
+                {page.map((r, i) => (
+                  <div key={i} className="rounded-md border-2 border-dashed border-black/60 p-2 bg-white" style={{ borderTop: `4px solid ${color}` }}>
+                    <div className="text-[8pt] font-bold truncate">{r.student}</div>
+                    <div className="text-[7pt] text-black/70 flex justify-between"><span>Code: {r.studentCode}</span><span>{r.classroom ?? ""}</span></div>
+                    <div className="mt-1 flex items-center justify-between">
+                      <span className="text-[7pt] font-semibold" style={{ color }}>{data.service.name}</span>
+                      <span className="text-[8pt] font-bold text-white rounded px-1.5 py-0.5" style={{ background: color }}>GH₵{(r.amountCents / 100).toFixed(2)}</span>
+                    </div>
+                    <div className="text-[6.5pt] text-black/60 mt-0.5 flex justify-between">
+                      <span>Valid: {today}</span><span>Expires: 5:00 PM</span>
+                    </div>
+                    <div className="text-[6pt] text-center text-black/50">{r.paymentType}</div>
+                  </div>
+                ))}
+                {/* faded placeholders to complete the 4×5 grid */}
+                {Array.from({ length: Math.max(0, 20 - page.length) }).map((_, i) => (
+                  <div key={`ph-${i}`} className="rounded-md border-2 border-dashed border-black/15 p-2 opacity-40">&nbsp;</div>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
