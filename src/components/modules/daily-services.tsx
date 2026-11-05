@@ -938,7 +938,7 @@ function CollectDialog({ student, date, online, onOpenChange, onDone }: { studen
 }
 function ReceiptIcon() { return <Printer className="size-4" />; }
 
-function ReceiptDialog({ receipt, onOpenChange }: { receipt: any; onOpenChange: (o: boolean) => void }) {
+export function ReceiptDialog({ receipt, onOpenChange }: { receipt: any; onOpenChange: (o: boolean) => void }) {
   const isPayload = receipt && receipt.type && receipt.school;
   return (
     <Dialog open={!!receipt} onOpenChange={onOpenChange}>

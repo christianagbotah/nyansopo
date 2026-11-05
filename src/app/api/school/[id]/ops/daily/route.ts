@@ -374,6 +374,31 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ service: updated });
   }
 
+  /* ── presence-only entry from the collection portal (wave 10): record a
+     boarding direction and/or mark present WITHOUT any payment — the transport
+     fare materialises against the transport wallet/arrears (iEduPro
+     record_transport_intention + mark_student_boarded), no cash moves. ── */
+  if (action === "record-presence") {
+    const { studentId, transportUsage, markPresent, date: on } = body;
+    const student = await db.student.findUnique({ where: { id: studentId } });
+    if (!student) return NextResponse.json({ error: "Learner not found" }, { status: 404 });
+    const day = new Date(on ?? new Date().toISOString().slice(0, 10));
+    let transport: { applied: string; fareCents: number | null } | null = null;
+    if (transportUsage) {
+      if (!TRANSPORT_USAGES.includes(transportUsage)) return NextResponse.json({ error: "Invalid transport usage" }, { status: 400 });
+      const applied = await applyTransportUsage(db, schoolId, studentId, day, transportUsage as TransportUsage, { performedByName: user.fullName, performedByRole: user.role });
+      if (transportUsage !== "NOT_USING" && !applied) return NextResponse.json({ error: "This learner has no active route assignment" }, { status: 400 });
+      transport = { applied: transportUsage, fareCents: applied ? applied.amountCents : 0 };
+    }
+    const present = markPresent
+      ? await markPresentForDate(db, { schoolId, studentId, date: day })
+      : null;
+    return NextResponse.json({
+      transport,
+      present: present ? { mode: present } : null,
+    });
+  }
+
   // ── per-classroom rate matrix (iedupro daily_fee_rates: rates are set per
   //    class-section per fee type). upsert one rate; clear removes the override.
   //    TRANSPORT is the exception — fares follow the bus ROUTE (per pickup stop,

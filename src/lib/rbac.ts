@@ -288,7 +288,7 @@ export const MODULE_PERMS: Record<string, string[]> = {
   library: ["library.view"],
   boarding: ["boarding.view"],
   rbac: ["rbac.manage"],
-  cashier: ["cashier.reports"],
+  cashier: ["cashier.reports", "fees.collect", "daily.collect"],
   conductor: ["transport.conduct"],
   staffhub: ["staffhub.self"],
   portal: ["portal.self"],

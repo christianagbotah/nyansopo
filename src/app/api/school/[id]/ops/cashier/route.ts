@@ -1,17 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
-import { paymentMethodLabel, type CollectMethodPart } from "@/lib/daily-billing";
+import { paymentMethodLabel, resolveTransportFare, effectivePrice, type CollectMethodPart } from "@/lib/daily-billing";
 
-// ── GET /api/school/[id]/ops/cashier — cashier console (iEduPro parity)
-//    period stats, fee-type breakdown (collected vs outstanding),
-//    per-collector performance, recent receipts ──
+// ── GET /api/school/[id]/ops/cashier ──
+//  ?action=student-info → the fee-collection portal payload for ONE learner:
+//  every enabled fee module as a conditional card (iEduPro fee_collection
+//  portal + user rules): optional items toggle, admin-approved lunch opt-outs
+//  disable the card, 100% discounts hide it, transport riders get the transport
+//  card, open invoices join as termly cards.
+//  (default) → cashier console stats (iEduPro parity) ──
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: schoolId } = await params;
-  const auth = await opsAuth(req, schoolId, "GET", { perms: ["cashier.reports"] });
+  const url = new URL(req.url);
+  const action = url.searchParams.get("action") ?? "";
+  const auth = await opsAuth(req, schoolId, "GET", { perms: ["cashier.reports", "fees.collect", "daily.collect"] });
   if (!auth.ok) return auth.res;
 
-  const url = new URL(req.url);
+  if (action === "student-info") return studentInfo(req, schoolId, url);
+
   const from = url.searchParams.get("from") ? new Date(url.searchParams.get("from")!) : new Date(new Date().toDateString());
   const toSrc = url.searchParams.get("to") ? new Date(url.searchParams.get("to")!) : new Date();
   const to = new Date(toSrc.getTime() + 864e5 - 1); // end of day
@@ -191,5 +198,228 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     student: { name: `${student.firstName} ${student.lastName}`, index: student.nyansapoIndex, classroom: student.enrollments[0]?.classroom?.name ?? null, guardian: student.guardianName, guardianPhone: student.guardianPhone },
     rows,
     closing: bal,
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────
+   FEE COLLECTION PORTAL — student-info (wave 10)
+   The CI3 fee_collection_portal parity, one learner at a time:
+
+   daily cards    every ACTIVE daily-service enrolment; OPTIONAL items
+                  (optInDaily) render as toggles, admin-approved OPT_OUT
+                  exceptions disable the card, 100% discounts hide it,
+                  partial discounts show the subsidised rate
+   transport card active route assignment → one-way fare card with
+                  per-stop overrides (in/out/both usage at collect time)
+   invoice cards  open termly invoices (not written off) with their dues
+   wallet         per-item prepaid balances + arrears; payments settle
+                  arrears FIFO first and park the excess on the SAME
+                  item as advance (iEduPro apply_payment)
+   ───────────────────────────────────────────────────────────── */
+async function studentInfo(req: NextRequest, schoolId: string, url: URL) {
+  const studentId = url.searchParams.get("studentId");
+  if (!studentId) return NextResponse.json({ error: "studentId is required" }, { status: 400 });
+  const dateStr = url.searchParams.get("date") ?? new Date().toISOString().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return NextResponse.json({ error: "date must be YYYY-MM-DD" }, { status: 400 });
+  const date = new Date(`${dateStr}T00:00:00`);
+  const dayStart = new Date(date); dayStart.setHours(0, 0, 0, 0);
+  const dayEnd = new Date(date); dayEnd.setHours(23, 59, 59, 999);
+
+  const enrollment = await db.enrollment.findFirst({
+    where: { studentId, status: "ACTIVE", classroom: { schoolId } },
+    include: { classroom: true, student: true },
+    orderBy: { admissionDate: "asc" },
+  });
+  if (!enrollment) return NextResponse.json({ error: "Learner not found in this school" }, { status: 404 });
+  const student = enrollment.student;
+  const classroomId = enrollment.classroomId;
+
+  /* attendance today (for the header chip) */
+  const attSession = await db.attendanceSession.findFirst({
+    where: { schoolId, classroomId, date: { gte: dayStart, lte: dayEnd } },
+    include: { records: { where: { studentId } } },
+  });
+  const attRecord = attSession?.records[0] ?? null;
+
+  /* this week (Mon–Sun) for WEEKLY items */
+  const weekStart = new Date(dayStart);
+  weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
+  const weekEnd = new Date(weekStart); weekEnd.setDate(weekEnd.getDate() + 7);
+
+  /* enrolments → item rows */
+  const enrollRows = await db.dailyServiceEnrollment.findMany({
+    where: { studentId, active: true, service: { schoolId, active: true } },
+    include: { service: { include: { classRates: true } } },
+  });
+
+  /* per-item balances + arrears */
+  const balances = await db.serviceBalance.findMany({ where: { studentId } });
+  const balByService = new Map(balances.map((b) => [b.serviceId, b.prepaidCents]));
+  const owedRows = await db.dailyCharge.findMany({ where: { studentId, status: "OWED" }, include: { service: { select: { category: true } } } });
+  const owedByService = new Map<string, number>();
+  owedRows.forEach((c) => owedByService.set(c.serviceId, (owedByService.get(c.serviceId) ?? 0) + c.amountCents));
+  const weekCharges = await db.dailyCharge.findMany({
+    where: { studentId, date: { gte: weekStart, lt: weekEnd } },
+    include: { service: true },
+  });
+  const weeklyBilled = new Set<string>();
+  weekCharges.forEach((c) => { if (c.service.chargeMode === "WEEKLY" && c.status !== "WAIVED") weeklyBilled.add(c.serviceId); });
+  const todayCharges = weekCharges.filter((c) => c.date >= dayStart && c.date <= dayEnd);
+  const todayByService = new Map<string, { amountCents: number; status: string; usage: string | null; paymentId: string | null }>();
+  todayCharges.forEach((c) => todayByService.set(c.serviceId, { amountCents: c.amountCents, status: c.status, usage: c.usage, paymentId: c.paymentId }));
+
+  /* meal opt-in/opt-out exceptions for the date (PENDING parent requests + APPROVED) */
+  const exceptions = await db.dailyMealException.findMany({
+    where: { studentId, date: { gte: dayStart, lte: dayEnd }, status: { in: ["PENDING", "APPROVED"] } },
+    include: { service: true },
+  });
+  const optOutByService = new Map<string, { status: string; reason: string | null }>(); // OPT_OUT
+  const optInByService = new Map<string, { status: string; reason: string | null }>(); // OPT_IN
+  exceptions.forEach((e) => {
+    if (e.kind === "OPT_OUT") optOutByService.set(e.serviceId, { status: e.status, reason: e.reason });
+    else optInByService.set(e.serviceId, { status: e.status, reason: e.reason });
+  });
+
+  /* approved discounts (DAILY_SERVICE scope) — CI3 get_student_discount_for_date */
+  const discountApps = await db.discountApplication.findMany({
+    where: {
+      studentId, schoolId, status: "APPROVED",
+      OR: [
+        { serviceId: null, discount: { isNot: null } },
+        { serviceId: { not: null } },
+      ],
+    },
+    include: { discount: true },
+  });
+  const dailyDiscounts = discountApps.filter((a) => {
+    if (a.serviceId) return true; // service-scoped
+    const d = a.discount;
+    return !!d && d.scope === "DAILY_SERVICE"; // generic
+  });
+
+  const discountFor = (serviceId: string, priceCents: number) => {
+    // specific service application first, then a generic DAILY_SERVICE discount
+    const specific = dailyDiscounts.find((a) => a.serviceId === serviceId);
+    const generic = dailyDiscounts.find((a) => !a.serviceId);
+    const pick = specific ?? generic;
+    if (!pick) return { cents: 0, label: null as string | null, hidden: false };
+    const method = pick.discount?.type ?? "PERCENT";
+    const raw = pick.valueOverride ?? pick.discount?.value ?? 0;
+    const cents = method === "PERCENT" ? Math.round((priceCents * Math.min(100, Math.max(0, raw))) / 100) : Math.min(priceCents, raw);
+    return {
+      cents,
+      label: pick.discount?.name ?? "Discount",
+      hidden: cents >= priceCents && priceCents > 0, // 100% → the card will not load
+    };
+  };
+
+  /* transport assignment → the transport card */
+  const fare = await resolveTransportFare(db, studentId);
+  const transportOwed = owedRows.filter((c) => c.service?.category === "TRANSPORT").reduce((a, c) => a + c.amountCents, 0);
+  const wallet = await db.studentWallet.findUnique({ where: { studentId } });
+
+  /* open termly invoices */
+  const invoices = await db.invoice.findMany({
+    where: { studentId, schoolId, writtenOff: false, status: { in: ["UNPAID", "PARTIAL", "OVERDUE"] } },
+    include: { items: true, term: true },
+    orderBy: { createdAt: "desc" },
+  });
+
+  /* recent payments (context strip) */
+  const recentPayments = await db.payment.findMany({
+    where: { studentId, voided: false, paymentType: "PAYMENT" },
+    orderBy: { paidAt: "desc" },
+    take: 6,
+  });
+
+  /* build the card list — ordering: daily items, transport, invoices */
+  const cards = enrollRows
+    .map((se) => {
+      const svc = se.service;
+      const classRate = svc.classRates.find((r) => r.classroomId === classroomId)?.priceCents ?? null;
+      const price = effectivePrice(svc, se, classRate);
+      const disc = discountFor(svc.id, price);
+      const optOut = optOutByService.get(svc.id) ?? null;
+      const optIn = optInByService.get(svc.id) ?? null;
+      const optional = svc.optInDaily;
+      return {
+        kind: "DAILY" as const,
+        serviceId: svc.id,
+        name: svc.name,
+        category: svc.category,
+        priceCents: price,
+        discountedCents: Math.max(0, price - disc.cents),
+        discountCents: disc.cents,
+        discountLabel: disc.label,
+        hidden: disc.hidden, // 100% discount → card not loaded
+        optional, // optInDaily → rendered as a toggle
+        optOut, // APPROVED → card disabled (admin approved the lunch skip)
+        optedIn: optional ? optIn : null, // APPROVED → opted in for the day
+        arrearsCents: owedByService.get(svc.id) ?? 0,
+        prepaidCents: balByService.get(svc.id) ?? 0,
+        weekly: svc.chargeMode === "WEEKLY",
+        weeklyBilledThisWeek: svc.chargeMode === "WEEKLY" && weeklyBilled.has(svc.id),
+        weekdays: svc.weekdays,
+        today: todayByService.get(svc.id) ?? null,
+        chargeMode: svc.chargeMode,
+      };
+    })
+    .filter((c) => !c.hidden); // hidden cards are simply not loaded
+
+  const transportCard = fare ? {
+    kind: "TRANSPORT" as const,
+    routeName: fare.routeName,
+    stopName: fare.stopName,
+    onewayCents: fare.onewayCents,
+    bothCents: fare.onewayCents * 2,
+    arrearsCents: transportOwed,
+    transportWalletCents: wallet?.transportCents ?? 0,
+    todayUsage: (todayByService.get("__transport__")?.usage) ?? null,
+  } : null;
+
+  const invoiceCards = invoices.map((inv) => ({
+    kind: "INVOICE" as const,
+    invoiceId: inv.id,
+    invoiceNo: inv.invoiceNo,
+    term: inv.term?.name ?? null,
+    totalCents: inv.totalCents,
+    paidCents: inv.paidCents,
+    dueCents: Math.max(0, inv.totalCents - inv.paidCents),
+    dueDate: inv.dueDate ? inv.dueDate.toISOString().slice(0, 10) : null,
+    status: inv.status,
+    items: inv.items.map((it) => ({ name: it.name, amountCents: it.amountCents })),
+  }));
+
+  return NextResponse.json({
+    date: dateStr,
+    student: {
+      id: student.id,
+      name: `${student.firstName} ${student.lastName}`,
+      index: student.nyansapoIndex,
+      classroom: enrollment.classroom.name,
+      classroomId,
+      guardianName: student.guardianName,
+      guardianPhone: student.guardianPhone,
+    },
+    attendance: attRecord ? { status: attRecord.status, excusedReason: attRecord.excusedReason ?? null, takenBy: attSession?.takenByName ?? null } : null,
+    wallet: {
+      prepaidCents: wallet?.prepaidCents ?? 0,
+      transportCents: wallet?.transportCents ?? 0,
+      itemPrepaidTotal: Array.from(balByService.values()).reduce((a, b) => a + b, 0),
+      arrearsTotal: owedRows.reduce((a, c) => a + c.amountCents, 0),
+    },
+    discounts: dailyDiscounts.map((a) => ({
+      name: a.discount?.name ?? "Discount",
+      method: a.discount?.type ?? "PERCENT",
+      value: a.valueOverride ?? a.discount?.value ?? 0,
+      scoped: !!a.serviceId,
+    })),
+    cards,
+    transport: transportCard,
+    invoices: invoiceCards,
+    recentPayments: recentPayments.map((p) => ({
+      id: p.id, receiptNo: p.receiptNo, amountCents: p.amountCents,
+      method: paymentMethodLabel(p), category: p.category, paidAt: p.paidAt.toISOString(),
+    })),
   });
 }

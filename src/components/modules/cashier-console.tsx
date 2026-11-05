@@ -1,7 +1,8 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
-import { apiGet, apiPost } from "@/lib/api";
+import { canAny } from "@/lib/rbac";
+import { apiGet, apiPost, apiPostQueueable } from "@/lib/api";
 import { ModuleHeader, LoadingBlock, EmptyState, downloadCsv } from "@/components/ui-helpers";
 import { fmtCedi, fmtDate, PAYMENT_LABELS } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
@@ -16,10 +17,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "@/hooks/use-toast";
 import { ReceiptDocument, BulkReceiptsDocument } from "@/components/receipts";
+import { ReceiptDialog } from "@/components/modules/daily-services";
 import {
   Receipt, Banknote, TrendingUp, Users, UtensilsCrossed, Banknote as CashIcon, Smartphone, RefreshCcw, Wallet,
   Percent, Printer, Save, ClipboardCheck, CalendarDays, ArrowLeftRight, Search, FileSpreadsheet, ListChecks,
-  BookOpen, Droplets, Bus, Coffee, HandCoins, ChevronRight,
+  BookOpen, Droplets, Bus, Coffee, HandCoins, ChevronRight, FileWarning, BadgeCheck,
 } from "lucide-react";
 
 type ReportRow = {
@@ -73,19 +75,28 @@ const SERVICE_TONE: Record<string, string> = {
 };
 
 export function CashierConsole() {
-  const { currentSchoolId, setModule, navTarget } = useStore();
+  const { currentSchoolId, setModule, navTarget, session } = useStore();
   const [from, setFrom] = useState(todayStr());
   const [to, setTo] = useState(todayStr());
   const [collector, setCollector] = useState("all");
   const [data, setData] = useState<CashierData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState("portal");
+  const [tab, setTab] = useState("collect");
+
+  /* permission split (wave 10): collecting is fees.collect/daily.collect;
+     the reporting tabs are cashier.reports — cashiers can be barred from
+     billing/receiving invoices while accountants keep everything */
+  const canCollect = canAny(session?.permissions, ["fees.collect", "daily.collect"]);
+  const canInvoice = canAny(session?.permissions, ["fees.collect"]);
+  const canReport = canAny(session?.permissions, ["cashier.reports"]);
 
   /* iEduPro nested nav: deep-link to any console tab */
   const [appliedTarget, setAppliedTarget] = useState<any>(null);
   if (navTarget !== appliedTarget) {
     setAppliedTarget(navTarget);
-    if (navTarget?.tab && ["portal", "collections", "summary", "receipts", "ledger", "counter"].includes(navTarget.tab)) setTab(navTarget.tab === "counter" ? "portal" : navTarget.tab);
+    if (navTarget?.tab && ["collect", "portal", "collections", "summary", "receipts", "ledger", "counter"].includes(navTarget.tab)) {
+      setTab(navTarget.tab === "counter" ? "collect" : navTarget.tab === "portal" ? "collect" : navTarget.tab);
+    }
   }
 
   const load = useCallback(() => {
@@ -96,6 +107,12 @@ export function CashierConsole() {
       .finally(() => setLoading(false));
   }, [currentSchoolId, from, to, collector]);
   useEffect(() => { load(); }, [load]);
+
+  // first permitted tab when the stored tab is out of reach
+  useEffect(() => {
+    if (tab === "collect" && !canCollect) setTab(canReport ? "portal" : "collections");
+    if (tab !== "collect" && !canReport) setTab(canCollect ? "collect" : "ledger");
+  }, [canCollect, canReport, tab]);
 
   return (
     <div>
@@ -128,12 +145,23 @@ export function CashierConsole() {
 
       <Tabs value={tab} onValueChange={setTab} className="mt-0">
         <TabsList className="flex-wrap">
-          <TabsTrigger value="portal" className="gap-1.5"><Receipt className="size-4" /> Collection portal</TabsTrigger>
-          <TabsTrigger value="collections" className="gap-1.5"><HandCoins className="size-4" /> My collections</TabsTrigger>
-          <TabsTrigger value="summary" className="gap-1.5"><ClipboardCheck className="size-4" /> Daily summary</TabsTrigger>
-          <TabsTrigger value="receipts" className="gap-1.5"><Printer className="size-4" /> Print receipts</TabsTrigger>
-          <TabsTrigger value="ledger" className="gap-1.5"><ListChecks className="size-4" /> Student ledger</TabsTrigger>
+          {canCollect && <TabsTrigger value="collect" className="gap-1.5"><Receipt className="size-4" /> Collection portal</TabsTrigger>}
+          {canReport && <TabsTrigger value="portal" className="gap-1.5"><TrendingUp className="size-4" /> Overview</TabsTrigger>}
+          {canReport && <TabsTrigger value="collections" className="gap-1.5"><HandCoins className="size-4" /> My collections</TabsTrigger>}
+          {canReport && <TabsTrigger value="summary" className="gap-1.5"><ClipboardCheck className="size-4" /> Daily summary</TabsTrigger>}
+          {canReport && <TabsTrigger value="receipts" className="gap-1.5"><Printer className="size-4" /> Print receipts</TabsTrigger>}
+          {canReport && <TabsTrigger value="ledger" className="gap-1.5"><ListChecks className="size-4" /> Student ledger</TabsTrigger>}
         </TabsList>
+
+        {/* ── FEE COLLECTION PORTAL (wave 10) — CI3 fee_collection_portal parity:
+            select a learner → every enabled fee module loads as a conditional
+            card → take one payment (split methods, arrears-first, advance to
+            the same item's prepaid account) ── */}
+        {canCollect && (
+          <TabsContent value="collect" className="mt-4">
+            <CollectTab data={data} canInvoice={canInvoice} onDone={load} />
+          </TabsContent>
+        )}
 
         <TabsContent value="portal">
       {loading && !data ? <LoadingBlock label="Counting the drawer…" /> : data ? (
@@ -291,6 +319,635 @@ export function CashierConsole() {
           <StudentLedgerTab data={data} />
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
+   FEE COLLECTION PORTAL (wave 10) — CI3 fee_collection_portal parity.
+   Once a learner is selected every ENABLED fee module loads as a card:
+   • optional modules (optInDaily — breakfast etc.) render as toggles
+   • admin-approved lunch opt-outs disable the meal card for the day
+   • 100% discounts hide the card entirely; partial discounts show the
+     subsidised rate
+   • active transport riders get the transport card (per-stop one-way fare)
+   • open termly invoices join as invoice cards (permission-gated)
+   Payments settle each item's arrears FIFO first; any excess stays on the
+   SAME item as prepaid advance (the engine's collectDailyItems).
+   ───────────────────────────────────────────────────────────── */
+type PortalInfo = {
+  date: string;
+  student: {
+    id: string; name: string; index: string; classroom: string; classroomId: string;
+    guardianName: string | null; guardianPhone: string | null;
+  };
+  attendance: { status: string; excusedReason: string | null; takenBy: string | null } | null;
+  wallet: { prepaidCents: number; transportCents: number; itemPrepaidTotal: number; arrearsTotal: number };
+  discounts: { name: string; method: string; value: number; scoped: boolean }[];
+  cards: {
+    kind: "DAILY"; serviceId: string; name: string; category: string;
+    priceCents: number; discountedCents: number; discountCents: number; discountLabel: string | null;
+    hidden: boolean; optional: boolean;
+    optOut: { status: string; reason: string | null } | null;
+    optedIn: { status: string; reason: string | null } | null;
+    arrearsCents: number; prepaidCents: number;
+    weekly: boolean; weeklyBilledThisWeek: boolean; weekdays: string;
+    today: { amountCents: number; status: string; usage: string | null; paymentId: string | null } | null;
+    chargeMode: string;
+  }[];
+  transport: {
+    routeName: string; stopName: string | null; onewayCents: number; bothCents: number;
+    arrearsCents: number; transportWalletCents: number; todayUsage: string | null;
+  } | null;
+  invoices: {
+    invoiceId: string; invoiceNo: string; term: string | null; totalCents: number; paidCents: number;
+    dueCents: number; dueDate: string | null; status: string;
+    items: { name: string; amountCents: number }[];
+  }[];
+  recentPayments: { id: string; receiptNo: string; amountCents: number; method: string; category: string; paidAt: string }[];
+};
+
+type PayRow = { key: string; method: string; amount: string; reference: string };
+
+const CAT_STYLE: Record<string, string> = {
+  MEAL: "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200",
+  DRINK: "bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-200",
+  CLASS: "bg-violet-100 text-violet-900 dark:bg-violet-950 dark:text-violet-200",
+  CARE: "bg-rose-100 text-rose-900 dark:bg-rose-950 dark:text-rose-200",
+  TRANSPORT: "bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200",
+  OTHER: "bg-secondary text-secondary-foreground",
+};
+const USAGE_OPTIONS = [
+  { value: "", label: "No bus today" },
+  { value: "MORNING", label: "Morning only (1×)" },
+  { value: "AFTERNOON", label: "Afternoon only (1×)" },
+  { value: "BOTH", label: "Both ways (2×)" },
+];
+
+function CollectTab({ data, canInvoice, onDone }: {
+  data: CashierData | null;
+  canInvoice: boolean;
+  onDone: () => void;
+}) {
+  const { currentSchoolId, online } = useStore();
+  const [query, setQuery] = useState("");
+  const [picked, setPicked] = useState<string | null>(null);
+  const [info, setInfo] = useState<PortalInfo | null>(null);
+  const [infoLoading, setInfoLoading] = useState(false);
+  const [date, setDate] = useState(todayStr());
+
+  // the collection form
+  const [amounts, setAmounts] = useState<Record<string, string>>({}); // serviceId → GH₵
+  const [toggles, setToggles] = useState<Record<string, boolean>>({}); // serviceId → opt-in today
+  const [usage, setUsage] = useState("");
+  const [boarded, setBoarded] = useState(false);
+  const [invoiceAmts, setInvoiceAmts] = useState<Record<string, string>>({}); // invoiceId → GH₵
+  const [rows, setRows] = useState<PayRow[]>([{ key: "r1", method: "CASH", amount: "", reference: "" }]);
+  const [tendered, setTendered] = useState("");
+  const [markPresent, setMarkPresent] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [receipt, setReceipt] = useState<any>(null);
+
+  const fmt = (cents: number) => `GH₵${(cents / 100).toFixed(2)}`;
+  const cent = (s: string) => Math.round(parseFloat(s || "0") * 100) || 0;
+
+  /* load the portal payload for the picked learner */
+  const loadInfo = useCallback((studentId: string, on: string) => {
+    if (!currentSchoolId) return;
+    setInfoLoading(true);
+    apiGet<PortalInfo>(`/api/school/${currentSchoolId}/ops/cashier?action=student-info&studentId=${studentId}&date=${on}`)
+      .then((d) => {
+        setInfo(d);
+        // prefill: each item's arrears; optional items start OFF unless approved opt-in today
+        const pre: Record<string, string> = {};
+        const tg: Record<string, boolean> = {};
+        d.cards.forEach((c) => {
+          if (c.optOut?.status === "APPROVED") return; // disabled card — not eating today
+          if (c.optional && !(c.optedIn?.status === "APPROVED")) { tg[c.serviceId] = false; return; } // opt-in pending/off → no default
+          if (c.arrearsCents > 0) pre[c.serviceId] = (c.arrearsCents / 100).toFixed(2);
+        });
+        setAmounts(pre);
+        setToggles(tg);
+        const invPre: Record<string, string> = {};
+        if (canInvoice) d.invoices.forEach((i) => { if (i.dueCents > 0) invPre[i.invoiceId] = (i.dueCents / 100).toFixed(2); });
+        setInvoiceAmts(invPre);
+        setUsage("");
+        setBoarded(false);
+        setRows([{ key: "r1", method: "CASH", amount: "", reference: "" }]);
+        setTendered("");
+        setMarkPresent(false);
+      })
+      .catch((e) => toast({ title: "Could not load the learner", description: e.message, variant: "destructive" }))
+      .finally(() => setInfoLoading(false));
+  }, [currentSchoolId, canInvoice]);
+
+  useEffect(() => { if (picked) loadInfo(picked, date); else setInfo(null); }, [picked, date, loadInfo]);
+
+  /* search matches over the roster */
+  const matches = useMemo(() => {
+    if (!data?.roster) return [];
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    return data.roster
+      .filter((r) => `${r.name} ${r.index} ${r.classroom}`.toLowerCase().includes(q))
+      .slice(0, 8);
+  }, [data?.roster, query]);
+
+  /* live totals for the payment rail */
+  const itemTotal = info ? info.cards.reduce((s, c) => {
+    if (c.optOut?.status === "APPROVED") return s; // disabled
+    if (c.optional && !toggles[c.serviceId]) return s; // opt-in OFF
+    return s + cent(amounts[c.serviceId] ?? "");
+  }, 0) : 0;
+  const invoiceTotal = info && canInvoice ? info.invoices.reduce((s, i) => s + cent(invoiceAmts[i.invoiceId] ?? ""), 0) : 0;
+  const grandTotal = itemTotal + invoiceTotal;
+  const allocated = rows.reduce((s, r) => s + cent(r.amount), 0);
+  const change = Math.max(0, cent(tendered) - grandTotal);
+  const hasCash = rows.some((r) => r.method === "CASH");
+
+  /* per-item projection: settles X arrears, banks Y as advance on that item */
+  const projection = useMemo(() => {
+    if (!info) return [] as { name: string; settle: number; advance: number }[];
+    return info.cards
+      .map((c) => {
+        if (c.optOut?.status === "APPROVED") return null;
+        if (c.optional && !toggles[c.serviceId]) return null;
+        const paid = cent(amounts[c.serviceId] ?? "");
+        if (paid <= 0) return null;
+        const settle = Math.min(paid, c.arrearsCents);
+        return { name: c.name, settle, advance: paid - settle };
+      })
+      .filter(Boolean) as { name: string; settle: number; advance: number }[];
+  }, [info, amounts, toggles]);
+
+  async function submit() {
+    if (!info || !currentSchoolId) return;
+    const dailyItems = info.cards
+      .filter((c) => {
+        if (c.optOut?.status === "APPROVED") return false;
+        if (c.optional && !toggles[c.serviceId]) return false;
+        return cent(amounts[c.serviceId] ?? "") > 0;
+      })
+      .map((c) => ({ serviceId: c.serviceId, amountCents: cent(amounts[c.serviceId] ?? "") }));
+    const invoiceItems = canInvoice ? info.invoices
+      .filter((i) => cent(invoiceAmts[i.invoiceId] ?? "") > 0)
+      .map((i) => ({ invoiceId: i.invoiceId, invoiceNo: i.invoiceNo, amountCents: cent(invoiceAmts[i.invoiceId] ?? "") })) : [];
+    if (!dailyItems.length && !invoiceItems.length && !usage) {
+      toast({ title: "Nothing to collect", description: "Enter an amount on at least one fee card." });
+      return;
+    }
+    const cleanRows = rows.map((r) => ({ method: r.method, amountCents: cent(r.amount), reference: r.reference.trim() || undefined })).filter((r) => r.amountCents > 0);
+    const dailyTotal = dailyItems.reduce((s, i) => s + i.amountCents, 0);
+    if (dailyItems.length) {
+      if (!cleanRows.length) { toast({ title: "Pick a payment method" }); return; }
+      if (cleanRows.reduce((s, r) => s + r.amountCents, 0) !== dailyTotal) {
+        toast({ title: "Method amounts must add up", description: `Allocated ${fmt(allocated)} of ${fmt(dailyTotal)} for the daily items.`, variant: "destructive" });
+        return;
+      }
+      if (cleanRows.length > 1 && !online) { toast({ title: "Split collections need a connection" }); return; }
+    }
+    setBusy(true);
+    let firstReceipt: any = null;
+    let queued = false;
+    try {
+      // 1) daily + transport: one queueable POS collection (receipt on completion)
+      if (dailyItems.length) {
+        const split = cleanRows.length > 1;
+        const res = await apiPostQueueable<any>(
+          `/api/school/${currentSchoolId}/ops/daily`, "payment",
+          {
+            action: "pos-collect", studentId: info.student.id, items: dailyItems,
+            ...(split ? { methods: cleanRows } : { method: cleanRows[0].method, reference: cleanRows[0].reference }),
+            paidAt: date, transportUsage: usage || undefined, markPresent, date,
+          },
+          `Daily services ${fmt(dailyTotal)} — ${info.student.name}`,
+          (p, clientId) => ({ ...p, category: "DAILY", schoolId: currentSchoolId, studentId: info.student.id, amountCents: dailyTotal, method: cleanRows[0]?.method ?? "CASH", paidAt: date, clientId }),
+        );
+        if (res.queued) queued = true;
+        else firstReceipt = res.data?.receipt ?? { ...res.data?.payment, student: info.student.name };
+      } else if (usage || markPresent) {
+        // no money moving — record the boarding direction / presence only
+        // (the fare materialises against the transport wallet/arrears)
+        await apiPost(`/api/school/${currentSchoolId}/ops/daily`, {
+          action: "record-presence", studentId: info.student.id,
+          transportUsage: usage || undefined, markPresent, date,
+        });
+      }
+      // 2) invoices: one payment per invoice through the fees engine
+      for (const inv of invoiceItems) {
+        const r = await apiPost<any>(`/api/school/${currentSchoolId}/fees`, {
+          action: "record-payment", invoiceId: inv.invoiceId, amountCents: inv.amountCents,
+          method: cleanRows[0]?.method ?? "CASH", reference: cleanRows[0]?.reference ?? undefined,
+        });
+        firstReceipt = firstReceipt ?? r?.receipt ?? r?.payment;
+      }
+      if (queued) toast({ title: "Queued offline", description: "Receipt will be issued when you reconnect." });
+      else toast({ title: "Collection recorded", description: `${fmt(grandTotal)} from ${info.student.name}.` });
+      if (firstReceipt) setReceipt(firstReceipt);
+      onDone();
+      loadInfo(info.student.id, date);
+    } catch (e: any) {
+      toast({ title: "Collection failed", description: e.message, variant: "destructive" });
+    } finally { setBusy(false); }
+  }
+
+  const disabledCards = info?.cards.filter((c) => c.optOut?.status === "APPROVED") ?? [];
+  const activeCards = info?.cards.filter((c) => !(c.optOut?.status === "APPROVED")) ?? [];
+
+  return (
+    <div className="space-y-4">
+      {/* learner picker — CI3 select2 parity */}
+      <div className="rounded-xl border bg-card p-3 flex flex-wrap items-center gap-2">
+        <div className="relative flex-1 min-w-[240px]">
+          <Search className="size-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search learner by name, index or class…"
+            className="pl-9"
+          />
+          {query && matches.length > 0 && (
+            <div className="absolute z-20 mt-1 w-full rounded-lg border bg-popover p-1 shadow-lg max-h-72 overflow-y-auto nice-scroll">
+              {matches.map((m) => (
+                <button key={m.id} className="w-full flex items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left text-sm hover:bg-accent"
+                  onClick={() => { setPicked(m.id); setQuery(""); }}>
+                  <span className="font-medium truncate">{m.name}</span>
+                  <span className="text-xs text-muted-foreground shrink-0">{m.index} · {m.classroom}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="flex items-center gap-1.5">
+          <Label className="text-xs text-muted-foreground">Date</Label>
+          <Input type="date" value={date} max={todayStr()} onChange={(e) => setDate(e.target.value)} className="w-36" />
+        </div>
+        {info && (
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => { setPicked(null); setInfo(null); }}>
+            <ArrowLeftRight className="size-3.5" /> Change learner
+          </Button>
+        )}
+      </div>
+
+      {!picked && (
+        <EmptyState
+          icon={<Receipt className="size-8" />}
+          title="Pick a learner to open the collection portal"
+          hint="Every enabled fee module loads as a card — daily services, transport (for riders) and open invoices — with optional items toggling, approved lunch opt-outs disabling the card and discounts hiding fully-subsidised items."
+        />
+      )}
+
+      {picked && !info && infoLoading && <LoadingBlock label="Loading fee modules…" />}
+
+      {info && (
+        <>
+          {/* learner header */}
+          <div className="rounded-xl border bg-card p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-lg font-bold flex items-center gap-2 flex-wrap">
+                  {info.student.name}
+                  {info.attendance ? (
+                    <Badge variant="outline" className={info.attendance.status === "PRESENT" || info.attendance.status === "LATE" ? "text-emerald-700 dark:text-emerald-300 border-emerald-400/50" : "text-amber-700 dark:text-amber-300 border-amber-400/50"}>
+                      {info.attendance.status.toLowerCase()} today
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="text-muted-foreground">not yet marked</Badge>
+                  )}
+                </div>
+                <div className="text-xs text-muted-foreground mt-0.5">
+                  {info.student.index} · {info.student.classroom}
+                  {info.student.guardianName ? ` · guardian ${info.student.guardianName}` : ""}
+                  {info.student.guardianPhone ? ` (${info.student.guardianPhone})` : ""}
+                </div>
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {info.wallet.prepaidCents > 0 && <Badge variant="outline" className="gap-1 text-emerald-700 dark:text-emerald-300 border-emerald-400/50"><Wallet className="size-3" /> prepaid {fmt(info.wallet.prepaidCents)}</Badge>}
+                  {info.wallet.transportCents > 0 && <Badge variant="outline" className="gap-1 text-sky-700 dark:text-sky-300 border-sky-400/50"><Bus className="size-3" /> transport wallet {fmt(info.wallet.transportCents)}</Badge>}
+                  {info.wallet.itemPrepaidTotal > 0 && <Badge variant="outline" className="gap-1 text-emerald-700 dark:text-emerald-300 border-emerald-400/50"><Wallet className="size-3" /> item credit {fmt(info.wallet.itemPrepaidTotal)}</Badge>}
+                  {info.wallet.arrearsTotal > 0 && <Badge variant="outline" className="gap-1 text-destructive border-destructive/40"><FileWarning className="size-3" /> arrears {fmt(info.wallet.arrearsTotal)}</Badge>}
+                  {info.discounts.map((d, i) => (
+                    <Badge key={i} variant="outline" className="gap-1 text-violet-700 dark:text-violet-300 border-violet-400/50">
+                      <Percent className="size-3" /> {d.name} {d.method === "PERCENT" ? `${d.value}%` : fmt(d.value)}{d.scoped ? " · item" : " · daily"}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Paying today</div>
+                <div className="text-2xl font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{fmt(grandTotal)}</div>
+                <div className="text-[11px] text-muted-foreground">{new Date(`${date}T12:00:00`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            {/* ── left: the fee cards ── */}
+            <div className="lg:col-span-2 space-y-3">
+              <h3 className="text-sm font-semibold flex items-center gap-2"><UtensilsCrossed className="size-4 text-primary" /> Fee modules</h3>
+
+              {/* daily service cards */}
+              {activeCards.filter((c) => !(c.optional && !toggles[c.serviceId])).length === 0 && !info.transport && !(canInvoice && info.invoices.length) && (
+                <EmptyState title="No fee modules for this learner" hint="No active enrolments, transport assignment or open invoices for the date." />
+              )}
+              {activeCards.map((c) => {
+                const off = c.optional && !toggles[c.serviceId];
+                const paid = cent(amounts[c.serviceId] ?? "");
+                const settle = Math.min(paid, c.arrearsCents);
+                const advance = paid - settle;
+                const hasDiscount = c.discountCents > 0;
+                return (
+                  <div key={c.serviceId} className={`rounded-xl border p-3 ${off ? "opacity-60 border-dashed" : hasDiscount ? "border-violet-300 dark:border-violet-800 bg-violet-50/50 dark:bg-violet-950/20" : "bg-card"}`}>
+                    <div className="flex items-center gap-3">
+                      <div className={`size-10 rounded-lg grid place-items-center shrink-0 ${CAT_STYLE[c.category] ?? CAT_STYLE.OTHER}`}>
+                        {c.category === "MEAL" ? <UtensilsCrossed className="size-5" /> : c.category === "DRINK" ? <Droplets className="size-5" /> : c.category === "CLASS" ? <BookOpen className="size-5" /> : c.category === "CARE" ? <Coffee className="size-5" /> : <Wallet className="size-5" />}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-semibold flex items-center gap-1.5 flex-wrap">
+                          {c.name}
+                          {c.optional && (
+                            <Badge variant="outline" className="text-[9px] px-1.5 border-amber-400/50 text-amber-700 dark:text-amber-300">optional</Badge>
+                          )}
+                          {c.weekly && <Badge variant="outline" className="text-[9px] px-1.5 text-cyan-700 dark:text-cyan-300 border-cyan-400/50">weekly</Badge>}
+                          {hasDiscount && <Badge variant="outline" className="text-[9px] px-1.5 text-violet-700 dark:text-violet-300 border-violet-400/50">{c.discountLabel}</Badge>}
+                          {c.today && c.today.status === "PAID" && <Badge variant="outline" className="text-[9px] px-1.5 text-emerald-700 dark:text-emerald-300 border-emerald-400/50">charged today</Badge>}
+                          {c.weeklyBilledThisWeek && <Badge variant="outline" className="text-[9px] px-1.5 text-emerald-700 dark:text-emerald-300 border-emerald-400/50">billed this week</Badge>}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground flex flex-wrap gap-x-2 mt-0.5">
+                          <span>rate {fmt(c.discountedCents)}{c.weekly ? "/wk" : "/day"}{hasDiscount && <span className="line-through opacity-50 ml-1">{fmt(c.priceCents)}</span>}</span>
+                          {c.arrearsCents > 0 && <span className="text-destructive font-medium">arrears {fmt(c.arrearsCents)}</span>}
+                          {c.prepaidCents > 0 && <span className="text-emerald-600 dark:text-emerald-400 font-medium">prepaid {fmt(c.prepaidCents)}</span>}
+                        </div>
+                      </div>
+                      {c.optional ? (
+                        <label className="flex items-center gap-2 cursor-pointer select-none shrink-0 pr-1" title="Opt in for the day — charged only when ON">
+                          <span className={`text-xs font-medium ${toggles[c.serviceId] ? "text-primary" : "text-muted-foreground"}`}>{toggles[c.serviceId] ? "eating" : "skip"}</span>
+                          <input
+                            type="checkbox"
+                            className="accent-primary size-4"
+                            checked={!!toggles[c.serviceId]}
+                            onChange={(e) => {
+                              const on = e.target.checked;
+                              setToggles((t) => ({ ...t, [c.serviceId]: on }));
+                              // opting in defaults the amount to the day's rate (+arrears) once
+                              if (on) {
+                                setAmounts((a) => ({
+                                  ...a,
+                                  [c.serviceId]: a[c.serviceId] || ((c.arrearsCents > 0 ? c.arrearsCents : c.discountedCents) / 100).toFixed(2),
+                                }));
+                              } else {
+                                setAmounts((a) => { const n = { ...a }; delete n[c.serviceId]; return n; });
+                              }
+                            }}
+                          />
+                        </label>
+                      ) : (
+                        <Input
+                          type="number" step="0.5" min="0" placeholder="0.00"
+                          className="w-24 text-right tabular-nums font-medium"
+                          value={amounts[c.serviceId] ?? ""}
+                          onChange={(e) => setAmounts({ ...amounts, [c.serviceId]: e.target.value })}
+                        />
+                      )}
+                    </div>
+                    {c.optional && toggles[c.serviceId] && (
+                      <div className="mt-2 pl-13 flex items-center justify-between gap-2">
+                        <span className="text-[11px] text-muted-foreground">amount for today</span>
+                        <Input type="number" step="0.5" min="0" placeholder="0.00" className="w-24 h-8 text-right tabular-nums"
+                          value={amounts[c.serviceId] ?? ""} onChange={(e) => setAmounts({ ...amounts, [c.serviceId]: e.target.value })} />
+                      </div>
+                    )}
+                    {paid > 0 && (
+                      <div className="mt-1.5 pl-13 text-[11px] text-muted-foreground flex flex-wrap gap-x-3">
+                        <span>settles <b className="text-foreground">{fmt(settle)}</b> arrears</span>
+                        {advance > 0 && <span className="text-emerald-700 dark:text-emerald-400">banks <b>{fmt(advance)}</b> as advance on this item</span>}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* optional items that are OFF — compact chips so the cashier sees they exist */}
+              {activeCards.filter((c) => c.optional && !toggles[c.serviceId]).length > 0 && (
+                <div className="rounded-xl border border-dashed p-3 bg-secondary/20">
+                  <div className="text-[11px] text-muted-foreground mb-1.5">Optional items skipped today — tick ON the card above to charge:</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {activeCards.filter((c) => c.optional && !toggles[c.serviceId]).map((c) => (
+                      <span key={c.serviceId} className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs">
+                        {c.name} <span className="text-muted-foreground">{fmt(c.discountedCents)}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* approved opt-outs — the cards that will not load */}
+              {disabledCards.length > 0 && (
+                <div className="rounded-xl border border-amber-300/60 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/30 p-3">
+                  <div className="text-[11px] font-medium text-amber-800 dark:text-amber-200 mb-1.5 flex items-center gap-1.5">
+                    <UtensilsCrossed className="size-3.5" /> Admin-approved opt-outs — these cards are disabled today (not charged):
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {disabledCards.map((c) => (
+                      <span key={c.serviceId} className="inline-flex items-center gap-1 rounded-md border border-amber-400/50 bg-card px-2 py-1 text-xs line-through opacity-70">
+                        {c.name} {fmt(c.discountedCents)}
+                        {c.optOut?.reason ? <span className="not-italic opacity-70">· {c.optOut.reason}</span> : null}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* transport card — only for assigned riders */}
+              {info.transport && (
+                <div className="rounded-xl border border-emerald-300/60 dark:border-emerald-800 bg-emerald-50/40 dark:bg-emerald-950/20 p-3">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <div className="size-10 rounded-lg grid place-items-center shrink-0 bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200"><Bus className="size-5" /></div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-semibold">
+                        {info.transport.routeName}
+                        <Badge variant="outline" className="ml-1.5 text-[9px] px-1.5 border-emerald-400/50 text-emerald-700 dark:text-emerald-300">rider</Badge>
+                      </div>
+                      <div className="text-[11px] text-muted-foreground flex flex-wrap gap-x-2 mt-0.5">
+                        <span>one-way {fmt(info.transport.onewayCents)}{info.transport.stopName ? ` · ${info.transport.stopName} stop` : ""}</span>
+                        {info.transport.arrearsCents > 0 && <span className="text-destructive font-medium">arrears {fmt(info.transport.arrearsCents)}</span>}
+                        {info.transport.transportWalletCents > 0 && <span className="text-sky-700 dark:text-sky-400 font-medium">wallet {fmt(info.transport.transportWalletCents)}</span>}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <Bus className="size-4 text-muted-foreground" />
+                      <Select value={usage} onValueChange={(v) => { setUsage(v); setBoarded(v !== ""); }}>
+                        <SelectTrigger className="h-9 w-[170px] text-xs"><SelectValue placeholder="Bus usage" /></SelectTrigger>
+                        <SelectContent>
+                          {USAGE_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  {usage && (
+                    <div className="mt-2 pl-13 text-[11px] text-muted-foreground">
+                      fare today <b className="text-foreground">{fmt(usage === "BOTH" ? info.transport.bothCents : info.transport.onewayCents)}</b>
+                      {usage === "BOTH" ? " (both ways)" : " (one way)"} — the charge materialises now and settles from the transport wallet first; paying an amount below charges it as arrears.
+                    </div>
+                  )}
+                  <label className="mt-2 flex items-center gap-2 text-xs cursor-pointer pl-13">
+                    <input type="checkbox" className="accent-primary size-3.5" checked={boarded} onChange={(e) => setBoarded(e.target.checked)} disabled={!usage} />
+                    record boarding now (fare charged to the transport wallet / arrears)
+                  </label>
+                </div>
+              )}
+
+              {/* invoice cards — permission-gated (cashiers can be barred; accountants keep them) */}
+              {canInvoice && info.invoices.length > 0 && (
+                <>
+                  <h3 className="text-sm font-semibold flex items-center gap-2 pt-1"><Banknote className="size-4 text-primary" /> Termly invoices</h3>
+                  {info.invoices.map((inv) => {
+                    const paid = cent(invoiceAmts[inv.invoiceId] ?? "");
+                    return (
+                      <div key={inv.invoiceId} className={`rounded-xl border p-3 ${inv.status === "OVERDUE" ? "border-destructive/40 bg-destructive/5" : "bg-card"}`}>
+                        <div className="flex items-center gap-3">
+                          <div className="size-10 rounded-lg grid place-items-center shrink-0 bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-200"><Banknote className="size-5" /></div>
+                          <div className="min-w-0 flex-1">
+                            <div className="text-sm font-semibold flex items-center gap-1.5 flex-wrap">
+                              {inv.invoiceNo}
+                              <Badge variant="outline" className={`text-[9px] px-1.5 ${inv.status === "OVERDUE" ? "text-destructive border-destructive/40" : ""}`}>{inv.status.toLowerCase()}</Badge>
+                              {inv.term && <span className="text-[10px] text-muted-foreground font-normal">{inv.term}</span>}
+                            </div>
+                            <div className="text-[11px] text-muted-foreground flex flex-wrap gap-x-2 mt-0.5">
+                              <span>total {fmt(inv.totalCents)}</span>
+                              <span>paid {fmt(inv.paidCents)}</span>
+                              <span className="text-destructive font-medium">due {fmt(inv.dueCents)}</span>
+                              {inv.dueDate && <span>· due {inv.dueDate}</span>}
+                            </div>
+                            <div className="text-[10px] text-muted-foreground mt-0.5 truncate">{inv.items.map((i) => i.name).join(" · ")}</div>
+                          </div>
+                          <Input type="number" step="0.5" min="0" max={(inv.dueCents / 100).toFixed(2)} placeholder="0.00"
+                            className="w-24 text-right tabular-nums font-medium"
+                            value={invoiceAmts[inv.invoiceId] ?? ""}
+                            onChange={(e) => setInvoiceAmts({ ...invoiceAmts, [inv.invoiceId]: e.target.value })} />
+                        </div>
+                        {paid > 0 && (
+                          <div className="mt-1.5 pl-13 text-[11px] text-muted-foreground">
+                            pays <b className="text-foreground">{fmt(paid)}</b> of the {fmt(inv.dueCents)} due
+                            {paid >= inv.dueCents ? " — invoice settles in full" : ` — ${fmt(inv.dueCents - paid)} remains owing`}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+
+              {/* recent receipts for this learner */}
+              {info.recentPayments.length > 0 && (
+                <div className="rounded-xl border bg-card p-3">
+                  <div className="text-xs font-semibold mb-2 text-muted-foreground">Recent receipts</div>
+                  <div className="space-y-1">
+                    {info.recentPayments.map((p) => (
+                      <div key={p.id} className="flex items-center justify-between text-xs">
+                        <span className="font-mono text-muted-foreground">{p.receiptNo}</span>
+                        <span className="text-muted-foreground">{p.method} · {fmtDate(p.paidAt)}</span>
+                        <span className="font-semibold tabular-nums">{fmt(p.amountCents)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* ── right: the payment rail ── */}
+            <div className="space-y-3">
+              <div className="rounded-xl border bg-card p-4 sticky top-20">
+                <div className="flex items-baseline justify-between">
+                  <div className="text-sm font-semibold">Taking payment</div>
+                  <div className="text-2xl font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{fmt(grandTotal)}</div>
+                </div>
+                {projection.length > 0 && (
+                  <div className="mt-2 space-y-1 text-[11px]">
+                    {projection.map((p, i) => (
+                      <div key={i} className="flex justify-between text-muted-foreground">
+                        <span className="truncate">{p.name}</span>
+                        <span>
+                          {p.settle > 0 && <>settles <b className="text-foreground">{fmt(p.settle)}</b></>}
+                          {p.settle > 0 && p.advance > 0 && " · "}
+                          {p.advance > 0 && <span className="text-emerald-700 dark:text-emerald-400">advance <b>{fmt(p.advance)}</b></span>}
+                          {p.settle === 0 && p.advance > 0 && <span className="text-emerald-700 dark:text-emerald-400">prepaid top-up</span>}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* method rows — one row = single method; several = split */}
+                <div className="mt-3 space-y-2">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Method{rows.length > 1 ? "s (split)" : ""}</div>
+                  {rows.map((r, idx) => (
+                    <div key={r.key} className="flex items-center gap-1.5">
+                      <Select value={r.method} onValueChange={(m) => setRows((rs) => rs.map((x) => x.key === r.key ? { ...x, method: m, reference: (m === "CASH" ? "" : x.reference) } : x))}>
+                        <SelectTrigger className="h-9 w-[130px] text-xs"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {Object.entries(PAYMENT_LABELS).filter(([k]) => !["WALLET", "TRANSPORT_WALLET", "SPLIT"].includes(k)).map(([k, label]) => (
+                            <SelectItem key={k} value={k} className="text-xs">{label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Input type="number" min="0" step="0.5" placeholder="0.00" className="h-9 text-right tabular-nums"
+                        value={r.amount} onChange={(e) => setRows((rs) => rs.map((x) => x.key === r.key ? { ...x, amount: e.target.value } : x))} />
+                      <Input placeholder={r.method === "CASH" ? "" : "ref / MoMo ID"} className="h-9 text-xs flex-1 min-w-0"
+                        disabled={r.method === "CASH"}
+                        value={r.reference} onChange={(e) => setRows((rs) => rs.map((x) => x.key === r.key ? { ...x, reference: e.target.value } : x))} />
+                      {rows.length > 1 && (
+                        <Button variant="ghost" size="icon" className="size-8 text-muted-foreground shrink-0"
+                          onClick={() => setRows((rs) => rs.filter((x) => x.key !== r.key))} title="Remove">
+                          <ChevronRight className="size-4 rotate-90" />
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+                  <Button variant="outline" size="sm" className="w-full gap-1.5 h-8"
+                    onClick={() => setRows((rs) => [...rs, { key: `r${Date.now()}`, method: "MOMO_MTN", amount: "", reference: "" }])}>
+                    <ChevronRight className="size-3.5 rotate-90" /> Add split method
+                  </Button>
+                </div>
+
+                {grandTotal > 0 && (
+                  <div className="mt-3 flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">Allocated {fmt(allocated)} of {fmt(grandTotal)}</span>
+                    {allocated === grandTotal ? (
+                      <Badge className="bg-emerald-600 gap-1"><BadgeCheck className="size-3" /> balanced</Badge>
+                    ) : (
+                      <span className="text-destructive font-medium">{fmt(Math.abs(grandTotal - allocated))} {allocated > grandTotal ? "over" : "left"}</span>
+                    )}
+                  </div>
+                )}
+
+                {hasCash && grandTotal > 0 && (
+                  <div className="mt-2 flex items-center justify-between text-xs">
+                    <span className="flex items-center gap-1.5 text-muted-foreground">
+                      Cash tendered
+                      <Input type="number" min="0" step="0.5" placeholder="0.00" className="h-8 w-24 text-right tabular-nums" value={tendered} onChange={(e) => setTendered(e.target.value)} />
+                    </span>
+                    <span className={change > 0 ? "font-semibold text-primary" : "text-muted-foreground"}>change {fmt(change)}</span>
+                  </div>
+                )}
+
+                <label className="mt-3 flex items-center gap-2 text-xs cursor-pointer" title="Also mark the learner present on the class register">
+                  <input type="checkbox" className="accent-primary size-3.5" checked={markPresent} onChange={(e) => setMarkPresent(e.target.checked)} disabled={!!info.attendance} />
+                  mark present today{info.attendance ? " (already marked)" : ""}
+                </label>
+
+                <Button className="mt-3 w-full gap-1.5" size="lg" disabled={busy || grandTotal === 0} onClick={submit}>
+                  <Wallet className="size-4" /> {busy ? "Recording…" : `Collect ${fmt(grandTotal)}`}
+                </Button>
+                <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">
+                  Each item settles its own arrears first (oldest charges first); any excess stays on that item as prepaid advance and auto-deducts on the next charge. {!online && "Offline — the collection queues and syncs with a receipt when you reconnect."}
+                </p>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      <ReceiptDialog receipt={receipt} onOpenChange={(o) => !o && setReceipt(null)} />
     </div>
   );
 }
