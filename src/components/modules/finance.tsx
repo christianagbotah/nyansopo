@@ -1,7 +1,7 @@
 "use client";
 /* Nyansapo — Finance & Analytics (iedupro parity).
    Income dashboard · Student ledger · AR aging · Terminal bills · Expenditure. */
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
 import { apiGet, apiPost } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatCard, ModuleHeader, LoadingBlock, EmptyState, FilterBar, FilterSelect, FilterSearch } from "@/components/ui-helpers";
@@ -127,6 +128,7 @@ export function Finance() {
           <TabsTrigger value="aging">Receivables ageing</TabsTrigger>
           <TabsTrigger value="bills">Terminal bills</TabsTrigger>
           <TabsTrigger value="expenditure">Expenditure</TabsTrigger>
+          <TabsTrigger value="advanced">Advanced reports</TabsTrigger>
         </TabsList>
 
         {/* ── CASHIER REPORTS ── */}
@@ -202,6 +204,9 @@ export function Finance() {
         {/* ── EXPENDITURE ── */}
         <TabsContent value="expenditure">
           <ExpenditureTab data={data} onRefresh={() => reload(yearId ?? "")} />
+        </TabsContent>
+        <TabsContent value="advanced">
+          <AdvancedReportsTab />
         </TabsContent>
       </Tabs>
     </div>
@@ -1047,6 +1052,242 @@ function AgingTab() {
           </p>
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+/* ── Advanced reports (CI3 Advanced_reports parity) ──
+   Financial summary · cash flow by month · payment-method mix (split
+   payments expanded) · expense categories · per-student financial profile,
+   with CSV exports. */
+type AdvData = {
+  range: { from: string; to: string };
+  summary: {
+    invoices: number; billedCents: number; collectedCents: number; outstandingCents: number;
+    overdueCents: number; overdueCount: number; payments: number; avgPaymentCents: number;
+    expenses: number; expenseCents: number; netCents: number;
+  };
+  cashFlow: { period: string; inflowCents: number; outflowCents: number; netCents: number }[];
+  methods: { method: string; count: number; totalCents: number; avgCents: number }[];
+  categories: { category: string; count: number; totalCents: number }[];
+  profile: null | {
+    student: string; classroom: string | null;
+    summary: { invoices: number; billedCents: number; paidCents: number; outstandingCents: number };
+    invoices: { invoiceNo: string; createdAt: string; totalCents: number; paidCents: number; balanceCents: number; status: string }[];
+    payments: { receiptNo: string; paidAt: string; amountCents: number; method: string }[];
+    monthly: { month: string; totalCents: number }[];
+  };
+};
+
+function csvDownload(filename: string, header: string[], rows: (string | number)[][]) {
+  const esc = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
+  const csv = [header, ...rows].map((r) => r.map(esc).join(",")).join("\n");
+  const url = URL.createObjectURL(new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function AdvancedReportsTab() {
+  const { currentSchoolId } = useStore();
+  const [from, setFrom] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10));
+  const [to, setTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const [data, setData] = useState<AdvData | null>(null);
+  const [students, setStudents] = useState<{ id: string; name: string; classroom: string | null }[]>([]);
+  const [studentId, setStudentId] = useState<string>("");
+
+  const load = useCallback(() => {
+    if (!currentSchoolId) return;
+    apiGet<AdvData>(`/api/school/${currentSchoolId}/ops/reports?tab=advanced&from=${from}&to=${to}${studentId ? `&studentId=${studentId}` : ""}`)
+      .then(setData)
+      .catch((e) => toast({ title: "Load failed", description: e.message, variant: "destructive" }));
+  }, [currentSchoolId, from, to, studentId]);
+  useEffect(() => { load(); }, [load]);
+
+  // learner picker for the financial profile
+  useEffect(() => {
+    if (!currentSchoolId) return;
+    apiGet<any>(`/api/school/${currentSchoolId}/students`)
+      .then((d) => setStudents((d.students ?? []).map((x: any) => ({ id: x.id, name: x.name || `${x.firstName ?? ""} ${x.lastName ?? ""}`.trim() || x.nyansapoIndex || "Learner", classroom: x.classroom ?? x.classroomName ?? null }))))
+      .catch(() => {});
+  }, [currentSchoolId]);
+
+  const chartData = (data?.cashFlow ?? []).map((c) => ({ period: c.period.slice(2), Inflow: c.inflowCents / 100, Outflow: c.outflowCents / 100 }));
+  const methodMax = Math.max(1, ...(data?.methods ?? []).map((m) => m.totalCents));
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardContent className="pt-4 flex flex-wrap gap-2 items-end">
+          <div className="space-y-1"><Label className="text-xs">From</Label><Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-9 w-40" /></div>
+          <div className="space-y-1"><Label className="text-xs">To</Label><Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-9 w-40" /></div>
+          <div className="space-y-1">
+            <Label className="text-xs">Learner profile (optional)</Label>
+            <Select value={studentId || "none"} onValueChange={setStudentId}>
+              <SelectTrigger className="h-9 w-64"><SelectValue placeholder="Pick a learner…" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">None</SelectItem>
+                {students.map((x) => <SelectItem key={x.id} value={x.id}>{x.name}{x.classroom ? ` — ${x.classroom}` : ""}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <Button size="sm" className="h-9" onClick={load}>Load</Button>
+        </CardContent>
+      </Card>
+
+      {!data ? <LoadingBlock label="Crunching the numbers…" /> : (
+        <>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <StatCard icon={<FileText className="size-4" />} label="Billed" value={fmtCedi(data.summary.billedCents, { compact: true })} sub={`${data.summary.invoices} invoices in range`} />
+            <StatCard icon={<ArrowDownLeft className="size-4" />} label="Collected" value={fmtCedi(data.summary.collectedCents, { compact: true })} tone="primary" sub={`avg ${fmtCedi(data.summary.avgPaymentCents, { compact: true })} × ${data.summary.payments}`} />
+            <StatCard icon={<Receipt className="size-4" />} label="Expenses" value={fmtCedi(data.summary.expenseCents, { compact: true })} sub={`${data.summary.expenses} entries`} />
+            <StatCard icon={<PieChart className="size-4" />} label="Net income" value={fmtCedi(data.summary.netCents, { compact: true })} tone={data.summary.netCents >= 0 ? "gold" : "danger"} sub="collected − expenses" />
+          </div>
+
+          <div className="grid lg:grid-cols-2 gap-4">
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center justify-between">Cash flow
+                  <Button size="sm" variant="outline" className="h-7 gap-1" onClick={() => csvDownload(`Cash_Flow_${from}_${to}.csv`, ["Period", "Inflow (GHS)", "Outflow (GHS)", "Net (GHS)"], data.cashFlow.map((c) => [c.period, (c.inflowCents / 100).toFixed(2), (c.outflowCents / 100).toFixed(2), (c.netCents / 100).toFixed(2)]))}>
+                    <Download className="size-3.5" /> CSV
+                  </Button>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {chartData.length ? (
+                  <div className="h-56">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={chartData}>
+                        <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                        <XAxis dataKey="period" fontSize={11} /><YAxis fontSize={11} />
+                        <Tooltip formatter={(v: number) => fmtCedi(Math.round(v * 100))} />
+                        <Legend /><Bar dataKey="Inflow" fill="#10b981" /><Bar dataKey="Outflow" fill="#ef4444" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                ) : <EmptyState title="No movement in this range" />}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center justify-between">Payment methods
+                  <Button size="sm" variant="outline" className="h-7 gap-1" onClick={() => csvDownload(`Payment_Methods_${from}_${to}.csv`, ["Method", "Count", "Total (GHS)", "Average (GHS)"], data.methods.map((m) => [m.method, m.count, (m.totalCents / 100).toFixed(2), (m.avgCents / 100).toFixed(2)]))}>
+                    <Download className="size-3.5" /> CSV
+                  </Button>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {data.methods.length ? data.methods.map((m) => (
+                  <div key={m.method}>
+                    <div className="flex justify-between text-xs mb-1"><span>{m.method} <span className="text-muted-foreground">× {m.count}</span></span><span className="tabular-nums font-medium">{fmtCedi(m.totalCents)}</span></div>
+                    <div className="bg-secondary h-2 rounded-full overflow-hidden"><div className="h-full rounded-full bg-violet-600" style={{ width: `${(m.totalCents / methodMax) * 100}%` }} /></div>
+                  </div>
+                )) : <EmptyState title="No payments in this range" />}
+                <p className="text-[11px] text-muted-foreground pt-1">Split collections are expanded into each method that formed them.</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="grid lg:grid-cols-2 gap-4">
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center justify-between">Expenses by category
+                  <Button size="sm" variant="outline" className="h-7 gap-1" onClick={() => csvDownload(`Category_Expenses_${from}_${to}.csv`, ["Category", "Count", "Total (GHS)"], data.categories.map((c) => [c.category, c.count, (c.totalCents / 100).toFixed(2)]))}>
+                    <Download className="size-3.5" /> CSV
+                  </Button>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {data.categories.length ? (
+                  <Table>
+                    <TableHeader><TableRow><TableHead>Category</TableHead><TableHead className="text-right">Count</TableHead><TableHead className="text-right">Total</TableHead></TableRow></TableHeader>
+                    <TableBody>
+                      {data.categories.map((c) => (
+                        <TableRow key={c.category}>
+                          <TableCell className="font-medium">{c.category}</TableCell>
+                          <TableCell className="text-right tabular-nums">{c.count}</TableCell>
+                          <TableCell className="text-right tabular-nums">{fmtCedi(c.totalCents)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                ) : <EmptyState title="No expenses in this range" />}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-3"><CardTitle className="text-base">Outstanding &amp; overdue</CardTitle></CardHeader>
+              <CardContent className="grid grid-cols-2 gap-3">
+                <div className="rounded-lg border p-4">
+                  <div className="text-2xl font-bold tabular-nums text-primary">{fmtCedi(data.summary.outstandingCents, { compact: true })}</div>
+                  <div className="text-xs text-muted-foreground">total outstanding (all open invoices)</div>
+                </div>
+                <div className="rounded-lg border p-4 bg-red-50 dark:bg-red-950/20">
+                  <div className="text-2xl font-bold tabular-nums text-red-600">{fmtCedi(data.summary.overdueCents, { compact: true })}</div>
+                  <div className="text-xs text-muted-foreground">overdue · {data.summary.overdueCount} past due date</div>
+                </div>
+                <div className="col-span-2 text-[11px] text-muted-foreground">Full bucket breakdown (current / 31–60 / 61–90 / 90+) lives in the Receivables ageing tab.</div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {data.profile && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">
+                  Learner profile — {data.profile.student}
+                  <span className="text-sm text-muted-foreground font-normal"> {data.profile.classroom ? `· ${data.profile.classroom}` : ""}</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="rounded-lg border p-3"><div className="text-lg font-bold tabular-nums">{data.profile.summary.invoices}</div><div className="text-xs text-muted-foreground">invoices</div></div>
+                  <div className="rounded-lg border p-3"><div className="text-lg font-bold tabular-nums">{fmtCedi(data.profile.summary.billedCents, { compact: true })}</div><div className="text-xs text-muted-foreground">billed</div></div>
+                  <div className="rounded-lg border p-3"><div className="text-lg font-bold tabular-nums text-emerald-600">{fmtCedi(data.profile.summary.paidCents, { compact: true })}</div><div className="text-xs text-muted-foreground">paid</div></div>
+                  <div className="rounded-lg border p-3"><div className="text-lg font-bold tabular-nums text-red-600">{fmtCedi(data.profile.summary.outstandingCents, { compact: true })}</div><div className="text-xs text-muted-foreground">outstanding</div></div>
+                </div>
+                <div className="grid md:grid-cols-2 gap-4">
+                  <div>
+                    <div className="text-sm font-semibold mb-1.5">Invoices</div>
+                    <div className="max-h-52 overflow-y-auto nice-scroll">
+                      <Table>
+                        <TableHeader><TableRow><TableHead>Invoice</TableHead><TableHead>Date</TableHead><TableHead className="text-right">Balance</TableHead></TableRow></TableHeader>
+                        <TableBody>
+                          {data.profile.invoices.map((i) => (
+                            <TableRow key={i.invoiceNo}>
+                              <TableCell className="font-mono text-xs">{i.invoiceNo}</TableCell>
+                              <TableCell className="text-xs">{fmtDate(i.createdAt)}</TableCell>
+                              <TableCell className={cn("text-right tabular-nums text-xs font-medium", i.balanceCents > 0 ? "text-red-600" : "text-emerald-600")}>{fmtCedi(i.balanceCents)}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold mb-1.5">Recent payments</div>
+                    <div className="max-h-52 overflow-y-auto nice-scroll">
+                      <Table>
+                        <TableHeader><TableRow><TableHead>Receipt</TableHead><TableHead>Method</TableHead><TableHead className="text-right">Amount</TableHead></TableRow></TableHeader>
+                        <TableBody>
+                          {data.profile.payments.map((p) => (
+                            <TableRow key={p.receiptNo}>
+                              <TableCell className="font-mono text-xs">{p.receiptNo}</TableCell>
+                              <TableCell className="text-xs">{p.method}</TableCell>
+                              <TableCell className="text-right tabular-nums text-xs">{fmtCedi(p.amountCents)}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </>
+      )}
     </div>
   );
 }

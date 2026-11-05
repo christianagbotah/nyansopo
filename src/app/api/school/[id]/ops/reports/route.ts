@@ -33,6 +33,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     approvals: ["fees.view", "approvals.request", "approvals.manage"],
     ssnit: ["payroll.view"],
     aging: ["finance.view"],
+    advanced: ["finance.view"],
     "cashier-summary": ["cashier.reports"],
   };
   if (!PERMS[tab]) return NextResponse.json({ error: "Unknown or missing ?tab= (approvals | ssnit | aging | cashier-summary)" }, { status: 400 });
@@ -129,6 +130,110 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         tier2Cents: rows.reduce((s, r) => s + r.tier2Cents, 0),
       },
       providers: [...new Set(rows.map((r) => r.tier2Provider).filter(Boolean))],
+    });
+  }
+
+  /* ══════════════════ TAB: advanced (CI3 Advanced_reports parity) ══════════════════
+     Financial summary · cash flow (monthly) · payment-method mix (split payments
+     expanded) · expense categories · per-student financial profile. */
+  if (tab === "advanced") {
+    const fromStr = url.searchParams.get("from") ?? new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
+    const toStr = url.searchParams.get("to") ?? new Date().toISOString().slice(0, 10);
+    const studentId = url.searchParams.get("studentId") || null;
+    const from = new Date(`${fromStr}T00:00:00.000Z`);
+    const to = new Date(`${toStr}T23:59:59.999Z`);
+    const inRange = { gte: from, lte: to };
+
+    const [invoices, payments, expenses] = await Promise.all([
+      db.invoice.findMany({ where: { schoolId, createdAt: inRange }, select: { totalCents: true, discountCents: true, paidCents: true, dueDate: true, createdAt: true, studentId: true } }),
+      db.payment.findMany({ where: { schoolId, voided: false, paymentType: "PAYMENT", paidAt: inRange }, select: { amountCents: true, method: true, splitJson: true, paidAt: true, studentId: true } }),
+      db.expense.findMany({ where: { schoolId, expenseDate: inRange }, select: { amountCents: true, category: true, expenseDate: true } }),
+    ]);
+
+    // ── financial summary
+    const billed = invoices.reduce((s, i) => s + i.totalCents - i.discountCents, 0);
+    const collected = payments.reduce((s, p) => s + p.amountCents, 0);
+    const expenseTotal = expenses.reduce((s, e) => s + e.amountCents, 0);
+    const allOpen = await db.invoice.findMany({ where: { schoolId, writtenOff: false, status: { not: "WRITTEN_OFF" } }, select: { totalCents: true, discountCents: true, paidCents: true, dueDate: true } });
+    const outstanding = allOpen.reduce((s, i) => s + Math.max(0, i.totalCents - i.discountCents - i.paidCents), 0);
+    const nowMs = Date.now();
+    const overdue = allOpen.reduce((acc, i) => {
+      const bal = i.totalCents - i.discountCents - i.paidCents;
+      if (bal > 0 && i.dueDate && i.dueDate.getTime() < nowMs) { acc.amount += bal; acc.count++; }
+      return acc;
+    }, { amount: 0, count: 0 });
+
+    // ── cash flow by month
+    const monthKey = (d: Date) => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+    const flow: Record<string, { inflow: number; outflow: number }> = {};
+    for (const p of payments) { const k = monthKey(p.paidAt); (flow[k] ??= { inflow: 0, outflow: 0 }).inflow += p.amountCents; }
+    for (const e of expenses) { const k = monthKey(e.expenseDate); (flow[k] ??= { inflow: 0, outflow: 0 }).outflow += e.amountCents; }
+    const cashFlow = Object.entries(flow).sort(([a], [b]) => a.localeCompare(b)).map(([period, v]) => ({ period, inflowCents: v.inflow, outflowCents: v.outflow, netCents: v.inflow - v.outflow }));
+
+    // ── payment-method mix (SPLIT payments expanded into their parts)
+    const METHOD_LABEL: Record<string, string> = { CASH: "Cash", MOMO_MTN: "MTN MoMo", MOMO_TELECEL: "Telecel Cash", MOMO_AT: "AT Money", BANK: "Bank transfer", CHEQUE: "Cheque", CARD: "Card" };
+    const mix: Record<string, { count: number; total: number }> = {};
+    for (const p of payments) {
+      const parts = Array.isArray(p.splitJson) ? (p.splitJson as { method: string; amountCents: number }[]) : null;
+      if (parts && parts.length) {
+        for (const part of parts) {
+          const key = METHOD_LABEL[part.method] ?? part.method;
+          (mix[key] ??= { count: 0, total: 0 }); mix[key].count++; mix[key].total += part.amountCents;
+        }
+      } else {
+        const key = METHOD_LABEL[p.method] ?? p.method;
+        (mix[key] ??= { count: 0, total: 0 }); mix[key].count++; mix[key].total += p.amountCents;
+      }
+    }
+    const methods = Object.entries(mix).map(([method, v]) => ({ method, count: v.count, totalCents: v.total, avgCents: Math.round(v.total / Math.max(1, v.count)) })).sort((a, b) => b.totalCents - a.totalCents);
+
+    // ── expense categories
+    const cat: Record<string, { count: number; total: number }> = {};
+    for (const e of expenses) { (cat[e.category] ??= { count: 0, total: 0 }); cat[e.category].count++; cat[e.category].total += e.amountCents; }
+    const categories = Object.entries(cat).map(([category, v]) => ({ category, count: v.count, totalCents: v.total })).sort((a, b) => b.totalCents - a.totalCents);
+
+    // ── per-student financial profile
+    let profile: null | {
+      student: string; classroom: string | null;
+      summary: { invoices: number; billedCents: number; paidCents: number; outstandingCents: number };
+      invoices: { invoiceNo: string; createdAt: string; totalCents: number; paidCents: number; balanceCents: number; status: string }[];
+      payments: { receiptNo: string; paidAt: string; amountCents: number; method: string }[];
+      monthly: { month: string; totalCents: number }[];
+    } = null;
+    if (studentId) {
+      const st = await db.student.findFirst({ where: { id: studentId, enrollments: { some: { schoolId, status: "ACTIVE" } } }, include: { enrollments: { where: { schoolId, status: "ACTIVE" }, take: 1, include: { classroom: { select: { name: true } } } } } });
+      if (st) {
+        const [stInvoices, stPayments] = await Promise.all([
+          db.invoice.findMany({ where: { schoolId, studentId }, orderBy: { createdAt: "desc" }, take: 50 }),
+          db.payment.findMany({ where: { schoolId, studentId, voided: false, paymentType: "PAYMENT" }, orderBy: { paidAt: "desc" }, take: 50 }),
+        ]);
+        const monthly: Record<string, number> = {};
+        for (const p of stPayments) { const k = monthKey(p.paidAt); monthly[k] = (monthly[k] ?? 0) + p.amountCents; }
+        profile = {
+          student: `${st.firstName} ${st.lastName}`,
+          classroom: st.enrollments[0]?.classroom?.name ?? null,
+          summary: {
+            invoices: stInvoices.length,
+            billedCents: stInvoices.reduce((s, i) => s + i.totalCents - i.discountCents, 0),
+            paidCents: stPayments.reduce((s, p) => s + p.amountCents, 0),
+            outstandingCents: stInvoices.reduce((s, i) => s + Math.max(0, i.totalCents - i.discountCents - i.paidCents), 0),
+          },
+          invoices: stInvoices.map((i) => ({ invoiceNo: i.invoiceNo, createdAt: i.createdAt.toISOString(), totalCents: i.totalCents - i.discountCents, paidCents: i.paidCents, balanceCents: Math.max(0, i.totalCents - i.discountCents - i.paidCents), status: i.status })),
+          payments: stPayments.map((p) => ({ receiptNo: p.receiptNo, paidAt: p.paidAt.toISOString(), amountCents: p.amountCents, method: METHOD_LABEL[p.method] ?? p.method })),
+          monthly: Object.entries(monthly).sort(([a], [b]) => a.localeCompare(b)).map(([month, totalCents]) => ({ month, totalCents })),
+        };
+      }
+    }
+
+    return NextResponse.json({
+      range: { from: fromStr, to: toStr },
+      summary: {
+        invoices: invoices.length, billedCents: billed, collectedCents: collected, outstandingCents: outstanding,
+        overdueCents: overdue.amount, overdueCount: overdue.count,
+        payments: payments.length, avgPaymentCents: payments.length ? Math.round(collected / payments.length) : 0,
+        expenses: expenses.length, expenseCents: expenseTotal, netCents: collected - expenseTotal,
+      },
+      cashFlow, methods, categories, profile,
     });
   }
 
