@@ -121,6 +121,7 @@ model School {
   inquiries            AdmissionInquiry[]
   onlineExams          OnlineExam[]
   onlineExamAttempts   OnlineExamAttempt[]
+  resultApprovals      ResultApproval[]
   announcements        Announcement[]
   riskScores           RiskScore[]
   dailyServices        DailyService[]
@@ -262,6 +263,7 @@ model Term {
   reportCards        ReportCard[]
   lessonNotes        LessonNote[]
   syllabusTopics     SyllabusTopic[]
+  resultApprovals    ResultApproval[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -289,6 +291,7 @@ model Classroom {
   lessonNotes        LessonNote[]
   studyMaterials     StudyMaterial[]
   syllabusTopics     SyllabusTopic[]
+  resultApprovals    ResultApproval[]
 }
 
 model Subject {
@@ -722,6 +725,47 @@ model ReportCardResult {
   position     Int? // position in subject for the class (1st, 2nd…)
 }
 
+// ─────────────────────────────────────────────────────────────
+// RESULTS GOVERNANCE (CI3 Academic_control parity): head-teacher
+// control over each class's results — submit → approve → lock,
+// with an append-only audit trail. Marks entry is blocked once a
+// class leaves DRAFT; unlocking returns it to DRAFT.
+// ─────────────────────────────────────────────────────────────
+model ResultApproval {
+  id           String   @id @default(cuid())
+  schoolId     String
+  school       School   @relation(fields: [schoolId], references: [id])
+  classroomId  String
+  classroom    Classroom @relation(fields: [classroomId], references: [id])
+  termId       String
+  term         Term     @relation(fields: [termId], references: [id])
+  status       String   @default("DRAFT") // DRAFT | SUBMITTED | APPROVED | LOCKED
+  submittedBy  String?
+  submittedAt  DateTime?
+  approvedBy   String?
+  approvedAt   DateTime?
+  lockedBy     String?
+  lockedAt     DateTime?
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  audits       ResultApprovalAudit[]
+
+  @@unique([classroomId, termId])
+}
+
+model ResultApprovalAudit {
+  id             String          @id @default(cuid())
+  approvalId     String
+  approval       ResultApproval  @relation(fields: [approvalId], references: [id])
+  action         String // SUBMIT | APPROVE | LOCK | UNLOCK
+  previousStatus String
+  newStatus      String
+  performedBy    String
+  reason         String?
+  createdAt      DateTime        @default(now())
+}
+
 // Report card remarks library — iedupro parity
 model RemarkTemplate {
   id         String   @id @default(cuid())
@@ -912,11 +956,13 @@ model OnlineExamQuestion {
   examId        String
   exam          OnlineExam @relation(fields: [examId], references: [id])
   prompt        String
-  optionA       String
-  optionB       String
-  optionC       String
-  optionD       String
-  correctOption String   // A | B | C | D
+  type          String   @default("MCQ") // MCQ | TRUE_FALSE | FILL_BLANKS (CI3 multiple_choice | true_false | fill_in_the_blanks)
+  optionA       String?  // MCQ only
+  optionB       String?  // MCQ only
+  optionC       String?  // MCQ only
+  optionD       String?  // MCQ only
+  correctOption String   // MCQ: A | B | C | D · TRUE_FALSE: TRUE | FALSE · FILL_BLANKS: unused
+  blankAnswers  String?  // FILL_BLANKS only — JSON array of accepted words (lowercase, trimmed)
   marks         Int      @default(1)
   sortOrder     Int      @default(0)
 }
@@ -931,6 +977,7 @@ model OnlineExamAttempt {
   school      School   @relation(fields: [schoolId], references: [id])
   answers     String // JSON { "0": "A", "1": "C", … } keyed by question sortOrder
   score       Int?
+  startedAt   DateTime? // set when the learner opens the paper — live-monitor signal (score null = still in progress)
   submittedAt DateTime @default(now())
 
   @@unique([examId, studentId])
@@ -1094,6 +1141,10 @@ model TransportRoute {
   vehicleModel     String?
   driverName       String
   driverPhone      String
+  driverId         String? // optional link into the DriverRecord registry
+  driver           DriverRecord?         @relation(fields: [driverId], references: [id])
+  vehicleId        String? // optional link into the Vehicle registry
+  vehicle          Vehicle?              @relation(fields: [vehicleId], references: [id])
   capacity         Int                   @default(15)
   farePerTermCents Int
   farePerTripCents Int                   @default(0) // one-way fare (×2 for BOTH directions)
@@ -1128,6 +1179,7 @@ model Vehicle {
   status           String    @default("ACTIVE") // ACTIVE | MAINTENANCE | RETIRED
   notes            String?
   createdAt        DateTime  @default(now())
+  routes           TransportRoute[]
 }
 
 // Driver registry (staff-linked or standalone) — iedupro parity
@@ -1142,6 +1194,7 @@ model DriverRecord {
   staffId       String? // optional link to a Staff record
   status        String    @default("ACTIVE") // ACTIVE | SUSPENDED | RETIRED
   createdAt     DateTime  @default(now())
+  routes        TransportRoute[]
 }
 
 // Daily boarding records (morning collection) — direction-based fares
