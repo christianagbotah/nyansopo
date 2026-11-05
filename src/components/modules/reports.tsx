@@ -11,18 +11,19 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { ModuleHeader, LoadingBlock, EmptyState, StatusBadge } from "@/components/ui-helpers";
 import { toast } from "@/hooks/use-toast";
 import { fmtDate } from "@/lib/format";
-import { GraduationCap, Sparkles, Printer, Wand2, Send, RefreshCcw, Layers, FileText, Pencil, Save, Plus, Trash2, Eye, BookMarked, Baby } from "lucide-react";
-import { ClassicSheet, ModernSheet, CompactSheet, CrecheSheet, type SheetData, type CrecheSheetData } from "@/components/report-sheets";
+import { GraduationCap, Sparkles, Printer, Wand2, Send, RefreshCcw, Layers, FileText, Pencil, Save, Plus, Trash2, Eye, BookMarked, Baby, ClipboardCheck, Lock, LockOpen, History, ShieldCheck } from "lucide-react";
+import { ClassicSheet, ModernSheet, CompactSheet, CrecheSheet, WaecStatement, type SheetData, type CrecheSheetData } from "@/components/report-sheets";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 
-type SheetStyle = "classic" | "modern" | "compact";
+type SheetStyle = "classic" | "modern" | "compact" | "waec";
 const STYLE_BUTTONS: { id: SheetStyle; label: string }[] = [
   { id: "classic", label: "Classic GES" },
   { id: "compact", label: "Primary / KG" },
   { id: "modern", label: "Modern" },
+  { id: "waec", label: "BECE statement" },
 ];
 function StylePicker({ style, set }: { style: SheetStyle; set: (s: SheetStyle) => void }) {
   return <span className="flex gap-1 flex-wrap">{STYLE_BUTTONS.map((b) => (
@@ -265,6 +266,7 @@ export function Reports() {
           <TabsTrigger value="cards">Report cards</TabsTrigger>
           <TabsTrigger value="cumulative" className="gap-1.5"><Layers className="size-4" /> Cumulative</TabsTrigger>
           <TabsTrigger value="papers" className="gap-1.5"><BookMarked className="size-4" /> Question papers</TabsTrigger>
+          <TabsTrigger value="control" className="gap-1.5"><ShieldCheck className="size-4" /> Results control</TabsTrigger>
         </TabsList>
 
         {/* ── TERMINAL REPORT CARDS (existing module flow) ── */}
@@ -352,6 +354,10 @@ export function Reports() {
         <TabsContent value="papers" className="mt-4">
           <QuestionPapersTab />
         </TabsContent>
+        {/* ── RESULTS CONTROL (CI3 academic_control_dashboard parity) ── */}
+        <TabsContent value="control" className="mt-4">
+          <ResultsControlTab />
+        </TabsContent>
       </Tabs>
 
       {/* report card viewer with sheet style picker */}
@@ -403,7 +409,7 @@ export function Reports() {
           ) : !sheetData ? <LoadingBlock label="Preparing report sheet…" /> : (
             <>
               <div className="print-area">
-                {sheetStyle === "classic" ? <ClassicSheet d={sheetData} /> : sheetStyle === "compact" ? <CompactSheet d={sheetData} /> : <ModernSheet d={sheetData} />}
+                {sheetStyle === "classic" ? <ClassicSheet d={sheetData} /> : sheetStyle === "compact" ? <CompactSheet d={sheetData} /> : sheetStyle === "waec" ? <WaecStatement d={sheetData} /> : <ModernSheet d={sheetData} />}
               </div>
 
               {/* remark / conduct editor (no-print) */}
@@ -456,7 +462,7 @@ export function Reports() {
             {bulk.loading ? <LoadingBlock label="Fetching every learner's sheet…" /> : (
               <div className="print-area space-y-4">
                 <div className="no-print flex justify-end"><Button size="sm" onClick={() => window.print()} className="gap-1.5"><Printer className="size-4" /> Print all {bulk.cards.length}</Button></div>
-                {bulk.cards.map((c, i) => sheetStyle === "classic" ? <ClassicSheet key={i} d={c} /> : sheetStyle === "compact" ? <CompactSheet key={i} d={c} /> : <ModernSheet key={i} d={c} />)}
+                {bulk.cards.map((c, i) => sheetStyle === "classic" ? <ClassicSheet key={i} d={c} /> : sheetStyle === "compact" ? <CompactSheet key={i} d={c} /> : sheetStyle === "waec" ? <WaecStatement key={i} d={c} /> : <ModernSheet key={i} d={c} />)}
               </div>
             )}
           </DialogContent>
@@ -892,6 +898,161 @@ function PaperDialog({ paper, classrooms, onOpenChange, onDone }: { paper: Paper
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+
+/* ── Results control (CI3 academic_control_dashboard parity) ──
+    Per-class completion metrics + the submit → approve → lock workflow.
+    Marks entry is refused for any class past DRAFT (see result-approval lib). */
+type ControlRow = {
+  classroomId: string; name: string; gradeLevel: string; enrolled: number;
+  portfolioCompletion: number; sbaCompletion: number; examCompletion: number;
+  status: string; submittedBy: string | null; submittedAt: string | null;
+  approvedBy: string | null; approvedAt: string | null; lockedBy: string | null; lockedAt: string | null;
+  notes: string | null;
+};
+type ControlAudit = { action: string; previousStatus: string; newStatus: string; performedBy: string; reason: string | null; createdAt: string };
+
+function ResultsControlTab() {
+  const { currentSchoolId } = useStore();
+  const [data, setData] = useState<{ term: { id: string; name: string; yearName: string }; terms: { id: string; name: string; isCurrent: boolean }[]; canUnlock: boolean; rows: ControlRow[] } | null>(null);
+  const [termId, setTermId] = useState<string>("");
+  const [auditFor, setAuditFor] = useState<ControlRow | null>(null);
+  const [audit, setAudit] = useState<ControlAudit[] | null>(null);
+  const [prompt, setPrompt] = useState<{ row: ControlRow; action: "submit" | "approve" | "lock" | "unlock"; title: string; hint: string; required: boolean } | null>(null);
+  const [reason, setReason] = useState("");
+
+  const load = (tid?: string) => {
+    if (!currentSchoolId) return;
+    apiGet<any>(`/api/school/${currentSchoolId}/ops/academic-control${tid ? `?termId=${tid}` : ""}`)
+      .then((d) => { setData(d); setTermId(d.term.id); })
+      .catch((e) => toast({ title: "Load failed", description: e.message, variant: "destructive" }));
+  };
+  useEffect(() => { load(); }, [currentSchoolId]);
+
+  async function openAudit(row: ControlRow) {
+    setAuditFor(row); setAudit(null);
+    try {
+      const d = await apiGet<any>(`/api/school/${currentSchoolId}/ops/academic-control?termId=${termId}&classroomId=${row.classroomId}`);
+      setAudit(d.audit ?? []);
+    } catch (e: any) { toast({ title: "Audit failed", description: e.message, variant: "destructive" }); }
+  }
+
+  async function run() {
+    if (!prompt) return;
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/academic-control`, {
+        action: prompt.action, classroomId: prompt.row.classroomId, termId, notes: reason, reason,
+      });
+      toast({ title: `${prompt.row.name}: results ${prompt.action}ted`.replace("submited", "submitted") });
+      setPrompt(null); setReason(""); load(termId);
+    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); }
+  }
+
+  if (!data) return <LoadingBlock label="Loading results control…" />;
+
+  const STATUS_STYLE: Record<string, string> = {
+    DRAFT: "bg-yellow-100 text-yellow-800 border-yellow-300",
+    SUBMITTED: "bg-blue-100 text-blue-800 border-blue-300",
+    APPROVED: "bg-emerald-100 text-emerald-800 border-emerald-300",
+    LOCKED: "bg-red-100 text-red-800 border-red-300",
+  };
+  const bar = (label: string, pct: number, cls: string) => (
+    <div>
+      <div className="flex justify-between text-[11px] mb-1"><span className="text-muted-foreground">{label}</span><span className="tabular-nums font-medium">{pct}%</span></div>
+      <div className="bg-secondary h-2 rounded-full overflow-hidden"><div className={cn("h-full rounded-full", cls)} style={{ width: `${Math.min(100, pct)}%` }} /></div>
+    </div>
+  );
+
+  return (
+    <div>
+      <div className="flex flex-wrap gap-2 mb-4 items-center">
+        <Select value={termId} onValueChange={(v) => { setTermId(v); load(v); }}>
+          <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
+          <SelectContent>{data.terms.map((t) => <SelectItem key={t.id} value={t.id}>{t.name}{t.isCurrent ? " (current)" : ""}</SelectItem>)}</SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground">
+          Monitor result readiness, then submit → approve → lock each class. Locked classes refuse marks entry and report recomputation until unlocked{data.canUnlock ? "" : " (admins only)"}.
+        </p>
+      </div>
+
+      {data.rows.length ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {data.rows.map((r) => (
+            <Card key={r.classroomId} className={cn("border-l-4", STATUS_STYLE[r.status]?.split(" ").find((x) => x.startsWith("border-")) ?? "border-zinc-300")}>
+              <CardContent className="pt-4 space-y-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="font-semibold">{r.name}</div>
+                    <div className="text-[11px] text-muted-foreground">{r.enrolled} learner{r.enrolled === 1 ? "" : "s"} · {r.gradeLevel}</div>
+                  </div>
+                  <span className={cn("text-[10px] font-bold px-2 py-1 rounded-full border", STATUS_STYLE[r.status])}>{r.status}</span>
+                </div>
+                {bar("Portfolio", r.portfolioCompletion, "bg-purple-600")}
+                {bar("Class work (SBA)", r.sbaCompletion, "bg-blue-600")}
+                {bar("Exams", r.examCompletion, "bg-emerald-600")}
+                {(r.submittedBy || r.approvedBy || r.lockedBy) && (
+                  <div className="text-[10px] text-muted-foreground leading-relaxed">
+                    {r.submittedBy && <div>submitted by {r.submittedBy} {r.submittedAt ? `· ${fmtDate(r.submittedAt)}` : ""}</div>}
+                    {r.approvedBy && <div>approved by {r.approvedBy} {r.approvedAt ? `· ${fmtDate(r.approvedAt)}` : ""}</div>}
+                    {r.lockedBy && <div>locked by {r.lockedBy} {r.lockedAt ? `· ${fmtDate(r.lockedAt)}` : ""}</div>}
+                  </div>
+                )}
+                <div className="flex gap-1.5 pt-1">
+                  {r.status === "DRAFT" && <Button size="sm" className="h-7 gap-1 flex-1" onClick={() => { setPrompt({ row: r, action: "submit", title: `Submit ${r.name} results`, hint: "Teachers can no longer enter marks once results are submitted.", required: false }); setReason(""); }}><Send className="size-3.5" /> Submit</Button>}
+                  {r.status === "SUBMITTED" && <Button size="sm" className="h-7 gap-1 flex-1 bg-emerald-600 hover:bg-emerald-700" onClick={() => { setPrompt({ row: r, action: "approve", title: `Approve ${r.name} results`, hint: "Approval confirms the head teacher has reviewed the marks.", required: false }); setReason(""); }}><ClipboardCheck className="size-3.5" /> Approve</Button>}
+                  {r.status === "APPROVED" && <Button size="sm" className="h-7 gap-1 flex-1 bg-red-600 hover:bg-red-700" onClick={() => { setPrompt({ row: r, action: "lock", title: `Lock ${r.name} results`, hint: "Locking freezes the class results — marks entry and recomputation are refused.", required: false }); setReason(""); }}><Lock className="size-3.5" /> Lock</Button>}
+                  {r.status === "LOCKED" && (
+                    <Button size="sm" className="h-7 gap-1 flex-1 bg-orange-600 hover:bg-orange-700" disabled={!data.canUnlock}
+                      onClick={() => { setPrompt({ row: r, action: "unlock", title: `Unlock ${r.name} results`, hint: "Give the reason for reopening these results — it is recorded in the audit trail.", required: true }); setReason(""); }}>
+                      <LockOpen className="size-3.5" /> Unlock
+                    </Button>
+                  )}
+                  <Button size="sm" variant="outline" className="h-7 gap-1" onClick={() => openAudit(r)}><History className="size-3.5" /> Audit</Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      ) : <EmptyState title="No classes" hint="Create classes first — every class appears here with its results workflow." />}
+
+      {/* audit trail modal */}
+      <Dialog open={!!auditFor} onOpenChange={(o) => !o && setAuditFor(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle>Audit trail — {auditFor?.name}</DialogTitle></DialogHeader>
+          {audit === null ? <LoadingBlock label="Loading audit…" /> : audit.length === 0 ? (
+            <EmptyState title="No audit records yet" hint="Actions on this class's results will be listed here." />
+          ) : (
+            <div className="max-h-96 overflow-y-auto nice-scroll space-y-2">
+              {audit.map((a, i) => (
+                <div key={i} className="border-l-4 border-blue-500 pl-3 py-1">
+                  <div className="text-sm font-bold">{a.action}</div>
+                  <div className="text-xs text-muted-foreground">{fmtDate(a.createdAt)} · {a.previousStatus} → {a.newStatus} · by {a.performedBy}</div>
+                  {a.reason && <div className="text-xs italic mt-0.5">“{a.reason}”</div>}
+                </div>
+              ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* submit/approve/lock/unlock note prompt */}
+      <Dialog open={!!prompt} onOpenChange={(o) => { if (!o) { setPrompt(null); setReason(""); } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>{prompt?.title}</DialogTitle></DialogHeader>
+          <div className="space-y-2">
+            <p className="text-sm text-muted-foreground">{prompt?.hint}</p>
+            <Textarea value={reason} onChange={(e) => setReason(e.target.value)}
+              placeholder={prompt?.action === "unlock" ? "Reason (required) — e.g. corrections received after locking" : "Notes (optional)"} rows={3} />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setPrompt(null); setReason(""); }}>Cancel</Button>
+            <Button onClick={run} disabled={prompt?.required && !reason.trim()}>Confirm {prompt?.action}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }
 

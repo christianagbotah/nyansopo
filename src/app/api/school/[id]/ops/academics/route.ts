@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { assertResultsEditable } from "@/lib/result-approval";
 import { opsAuth } from "@/lib/ops-auth";
 import { sendSms } from "@/lib/sms";
 import { gradeFor } from "@/lib/grading";
@@ -531,6 +532,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const auth = await opsAuth(req, schoolId, "POST", { perms: POST_PERMS[action] });
   if (!auth.ok) return auth.res;
   const user = auth.user;
+
+  /* results governance: marks-entry actions refuse classes whose results
+     have moved past DRAFT (submitted / approved / locked) — CI3 is_editable */
+  const GATED = new Set(["portfolio.save", "portfolio.aggregate", "sba-sheet-save", "sba-portfolio-fill", "creche-ratings-save"]);
+  if (GATED.has(action) && body.classroomId) {
+    const gate = await assertResultsEditable(schoolId, body.classroomId, body.termId);
+    if (gate.blocked) return NextResponse.json({ error: gate.error }, { status: 423 });
+  }
 
   /* ── PORTFOLIO: save the weekly SBA grid ── */
   if (action === "portfolio.save") {

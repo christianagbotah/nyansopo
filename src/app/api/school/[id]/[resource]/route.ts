@@ -9,6 +9,7 @@ import { nextInvoiceNo, nextReceiptNo, nextStudentIndex } from "@/lib/codes";
 import { effectiveValue } from "@/lib/discounts";
 import { storeMedia } from "@/lib/media";
 import { isCurriculumKey } from "@/lib/curricula";
+import { assertResultsComputable, assertResultsEditable } from "@/lib/result-approval";
 
 const C = (cedis: number) => Math.round(cedis * 100);
 
@@ -776,6 +777,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       if (action === "create-assessment") {
         const { classroomId, subjectId, title, type, maxScore, date } = body;
         const term = await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId } } });
+        const gate = await assertResultsEditable(schoolId, classroomId, term?.id);
+        if (gate.blocked) return NextResponse.json({ error: gate.error }, { status: 423 });
         const a = await db.assessment.create({ data: { classroomId, schoolId, termId: term!.id, subjectId, title, type: type ?? "EXERCISE", maxScore: Number(maxScore) || 100, date: date ? new Date(date) : new Date() } });
         return NextResponse.json({ assessment: a });
       }
@@ -783,6 +786,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         const { assessmentId, marks, offline } = body;
         const a = await db.assessment.findUnique({ where: { id: assessmentId } });
         if (!a) return NextResponse.json({ error: "Assessment not found" }, { status: 404 });
+        const gate = await assertResultsEditable(schoolId, a.classroomId, a.termId);
+        if (gate.blocked) return NextResponse.json({ error: gate.error }, { status: 423 });
         await db.mark.deleteMany({ where: { assessmentId } });
         for (const m of marks) {
           if (m.score !== null && m.score !== undefined && m.score !== "") {
@@ -792,6 +797,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         return NextResponse.json({ saved: marks.length });
       }
       if (action === "delete-assessment") {
+        const a = await db.assessment.findUnique({ where: { id: body.assessmentId } });
+        if (a) {
+          const gate = await assertResultsEditable(schoolId, a.classroomId, a.termId);
+          if (gate.blocked) return NextResponse.json({ error: gate.error }, { status: 423 });
+        }
         await db.mark.deleteMany({ where: { assessmentId: body.assessmentId } });
         await db.assessment.delete({ where: { id: body.assessmentId } });
         return NextResponse.json({ ok: true });
@@ -804,6 +814,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         const { classroomId, termId } = body;
         const term = await db.term.findUnique({ where: { id: termId }, include: { academicYear: true } });
         if (!term) return NextResponse.json({ error: "Term not found" }, { status: 404 });
+        const gate = await assertResultsComputable(schoolId, classroomId, termId);
+        if (gate.blocked) return NextResponse.json({ error: gate.error }, { status: 423 });
         const classroom = await db.classroom.findUnique({ where: { id: classroomId } });
         const enrolled = await db.enrollment.findMany({ where: { classroomId, status: "ACTIVE" }, include: { student: true } });
         const assessments = await db.assessment.findMany({ where: { classroomId, termId }, include: { subject: true, marks: true } });
