@@ -55,7 +55,7 @@ import {
   Download, ChevronDown, ChevronRight, School, MessageSquareText, UtensilsCrossed, Bus, Smartphone, Calculator, Package, PieChart, LayoutList,
   BookOpen, ShieldCheck, Receipt, Route, UserRound, Home, Backpack, Laptop, BedDouble, NotebookPen, Search, LayoutGrid, SmartphoneNfc,
   QrCode, UserPlus, Printer, Wallet, BarChart3, CalendarDays, HandCoins, FileWarning, ListChecks, ScanLine, ClipboardPen, Percent,
-  PanelLeftClose, PanelLeftOpen,
+  PanelLeftClose, PanelLeftOpen, Palette, SlidersHorizontal, Archive, FileText, BookMarked, Target,
 } from "lucide-react";
 
 type NavLeaf = { id: string; label: string; icon?: any; target?: NavTarget };
@@ -532,6 +532,28 @@ export function AppShell() {
           { key: "m-ai", label: "AI Assistant", icon: BrainCircuit, module: "ai", color: C.purple, when: open("ai") },
           { key: "m-settings", label: "System Settings", icon: SettingsIcon, module: "settings", target: { tab: "system" }, color: C.gray, when: open("settings") },
           { key: "m-cashier-ledger", label: "Student Ledger", icon: ListChecks, module: "cashier", target: { tab: "ledger" }, color: C.teal, when: canCashier },
+        ],
+      },
+      {
+        title: "System & Administration",
+        tiles: [
+          { key: "m-profile", label: "School Profile", icon: School, module: "settings", target: { tab: "profile" }, color: C.blue, when: open("settings") },
+          { key: "m-branding", label: "Branding & Logos", icon: Palette, module: "settings", target: { tab: "branding" }, color: C.green, when: open("settings") },
+          { key: "m-calendar", label: "Calendar & Terms", icon: CalendarDays, module: "settings", target: { tab: "calendar" }, color: C.teal, when: open("settings") },
+          { key: "m-subjects", label: "Subjects", icon: BookOpen, module: "settings", target: { tab: "subjects" }, color: C.amber, when: open("settings") },
+          { key: "m-grading", label: "Grading Scale", icon: SlidersHorizontal, module: "settings", target: { tab: "grading" }, color: C.purple, when: open("settings") },
+          { key: "m-statutory", label: "Statutory Rates", icon: Landmark, module: "settings", target: { tab: "statutory" }, color: C.gray, when: open("settings") },
+        ],
+      },
+      {
+        title: "Reports & Analytics",
+        tiles: [
+          { key: "m-tcards", label: "Terminal Reports", icon: GraduationCap, module: "reports", target: { tab: "cards" }, color: C.blue, when: open("reports") },
+          { key: "m-cumulative", label: "Cumulative Records", icon: Archive, module: "reports", target: { tab: "cumulative" }, color: C.green, when: open("reports") },
+          { key: "m-bece", label: "BECE Papers", icon: FileText, module: "reports", target: { tab: "papers" }, color: C.orange, when: open("reports") },
+          { key: "m-gb-analytics", label: "Gradebook Analytics", icon: BarChart3, module: "gradebook", target: { tab: "analytics" }, color: C.purple, when: open("gradebook") },
+          { key: "m-framework", label: "Curriculum Framework", icon: BookMarked, module: "curriculum", target: { tab: "framework" }, color: C.teal, when: open("curriculum") },
+          { key: "m-completion", label: "Completion Dashboard", icon: Target, module: "curriculum", target: { tab: "completion" }, color: C.cyan, when: open("curriculum") },
         ],
       },
     ];

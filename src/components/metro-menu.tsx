@@ -37,6 +37,7 @@ const SECTION_HUE: Record<string, string> = {
   "Academics & Exams": "#881798",
   "Finance & Communication": "#00b294",
   "System & Administration": "#5d5a58",
+  "Reports & Analytics": "#ca5010",
   "Self-Service": "#ec008c",
 };
 
@@ -197,7 +198,7 @@ export function MetroMenu({ sections, pages, current, currentTarget, onSelect, o
               {visible.length > 0 && (
                 <>
                   <h2 className="mb-3 text-sm font-semibold uppercase tracking-[0.1em] text-white/60">Quick tiles</h2>
-                  <div className="grid grid-cols-[repeat(auto-fill,minmax(320px,1fr))] gap-[30px] max-md:grid-cols-[repeat(auto-fill,minmax(280px,1fr))] max-sm:grid-cols-1">
+                  <div className="grid grid-cols-[repeat(auto-fill,minmax(320px,1fr))] gap-[30px] max-md:grid-cols-[repeat(auto-fill,minmax(280px,1fr))] max-sm:grid-cols-1 max-w-[1360px] mx-auto">
                     {visible.map((s) => (
                       <section key={s.title} aria-label={s.title}>
                         <h3 className="mb-3 text-sm font-semibold uppercase tracking-[0.1em] text-white/60">{s.title}</h3>
@@ -258,7 +259,10 @@ export function MetroMenu({ sections, pages, current, currentTarget, onSelect, o
           {/* ── mode: default Start (tiles, CI3 exact) ── */}
           {!showSearchResults && !showBrowse && (
             <>
-              <div className="grid grid-cols-[repeat(auto-fill,minmax(320px,1fr))] gap-[30px] max-md:grid-cols-[repeat(auto-fill,minmax(280px,1fr))] max-sm:grid-cols-1">
+              {/* 9 groups × 3 columns = a perfectly uniform 3×3 metro wall; the 1360px
+                  cap keeps the grid at 3 columns even on ultra-wide monitors so the
+                  bottom row never strands empty columns (CI3 groups auto-fit wider) */}
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(320px,1fr))] gap-[30px] max-md:grid-cols-[repeat(auto-fill,minmax(280px,1fr))] max-sm:grid-cols-1 max-w-[1360px] mx-auto">
                 {visible.map((s) => (
                   <section key={s.title} aria-label={s.title}>
                     <h2 className="mb-3 text-sm font-semibold uppercase tracking-[0.1em] text-white/60">{s.title}</h2>
