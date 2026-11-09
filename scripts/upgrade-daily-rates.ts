@@ -20,7 +20,7 @@ const demo = process.argv.includes("--demo");
 const C = (cedis: number) => Math.round(cedis * 100);
 
 // graduated per-stop fares per route name (seed table); fallback derives from
-// the termly fare (≈ one-way ≈ term fare ÷ 55 school-days, min GH₵2)
+// the termly fare (≈ one-way ≈ term fare ÷ 55 school-days, min ₵2)
 const FARE_TABLE: Record<string, { perTrip: number; stops: Record<string, number> }> = {
   "Adenta Loop": { perTrip: 8, stops: { "Adenta Market": 6, "Community 25": 8, "Frafraha Junction": 9, Ogbojo: 10 } },
   "Madina–Atomic": { perTrip: 7, stops: { "Madina Market": 5, "Zongo Junction": 6, "Atomic Roundabout": 7, "Legon Hall": 9 } },

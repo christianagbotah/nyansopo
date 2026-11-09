@@ -191,7 +191,7 @@ async function main() {
       check("day charges generated for B (lunch owed)", !!owedLunch);
       const collect = await post(`/api/school/${schoolId}/ops/daily`, {
         action: "pos-collect", studentId: b, date: dateStr(today),
-        items: [{ serviceId: svcLunch.id, amountCents: owedLunch!.amountCents + 30000 }], // +GH₵300 advance
+        items: [{ serviceId: svcLunch.id, amountCents: owedLunch!.amountCents + 30000 }], // +₵300 advance
         method: "CASH", paidAt: dateStr(today),
       });
       const collectBody = await collect.json();

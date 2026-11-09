@@ -77,8 +77,8 @@ async function main() {
     check("stop B rider: pos-collect accepted", r2.status === 200, String(r2.status));
     const t1 = await db.dailyCharge.findFirst({ where: { studentId: st1, service: { category: "TRANSPORT" }, date: today } });
     const t2 = await db.dailyCharge.findFirst({ where: { studentId: st2, service: { category: "TRANSPORT" }, date: today } });
-    check("Stop A both-ways = 2 × GH₵3.00 = 6.00", t1?.amountCents === 600, `${t1?.amountCents}`);
-    check("Stop B morning-only = 1 × GH₵7.00 = 7.00", t2?.amountCents === 700, `${t2?.amountCents}`);
+    check("Stop A both-ways = 2 × ₵3.00 = 6.00", t1?.amountCents === 600, `${t1?.amountCents}`);
+    check("Stop B morning-only = 1 × ₵7.00 = 7.00", t2?.amountCents === 700, `${t2?.amountCents}`);
     check("same class, different fares by pickup point", t1?.amountCents !== t2?.amountCents);
     // GET payload exposes the resolved fare with the stop that set it
     const data = await get(`?date=${d}`);
@@ -95,7 +95,7 @@ async function main() {
     const gen1 = await g1.json();
     check("day generated", g1.status === 200 && gen1.created > 0, JSON.stringify(gen1).slice(0, 80));
     const w1 = await chargesFor(st1, svcWater.id);
-    check("water charged once this week (GH₵5.00)", w1.length === 1 && w1[0].amountCents === 500, `${w1.length}×${w1[0]?.amountCents}`);
+    check("water charged once this week (₵5.00)", w1.length === 1 && w1[0].amountCents === 500, `${w1.length}×${w1[0]?.amountCents}`);
     // regenerate same day → idempotent
     const g2 = await (await post({ action: "generate-day", date: today.toISOString().slice(0, 10) })).json();
     const w2 = await chargesFor(st1, svcWater.id);
@@ -119,8 +119,8 @@ async function main() {
   console.log("\n── C. per-item payment entry: item amounts settle their own arrears ──");
   {
     // s2 owes: meal 7.99 (today, after a 1p auto-deduct) + 8.00 (next week) +
-    // water 5.00 (today) + 5.00 (next week) — paying meal GH₵20 settles GH₵15.99
-    // of meal arrears oldest-first and banks GH₵4.01 as meal advance; water untouched
+    // water 5.00 (today) + 5.00 (next week) — paying meal ₵20 settles ₵15.99
+    // of meal arrears oldest-first and banks ₵4.01 as meal advance; water untouched
     const mealOwed = (await chargesFor(st2, svcMeal.id)).filter((c) => c.status === "OWED").reduce((a, c) => a + c.amountCents, 0);
     const waterOwed = (await chargesFor(st2, svcWater.id)).filter((c) => c.status === "OWED").reduce((a, c) => a + c.amountCents, 0);
     check("s2 owes meal 15.99 + water 10.00 before the per-item payment", mealOwed === 1599 && waterOwed === 1000, `${mealOwed}/${waterOwed}`);
@@ -140,7 +140,7 @@ async function main() {
 
   console.log("\n── D. per-item auto-deduct at charge generation (CI3 apply_charge) ──");
   {
-    // s2 holds GH₵4.01 meal credit; the week-3 meal charge auto-settles from it
+    // s2 holds ₵4.01 meal credit; the week-3 meal charge auto-settles from it
     const week3 = new Date(today.getTime() + 14 * 864e5);
     await post({ action: "generate-day", date: week3.toISOString().slice(0, 10) });
     const w3rows = await db.dailyCharge.findMany({ where: { studentId: st2, serviceId: svcMeal.id, date: week3 }, orderBy: { amountCents: "desc" } });

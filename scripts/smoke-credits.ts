@@ -47,7 +47,7 @@ async function main() {
   const term = await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId } } });
   if (!term) { console.log("no current term"); return; }
 
-  // ── (a) overpay an invoice by GH₵20 → invoice PAID + credit row + receipt note ──
+  // ── (a) overpay an invoice by ₵20 → invoice PAID + credit row + receipt note ──
   console.log("\n── (a) overpayment creates credit ──");
   const invA = await db.invoice.findFirst({
     where: { schoolId, termId: term.id, payments: { none: {} }, OR: [{ status: "UNPAID" }, { status: "PARTIAL" }, { status: "OVERDUE" }] },
@@ -56,7 +56,7 @@ async function main() {
   if (!invA) { console.log("no owing invoice without payments — aborting"); return; }
   const snapA = { paidCents: invA.paidCents, status: invA.status };
   const balA = invA.totalCents - invA.discountCents - invA.paidCents;
-  const OVER = 2000; // GH₵20 overpayment
+  const OVER = 2000; // ₵20 overpayment
   const baseA = await creditSum(schoolId, invA.studentId);
   const payRes = await post(head, `/api/school/${schoolId}/fees`, {
     action: "record-payment", invoiceId: invA.id, amountCents: balA + OVER, method: "CASH", reference: "SMOKE-CREDITS",
@@ -70,7 +70,7 @@ async function main() {
   const invAfter = await db.invoice.findUnique({ where: { id: invA.id } });
   check("invoice PAID — only the balance applied", invAfter?.status === "PAID" && invAfter?.paidCents === snapA.paidCents + balA, `status=${invAfter?.status} paid=${invAfter?.paidCents}`);
   const credA = await db.studentCredit.findFirst({ where: { sourcePaymentId: paymentId } });
-  check("StudentCredit row kind=CREDIT +GH₵20, receipt-linked", credA?.kind === "CREDIT" && credA?.amountCents === OVER && credA?.balanceAfter === baseA + OVER, JSON.stringify(credA));
+  check("StudentCredit row kind=CREDIT +₵20, receipt-linked", credA?.kind === "CREDIT" && credA?.amountCents === OVER && credA?.balanceAfter === baseA + OVER, JSON.stringify(credA));
 
   // ── (b) credits list + stats ──
   console.log("\n── (b) credits list + stats ──");
@@ -78,7 +78,7 @@ async function main() {
   const list = await listRes.json().catch(() => ({}));
   check("credits list 200", listRes.status === 200, String(listRes.status));
   const rowA = (list.rows ?? []).find((r: any) => r.studentId === invA.studentId);
-  check("learner row shows base + GH₵20 balance", rowA?.balanceCents === baseA + OVER, JSON.stringify(rowA));
+  check("learner row shows base + ₵20 balance", rowA?.balanceCents === baseA + OVER, JSON.stringify(rowA));
   check("stats.activeCents grows by the overpayment", (list.stats?.activeCents ?? -1) >= 5000 + OVER, JSON.stringify(list.stats));
   check("stats.studentsWithCredits grew if a new wallet opened", (list.stats?.studentsWithCredits ?? 0) >= preStudentsWithCredits + (baseA === 0 ? 1 : 0), `${list.stats?.studentsWithCredits} vs ${preStudentsWithCredits}`);
   check("stats.utilizationPct numeric", typeof list.stats?.utilizationPct === "number");
@@ -86,12 +86,12 @@ async function main() {
 
   // ── (c) adjust ± ──
   console.log("\n── (c) adjust ± ──");
-  const adj1 = await post(head, `/api/school/${schoolId}/ops/finance`, { action: "credit-adjust", studentId: invA.studentId, amountCents: 500, note: "SMOKE: +GH₵5 correction" });
+  const adj1 = await post(head, `/api/school/${schoolId}/ops/finance`, { action: "credit-adjust", studentId: invA.studentId, amountCents: 500, note: "SMOKE: +₵5 correction" });
   const adj1Body = await adj1.json().catch(() => ({}));
-  check("adjust +GH₵5 → balance +500", adj1.status === 200 && adj1Body.balanceCents === baseA + OVER + 500, `${adj1.status} ${JSON.stringify(adj1Body.balanceCents)}`);
-  const adj2 = await post(head, `/api/school/${schoolId}/ops/finance`, { action: "credit-adjust", studentId: invA.studentId, amountCents: -300, note: "SMOKE: −GH₵3 correction" });
+  check("adjust +₵5 → balance +500", adj1.status === 200 && adj1Body.balanceCents === baseA + OVER + 500, `${adj1.status} ${JSON.stringify(adj1Body.balanceCents)}`);
+  const adj2 = await post(head, `/api/school/${schoolId}/ops/finance`, { action: "credit-adjust", studentId: invA.studentId, amountCents: -300, note: "SMOKE: −₵3 correction" });
   const adj2Body = await adj2.json().catch(() => ({}));
-  check("adjust −GH₵3 → balance +200", adj2.status === 200 && adj2Body.balanceCents === baseA + OVER + 200, `${adj2.status} ${JSON.stringify(adj2Body.balanceCents)}`);
+  check("adjust −₵3 → balance +200", adj2.status === 200 && adj2Body.balanceCents === baseA + OVER + 200, `${adj2.status} ${JSON.stringify(adj2Body.balanceCents)}`);
   const adjOver = await post(head, `/api/school/${schoolId}/ops/finance`, { action: "credit-adjust", studentId: invA.studentId, amountCents: -9999999, note: "SMOKE: overdraft attempt" });
   check("overdraft refused 400", adjOver.status === 400, String(adjOver.status));
   const adjNoNote = await post(head, `/api/school/${schoolId}/ops/finance`, { action: "credit-adjust", studentId: invA.studentId, amountCents: 100 });
@@ -117,7 +117,7 @@ async function main() {
   const toDaily = await post(head, `/api/school/${schoolId}/ops/finance`, { action: "credit-to-daily", studentId: studentB.id, amountCents: 400, note: "SMOKE: to wallet" });
   check("credit-to-daily 200", toDaily.status === 200, String(toDaily.status));
   const walletAfter = await db.studentWallet.findUnique({ where: { studentId: studentB.id } });
-  check("wallet prepaidCents +GH₵4", walletAfter?.prepaidCents === (walletBefore?.prepaidCents ?? 0) + 400, `${walletBefore?.prepaidCents ?? 0} → ${walletAfter?.prepaidCents}`);
+  check("wallet prepaidCents +₵4", walletAfter?.prepaidCents === (walletBefore?.prepaidCents ?? 0) + 400, `${walletBefore?.prepaidCents ?? 0} → ${walletAfter?.prepaidCents}`);
   const txn = await db.walletTxn.findFirst({ where: { studentId: studentB.id, kind: "TOPUP", wallet: "PREPAID" }, orderBy: { at: "desc" } });
   check("WalletTxn TOPUP row (PREPAID, +400)", txn?.amountCents === 400 && txn?.balanceAfter === walletAfter?.prepaidCents, JSON.stringify(txn));
   const dailyRow = await db.studentCredit.findFirst({ where: { studentId: studentB.id, kind: "DAILY_WALLET" }, orderBy: { at: "desc" } });
@@ -143,7 +143,7 @@ async function main() {
         writeOffNote: candInv.writeOffNote, createdAt: candInv.createdAt,
         items: candInv.items.map((it) => ({ name: it.name, amountCents: it.amountCents })),
       };
-      // bank GH₵50 of credit, remove the learner's current-term invoice, regenerate
+      // bank ₵50 of credit, remove the learner's current-term invoice, regenerate
       const mk = await post(head, `/api/school/${schoolId}/ops/finance`, { action: "credit-create", studentId: snapZ.studentId, amountCents: 5000, note: "SMOKE: credit for billing test" });
       check("credit-create 200", mk.status === 200, String(mk.status));
       const baseZ = await creditSum(schoolId, snapZ.studentId);

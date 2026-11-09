@@ -278,7 +278,7 @@ async function main() {
     const g1 = await post({ action: "create", studentId: stB.studentId, purpose: "INVOICE", amountCents: 500, method: "MOMO_PROMPT" });
     check("INVOICE without invoiceId → 400", g1.status === 400);
     const g2 = await post({ action: "create", studentId: stB.studentId, purpose: "WALLET", walletKind: "PREPAID", amountCents: 20, method: "MOMO_PROMPT" });
-    check("below GH₵0.50 minimum → 400", g2.status === 400 && /minimum/i.test((await g2.json()).error));
+    check("below ₵0.50 minimum → 400", g2.status === 400 && /minimum/i.test((await g2.json()).error));
   }
 
   console.log("\n── G. GET payload: list, filters, stats, config card ──");

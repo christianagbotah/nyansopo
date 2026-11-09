@@ -134,7 +134,7 @@ async function main() {
     const delPosted = await post(bursar, API, { action: "delete-journal", id: j1?.id });
     check("delete posted entry → 400", delPosted.status === 400, String(delPosted.status));
 
-    // trial-balance math: post a distinct GH₵77.77 entry, then void it
+    // trial-balance math: post a distinct ₵77.77 entry, then void it
     const tb0 = await J(await get(bursar, `${API}?report=trial-balance`));
     check("trial balance ΣDr === ΣCr (baseline)", tb0.totalDebitCents === tb0.totalCreditCents && tb0.balanced === true, `${tb0.totalDebitCents}/${tb0.totalCreditCents}`);
     const mkJ2 = await post(bursar, API, { action: "save-journal", entryDate: today, description: "SMOKE TB probe", lines: [{ accountId: cash.id, debitCents: 7777, creditCents: 0 }, { accountId: otherIncome.id, debitCents: 0, creditCents: 7777 }] });

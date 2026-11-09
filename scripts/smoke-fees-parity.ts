@@ -67,7 +67,7 @@ async function main() {
     const res = await post({ action: "import-arrears", csv });
     const body = await res.json();
     check("import 200 · imported=2, failed=2", res.ok && body.imported === 2 && body.failed === 2, JSON.stringify(body).slice(0, 160));
-    check("total imported = GH₵326.00", body.importedCents === 32600, String(body.importedCents));
+    check("total imported = ₵326.00", body.importedCents === 32600, String(body.importedCents));
     const arrearsInvoices = await db.invoice.findMany({
       where: { schoolId, termId: currentTerm.id, items: { some: { name: { startsWith: "Arrears — " } } } },
       include: { items: true },

@@ -89,7 +89,7 @@ async function main() {
     const txn = await db.walletTxn.findFirst({ where: { studentId: st, wallet: "ITEM", serviceId: svcMeal.id, kind: "TOPUP" }, orderBy: { at: "desc" } });
     check("ITEM TOPUP txn notes the receipt (advance — RCT)", txn?.amountCents === 700 && /advance/.test(txn?.note ?? ""), JSON.stringify(txn?.note));
     const audit = await db.dailyFeeAudit.findFirst({ where: { studentId: st, actionType: "PAYMENT", createdAt: { gte: testStart } }, orderBy: { createdAt: "desc" } });
-    check("audit notes the advance (+GH₵7.00)", /\(\+GH₵7\.00 advance\)/.test(audit?.notes ?? ""), audit?.notes ?? "");
+    check("audit notes the advance (+₵7.00)", /\(\+₵7\.00 advance\)/.test(audit?.notes ?? ""), audit?.notes ?? "");
   }
 
   console.log("\n── C. pure advance on an item with no charges ──");
