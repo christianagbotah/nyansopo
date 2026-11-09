@@ -21,7 +21,7 @@ const DEMO = [
 ];
 
 const FEATURES = [
-  { icon: Banknote, title: "Fees, Invoicing & Discounts", text: "Term billing in GH₵ — tuition, exam, books, ICT, meals & transport items. MoMo receipts, payment plans, sibling & scholarship discounts, arrears chase-lists and defaulter flagging." },
+  { icon: Banknote, title: "Fees, Invoicing & Discounts", text: "Term billing in ₵ — tuition, exam, books, ICT, meals & transport items. MoMo receipts, payment plans, sibling & scholarship discounts, arrears chase-lists and defaulter flagging." },
   { icon: UtensilsCrossed, title: "Daily Services & Tuck", text: "Lunch, breakfast, sachet water, remedial classes — billed by the school day with a fast POS counter, weekly water days, subsidised rates and automatic SMS receipts." },
   { icon: Bus, title: "Transportation", text: "Bus routes, vehicles and drivers. Assign learners to pickup stops, log daily trips and bill the termly fare straight onto invoices." },
   { icon: Calculator, title: "Payroll & HR", text: "Ghana-compliant payroll: SSNIT Tier 1 (5%/13%) and Tier 2 (5%), progressive PAYE, allowances and deductions — with payslips and MoMo payout lists." },

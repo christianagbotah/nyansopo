@@ -12,7 +12,7 @@ const PAY_LABELS: Record<string, string> = {
   CASH: "Cash", MOMO_MTN: "MTN MoMo", MOMO_AT: "AirtelTigo Money", MOMO_TELECEL: "Telecel Cash",
   BANK: "Bank transfer", CHEQUE: "Cheque", CARD: "Card",
 };
-const cedis = (c: number) => `GH₵ ${(c / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const cedis = (c: number) => `₵ ${(c / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export default async function PublicInvoicePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

@@ -518,7 +518,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (!student) return NextResponse.json({ error: "Learner not found" }, { status: 404 });
     const bal = await creditBalance(schoolId, studentId);
     const after = bal + amt;
-    if (after < 0) return NextResponse.json({ error: `Adjustment refused — it would overdraw the credit. Current balance is GH₵${(bal / 100).toFixed(2)}` }, { status: 400 });
+    if (after < 0) return NextResponse.json({ error: `Adjustment refused — it would overdraw the credit. Current balance is ₵${(bal / 100).toFixed(2)}` }, { status: 400 });
     const row = await db.studentCredit.create({
       data: {
         schoolId, studentId,
@@ -544,7 +544,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     ]);
     if (!from || !to) return NextResponse.json({ error: "Learner not found" }, { status: 404 });
     const balFrom = await creditBalance(schoolId, fromStudentId);
-    if (balFrom < amt) return NextResponse.json({ error: `Insufficient credit — ${from.firstName}'s balance is GH₵${(balFrom / 100).toFixed(2)}` }, { status: 400 });
+    if (balFrom < amt) return NextResponse.json({ error: `Insufficient credit — ${from.firstName}'s balance is ₵${(balFrom / 100).toFixed(2)}` }, { status: 400 });
     const balTo = await creditBalance(schoolId, toStudentId);
     const [out, inn] = await db.$transaction([
       db.studentCredit.create({ data: { schoolId, studentId: fromStudentId, kind: "TRANSFER_OUT", amountCents: -amt, balanceAfter: balFrom - amt, note: note ?? null, byName: user.fullName } }),
@@ -562,7 +562,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const student = await db.student.findUnique({ where: { id: studentId } });
     if (!student) return NextResponse.json({ error: "Learner not found" }, { status: 404 });
     const bal = await creditBalance(schoolId, studentId);
-    if (bal < amt) return NextResponse.json({ error: `Insufficient credit — balance is GH₵${(bal / 100).toFixed(2)}` }, { status: 400 });
+    if (bal < amt) return NextResponse.json({ error: `Insufficient credit — balance is ₵${(bal / 100).toFixed(2)}` }, { status: 400 });
     const existing = await db.studentWallet.findUnique({ where: { studentId } });
     const result = await db.$transaction(async (tx) => {
       const credit = await tx.studentCredit.create({

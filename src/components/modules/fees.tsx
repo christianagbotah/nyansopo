@@ -907,7 +907,7 @@ function PayDialog({ open, invoice, roster, invoices, onOpenChange, onDone, onCr
           </Select>
         </div>
         <div className="space-y-1">
-          <Label className="text-[11px] font-semibold uppercase tracking-wide">{label} — amount (GH₵)</Label>
+          <Label className="text-[11px] font-semibold uppercase tracking-wide">{label} — amount (₵)</Label>
           <Input type="number" step="0.01" min="0" value={amt} onChange={(e) => setAmt(e.target.value)} className="h-9" disabled={!selectedInvoice} />
         </div>
       </div>
@@ -1044,7 +1044,7 @@ function PayDialog({ open, invoice, roster, invoices, onOpenChange, onDone, onCr
                 </Select>
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs font-bold uppercase tracking-wide">Amount (GH₵) *</Label>
+                <Label className="text-xs font-bold uppercase tracking-wide">Amount (₵) *</Label>
                 <Input type="number" step="0.01" min="0" placeholder="600" value={amount} onChange={(e) => setAmount(e.target.value)} disabled={!selectedInvoice} />
                 <p className="text-[11px] text-muted-foreground">Amounts above the balance are banked as prepaid credit.</p>
               </div>
@@ -1536,7 +1536,7 @@ function InvoiceDiscountDialog({ invoice, catalog, onOpenChange, onDone }: {
                 <Label>Type</Label>
                 <Select value={type} onValueChange={setType}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectItem value="PERCENT">Percentage</SelectItem><SelectItem value="FIXED">Fixed (GH₵)</SelectItem></SelectContent>
+                  <SelectContent><SelectItem value="PERCENT">Percentage</SelectItem><SelectItem value="FIXED">Fixed (₵)</SelectItem></SelectContent>
                 </Select>
               </div>
               <div className="space-y-1.5"><Label>Value</Label><Input type="number" value={value} onChange={(e) => setValue(e.target.value)} /></div>
@@ -1828,7 +1828,7 @@ function RequestModificationDialog({ open, receipts, invoices, onOpenChange, onD
             targetType === "PAYMENT" ? (
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-1.5">
-                  <Label>Corrected amount (GH₵)</Label>
+                  <Label>Corrected amount (₵)</Label>
                   <Input type="number" step="0.01" value={newAmount} onChange={(e) => setNewAmount(e.target.value)} placeholder={chosen ? (chosen.amount / 100).toFixed(2) : "0.00"} />
                 </div>
                 <div className="space-y-1.5">
@@ -1841,7 +1841,7 @@ function RequestModificationDialog({ open, receipts, invoices, onOpenChange, onD
               </div>
             ) : (
               <div className="space-y-1.5">
-                <Label>Corrected invoice total (GH₵)</Label>
+                <Label>Corrected invoice total (₵)</Label>
                 <Input type="number" step="0.01" value={newTotal} onChange={(e) => setNewTotal(e.target.value)} placeholder={chosen ? (chosen.total / 100).toFixed(2) : "0.00"} />
               </div>
             )
@@ -2134,7 +2134,7 @@ function AddCreditDialog({ open, students, onOpenChange, onDone }: {
           <LearnerPicker students={students} selected={studentId} onSelect={setStudentId} />
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label>Amount (GH₵) *</Label>
+              <Label>Amount (₵) *</Label>
               <Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="e.g. 50.00" />
             </div>
             <div className="space-y-1.5">
@@ -2186,7 +2186,7 @@ function AdjustCreditDialog({ row, onOpenChange, onDone }: { row: CreditRow | nu
         <div className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label>Amount (± GH₵) *</Label>
+              <Label>Amount (± ₵) *</Label>
               <Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="e.g. 5 or -5" />
               <div className="flex gap-1.5">
                 <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => setAmount((v) => String(parseFloat(v || "0") - 5))}>−5</Button>
@@ -2203,7 +2203,7 @@ function AdjustCreditDialog({ row, onOpenChange, onDone }: { row: CreditRow | nu
           </div>
           <div className="space-y-1.5">
             <Label>Reason / note *</Label>
-            <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Guardian paid GH₵5 extra at the bank — slip attached" />
+            <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Guardian paid ₵5 extra at the bank — slip attached" />
           </div>
           <p className="text-xs text-muted-foreground">Adjustments are permanent ledger entries (kind ADJUST) with your name attached for the audit trail.</p>
         </div>
@@ -2257,7 +2257,7 @@ function TransferCreditDialog({ row, students, onOpenChange, onDone }: {
           <LearnerPicker students={students} selected={toId} onSelect={setToId} exclude={row?.studentId} />
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label>Amount (GH₵) *</Label>
+              <Label>Amount (₵) *</Label>
               <Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
             </div>
             <div className="space-y-1.5">
@@ -2309,7 +2309,7 @@ function ToDailyWalletDialog({ row, onOpenChange, onDone }: { row: CreditRow | n
         <div className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label>Amount (GH₵) *</Label>
+              <Label>Amount (₵) *</Label>
               <Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
               <p className="text-[11px] text-muted-foreground">Available credit: {row ? fmtCedi(row.balanceCents) : ""}</p>
             </div>

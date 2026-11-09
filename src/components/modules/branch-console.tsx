@@ -44,13 +44,13 @@ export function BranchConsole() {
       </div>
 
       <Card className="mt-4">
-        <CardHeader className="pb-2"><CardTitle className="text-base">Collections vs arrears by branch (GH₵)</CardTitle></CardHeader>
+        <CardHeader className="pb-2"><CardTitle className="text-base">Collections vs arrears by branch (₵)</CardTitle></CardHeader>
         <CardContent className="h-64">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={chartData} margin={{ top: 4, right: 8, left: -8, bottom: 0 }}>
               <XAxis dataKey="name" tick={{ fontSize: 11 }} stroke="#888" />
               <YAxis tick={{ fontSize: 11 }} stroke="#888" />
-              <Tooltip formatter={(v: any) => `GH₵${Number(v).toLocaleString()}`} contentStyle={{ borderRadius: 10 }} />
+              <Tooltip formatter={(v: any) => `₵${Number(v).toLocaleString()}`} contentStyle={{ borderRadius: 10 }} />
               <Legend />
               <Bar dataKey="Collected" stackId="a" fill="#0e5f3f" radius={[0, 0, 0, 0]} />
               <Bar dataKey="Arrears" stackId="a" fill="#c05621" radius={[4, 4, 0, 0]} />

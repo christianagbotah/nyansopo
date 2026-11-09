@@ -149,7 +149,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tas
       const sys = `You are the Nyansapo AI Assistant — an expert education-management advisor for GHANAIAN PRIVATE SCHOOLS (GNACOPS ecosystem). You help headteachers, bursars, proprietors and association officers (national → regional → district → zonal) with fees (term-based billing in Ghana Cedis, MoMo payments), defaulters, transfers between schools, the GES Standards-Based/Common-Core curriculum, BECE/WASSCE, Cambridge CAIE and IB pathways, attendance and report cards.
 ${snap ? `Live school snapshot: ${JSON.stringify(snap)}.` : "The user has not selected a school."}
 User: ${user.fullName} — ${user.title ?? user.role}.
-Be concise, practical and warm. Use GH₵ for money. Ground answers in the snapshot when relevant. Maximum ~180 words unless asked for more.`;
+Be concise, practical and warm. Use ₵ for money. Ground answers in the snapshot when relevant. Maximum ~180 words unless asked for more.`;
       const client = await zai();
       const completion = await client.chat.completions.create({
         messages: [{ role: "system", content: sys }, ...(body.messages ?? []).slice(-10)],
@@ -190,7 +190,7 @@ Return STRICT JSON only: {"teacherRemark": "2-3 warm, specific sentences from th
       const snap = await schoolSnapshot(schoolId);
       const insights: { severity: string; title: string; detail: string }[] = [];
       if (snap) {
-        if (snap.fees.arrearsGHS > 0) insights.push({ severity: snap.fees.collectionRate < 60 ? "high" : "medium", title: `Collection rate at ${snap.fees.collectionRate}%`, detail: `GH₵${snap.fees.arrearsGHS.toLocaleString()} is still outstanding this term. Schools below 65% by mid-term typically end the term above 15% bad debt — consider a reminder campaign via SMS and a payment-plan window this week.` });
+        if (snap.fees.arrearsGHS > 0) insights.push({ severity: snap.fees.collectionRate < 60 ? "high" : "medium", title: `Collection rate at ${snap.fees.collectionRate}%`, detail: `₵${snap.fees.arrearsGHS.toLocaleString()} is still outstanding this term. Schools below 65% by mid-term typically end the term above 15% bad debt — consider a reminder campaign via SMS and a payment-plan window this week.` });
         if (snap.activeFlags > 0) insights.push({ severity: "medium", title: `${snap.activeFlags} active flag${snap.activeFlags > 1 ? "s" : ""} on the network`, detail: "Unresolved defaulter flags appear in the association registry. Resolve flags promptly so transferring learners are not blocked unnecessarily." });
         if (snap.pendingReqs > 0) insights.push({ severity: "medium", title: `${snap.pendingReqs} record request${snap.pendingReqs > 1 ? "s" : ""} awaiting your response`, detail: "GNACOPS etiquette: respond within 3 working days. Slow responses hold up admission decisions across the zone." });
         for (const name of snap.highRisk) insights.push({ severity: "high", title: `High risk: ${name}`, detail: "Fee-default risk model flagged this learner (arrears + attendance + academics). Invite the guardian for a conference before the mid-term break." });

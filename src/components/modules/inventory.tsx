@@ -628,8 +628,8 @@ function ItemDialog({ item, onOpenChange, onDone }: { item: Item | "new" | null;
             </Select>
           </div>
           <div className="space-y-1.5"><Label>Unit</Label><Input value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="pcs / set / bag" /></div>
-          <div className="space-y-1.5"><Label>Unit cost (GH₵) *</Label><Input type="number" step="0.5" value={unitCost} onChange={(e) => setUnitCost(e.target.value)} /></div>
-          <div className="space-y-1.5"><Label>Sell price (GH₵)</Label><Input type="number" step="0.5" value={sellPrice} onChange={(e) => setSellPrice(e.target.value)} placeholder="blank = internal use" /></div>
+          <div className="space-y-1.5"><Label>Unit cost (₵) *</Label><Input type="number" step="0.5" value={unitCost} onChange={(e) => setUnitCost(e.target.value)} /></div>
+          <div className="space-y-1.5"><Label>Sell price (₵)</Label><Input type="number" step="0.5" value={sellPrice} onChange={(e) => setSellPrice(e.target.value)} placeholder="blank = internal use" /></div>
           <div className="space-y-1.5"><Label>Reorder level</Label><Input type="number" value={reorderLevel} onChange={(e) => setReorderLevel(e.target.value)} /></div>
           <div className="space-y-1.5 sm:col-span-2"><Label>Location</Label><Input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Store room A" /></div>
           {item === "new" && (
@@ -707,7 +707,7 @@ function MovementDialog({ ctx, students, suppliers, onOpenChange, onDone }: { ct
             </div>
             {isIn ? (
               <div className="space-y-1.5">
-                <Label>Unit cost (GH₵)</Label>
+                <Label>Unit cost (₵)</Label>
                 <Input type="number" step="0.5" value={unitCost} onChange={(e) => setUnitCost(e.target.value)} />
               </div>
             ) : (

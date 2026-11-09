@@ -27,7 +27,7 @@ type PayStatus = {
   simulated: boolean;
 };
 
-const fmt = (cents: number) => `GH₵${(cents / 100).toFixed(2)}`;
+const fmt = (cents: number) => `₵${(cents / 100).toFixed(2)}`;
 
 export default function PublicPayPage() {
   const params = useParams<{ ref: string }>();

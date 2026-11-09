@@ -269,20 +269,20 @@ export function Payroll() {
                 <div className="flex justify-between"><span>Tier 2 — occupational</span><b>{data.rates.ssnitTier2}% of basic</b></div>
                 <div className="flex justify-between"><span>GETFund / NHIL levies</span><b>{data.rates.getfund}% + {data.rates.nhil}%</b></div>
                 <Separator />
-                <p className="text-xs text-muted-foreground pt-1">Tier 1 contributions are capped at the SSNIT maximum pensionable earnings (GH₵35,000/month). All rates are configurable in Statutory settings and applied to every new payroll run.</p>
+                <p className="text-xs text-muted-foreground pt-1">Tier 1 contributions are capped at the SSNIT maximum pensionable earnings (₵35,000/month). All rates are configurable in Statutory settings and applied to every new payroll run.</p>
               </CardContent>
             </Card>
             <Card>
               <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><Calculator className="size-4 text-primary" /> PAYE progressive bands (monthly)</CardTitle></CardHeader>
               <CardContent className="space-y-1.5 text-sm">
                 {[
-                  ["First GH₵512", "0%"], ["Next GH₵184", "5%"], ["Next GH₵218", "10%"],
-                  ["Next GH₵3,040", "17.5%"], ["Next GH₵1,621", "25%"], ["Next GH₵1,466", "30%"], ["Above GH₵7,041", "35%"],
+                  ["First ₵512", "0%"], ["Next ₵184", "5%"], ["Next ₵218", "10%"],
+                  ["Next ₵3,040", "17.5%"], ["Next ₵1,621", "25%"], ["Next ₵1,466", "30%"], ["Above ₵7,041", "35%"],
                 ].map(([band, rate]) => (
                   <div key={band} className="flex justify-between"><span className="text-muted-foreground">{band}</span><b>{rate}</b></div>
                 ))}
                 <Separator />
-                <p className="text-xs text-muted-foreground">Taxable income = gross − employee SSNIT. A teacher on GH₵1,600 basic + GH₵100 allowance pays GH₵160 SSNIT and GH₵152 PAYE — net GH₵1,488.</p>
+                <p className="text-xs text-muted-foreground">Taxable income = gross − employee SSNIT. A teacher on ₵1,600 basic + ₵100 allowance pays ₵160 SSNIT and ₵152 PAYE — net ₵1,488.</p>
               </CardContent>
             </Card>
             <Card className="lg:col-span-2 bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800">
@@ -574,7 +574,7 @@ function StaffDialog({ staff, onOpenChange, onDone }: { staff: StaffRow | null; 
           <Separator className="sm:col-span-2 my-1" />
           <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold sm:col-span-2">Payroll</div>
           <div className="space-y-1.5">
-            <Label>Basic salary (GH₵/month)</Label>
+            <Label>Basic salary (₵/month)</Label>
             <Input type="number" value={f.salary} onChange={(e) => setF({ ...f, salary: e.target.value })} placeholder="1600" />
           </div>
           <div className="space-y-1.5">
@@ -846,7 +846,7 @@ function NewStaffDialog({ open, onOpenChange, onDone, providers }: { open: boole
               </SelectContent>
             </Select>
           </FormField>
-          <FormField label="Basic salary (GH₵/month)">
+          <FormField label="Basic salary (₵/month)">
             <Input type="number" value={f.salary} onChange={(e) => setF({ ...f, salary: e.target.value })} placeholder="1600" />
           </FormField>
           <FormField label="Hired on">
@@ -1047,8 +1047,8 @@ function SsnitReportsTab({ defaultPeriod }: { defaultPeriod?: string }) {
     if (!report) return;
     const r = report.rates;
     const header = tier === "T1"
-      ? ["S/N", "SSNIT No.", "First Name", "Last Name", "Option", "Hazd.", `Salary (GH₵)`, `SSNIT ${r.tier1Employer}% (GH₵)`, `Employee ${r.tier1Employee}% (GH₵)`, "Payslip-stored employee SSNIT (GH₵)", "Payslip-stored employer SSNIT (GH₵)"]
-      : ["S/N", "Tier 2 Member ID", "Last", "First", "Other", "Basic Salary (GH₵)", `Tier 2 Contribution ${r.tier2}% (GH₵)`, "Provider"];
+      ? ["S/N", "SSNIT No.", "First Name", "Last Name", "Option", "Hazd.", `Salary (₵)`, `SSNIT ${r.tier1Employer}% (₵)`, `Employee ${r.tier1Employee}% (₵)`, "Payslip-stored employee SSNIT (₵)", "Payslip-stored employer SSNIT (₵)"]
+      : ["S/N", "Tier 2 Member ID", "Last", "First", "Other", "Basic Salary (₵)", `Tier 2 Contribution ${r.tier2}% (₵)`, "Provider"];
     const lines = report.rows.map((x) => tier === "T1"
       ? [x.sn, x.ssnitNumber, x.firstName, x.lastName, "ACT 766", "NO", x.basicSalaryCents / 100, x.tier1EmployerCents / 100, x.tier1EmployeeCents / 100, x.storedSsnitEmployeeCents / 100, x.storedSsnitEmployerCents / 100]
       : [x.sn, x.tier2MemberId, x.lastToken, x.firstName, x.otherNames, x.basicSalaryCents / 100, x.tier2Cents / 100, x.tier2Provider]);
@@ -1116,7 +1116,7 @@ function SsnitReportsTab({ defaultPeriod }: { defaultPeriod?: string }) {
                 <table className="w-full text-[11.5px] mt-4 border-collapse">
                   <thead>
                     <tr className="bg-secondary/70">
-                      {["S/N", "SSNIT No.", "First Name", "Last Name", "Option", "Hazd.", "Salary (GH₵)", `SSNIT (${report.rates.tier1Employer}%)`].map((h) => (
+                      {["S/N", "SSNIT No.", "First Name", "Last Name", "Option", "Hazd.", "Salary (₵)", `SSNIT (${report.rates.tier1Employer}%)`].map((h) => (
                         <th key={h} className="border px-2 py-1.5 text-left font-semibold whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
@@ -1148,7 +1148,7 @@ function SsnitReportsTab({ defaultPeriod }: { defaultPeriod?: string }) {
                 <table className="w-full text-[11.5px] mt-4 border-collapse">
                   <thead>
                     <tr className="bg-secondary/70">
-                      {["S/N", "Tier 2 Member ID", "Last", "First", "Other", "Basic Salary (GH₵)", `Tier 2 Contribution (${report.rates.tier2}%)`].map((h) => (
+                      {["S/N", "Tier 2 Member ID", "Last", "First", "Other", "Basic Salary (₵)", `Tier 2 Contribution (${report.rates.tier2}%)`].map((h) => (
                         <th key={h} className="border px-2 py-1.5 text-left font-semibold whitespace-nowrap">{h}</th>
                       ))}
                     </tr>

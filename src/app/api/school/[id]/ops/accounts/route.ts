@@ -35,7 +35,7 @@ const endOfDay = (d: Date) => new Date(d.getTime() + DAY_MS - 1);
 const utcDay = (d: Date) => Math.floor(d.getTime() / DAY_MS);
 const dayDiff = (a: Date, b: Date) => Math.abs(utcDay(a) - utcDay(b));
 const iso = (d: Date) => d.toISOString().slice(0, 10);
-const fmtGhs = (cents: number) => `GH₵${(cents / 100).toLocaleString("en-GH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const fmtGhs = (cents: number) => `₵${(cents / 100).toLocaleString("en-GH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 type Act = { debit: number; credit: number };
 type Activity = Map<string, Act>;

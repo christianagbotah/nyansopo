@@ -130,7 +130,7 @@ export async function GET(req: NextRequest) {
       items.push({
         id: "overdue", kind: "arrears", severity: "warning", count: overdue._count.id,
         title: `${overdue._count.id} invoice${overdue._count.id > 1 ? "s" : ""} overdue`,
-        detail: `GH₵${(outstanding / 100).toLocaleString("en-GH", { maximumFractionDigits: 2 })} outstanding — send reminders`,
+        detail: `₵${(outstanding / 100).toLocaleString("en-GH", { maximumFractionDigits: 2 })} outstanding — send reminders`,
         module: "fees", tab: "arrears", at: new Date(),
       });
     }

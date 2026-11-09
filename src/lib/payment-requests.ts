@@ -36,7 +36,7 @@ const MOMO_LABEL: Record<string, string> = {
   "tigo-gh": "AT Money",
 };
 
-const fmtGH = (cents: number) => `GH₵${(cents / 100).toFixed(2)}`;
+const fmtGH = (cents: number) => `₵${(cents / 100).toFixed(2)}`;
 
 type RequestItem = { serviceId: string; amountCents: number };
 
@@ -82,7 +82,7 @@ export async function createPaymentRequest(db: PrismaClient, input: CreateReques
   if (!enrolled) return { ok: false, error: "This learner is not enrolled in this school" };
   const amount = Math.round(Number(input.amountCents) || 0);
   if (amount <= 0) return { ok: false, error: "Enter an amount greater than zero" };
-  if (amount < 50) return { ok: false, error: "Hubtel collects a minimum of GH₵0.50 per transaction" };
+  if (amount < 50) return { ok: false, error: "Hubtel collects a minimum of ₵0.50 per transaction" };
 
   // purpose validation + description
   let itemsJson: RequestItem[] | null = null;

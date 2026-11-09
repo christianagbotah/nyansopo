@@ -680,7 +680,7 @@ const refHint = (m: string) => (m === "CHEQUE" ? "Cheque number" : m.startsWith(
 
 function CollectDialog({ student, date, online, onOpenChange, onDone }: { student: PosStudent | null; date: string; online: boolean; onOpenChange: (o: boolean) => void; onDone: (receipt: any) => void }) {
   const { currentSchoolId } = useStore();
-  const [amounts, setAmounts] = useState<Record<string, string>>({}); // serviceId → GH₵ being paid for that item
+  const [amounts, setAmounts] = useState<Record<string, string>>({}); // serviceId → ₵ being paid for that item
   /* payment method rows — one row = a normal collection; several rows record a
      SPLIT (part cash + part MoMo…) that lands on ONE receipt */
   const [parts, setParts] = useState<PayPart[]>([{ key: "p1", method: "MOMO_MTN", amount: "", reference: "" }]);
@@ -716,7 +716,7 @@ function CollectDialog({ student, date, online, onOpenChange, onDone }: { studen
   const remaining = totalCents - allocated;
   const hasCash = parts.some((p) => p.method === "CASH");
   const change = Math.max(0, Math.round(parseFloat(tendered || "0") * 100) - totalCents);
-  const fmt = (c: number) => `GH₵${(c / 100).toFixed(2)}`;
+  const fmt = (c: number) => `₵${(c / 100).toFixed(2)}`;
 
   async function submit() {
     if (!student || !currentSchoolId) return;
@@ -891,7 +891,7 @@ function CollectDialog({ student, date, online, onOpenChange, onDone }: { studen
           </div>
           {hasCash && (
             <div className="space-y-1.5">
-              <Label>Tendered (GH₵)</Label>
+              <Label>Tendered (₵)</Label>
               <Input type="number" step="0.5" value={tendered} onChange={(e) => setTendered(e.target.value)} placeholder="e.g. 20.00" />
               {tendered && change >= 0 && <p className="text-[11px]">Change: <b className="text-emerald-600">{fmtCedi(change)}</b></p>}
               {tendered && change < 0 && <p className="text-[11px] text-destructive">Short by {fmtCedi(-change)}</p>}
@@ -906,7 +906,7 @@ function CollectDialog({ student, date, online, onOpenChange, onDone }: { studen
                   <SelectItem value="BOTH" disabled={!student?.transportFare}>Both ways — {student?.transportFare ? fmtCedi(student.transportFare.oneway * 2) : "—"}</SelectItem>
                   <SelectItem value="MORNING" disabled={!student?.transportFare}>Morning only (one-way) — {student?.transportFare ? fmtCedi(student.transportFare.oneway) : "—"}</SelectItem>
                   <SelectItem value="AFTERNOON" disabled={!student?.transportFare}>Afternoon only (one-way) — {student?.transportFare ? fmtCedi(student.transportFare.oneway) : "—"}</SelectItem>
-                  <SelectItem value="NOT_USING">Not using bus — waive fare (GH₵0)</SelectItem>
+                  <SelectItem value="NOT_USING">Not using bus — waive fare (₵0)</SelectItem>
                   <SelectItem value="BOARDED" disabled={!student?.transportFare}>Already boarded — as recorded</SelectItem>
                 </SelectContent>
               </Select>
@@ -1008,7 +1008,7 @@ function ServiceDialog({ service, onOpenChange, onDone }: { service: Service | "
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{service === "new" ? "New daily service" : "Edit service"}</DialogTitle>
-          <DialogDescription>e.g. Lunch GH₵8 every school day, or Sachet Water GH₵1 on Wednesdays only.</DialogDescription>
+          <DialogDescription>e.g. Lunch ₵8 every school day, or Sachet Water ₵1 on Wednesdays only.</DialogDescription>
         </DialogHeader>
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5 sm:col-span-2">
@@ -1027,7 +1027,7 @@ function ServiceDialog({ service, onOpenChange, onDone }: { service: Service | "
             </Select>
           </div>
           <div className="space-y-1.5">
-            <Label>Price (GH₵) *</Label>
+            <Label>Price (₵) *</Label>
             <Input type="number" step="0.5" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="8.00" />
           </div>
           <div className="space-y-1.5 sm:col-span-2">
@@ -1094,7 +1094,7 @@ function EnrollDialog({ service, students, onOpenChange, onDone }: { service: Se
         action: "enroll", serviceId: service.id, studentIds: picked,
         priceCentsOverride: subsidy ? Math.round(parseFloat(subsidy) * 100) : undefined,
       });
-      toast({ title: `${res.enrolled} learners enrolled`, description: `${service.name}${subsidy ? ` at GH₵${subsidy} subsidised rate` : ""}.` });
+      toast({ title: `${res.enrolled} learners enrolled`, description: `${service.name}${subsidy ? ` at ₵${subsidy} subsidised rate` : ""}.` });
       onDone();
     } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
   }
@@ -1121,7 +1121,7 @@ function EnrollDialog({ service, students, onOpenChange, onDone }: { service: Se
             ))}
           </div>
           <div className="space-y-1.5">
-            <Label>Subsidised rate (GH₵) — optional</Label>
+            <Label>Subsidised rate (₵) — optional</Label>
             <Input type="number" step="0.5" value={subsidy} onChange={(e) => setSubsidy(e.target.value)} placeholder={`Standard ${service ? fmtCedi(service.price) : ""}`} />
             <p className="text-xs text-muted-foreground">For needy-family support or staff wards — overrides the standard price for these learners.</p>
           </div>
@@ -1243,7 +1243,7 @@ function TopUpDialog({ students, initialStudent, open, onOpenChange, onDone }: {
               </div>
             )}
             <div className="space-y-1.5">
-              <Label>{asAdjust ? "New balance (GH₵)" : "Amount (GH₵)"}</Label>
+              <Label>{asAdjust ? "New balance (₵)" : "Amount (₵)"}</Label>
               <Input type="number" step="0.5" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={asAdjust ? "0.00" : "e.g. 20.00"} />
               {picked && !asAdjust && (
                 <p className="text-[11px] text-muted-foreground">
@@ -1885,7 +1885,7 @@ function CouponsDialog({ open, date, services, onOpenChange }: { open: boolean; 
                     <div className="text-[7pt] text-black/70 flex justify-between"><span>Code: {r.studentCode}</span><span>{r.classroom ?? ""}</span></div>
                     <div className="mt-1 flex items-center justify-between">
                       <span className="text-[7pt] font-semibold" style={{ color }}>{data.service.name}</span>
-                      <span className="text-[8pt] font-bold text-white rounded px-1.5 py-0.5" style={{ background: color }}>GH₵{(r.amountCents / 100).toFixed(2)}</span>
+                      <span className="text-[8pt] font-bold text-white rounded px-1.5 py-0.5" style={{ background: color }}>₵{(r.amountCents / 100).toFixed(2)}</span>
                     </div>
                     <div className="text-[6.5pt] text-black/60 mt-0.5 flex justify-between">
                       <span>Valid: {today}</span><span>Expires: 5:00 PM</span>

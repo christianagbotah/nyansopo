@@ -75,7 +75,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ res
       const activeFlags = match?.flags.filter((f) => f.status === "ACTIVE" || f.status === "CONTESTED") ?? [];
       const status = match ? (activeFlags.length ? "FLAGGED" : "CLEARED") : "NEW";
       const summary = match
-        ? { matched: true, nyansapoIndex: match.nyansapoIndex, priorSchools: match.enrollments.length, activeFlags: activeFlags.length, flagSummary: activeFlags.map((f: any) => `${f.type} — GH₵${((f.amountOwedCents ?? 0) / 100).toFixed(2)} (${f.severity})`).join("; ") || "None" }
+        ? { matched: true, nyansapoIndex: match.nyansapoIndex, priorSchools: match.enrollments.length, activeFlags: activeFlags.length, flagSummary: activeFlags.map((f: any) => `${f.type} — ₵${((f.amountOwedCents ?? 0) / 100).toFixed(2)} (${f.severity})`).join("; ") || "None" }
         : { matched: false };
       const inq = await db.admissionInquiry.create({
         data: { schoolId, studentName: body.studentName, gender: body.gender, dateOfBirth: body.dateOfBirth ? new Date(body.dateOfBirth) : null, guardianName: body.guardianName, guardianPhone: body.guardianPhone, guardianEmail: body.guardianEmail, classAppliedFor: body.classAppliedFor, matchedStudentId: match?.id ?? null, registryCheckedAt: new Date(), registrySummary: JSON.stringify(summary), status, handledByName: user.fullName },

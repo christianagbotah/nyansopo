@@ -627,10 +627,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           const balanceAfter = inv.totalCents - inv.discountCents - paid;
           await sendAutomated({
             db, schoolId, trigger: "PAYMENT_RECEIVED",
-            defaultBody: `We have received GH₵${(requested / 100).toFixed(2)} for ${inv.student.firstName} (${payment.receiptNo}). Balance: GH₵${(Math.max(0, balanceAfter) / 100).toFixed(2)}${excess > 0 ? `. Credit: GH₵${(excess / 100).toFixed(2)}` : ""}. Thank you.`,
+            defaultBody: `We have received ₵${(requested / 100).toFixed(2)} for ${inv.student.firstName} (${payment.receiptNo}). Balance: ₵${(Math.max(0, balanceAfter) / 100).toFixed(2)}${excess > 0 ? `. Credit: ₵${(excess / 100).toFixed(2)}` : ""}. Thank you.`,
             vars: {
-              student: inv.student.firstName, amount: `GH₵${(requested / 100).toFixed(2)}`,
-              balance: `GH₵${(Math.max(0, balanceAfter) / 100).toFixed(2)}`, receipt: payment.receiptNo,
+              student: inv.student.firstName, amount: `₵${(requested / 100).toFixed(2)}`,
+              balance: `₵${(Math.max(0, balanceAfter) / 100).toFixed(2)}`, receipt: payment.receiptNo,
               date: new Date().toLocaleDateString("en-GB"),
             },
             studentId: inv.studentId, recipientName: inv.student.guardianName, recipientPhone: inv.student.guardianPhone, sentByName: user.fullName,
@@ -641,7 +641,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           await sendAutomated({
             db, schoolId, trigger: "PAYMENT_RECEIVED",
             defaultBody: `${inv.student.firstName}'s bill (${inv.invoiceNo}) is now FULLY PAID. Thank you!`,
-            vars: { student: inv.student.firstName, amount: `GH₵${(requested / 100).toFixed(2)}`, balance: "GH₵0.00", receipt: payment.receiptNo, date: new Date().toLocaleDateString("en-GB") },
+            vars: { student: inv.student.firstName, amount: `₵${(requested / 100).toFixed(2)}`, balance: "₵0.00", receipt: payment.receiptNo, date: new Date().toLocaleDateString("en-GB") },
             studentId: inv.studentId, recipientName: inv.student.guardianName, recipientPhone: inv.student.guardianPhone, sentByName: user.fullName,
           });
         }
@@ -649,8 +649,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         if (excess > 0 && (await smsEventEnabled(db, schoolId, "OVERPAYMENT_CREDIT"))) {
           await sendAutomated({
             db, schoolId, trigger: "PAYMENT_RECEIVED",
-            defaultBody: `An overpayment of GH₵${(excess / 100).toFixed(2)} for ${inv.student.firstName} has been banked as prepaid credit — it will be applied to future bills automatically.`,
-            vars: { student: inv.student.firstName, amount: `GH₵${(excess / 100).toFixed(2)}`, receipt: payment.receiptNo, date: new Date().toLocaleDateString("en-GB") },
+            defaultBody: `An overpayment of ₵${(excess / 100).toFixed(2)} for ${inv.student.firstName} has been banked as prepaid credit — it will be applied to future bills automatically.`,
+            vars: { student: inv.student.firstName, amount: `₵${(excess / 100).toFixed(2)}`, receipt: payment.receiptNo, date: new Date().toLocaleDateString("en-GB") },
             studentId: inv.studentId, recipientName: inv.student.guardianName, recipientPhone: inv.student.guardianPhone, sentByName: user.fullName,
           });
         }
@@ -741,8 +741,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             const payable = inv.totalCents - inv.discountCents;
             await sendAutomated({
               db, schoolId, trigger: "INVOICE_ISSUED",
-              defaultBody: `${inv.student.firstName}'s term bill for ${term.name} is GH₵${(payable / 100).toFixed(2)}. Due ${inv.dueDate ? new Date(inv.dueDate).toLocaleDateString("en-GB") : "soon"}. Thank you.`,
-              vars: { student: inv.student.firstName, amount: `GH₵${(payable / 100).toFixed(2)}`, term: term.name, date: inv.dueDate ? new Date(inv.dueDate).toLocaleDateString("en-GB") : "" },
+              defaultBody: `${inv.student.firstName}'s term bill for ${term.name} is ₵${(payable / 100).toFixed(2)}. Due ${inv.dueDate ? new Date(inv.dueDate).toLocaleDateString("en-GB") : "soon"}. Thank you.`,
+              vars: { student: inv.student.firstName, amount: `₵${(payable / 100).toFixed(2)}`, term: term.name, date: inv.dueDate ? new Date(inv.dueDate).toLocaleDateString("en-GB") : "" },
               studentId: inv.studentId, recipientName: inv.student.guardianName, recipientPhone: inv.student.guardianPhone, sentByName: user.fullName,
             });
           }

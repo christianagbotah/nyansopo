@@ -213,7 +213,7 @@ export function FormalReceipt({ data }: { data: ReceiptData }) {
           </div>
           <div className="flex items-baseline gap-2">
             <span className="font-semibold uppercase text-[11px] tracking-wide">The sum of</span>
-            <span className="font-bold tabular-nums border-b border-dotted border-foreground/50 pb-0.5">GH₵ {(data.amount / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+            <span className="font-bold tabular-nums border-b border-dotted border-foreground/50 pb-0.5">₵ {(data.amount / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
             <span className="flex-1 border-b border-dotted border-foreground/50 pb-0.5 italic text-[12px] text-muted-foreground text-right">({amountInWords(data.amount)})</span>
           </div>
           <div className="flex items-baseline gap-2">
@@ -248,7 +248,7 @@ export function FormalReceipt({ data }: { data: ReceiptData }) {
             <tr className="border-y border-foreground/40 text-left text-[9.5px] uppercase tracking-wider">
               <th className="py-1.5 font-semibold">Particulars</th>
               <th className="py-1.5 font-semibold text-center w-14">Qty</th>
-              <th className="py-1.5 font-semibold text-right">Amount (GH₵)</th>
+              <th className="py-1.5 font-semibold text-right">Amount (₵)</th>
             </tr>
           </thead>
           <tbody>
@@ -272,11 +272,11 @@ export function FormalReceipt({ data }: { data: ReceiptData }) {
         <div className="mt-3 grid grid-cols-3 gap-3">
           <div className="border border-foreground/40 rounded p-2 text-center">
             <div className="text-[9px] uppercase tracking-widest text-muted-foreground">{isRefund ? "Refunded" : "Amount Paid"}</div>
-            <div className="font-bold text-[15px] tabular-nums">GH₵ {(data.amount / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+            <div className="font-bold text-[15px] tabular-nums">₵ {(data.amount / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
           </div>
           <div className="border border-foreground/40 rounded p-2 text-center">
             <div className="text-[9px] uppercase tracking-widest text-muted-foreground">Balance Due</div>
-            <div className={`font-bold text-[15px] tabular-nums ${(data.invoice?.balance ?? 0) > 0 ? "text-destructive" : "text-emerald-600"}`}>GH₵ {((data.invoice?.balance ?? 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+            <div className={`font-bold text-[15px] tabular-nums ${(data.invoice?.balance ?? 0) > 0 ? "text-destructive" : "text-emerald-600"}`}>₵ {((data.invoice?.balance ?? 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
           </div>
           <div className="border border-foreground/40 rounded p-2 text-center">
             <div className="text-[9px] uppercase tracking-widest text-muted-foreground">Method</div>
@@ -286,7 +286,7 @@ export function FormalReceipt({ data }: { data: ReceiptData }) {
 
         {data.creditCreated ? (
           <div className="mt-3 rounded border border-emerald-500/60 bg-emerald-50 dark:bg-emerald-950/40 px-3 py-1.5 text-center text-[11.5px] font-semibold text-emerald-700 dark:text-emerald-300">
-            CREDIT CREATED — GH₵ {(data.creditCreated / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })} applied to future bills
+            CREDIT CREATED — ₵ {(data.creditCreated / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })} applied to future bills
           </div>
         ) : null}
 

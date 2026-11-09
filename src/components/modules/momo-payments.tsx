@@ -53,7 +53,7 @@ type Accounts = {
   wallet: { prepaidCents: number; transportCents: number };
 };
 
-const fmt = (cents: number) => `GH₵${(cents / 100).toFixed(2)}`;
+const fmt = (cents: number) => `₵${(cents / 100).toFixed(2)}`;
 
 /** Absolute pay link in the browser — env-based URL when present, else the
  *  current origin + /pay/{ref} (preview hosts and LAN deployments). */
@@ -575,7 +575,7 @@ function NewRequestDialog({ open, onOpenChange, live }: { open: boolean; onOpenC
                         ))}
                         <div className="grid grid-cols-2 gap-2 items-end">
                           <div className="space-y-1.5">
-                            <Label>Amount (GH₵) *</Label>
+                            <Label>Amount (₵) *</Label>
                             <Input type="number" min="0.5" step="0.01" value={invoiceAmount} onChange={(e) => setInvoiceAmount(e.target.value)} />
                           </div>
                           {selectedInvoice ? (
@@ -622,7 +622,7 @@ function NewRequestDialog({ open, onOpenChange, live }: { open: boolean; onOpenC
                       </Select>
                     </div>
                     <div className="space-y-1.5">
-                      <Label>Amount (GH₵) *</Label>
+                      <Label>Amount (₵) *</Label>
                       <Input type="number" min="0.5" step="0.01" value={itemBalanceAmount} onChange={(e) => setItemBalanceAmount(e.target.value)} placeholder="e.g. 20" />
                     </div>
                   </div>
@@ -639,7 +639,7 @@ function NewRequestDialog({ open, onOpenChange, live }: { open: boolean; onOpenC
                       </Select>
                     </div>
                     <div className="space-y-1.5">
-                      <Label>Amount (GH₵) *</Label>
+                      <Label>Amount (₵) *</Label>
                       <Input type="number" min="0.5" step="0.01" value={walletAmount} onChange={(e) => setWalletAmount(e.target.value)} placeholder="e.g. 50" />
                     </div>
                   </div>

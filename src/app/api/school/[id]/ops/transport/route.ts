@@ -304,7 +304,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const prev = await db.transportBoarding.findFirst({ where: { assignmentId, date: day } });
     let inFare = 0, outFare = 0, dir = direction as string;
     if (direction === "NONE") {
-      // not riding today — clears the day's fare (iEduPro 'none' → GH₵0)
+      // not riding today — clears the day's fare (iEduPro 'none' → ₵0)
       dir = "NONE";
     } else if (prev) {
       inFare = direction === "IN" || direction === "BOTH" ? oneway : prev.direction === "IN" || prev.direction === "BOTH" ? oneway : 0;
@@ -380,8 +380,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       fare: { oneway, inFare, outFare, total: totalFare },
       settlement: { paid, walletDeduct, arrearsAdded },
       message: arrearsAdded > 0
-        ? `Boarded marked — GH₵${(arrearsAdded / 100).toFixed(2)} billed as owing (transport wallet short)`
-        : walletDeduct > 0 ? `Boarded marked — GH₵${(walletDeduct / 100).toFixed(2)} deducted from the transport wallet`
+        ? `Boarded marked — ₵${(arrearsAdded / 100).toFixed(2)} billed as owing (transport wallet short)`
+        : walletDeduct > 0 ? `Boarded marked — ₵${(walletDeduct / 100).toFixed(2)} deducted from the transport wallet`
         : "Boarding marked",
     });
   }
@@ -437,7 +437,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (setting?.autoPaymentReceipts) {
       await sendSms({
         db, schoolId, studentId: a.studentId, recipientName: a.student.guardianName, recipientPhone: a.student.guardianPhone,
-        body: `Transport fare of GH₵${(outstanding / 100).toFixed(2)} received for ${a.student.firstName} — route ${a.route.name} (${payment.receiptNo}). Thank you.`,
+        body: `Transport fare of ₵${(outstanding / 100).toFixed(2)} received for ${a.student.firstName} — route ${a.route.name} (${payment.receiptNo}). Thank you.`,
         category: "TRANSPORT", sentByName: auth.user.fullName,
       });
     }

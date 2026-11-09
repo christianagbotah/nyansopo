@@ -179,7 +179,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         defaultBody: `Friendly reminder: {student}'s term balance is {balance}. Kindly settle at the office or via MoMo. Thank you — {school}.`,
         vars: {
           student: `${s.firstName} ${s.lastName}`, school: school?.name ?? "the school",
-          balance: `GH₵${((inv.totalCents - inv.discountCents - inv.paidCents) / 100).toFixed(2)}`,
+          balance: `₵${((inv.totalCents - inv.discountCents - inv.paidCents) / 100).toFixed(2)}`,
           date: new Date().toLocaleDateString("en-GB"), term: term.name,
         },
         studentId: s.id, recipientName: s.guardianName, recipientPhone: s.guardianPhone, sentByName: user.fullName,
@@ -244,8 +244,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     for (const r of recipients) {
       const rendered = renderTemplate(text, {
         student: r.name, school: schoolName, class: r.classroom, guardian: r.guardianName,
-        balance: r.balanceCents !== undefined ? `GH₵${(r.balanceCents / 100).toFixed(2)}` : "",
-        amount: r.balanceCents !== undefined ? `GH₵${(r.balanceCents / 100).toFixed(2)}` : "",
+        balance: r.balanceCents !== undefined ? `₵${(r.balanceCents / 100).toFixed(2)}` : "",
+        amount: r.balanceCents !== undefined ? `₵${(r.balanceCents / 100).toFixed(2)}` : "",
         term: termName, date: new Date().toLocaleDateString("en-GB"), message: "",
       });
       const msg = await sendSms({ db, schoolId, studentId: r.studentId, recipientName: r.guardianName, recipientPhone: r.guardianPhone, body: rendered, category: "ANNOUNCEMENT", sentByName: user.fullName });

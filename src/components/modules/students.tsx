@@ -611,7 +611,7 @@ function WithdrawDialog({ student, onOpenChange, onDone }: { student: StudentRow
           </div>
           <div className="space-y-1.5">
             <Label>Note (reason / remarks)</Label>
-            <Textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Family relocating to Kumasi; balance of GH₵1,850.00 outstanding after three reminders." />
+            <Textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Family relocating to Kumasi; balance of ₵1,850.00 outstanding after three reminders." />
           </div>
         </div>
         <DialogFooter>

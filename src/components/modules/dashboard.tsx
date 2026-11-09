@@ -149,7 +149,7 @@ export function Dashboard() {
               <div className="flex items-center justify-between"><span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Income received today</span><HandCoins className="size-4 text-emerald-500" /></div>
               <div className="mt-1 text-2xl font-bold tabular-nums">{ops?.incomeToday ? fmtCedi(ops.incomeToday.totalCents, { compact: true }) : "—"}</div>
               <div className="text-[11px] text-muted-foreground">
-                {ops?.incomeToday ? `${ops.incomeToday.count} payment${ops.incomeToday.count === 1 ? "" : "s"} · fees GH₵${(ops.incomeToday.invoicesCents / 100).toFixed(0)} + daily GH₵${(ops.incomeToday.dailyCents / 100).toFixed(0)}` : "click for the breakdown"}
+                {ops?.incomeToday ? `${ops.incomeToday.count} payment${ops.incomeToday.count === 1 ? "" : "s"} · fees ₵${(ops.incomeToday.invoicesCents / 100).toFixed(0)} + daily ₵${(ops.incomeToday.dailyCents / 100).toFixed(0)}` : "click for the breakdown"}
               </div>
             </button>
             <button onClick={() => setModule("classes")} className="rounded-xl border border-r-4 border-r-amber-500 bg-card p-4 text-left hover:bg-secondary/40 transition-colors">

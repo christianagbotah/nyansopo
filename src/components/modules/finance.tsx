@@ -684,7 +684,7 @@ function ExpenditureTab({ data, onRefresh }: { data: FinanceData; onRefresh: () 
               </Select>
             </div>
             <div className="space-y-1.5 sm:col-span-2"><Label>Description *</Label><Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="e.g. ECG postpaid — September" /></div>
-            <div className="space-y-1.5"><Label>Amount (GH₵) *</Label><Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} /></div>
+            <div className="space-y-1.5"><Label>Amount (₵) *</Label><Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} /></div>
             <div className="space-y-1.5">
               <Label>Paid via</Label>
               <Select value={method} onValueChange={setMethod}>
@@ -963,7 +963,7 @@ function AgingTab() {
 
   function exportCsv() {
     if (!report) return;
-    const header = ["Student", "Class", "Invoice", "Invoice Date", "Due Date", "Days Outstanding", "Balance (GH₵)", "Aging Bucket"];
+    const header = ["Student", "Class", "Invoice", "Invoice Date", "Due Date", "Days Outstanding", "Balance (₵)", "Aging Bucket"];
     const lines = report.rows.map((r) => [
       r.student, r.classroom ?? "", r.invoiceNo, r.invoiceDate.slice(0, 10), r.dueDate ? r.dueDate.slice(0, 10) : "",
       r.daysOutstanding, r.balanceCents / 100, AGING_BUCKETS.find((b) => b.key === r.bucket)?.label ?? r.bucket,

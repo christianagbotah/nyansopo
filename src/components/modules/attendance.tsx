@@ -68,7 +68,7 @@ export function Attendance() {
      per-learner item amounts + optional toggles + transport usage. Rendered
      only when this session may collect daily fees. */
   const canCollectFees = canAny(session?.permissions, ["daily.collect", "daily.manage"]);
-  const [feeAmts, setFeeAmts] = useState<Record<string, string>>({}); // `${studentId}:${serviceId}` → GH₵
+  const [feeAmts, setFeeAmts] = useState<Record<string, string>>({}); // `${studentId}:${serviceId}` → ₵
   const [feeToggles, setFeeToggles] = useState<Record<string, boolean>>({}); // optional items ON/OFF
   const [feeUsage, setFeeUsage] = useState<Record<string, string>>({}); // studentId → MORNING|AFTERNOON|BOTH
 

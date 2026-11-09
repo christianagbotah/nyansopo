@@ -88,7 +88,7 @@ function BillItemFields({ draft, setDraft, errors, classrooms, idPrefix }: {
         </Select>
       </div>
       <div className="space-y-1.5">
-        <Label htmlFor={`${idPrefix}-amount`}>Amount (GH₵) *</Label>
+        <Label htmlFor={`${idPrefix}-amount`}>Amount (₵) *</Label>
         <Input id={`${idPrefix}-amount`} type="number" min="0" step="0.01" value={draft.amount} onChange={(e) => setDraft({ ...draft, amount: e.target.value })} placeholder="250.00" className={cn("text-right", errors.amount && "border-destructive focus-visible:ring-destructive")} aria-invalid={!!errors.amount} />
         {errors.amount && <p className="text-[11px] text-destructive flex items-center gap-1"><AlertCircle className="size-3" /> {errors.amount}</p>}
       </div>

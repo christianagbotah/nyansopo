@@ -11,7 +11,7 @@ import { opsAuth } from "@/lib/ops-auth";
    · POST action=modreq.create / modreq.decide / modreq.revoke / handover.save ── */
 
 const DAY_MS = 864e5;
-const fmtGhs = (cents: number) => `GH₵${(cents / 100).toFixed(2)}`;
+const fmtGhs = (cents: number) => `₵${(cents / 100).toFixed(2)}`;
 
 /** invoice status per the fees conventions: PAID when paid ≥ total−discount, PARTIAL above 0,
  *  UNPAID at 0, OVERDUE when past the due date and not fully paid (chase-list semantics). */

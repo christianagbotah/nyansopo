@@ -311,9 +311,9 @@ function RouteDialog({ route, drivers, vehicles, onOpenChange, onDone }: { route
             </Select>
           </div>
           <div className="space-y-1.5"><Label>Capacity (seats)</Label><Input type="number" value={capacity} onChange={(e) => setCapacity(e.target.value)} /></div>
-          <div className="space-y-1.5"><Label>Fare per term (GH₵) *</Label><Input type="number" value={fare} onChange={(e) => setFare(e.target.value)} placeholder="450" /></div>
+          <div className="space-y-1.5"><Label>Fare per term (₵) *</Label><Input type="number" value={fare} onChange={(e) => setFare(e.target.value)} placeholder="450" /></div>
           <div className="space-y-1.5 sm:col-span-2">
-            <Label>Default one-way fare (GH₵) — used when a stop has no fare of its own</Label>
+            <Label>Default one-way fare (₵) — used when a stop has no fare of its own</Label>
             <Input type="number" step="0.5" value={farePerTrip} onChange={(e) => setFarePerTrip(e.target.value)} placeholder="e.g. 8.00 — both ways 16.00" />
           </div>
           <div className="space-y-1.5 sm:col-span-2">
@@ -323,7 +323,7 @@ function RouteDialog({ route, drivers, vehicles, onOpenChange, onDone }: { route
             </div>
             <div className="grid grid-cols-[1fr_110px_32px] gap-2 items-center">
               <span className="text-[11px] text-muted-foreground -mb-1">Stop name</span>
-              <span className="text-[11px] text-muted-foreground -mb-1">One-way fare (GH₵)</span>
+              <span className="text-[11px] text-muted-foreground -mb-1">One-way fare (₵)</span>
               <span />
               {stops.map((s, i) => (
                 <div key={i} className="contents">
@@ -368,7 +368,7 @@ function AssignDialog({ route, unassigned, onOpenChange, onDone }: { route: Rout
         pickupStop: pickupStop || null, dropStop: dropStop || pickupStop || null,
         fareOverrideCents: fareOverride ? Math.round(parseFloat(fareOverride) * 100) : null,
       });
-      toast({ title: "Learner assigned", description: `${route.name}${fareOverride ? ` at GH₵${fareOverride}/term` : ""}.` });
+      toast({ title: "Learner assigned", description: `${route.name}${fareOverride ? ` at ₵${fareOverride}/term` : ""}.` });
       onDone();
     } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
   }
@@ -419,7 +419,7 @@ function AssignDialog({ route, unassigned, onOpenChange, onDone }: { route: Rout
             );
           })()}
           <div className="space-y-1.5">
-            <Label>Fare override (GH₵/term) — optional</Label>
+            <Label>Fare override (₵/term) — optional</Label>
             <Input type="number" value={fareOverride} onChange={(e) => setFareOverride(e.target.value)} placeholder={`Standard ${route ? fmtCedi(route.fare) : ""}`} />
           </div>
         </div>

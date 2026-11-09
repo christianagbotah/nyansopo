@@ -88,7 +88,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     await db.enrollment.update({ where: { id: active.id }, data: { status: reason === "transfer" ? "TRANSFERRED" : "WITHDRAWN", exitDate: new Date(), exitReason: body.exitNote ?? reason } });
     await db.student.update({ where: { id }, data: { status: "TRACKED" } });
     if (flag) {
-      await db.studentFlag.create({ data: { studentId: id, schoolId: active.schoolId, raisedByName: user.fullName, type: "WITHDREW_OWING", severity: severity ?? "HIGH", status: "ACTIVE", amountOwedCents: Number(amountOwedCents) || null, description: body.flagDescription ?? `Withdrawn from school with outstanding balance of GH₵${((amountOwedCents ?? 0) / 100).toFixed(2)}.` } });
+      await db.studentFlag.create({ data: { studentId: id, schoolId: active.schoolId, raisedByName: user.fullName, type: "WITHDREW_OWING", severity: severity ?? "HIGH", status: "ACTIVE", amountOwedCents: Number(amountOwedCents) || null, description: body.flagDescription ?? `Withdrawn from school with outstanding balance of ₵${((amountOwedCents ?? 0) / 100).toFixed(2)}.` } });
     }
     const n = await db.enrollment.count({ where: { schoolId: active.schoolId, status: "ACTIVE" } });
     await db.school.update({ where: { id: active.schoolId }, data: { studentsOnRoll: n } });

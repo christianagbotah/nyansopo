@@ -215,7 +215,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       return NextResponse.json({
         denied: true,
         amountOwedCents: owedCents,
-        message: `${learner.name} owes GH₵${(owedCents / 100).toFixed(2)} — entry denied`,
+        message: `${learner.name} owes ₵${(owedCents / 100).toFixed(2)} — entry denied`,
         learner, classroom,
       });
     }

@@ -662,7 +662,7 @@ function HouseDialog({ target, staff, learners, onOpenChange, onDone }: {
           <div className="space-y-1.5"><Label>Capacity</Label><Input type="number" min={0} value={capacity} onChange={(e) => setCapacity(e.target.value)} /></div>
           <div className="space-y-1.5"><Label>Year established</Label><Input value={year} onChange={(e) => setYear(e.target.value)} placeholder="e.g. 2012" /></div>
           <div className="space-y-1.5"><Label>GPS code</Label><Input value={gps} onChange={(e) => setGps(e.target.value)} placeholder="e.g. GH-545-231" /></div>
-          <div className="space-y-1.5"><Label>Termly boarding fee (GH₵)</Label><Input type="number" min={0} step="0.01" value={fee} onChange={(e) => setFee(e.target.value)} placeholder="e.g. 450" /></div>
+          <div className="space-y-1.5"><Label>Termly boarding fee (₵)</Label><Input type="number" min={0} step="0.01" value={fee} onChange={(e) => setFee(e.target.value)} placeholder="e.g. 450" /></div>
           <div className="space-y-1.5 sm:col-span-2">
             <Label>Status</Label>
             <Select value={status} onValueChange={setStatus}>

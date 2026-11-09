@@ -3,13 +3,13 @@
 //   Tier 1: 5% employee + 13% employer of basic salary (up to the SSNIT cap)
 //   Tier 2: 5% employer of basic salary (occupational pension, always uncapped)
 // PAYE (Progressive annual bands, converted to monthly — 2024+ schedule):
-//   First GH₵6,144 p.a. (₵512/mo) .............. 0%
-//   Next  GH₵2,208 (₵184/mo) ................... 5%
-//   Next  GH₵2,616 (₵218/mo) ................... 10%
-//   Next  GH₵36,480 (₵3,040/mo) ................ 17.5%
-//   Next  GH₵19,452 (₵1,621/mo) ................ 25%
-//   Next  GH₵17,592 (₵1,466/mo) ................ 30%
-//   Excess over GH₵84,492 (₵7,041/mo) .......... 35%
+//   First ₵6,144 p.a. (₵512/mo) .............. 0%
+//   Next  ₵2,208 (₵184/mo) ................... 5%
+//   Next  ₵2,616 (₵218/mo) ................... 10%
+//   Next  ₵36,480 (₵3,040/mo) ................ 17.5%
+//   Next  ₵19,452 (₵1,621/mo) ................ 25%
+//   Next  ₵17,592 (₵1,466/mo) ................ 30%
+//   Excess over ₵84,492 (₵7,041/mo) .......... 35%
 // Taxable income = gross − SSNIT employee contribution.
 
 export type Allowance = { name: string; amountCents: number };
@@ -31,7 +31,7 @@ export const DEFAULT_RATES: StatutoryRates = {
   nhil: 0.025,
 };
 
-export const SSNIT_CAP_CENTS = 35_000_00; // GH₵35,000/month maximum pensionable earnings
+export const SSNIT_CAP_CENTS = 35_000_00; // ₵35,000/month maximum pensionable earnings
 
 /** Employee SSNIT deduction: Tier-1 employee share + Tier-2, capped at the SSNIT ceiling. */
 export function ssnitEmployeeCents(basicCents: number, r: StatutoryRates = DEFAULT_RATES): number {

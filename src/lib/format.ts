@@ -1,9 +1,12 @@
 // Client-safe formatting helpers
+// Currency symbol: bare '₵' (Ghana cedi sign) everywhere — compact; the full
+// "GH₵" spelling is reserved for formal documents that spell the currency out.
+export const CEDI = "₵";
 export const fmtCedi = (cents: number, opts?: { compact?: boolean }) => {
   if (opts?.compact && Math.abs(cents) >= 100000) {
-    return `GH₵${(cents / 100000).toFixed(0)}k`;
+    return `${CEDI}${(cents / 100000).toFixed(0)}k`;
   }
-  return `GH₵${(cents / 100).toLocaleString("en-GH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `${CEDI}${(cents / 100).toLocaleString("en-GH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
 export const fmtDate = (d: string | Date | null | undefined) => {

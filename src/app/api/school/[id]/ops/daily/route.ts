@@ -8,7 +8,7 @@ import { dailyServicesReceipt } from "@/lib/receipt-payload";
 import { nextReceiptNo } from "@/lib/codes";
 import { PAYMENT_LABELS } from "@/lib/format";
 
-const fmtMoney = (cents: number) => `GH₵${(cents / 100).toFixed(2)}`;
+const fmtMoney = (cents: number) => `₵${(cents / 100).toFixed(2)}`;
 
 // ── GET /api/school/[id]/ops/daily — services, ledger, POS, wallets, settings ──
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -608,7 +608,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       await logDailyFeeAudit(db, {
         schoolId, studentId, actionType: "ADJUSTMENT", serviceCode: svc.name, amountCents: target - before,
         performedByName: user.fullName, performedByRole: user.role,
-        notes: `Item balance set to GH₵${(target / 100).toFixed(2)} — ${svc.name} — ${note ?? "balance correction"}`,
+        notes: `Item balance set to ₵${(target / 100).toFixed(2)} — ${svc.name} — ${note ?? "balance correction"}`,
       });
       return NextResponse.json({ service: { id: svc.id, name: svc.name }, balance: target, wallet: "ITEM" });
     }
@@ -632,7 +632,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       balanceAfterCents: w.prepaidCents + w.transportCents,
       performedByName: user.fullName, performedByRole: user.role,
       reference: txn.id,
-      notes: `${wallet === "PREPAID" ? "Prepaid" : "Transport"} wallet set to GH₵${(target / 100).toFixed(2)} — ${note ?? "balance correction"}`,
+      notes: `${wallet === "PREPAID" ? "Prepaid" : "Transport"} wallet set to ₵${(target / 100).toFixed(2)} — ${note ?? "balance correction"}`,
     });
     return NextResponse.json({ wallet: w, txn });
   }
@@ -704,8 +704,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       if (setting?.autoPaymentReceipts && (await smsEventEnabled(db, schoolId, "DAILY_FEES_PAID"))) {
         await sendAutomated({
           db, schoolId, trigger: "PAYMENT_RECEIVED",
-          defaultBody: `We have received GH₵${(total / 100).toFixed(2)} for ${student.firstName} (${payment.receiptNo}) towards daily services. Thank you.`,
-          vars: { student: student.firstName, amount: `GH₵${(total / 100).toFixed(2)}`, receipt: payment.receiptNo, date: new Date().toLocaleDateString("en-GB") },
+          defaultBody: `We have received ₵${(total / 100).toFixed(2)} for ${student.firstName} (${payment.receiptNo}) towards daily services. Thank you.`,
+          vars: { student: student.firstName, amount: `₵${(total / 100).toFixed(2)}`, receipt: payment.receiptNo, date: new Date().toLocaleDateString("en-GB") },
           studentId, recipientName: student.guardianName, recipientPhone: student.guardianPhone, sentByName: user.fullName,
         });
       }
@@ -740,7 +740,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     let walletBalBefore: number | null = null; // for the audit trail (total wallet credit pre-debit)
     if (walletKind === "PREPAID") {
       const w = await db.studentWallet.findUnique({ where: { studentId } });
-      if (!w || w.prepaidCents < amt) return NextResponse.json({ error: `Prepaid wallet short — balance is GH₵${(w?.prepaidCents ?? 0) / 100}` }, { status: 400 });
+      if (!w || w.prepaidCents < amt) return NextResponse.json({ error: `Prepaid wallet short — balance is ₵${(w?.prepaidCents ?? 0) / 100}` }, { status: 400 });
       walletBalBefore = w.prepaidCents + w.transportCents;
       await db.studentWallet.update({ where: { studentId }, data: { prepaidCents: { decrement: amt } } });
       const t = await db.walletTxn.create({ data: { schoolId, studentId, wallet: "PREPAID", kind: "PAY", amountCents: -amt, balanceAfter: w.prepaidCents - amt, note: reference ?? null, byName: user.fullName } });
@@ -748,7 +748,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       payMethod = "WALLET";
     } else if (walletKind === "TRANSPORT") {
       const w = await db.studentWallet.findUnique({ where: { studentId } });
-      if (!w || w.transportCents < amt) return NextResponse.json({ error: `Transport wallet short — balance is GH₵${(w?.transportCents ?? 0) / 100}` }, { status: 400 });
+      if (!w || w.transportCents < amt) return NextResponse.json({ error: `Transport wallet short — balance is ₵${(w?.transportCents ?? 0) / 100}` }, { status: 400 });
       walletBalBefore = w.prepaidCents + w.transportCents;
       await db.studentWallet.update({ where: { studentId }, data: { transportCents: { decrement: amt } } });
       const t = await db.walletTxn.create({ data: { schoolId, studentId, wallet: "TRANSPORT", kind: "PAY", amountCents: -amt, balanceAfter: w.transportCents - amt, note: reference ?? null, byName: user.fullName } });
@@ -809,8 +809,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (setting?.autoPaymentReceipts && (await smsEventEnabled(db, schoolId, "DAILY_FEES_PAID"))) {
       await sendAutomated({
         db, schoolId, trigger: "PAYMENT_RECEIVED",
-        defaultBody: `We have received GH₵${(amt / 100).toFixed(2)} for ${student.firstName} (${payment.receiptNo}) towards daily services. Thank you.`,
-        vars: { student: student.firstName, amount: `GH₵${(amt / 100).toFixed(2)}`, receipt: payment.receiptNo, date: new Date().toLocaleDateString("en-GB") },
+        defaultBody: `We have received ₵${(amt / 100).toFixed(2)} for ${student.firstName} (${payment.receiptNo}) towards daily services. Thank you.`,
+        vars: { student: student.firstName, amount: `₵${(amt / 100).toFixed(2)}`, receipt: payment.receiptNo, date: new Date().toLocaleDateString("en-GB") },
         studentId, recipientName: student.guardianName, recipientPhone: student.guardianPhone, sentByName: user.fullName,
       });
     }

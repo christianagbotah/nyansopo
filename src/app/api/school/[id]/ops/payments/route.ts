@@ -10,7 +10,7 @@ import { hubtelPaymentsConfigured, hubtelWebhookUrl, detectMomoChannel } from "@
 import { sendSms } from "@/lib/sms";
 import { toGhanaIntl } from "@/lib/phone";
 
-const fmt = (cents: number) => `GH₵${(cents / 100).toFixed(2)}`;
+const fmt = (cents: number) => `₵${(cents / 100).toFixed(2)}`;
 
 /** Absolute pay link for a request — HUBTEL_CALLBACK_BASE when set, else the
  *  origin this API was called on (works for the school's own deployment and

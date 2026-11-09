@@ -97,8 +97,8 @@ export async function sendEmail({ db, schoolId, to, toName, subject, html, categ
 const esc = (s: unknown) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string);
 
-/** GH₵ money formatting — en-GH grouping, 2 decimals */
-const cedi = (cents: number) => `GH₵${(cents / 100).toLocaleString("en-GH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+/** ₵ money formatting — en-GH grouping, 2 decimals */
+const cedi = (cents: number) => `₵${(cents / 100).toLocaleString("en-GH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const day = (d?: Date | null) =>
   d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) : "—";

@@ -57,8 +57,8 @@ export async function POST(req: NextRequest) {
             if (setting?.autoPaymentReceipts && (await smsEventEnabled(db, schoolId, "DAILY_FEES_PAID"))) {
               await sendAutomated({
                 db, schoolId, trigger: "PAYMENT_RECEIVED",
-                defaultBody: `We have received GH₵${(collected.payment.amountCents / 100).toFixed(2)} for ${learner.firstName} (${collected.payment.receiptNo}) towards daily services. Thank you.`,
-                vars: { student: learner.firstName, amount: `GH₵${(collected.payment.amountCents / 100).toFixed(2)}`, receipt: collected.payment.receiptNo, date: new Date().toLocaleDateString("en-GB") },
+                defaultBody: `We have received ₵${(collected.payment.amountCents / 100).toFixed(2)} for ${learner.firstName} (${collected.payment.receiptNo}) towards daily services. Thank you.`,
+                vars: { student: learner.firstName, amount: `₵${(collected.payment.amountCents / 100).toFixed(2)}`, receipt: collected.payment.receiptNo, date: new Date().toLocaleDateString("en-GB") },
                 studentId, recipientName: learner.guardianName, recipientPhone: learner.guardianPhone, sentByName: `${user.fullName} (offline)`,
               });
             }

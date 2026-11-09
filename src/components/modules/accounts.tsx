@@ -554,8 +554,8 @@ function JournalEditor({ open, entry, accounts, busy, onClose, onSave }: {
               <TableRow>
                 <TableHead>Account</TableHead>
                 <TableHead className="hidden md:table-cell min-w-32">Memo</TableHead>
-                <TableHead className="w-28">Debit (GH₵)</TableHead>
-                <TableHead className="w-28">Credit (GH₵)</TableHead>
+                <TableHead className="w-28">Debit (₵)</TableHead>
+                <TableHead className="w-28">Credit (₵)</TableHead>
                 <TableHead className="w-10" />
               </TableRow>
             </TableHeader>
@@ -785,7 +785,7 @@ function BankDialog({ open, editing, accounts, busy, onClose, onSave }: {
               </SelectContent>
             </Select>
           </FormField>
-          <FormField label="Opening balance (GH₵)"><Input inputMode="decimal" value={f.opening} onChange={(e) => setF({ ...f, opening: e.target.value })} placeholder="12000.00" /></FormField>
+          <FormField label="Opening balance (₵)"><Input inputMode="decimal" value={f.opening} onChange={(e) => setF({ ...f, opening: e.target.value })} placeholder="12000.00" /></FormField>
           <FormField label="Active">
             <div className="flex items-center gap-2 pt-1.5"><Switch checked={f.isActive} onCheckedChange={(v) => setF({ ...f, isActive: v })} id="bank-active" /><Label htmlFor="bank-active" className="text-xs font-normal text-muted-foreground">{f.isActive ? "Active" : "Inactive"}</Label></div>
           </FormField>
@@ -828,7 +828,7 @@ function TxnDialog({ open, busy, bank, onClose, onSave }: {
               </SelectContent>
             </Select>
           </FormField>
-          <FormField label="Amount (GH₵)" required><Input inputMode="decimal" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} placeholder="450.00" /></FormField>
+          <FormField label="Amount (₵)" required><Input inputMode="decimal" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} placeholder="450.00" /></FormField>
           <FormField label="Reference"><Input value={f.reference} onChange={(e) => setF({ ...f, reference: e.target.value })} placeholder="TRF-015" /></FormField>
           <FormField label="Description" required span={2}><Input value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} placeholder="ECG electricity bill" /></FormField>
           <FormField label="Source">
@@ -1119,7 +1119,7 @@ function NewReconDialog({ open, busy, bank, onClose, onSave }: {
         </DialogHeader>
         <FormGrid cols={2}>
           <FormField label="Statement date" required><DateField mode="date" value={f.date} onChange={(v) => setF({ ...f, date: v ?? "" })} aria-label="Statement date" /></FormField>
-          <FormField label="Statement end balance (GH₵)" required><Input inputMode="decimal" value={f.end} onChange={(e) => setF({ ...f, end: e.target.value })} placeholder="14867.40" /></FormField>
+          <FormField label="Statement end balance (₵)" required><Input inputMode="decimal" value={f.end} onChange={(e) => setF({ ...f, end: e.target.value })} placeholder="14867.40" /></FormField>
         </FormGrid>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
@@ -1145,7 +1145,7 @@ function ItemDialog({ open, busy, reconId, onClose, onSave }: {
         </DialogHeader>
         <FormGrid cols={2}>
           <FormField label="Date" required><DateField mode="date" value={f.date} onChange={(v) => setF({ ...f, date: v ?? "" })} aria-label="Line date" /></FormField>
-          <FormField label="Amount (GH₵)" required hint="+ in / − out"><Input inputMode="decimal" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} placeholder="-95.00" /></FormField>
+          <FormField label="Amount (₵)" required hint="+ in / − out"><Input inputMode="decimal" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} placeholder="-95.00" /></FormField>
           <FormField label="Description" required span={2}><Input value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} placeholder="Cheque 0033 — supplier" /></FormField>
         </FormGrid>
         <DialogFooter>

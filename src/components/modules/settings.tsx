@@ -564,7 +564,7 @@ export function Settings() {
                 <div className="flex flex-wrap items-center gap-2 border-t px-4 py-3">
                   <Button className="gap-1.5" onClick={saveRates} disabled={busy}><Save className="size-4" /> {busy ? "Saving&hellip;" : "Save all changes"}</Button>
                   <Button variant="outline" onClick={load} disabled={busy}>Reset to saved values</Button>
-                  <span className="text-xs text-muted-foreground ml-auto">Tier-1 contributions are capped at GH₵35,000/month pensionable earnings. Full schedules print from Payroll &rarr; SSNIT reports.</span>
+                  <span className="text-xs text-muted-foreground ml-auto">Tier-1 contributions are capped at ₵35,000/month pensionable earnings. Full schedules print from Payroll &rarr; SSNIT reports.</span>
                 </div>
               </CardContent>
             </Card>

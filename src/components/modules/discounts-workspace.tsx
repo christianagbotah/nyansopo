@@ -356,7 +356,7 @@ function ProfileDialog({ profile, classrooms, services, onOpenChange, onDone }: 
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label>{method === "PERCENT" ? "Value (% off)" : "Value (GH₵ off)"}</Label>
+              <Label>{method === "PERCENT" ? "Value (% off)" : "Value (₵ off)"}</Label>
               <Input type="number" min="0" value={value} onChange={(e) => setValue(e.target.value)} placeholder={method === "PERCENT" ? "e.g. 15" : "e.g. 6.50"} />
               {method === "PERCENT" && (
                 <div className="flex flex-wrap gap-1.5 pt-1">
@@ -439,7 +439,7 @@ function ProfileDialog({ profile, classrooms, services, onOpenChange, onDone }: 
                   <SelectContent>{classrooms.map((c) => <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>)}</SelectContent>
                 </Select>
                 <Input type="number" className="w-24 h-8 text-xs" value={r.value} onChange={(e) => setRules(rules.map((x, j) => j === i ? { ...x, value: Number(e.target.value) } : x))} />
-                <span className="text-xs text-muted-foreground">{method === "PERCENT" ? "%" : "GH₵"}</span>
+                <span className="text-xs text-muted-foreground">{method === "PERCENT" ? "%" : "₵"}</span>
                 <Button size="sm" variant="ghost" className="h-8 text-destructive ml-auto" onClick={() => setRules(rules.filter((_, j) => j !== i))}><Trash2 className="size-3.5" /></Button>
               </div>
             ))}

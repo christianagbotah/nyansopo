@@ -235,7 +235,7 @@ const CREDIT_RE = /\bcredits?\b/i;
 const EXPENSE_RE = /(expenditure|expenses?|spent|spending|costs?)/i;
 const ARREARS_RE = /(arrears?|owing|owed|outstanding|defaulters?|debts?)/i;
 
-const ghs = (n: number) => `GH₵${n.toLocaleString("en-GH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const ghs = (n: number) => `₵${n.toLocaleString("en-GH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 type AssistantData =
   | {
@@ -433,7 +433,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
 You are given VERIFIED figures (JSON) computed from the school's live database for a specific date range. Rules:
 - Ground every financial claim in those VERIFIED figures only — never invent, estimate or recall numbers.
-- Format money as GH₵ with thousands separators and two decimals, e.g. GH₵12,450.00.
+- Format money as ₵ with thousands separators and two decimals, e.g. ₵12,450.00.
 - Always mention the date range the figures cover.
 - If asked for details, a breakdown or a list, itemise the receipts, methods or categories provided in the data.
 - If the data does not cover what was asked, say plainly what the figures do cover instead of guessing.
@@ -443,7 +443,7 @@ You are given VERIFIED figures (JSON) computed from the school's live database f
 
 VERIFIED DATA (range: ${range ? range.label : "not resolved"}):
 ${JSON.stringify(data)}`
-    : `You are the Nyansapo Owner Assistant for the proprietor of a Ghanaian private school (${school?.name ?? "the school"}). Answer school-management questions briefly, practically and warmly (at most 150 words). Use GH₵ for money. You do not have live figures for this question — do not invent any numbers.`;
+    : `You are the Nyansapo Owner Assistant for the proprietor of a Ghanaian private school (${school?.name ?? "the school"}). Answer school-management questions briefly, practically and warmly (at most 150 words). Use ₵ for money. You do not have live figures for this question — do not invent any numbers.`;
 
   let answer = "";
   try {

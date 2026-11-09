@@ -466,7 +466,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     try {
       await sendSms({
         db, schoolId, studentId: student.id, recipientName: guardianName, recipientPhone: student.guardianPhone,
-        body: `Akwaaba! ${firstName} has been admitted to ${classroom.name}. Nyansapo Index: ${nyansapoIndex}. ${invoice ? `Term bill: GH₵${((gross - discountCents) / 100).toFixed(2)}.` : ""}`,
+        body: `Akwaaba! ${firstName} has been admitted to ${classroom.name}. Nyansapo Index: ${nyansapoIndex}. ${invoice ? `Term bill: ₵${((gross - discountCents) / 100).toFixed(2)}.` : ""}`,
         category: "ADMISSION", sentByName: user.fullName,
       });
     } catch { /* ignore SMS errors */ }

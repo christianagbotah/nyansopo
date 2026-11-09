@@ -527,7 +527,7 @@ export function AdmissionWizard({ schoolId, onAdmitted }: { schoolId: string; on
                           <Input className="h-8 border-0 bg-transparent px-0 focus-visible:ring-0 flex-1 font-medium" value={it.name}
                             onChange={(e) => setBill(bill.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} />
                           <div className="relative w-32">
-                            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">GH₵</span>
+                            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">₵</span>
                             <Input className="h-8 pl-10 text-right tabular-nums" type="number" min="0" step="0.01" value={gh(it.amountCents)}
                               onChange={(e) => setBill(bill.map((x, j) => j === i ? { ...x, amountCents: money(e.target.value) } : x))} />
                           </div>
@@ -579,7 +579,7 @@ export function AdmissionWizard({ schoolId, onAdmitted }: { schoolId: string; on
                 <Separator />
                 <div className="grid sm:grid-cols-2 gap-3">
                   <div className="space-y-1.5">
-                    <Label>Deposit received now (GH₵)</Label>
+                    <Label>Deposit received now (₵)</Label>
                     <Input type="number" min="0" step="0.01" value={deposit} onChange={(e) => setDeposit(e.target.value)} placeholder="0.00" />
                   </div>
                   <div className="space-y-1.5">

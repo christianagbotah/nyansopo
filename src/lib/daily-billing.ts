@@ -6,7 +6,7 @@ import { PAYMENT_LABELS } from "./format";
 // ── Daily-service billing helpers (shared by API + offline sync) ──
 //  iEduPro CI3 parity (Daily_fee_model):
 //   • route fare is ONE-WAY — 'in'/'out' charge 1×, 'both' 2×, 'none' 0
-//     (e.g. route fare GH₵8 → morning only GH₵8, both ways GH₵16)
+//     (e.g. route fare ₵8 → morning only ₵8, both ways ₵16)
 //   • transport day-charges materialise lazily — only when a direction is
 //     picked at the counter or the conductor marks boarding (never auto-billed)
 //   • WEEKLY services (water) bill once per ISO week, on the first school day
@@ -92,7 +92,7 @@ export async function creditItemBalance(db: PrismaClient, opts: {
 //  balance as advance (payment_type: arrears | current | advance | mixed).
 //  Extracted so the online counter and the offline queue flush can never drift.
 
-const fmtGH = (cents: number) => `GH₵${(cents / 100).toFixed(2)}`;
+const fmtGH = (cents: number) => `₵${(cents / 100).toFixed(2)}`;
 
 export type CollectItemEntry = { serviceId: string; amountCents: number };
 export type CollectBreakdownRow = { name: string; paid: number; advance: number };
@@ -115,7 +115,7 @@ export function sanitizeMethodParts(raw: unknown, totalCents: number): { error?:
   if (parts.some((p) => !SPLIT_METHOD_KEYS.has(p.method))) return { error: "Unknown payment method in split" };
   if (parts.some((p) => p.amountCents <= 0)) return { error: "Every split part needs an amount above zero" };
   const sum = parts.reduce((s, p) => s + p.amountCents, 0);
-  if (sum !== totalCents) return { error: `Split parts add up to GH₵${(sum / 100).toFixed(2)} — the items total GH₵${(totalCents / 100).toFixed(2)}` };
+  if (sum !== totalCents) return { error: `Split parts add up to ₵${(sum / 100).toFixed(2)} — the items total ₵${(totalCents / 100).toFixed(2)}` };
   return { parts };
 }
 
@@ -336,7 +336,7 @@ export async function waiveDayChargesForStudent(
       await logDailyFeeAudit(db, {
         schoolId: opts.schoolId, studentId: opts.studentId, actionType: "CHARGE_REVERSAL", serviceCode: c.service.name, amountCents: c.amountCents,
         performedByName: opts.byName, performedByRole: opts.byRole, reference: c.id,
-        notes: `attendance reversal — settled charge waived; GH₵${(c.amountCents / 100).toFixed(2)} held as item prepaid · ${day.toISOString().slice(0, 10)}`,
+        notes: `attendance reversal — settled charge waived; ₵${(c.amountCents / 100).toFixed(2)} held as item prepaid · ${day.toISOString().slice(0, 10)}`,
       });
     }
   }
@@ -388,7 +388,7 @@ export async function ensureDayChargesForStudent(
         await logDailyFeeAudit(db, {
           schoolId: opts.schoolId, studentId: opts.studentId, actionType: "CHARGE", serviceCode: svc.name, amountCents: existing.amountCents,
           performedByName: opts.byName, performedByRole: opts.byRole, reference: existing.id,
-          notes: `attendance re-marked chargeable — waived charge reinstated${covered > 0 ? ` · GH₵${(covered / 100).toFixed(2)} auto-deducted from item balance` : ""} · ${day.toISOString().slice(0, 10)}`,
+          notes: `attendance re-marked chargeable — waived charge reinstated${covered > 0 ? ` · ₵${(covered / 100).toFixed(2)} auto-deducted from item balance` : ""} · ${day.toISOString().slice(0, 10)}`,
         });
       }
       continue;
@@ -402,7 +402,7 @@ export async function ensureDayChargesForStudent(
     await logDailyFeeAudit(db, {
       schoolId: opts.schoolId, studentId: opts.studentId, actionType: "CHARGE", serviceCode: svc.name, amountCents: amount,
       performedByName: opts.byName, performedByRole: opts.byRole, reference: charge.id,
-      notes: `attendance charge (register) · ${svc.name} · ${day.toISOString().slice(0, 10)}${covered > 0 ? ` · GH₵${(covered / 100).toFixed(2)} auto-deducted from item balance` : ""}`,
+      notes: `attendance charge (register) · ${svc.name} · ${day.toISOString().slice(0, 10)}${covered > 0 ? ` · ₵${(covered / 100).toFixed(2)} auto-deducted from item balance` : ""}`,
     });
   }
   return { reinstated, created };
@@ -641,7 +641,7 @@ export async function generateDayCharges(
         arrearsBeforeCents: arrearsBefore, arrearsAfterCents: arrearsBefore + (covered >= amount ? 0 : amount - covered),
         performedByName: opts?.performedByName, performedByRole: opts?.performedByRole,
         reference: charge.id,
-        notes: `day charge · ${svc.name} · ${day.toISOString().slice(0, 10)}${covered > 0 ? ` · GH₵${(covered / 100).toFixed(2)} auto-deducted from item balance` : ""}`,
+        notes: `day charge · ${svc.name} · ${day.toISOString().slice(0, 10)}${covered > 0 ? ` · ₵${(covered / 100).toFixed(2)} auto-deducted from item balance` : ""}`,
       });
       if (svc.chargeMode === "WEEKLY") weeklySeen.add(`${svc.id}:${en.studentId}`);
     }
@@ -651,7 +651,7 @@ export async function generateDayCharges(
 
 // ── Transport usage / boarding direction (iedupro §1 — one-way fare model) ──
 //  MORNING (in) → 1× one-way · AFTERNOON (out) → 1× one-way · BOTH → 2× one-way
-//  NOT_USING (none) → waived, GH₵0 · BOARDED → the fare recorded on the boarding mark
+//  NOT_USING (none) → waived, ₵0 · BOARDED → the fare recorded on the boarding mark
 export const TRANSPORT_USAGES = ["BOTH", "MORNING", "AFTERNOON", "NOT_USING", "BOARDED"] as const;
 export type TransportUsage = (typeof TRANSPORT_USAGES)[number];
 
@@ -721,7 +721,7 @@ export async function applyTransportUsage(
         arrearsBeforeCents: arrearsAfter - owedAfter, arrearsAfterCents: arrearsAfter,
         performedByName: opts?.performedByName, performedByRole: opts?.performedByRole,
         reference: createdCharge.id,
-        notes: `transport fare · ${usage.toLowerCase()} · ${dStart.toISOString().slice(0, 10)}${covered > 0 ? ` · GH₵${(covered / 100).toFixed(2)} auto-deducted from item balance` : ""}`,
+        notes: `transport fare · ${usage.toLowerCase()} · ${dStart.toISOString().slice(0, 10)}${covered > 0 ? ` · ₵${(covered / 100).toFixed(2)} auto-deducted from item balance` : ""}`,
       });
     }
     return createdCharge;
