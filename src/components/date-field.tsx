@@ -95,11 +95,11 @@ export function DateField({
     setOpen(false);
   }
 
-  const calDisabled = useMemo<{ before?: Date; after?: Date } | undefined>(() => {
+  const calDisabled = useMemo(() => {
     if (!minD && !maxD) return undefined;
-    const m: { before?: Date; after?: Date } = {};
-    if (minD) m.before = minD;
-    if (maxD) m.after = maxD;
+    const m: { before: Date; after?: Date } | { before?: Date; after: Date } = minD && maxD
+      ? { before: minD, after: maxD }
+      : minD ? { before: minD } : { after: maxD! };
     return m;
   }, [minD, maxD]);
 

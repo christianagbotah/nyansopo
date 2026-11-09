@@ -1,7 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
+import { sortClassrooms } from "@/lib/classes";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
 import { currentPeriod } from "@/lib/payroll";
+
+// method legs of a payment — SPLIT payments carry their parts in splitJson
+type MethodLeg = { method: string; amountCents: number; reference?: string | null };
+function methodLegs(p: { method: string; amountCents: number; splitJson: unknown; reference?: string | null }): MethodLeg[] {
+  const parts = Array.isArray((p as any).splitJson) ? ((p as any).splitJson as { method?: string; amountCents?: number; reference?: string | null }[]) : null;
+  if (parts && parts.length) {
+    return parts.filter((x) => x.method && x.amountCents).map((x) => ({ method: String(x.method), amountCents: Number(x.amountCents), reference: x.reference ?? null }));
+  }
+  return [{ method: p.method, amountCents: p.amountCents, reference: p.reference ?? null }];
+}
 
 // ── GET /api/school/[id]/ops/overview — dashboard widgets for ops modules ──
 // daily strip + payroll + inventory + sms + transport, plus the dashboard KPI
@@ -13,6 +24,87 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const auth = await opsAuth(req, schoolId, "GET");
   if (!auth.ok) return auth.res;
   const user = auth.user;
+
+  const url = new URL(req.url);
+  const action = url.searchParams.get("action");
+
+  // ── CI3 modal_daily_revenue parity: filtered payment list for the dashboard
+  //    breakdown modal — source (invoices / daily fees / all), payment method,
+  //    classroom, daily service and date. ──
+  if (action === "payments") {
+    const dateStr = url.searchParams.get("date") ?? new Date().toISOString().slice(0, 10);
+    const source = url.searchParams.get("source") ?? "all"; // all | invoices | daily
+    const method = url.searchParams.get("method") ?? "all";
+    const classroomId = url.searchParams.get("classroomId") ?? "all";
+    const serviceId = url.searchParams.get("serviceId") ?? "all";
+    const dStart = new Date(`${dateStr}T00:00:00.000Z`);
+    const dEnd = new Date(`${dateStr}T23:59:59.999Z`);
+
+    let studentIds: string[] | null = null;
+    if (classroomId !== "all") {
+      const enrolled = await db.enrollment.findMany({ where: { schoolId, classroomId, status: "ACTIVE" }, select: { studentId: true } });
+      studentIds = enrolled.map((e) => e.studentId);
+    }
+
+    const payments = await db.payment.findMany({
+      where: {
+        schoolId, voided: false, paymentType: { not: "REFUND" }, paidAt: { gte: dStart, lte: dEnd },
+        ...(source === "invoices" ? { category: "INVOICE" } : source === "daily" ? { category: "DAILY" } : {}),
+        ...(studentIds ? { studentId: { in: studentIds } } : {}),
+      },
+      include: { student: { select: { firstName: true, lastName: true } } },
+      orderBy: { paidAt: "desc" },
+    });
+
+    // daily charges per payment (service split) for the daily-fee lines
+    const payIds = payments.map((p) => p.id);
+    const charges = payIds.length ? await db.dailyCharge.findMany({ where: { paymentId: { in: payIds }, ...(serviceId !== "all" ? { serviceId } : {}) }, include: { service: { select: { name: true } } } }) : [];
+    const chargesByPay: Record<string, { service: string; cents: number }[]> = {};
+    for (const c of charges) {
+      ((chargesByPay[c.paymentId ?? ""] ??= [])).push({ service: c.service.name, cents: c.amountCents });
+    }
+
+    // classroom names for the rows (current enrolment)
+    const rowStudentIds = [...new Set(payments.map((p) => p.studentId).filter(Boolean))] as string[];
+    const enrollments = rowStudentIds.length ? await db.enrollment.findMany({ where: { schoolId, studentId: { in: rowStudentIds }, status: "ACTIVE" }, include: { classroom: { select: { name: true } } } }) : [];
+    const classByStudent: Record<string, string> = {};
+    for (const e of enrollments) classByStudent[e.studentId] = e.classroom.name;
+
+    const services = await db.dailyService.findMany({ where: { schoolId }, orderBy: { name: "asc" } });
+    const classrooms = sortClassrooms(await db.classroom.findMany({ where: { schoolId }, select: { id: true, name: true, gradeLevel: true } }));
+
+    let rows = payments.map((p) => ({
+      id: p.id,
+      receiptNo: p.receiptNo,
+      student: p.student ? `${p.student.firstName} ${p.student.lastName}` : "—",
+      classroom: p.studentId ? classByStudent[p.studentId] ?? "" : "",
+      category: p.category,
+      amountCents: p.amountCents,
+      legs: methodLegs(p),
+      paidAt: p.paidAt.toISOString(),
+      receivedByName: p.receivedByName,
+      services: chargesByPay[p.id] ?? [],
+    }));
+    if (method !== "all") rows = rows.filter((r) => r.legs.some((l) => l.method === method));
+
+    // summary by method (split-aware) and by source
+    const byMethod: Record<string, number> = {};
+    for (const r of rows) for (const l of r.legs) byMethod[l.method] = (byMethod[l.method] ?? 0) + l.amountCents;
+    const bySource = {
+      invoices: rows.filter((r) => r.category === "INVOICE").reduce((s, r) => s + r.amountCents, 0),
+      daily: rows.filter((r) => r.category === "DAILY").reduce((s, r) => s + r.amountCents, 0),
+    };
+    return NextResponse.json({
+      date: dateStr,
+      total: rows.reduce((s, r) => s + r.amountCents, 0),
+      count: rows.length,
+      byMethod: Object.entries(byMethod).map(([m, cents]) => ({ method: m, cents })),
+      bySource,
+      rows,
+      services: services.map((s) => ({ id: s.id, name: s.name })),
+      classrooms: classrooms.map((c) => ({ id: c.id, name: c.name })),
+    });
+  }
 
   const today = new Date();
   const todayStr = today.toISOString().slice(0, 10);
@@ -97,6 +189,34 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   // OWED day-charges (wallets are prepaid credit; arrears derive from the ledger)
   const dailyArrearsCents = daily.outstanding;
 
+  // ── CI3 dashboard_enterprise “total income received today” KPI + breakdown:
+  //    all non-voided payments today (invoice fees + daily fees), split-aware
+  //    method mix, per-source split, per-service method mix for the daily cards ──
+  const todayPayments = await db.payment.findMany({
+    where: { schoolId, voided: false, paymentType: { not: "REFUND" }, paidAt: { gte: dayStart, lte: dayEnd } },
+    include: { dailyCharges: { where: { status: "PAID" }, include: { service: { select: { id: true, name: true } } } } },
+  });
+  const methodMix: Record<string, number> = {};
+  for (const p of todayPayments) for (const l of methodLegs(p)) methodMix[l.method] = (methodMix[l.method] ?? 0) + l.amountCents;
+  // per daily service, per method (from the linked day-charges' payments)
+  const svcMethodMix: Record<string, Record<string, number>> = {};
+  for (const p of todayPayments) {
+    for (const c of p.dailyCharges) {
+      const mix = (svcMethodMix[c.service.id] ??= {});
+      for (const l of methodLegs(p)) mix[l.method] = (mix[l.method] ?? 0) + Math.round(l.amountCents * (c.amountCents / Math.max(1, p.amountCents)));
+    }
+  }
+  const incomeToday = {
+    totalCents: todayPayments.reduce((s, p) => s + p.amountCents, 0),
+    count: todayPayments.length,
+    invoicesCents: todayPayments.filter((p) => p.category === "INVOICE").reduce((s, p) => s + p.amountCents, 0),
+    dailyCents: todayPayments.filter((p) => p.category === "DAILY").reduce((s, p) => s + p.amountCents, 0),
+    byMethod: Object.entries(methodMix).map(([method, cents]) => ({ method, cents })),
+  };
+  const dailyTodayByMethod = Object.fromEntries(
+    services.map((s) => [s.id, Object.entries(svcMethodMix[s.id] ?? {}).map(([method, cents]) => ({ method, cents }))])
+  );
+
   // ── learner distribution (dashboard KPI): active enrolment by classroom,
   //    male/female split per classroom — top 10 by class size ──
   const enrollRows = await db.enrollment.findMany({
@@ -115,7 +235,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   //    Staff record class-teaches, with today's register snapshot ──
   let myClasses: { classroomId: string; name: string; learners: number; presentToday: number; absentToday: number; registerTaken: boolean }[] = [];
   if (user.staffId) {
-    const myRooms = await db.classroom.findMany({ where: { schoolId, classTeacherId: user.staffId }, orderBy: { name: "asc" } });
+    const myRooms =sortClassrooms(await db.classroom.findMany({ where: { schoolId, classTeacherId: user.staffId }, }));
     if (myRooms.length) {
       const todaySessions = await db.attendanceSession.findMany({
         where: { schoolId, date: { gte: dayStart, lte: dayEnd } },
@@ -131,5 +251,5 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     }
   }
 
-  return NextResponse.json({ daily, payroll, inventory, sms, transport, dailyToday, dailyArrearsCents, classroomBands, myClasses });
+  return NextResponse.json({ daily, payroll, inventory, sms, transport, dailyToday, dailyTodayByMethod, incomeToday, dailyArrearsCents, classroomBands, myClasses });
 }

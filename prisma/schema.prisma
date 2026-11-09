@@ -128,6 +128,7 @@ model School {
   createdAt            DateTime              @default(now())
   users                User[]
   classrooms           Classroom[]
+  sections             Section[]
   academicYears        AcademicYear[]
   feeStructures        FeeStructure[]
   invoices             Invoice[]
@@ -319,6 +320,28 @@ model Classroom {
   studyMaterials     StudyMaterial[]
   syllabusTopics     SyllabusTopic[]
   resultApprovals    ResultApproval[]
+  sections           Section[]
+}
+
+// Section (stream) within a classroom — iEduPro parity: a class like
+// "Basic 4" can run multiple sections (Gold / Green, or A / B), each with
+// its own ordered placement within the class.
+model Section {
+  id          String    @id @default(cuid())
+  schoolId    String
+  school      School    @relation(fields: [schoolId], references: [id])
+  classroomId String
+  classroom   Classroom @relation(fields: [classroomId], references: [id])
+  name        String // "Gold" | "A" | "B" — shown as `Class name — Section`
+  sortOrder   Int       @default(0) // ordered within the classroom (CI3 section ordering)
+  capacity    Int?
+  note        String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  enrollments Enrollment[]
+
+  @@unique([classroomId, name])
+  @@index([schoolId])
 }
 
 model Subject {
@@ -462,6 +485,8 @@ model Enrollment {
   student       Student   @relation(fields: [studentId], references: [id])
   classroomId   String
   classroom     Classroom @relation(fields: [classroomId], references: [id])
+  sectionId     String? // optional stream within the class (Section model)
+  section       Section?  @relation(fields: [sectionId], references: [id])
   schoolId      String
   school        School    @relation(fields: [schoolId], references: [id])
   rollNo        Int?
@@ -1284,6 +1309,15 @@ model SmsSetting {
   autoAbsenceAlerts     Boolean @default(true)
   autoPaymentReceipts   Boolean @default(true)
   autoLessonNoteAlerts  Boolean @default(true) // teacher SMS when a GES note is returned / endorsed
+  // ── per-event toggles (iEduPro parity — granular control over each trigger) ──
+  evtInvoicePaid        Boolean @default(true) // billed invoice settled in full
+  evtDailyFeesPaid      Boolean @default(true) // daily-fee payment made (lunch/bus etc.)
+  evtLearnerBilled      Boolean @default(true) // invoice issued to a learner
+  evtLearnerPresent     Boolean @default(false) // learner marked present (off by default — volume)
+  evtLearnerAbsent      Boolean @default(true) // learner marked absent
+  evtResultsPublished   Boolean @default(true) // end-of-term results released
+  evtPaymentReceipt     Boolean @default(true) // receipt confirmation for any fee payment
+  evtOverpaymentCredit  Boolean @default(true) // overpayment banked as prepaid credit
 }
 
 model SmsTemplate {
@@ -1849,6 +1883,10 @@ model LessonNote {
   templateId      String? // seeded from a LessonNoteTemplate
   title           String
   description     String?
+  strandCode      String? // CODE separate from the name (e.g. "B4.1.1") — iEduPro parity
+  strandName      String? // human strand label when not framework-aligned
+  subStrandCode   String? // sub-strand / sub-ln reference code
+  subStrandName   String?
   strandId        String? // CURRICULUM ALIGNMENT — framework strand/sub-strand/
   strand          CurriculumStrand?           @relation("NoteStrand", fields: [strandId], references: [id])
   subStrandId     String? // content standard + chosen indicators (GES SBC,

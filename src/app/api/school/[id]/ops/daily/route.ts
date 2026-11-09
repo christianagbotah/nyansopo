@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { sortClassrooms } from "@/lib/classes";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
 import { generateDayCharges, settleDailyCharges, effectivePrice, applyTransportUsage, parseTeacherPerms, DEFAULT_TEACHER_PERMS, collectionAllowed, TRANSPORT_USAGES, logDailyFeeAudit, arrearsTotalCents, creditItemBalance, itemBalanceCents, collectDailyItems, markPresentForDate, sanitizeMethodParts, paymentMethodLabel, type CollectionMode, type TeacherPerms, type TransportUsage } from "@/lib/daily-billing";
-import { sendAutomated } from "@/lib/sms";
+import { sendAutomated, smsEventEnabled } from "@/lib/sms";
 import { dailyServicesReceipt } from "@/lib/receipt-payload";
 import { nextReceiptNo } from "@/lib/codes";
 import { PAYMENT_LABELS } from "@/lib/format";
@@ -95,7 +96,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const enrollments = await db.enrollment.findMany({ where: { schoolId, status: "ACTIVE" } });
   const classByStudent: Record<string, string> = {};
   enrollments.forEach((e) => (classByStudent[e.studentId] = e.classroomId));
-  const classrooms = await db.classroom.findMany({ where: { schoolId } });
+  const classrooms =sortClassrooms(await db.classroom.findMany({ where: { schoolId } }));
   const clsName = Object.fromEntries(classrooms.map((c) => [c.id, c.name]));
   Object.values(ledger).forEach((l) => (l.classroom = clsName[classByStudent[l.studentId]] ?? null));
 
@@ -229,7 +230,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const settingRows = await db.opsSetting.findMany({ where: { schoolId, key: { in: ["DAILY_COLLECTION_MODE", "DAILY_TEACHER_PERMS"] } } });
   const collectionMode = ((settingRows.find((r) => r.key === "DAILY_COLLECTION_MODE")?.value ?? "HYBRID") as CollectionMode);
   const teacherPerms = parseTeacherPerms(settingRows.find((r) => r.key === "DAILY_TEACHER_PERMS")?.value);
-  const allClassrooms = await db.classroom.findMany({ where: { schoolId }, orderBy: { name: "asc" }, select: { id: true, name: true } });
+  const allClassrooms =sortClassrooms(await db.classroom.findMany({ where: { schoolId }, select: {  id: true, name: true, gradeLevel: true } }));
 
   // ── daily reconciliation (iedupro daily_fee_reconciliation) ──
   // charges raised vs settled at the counter vs wallet deductions, with a
@@ -698,9 +699,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         ? await markPresentForDate(db, { schoolId, studentId, date: new Date(body.date ?? new Date().toISOString().slice(0, 10)) })
         : null;
 
-      // auto receipt SMS
+      // auto receipt SMS — daily-fee payment event gate (evtDailyFeesPaid)
       const setting = await db.smsSetting.findUnique({ where: { schoolId } });
-      if (setting?.autoPaymentReceipts) {
+      if (setting?.autoPaymentReceipts && (await smsEventEnabled(db, schoolId, "DAILY_FEES_PAID"))) {
         await sendAutomated({
           db, schoolId, trigger: "PAYMENT_RECEIVED",
           defaultBody: `We have received GH₵${(total / 100).toFixed(2)} for ${student.firstName} (${payment.receiptNo}) towards daily services. Thank you.`,
@@ -803,9 +804,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       }
     }
 
-    // auto receipt SMS
+    // auto receipt SMS — daily-fee payment event gate (evtDailyFeesPaid)
     const setting = await db.smsSetting.findUnique({ where: { schoolId } });
-    if (setting?.autoPaymentReceipts) {
+    if (setting?.autoPaymentReceipts && (await smsEventEnabled(db, schoolId, "DAILY_FEES_PAID"))) {
       await sendAutomated({
         db, schoolId, trigger: "PAYMENT_RECEIVED",
         defaultBody: `We have received GH₵${(amt / 100).toFixed(2)} for ${student.firstName} (${payment.receiptNo}) towards daily services. Thank you.`,

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { sortClassrooms } from "@/lib/classes";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
-import { sendAutomated } from "@/lib/sms";
+import { sendAutomated, smsEventEnabled } from "@/lib/sms";
 import { applyAttendanceChargeRule, applyTransportUsage, collectDailyItems, resolveTransportFare, effectivePrice, TRANSPORT_USAGES, type TransportUsage } from "@/lib/daily-billing";
 import { canAny } from "@/lib/rbac";
 
@@ -131,7 +132,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const end = new Date(Date.UTC(y, m, 1)); // exclusive
     const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
 
-    const classrooms = await db.classroom.findMany({ where: { schoolId }, orderBy: { name: "asc" }, select: { id: true, name: true } });
+    const classrooms =sortClassrooms(await db.classroom.findMany({ where: { schoolId }, select: {  id: true, name: true, gradeLevel: true } }));
     const cls = classrooms.find((c) => c.id === classroomId);
     if (!cls) return NextResponse.json({ classrooms, month, daysInMonth, classroomId: null, classroomName: null, students: [] });
 
@@ -168,7 +169,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const classId = q("classId") ?? q("classroomId");
   const dateStr = q("date") ?? new Date().toISOString().slice(0, 10);
   const date = new Date(dateStr); // date-only strings parse as UTC midnight, matching session writes
-  const classrooms = await db.classroom.findMany({ where: { schoolId }, orderBy: { name: "asc" } });
+  const classrooms =sortClassrooms(await db.classroom.findMany({ where: { schoolId }, }));
   if (!classId) return NextResponse.json({ classrooms: classrooms.map((c) => ({ id: c.id, name: c.name, grade: c.gradeLevel, stage: c.stageLabel })), session: null, date: dateStr, termId: null, students: [] });
 
   const term = await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId } } });
@@ -384,9 +385,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   // auto absence alerts to guardians (legacy semantics: online saves, ABSENT
-  // only, deduplicated per learner + day)
+  // only, deduplicated per learner + day) — gated by evtLearnerAbsent
   const smsSetting = await db.smsSetting.findUnique({ where: { schoolId } });
-  if (smsSetting?.autoAbsenceAlerts && !offline) {
+  if (smsSetting?.autoAbsenceAlerts && !offline && (await smsEventEnabled(db, schoolId, "LEARNER_ABSENT"))) {
     const absent = finalRecords.filter((r) => r.status === "ABSENT");
     for (const r of absent) {
       const already = await db.smsMessage.findFirst({ where: { schoolId, studentId: r.studentId, category: "ATTENDANCE", sentAt: { gte: new Date(new Date(date).setHours(0, 0, 0, 0)) } } });

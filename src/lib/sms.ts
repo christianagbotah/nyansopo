@@ -78,6 +78,56 @@ export function renderTemplate(body: string, vars: Record<string, string>) {
   return body.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? `{${k}}`);
 }
 
+/* ── Per-event notification gates (iedupro parity) ──────────
+   Granular SmsSetting.evt* switches gate every automated event,
+   independent of the legacy auto* master switches. A missing
+   setting or unknown event is FALSE — the safe default is to
+   NOT text guardians. */
+export type SmsEventKey =
+  | "INVOICE_PAID"
+  | "DAILY_FEES_PAID"
+  | "LEARNER_BILLED"
+  | "LEARNER_PRESENT"
+  | "LEARNER_ABSENT"
+  | "RESULTS_PUBLISHED"
+  | "PAYMENT_RECEIPT"
+  | "OVERPAYMENT_CREDIT";
+
+type SmsEventField =
+  | "evtInvoicePaid"
+  | "evtDailyFeesPaid"
+  | "evtLearnerBilled"
+  | "evtLearnerPresent"
+  | "evtLearnerAbsent"
+  | "evtResultsPublished"
+  | "evtPaymentReceipt"
+  | "evtOverpaymentCredit";
+
+const EVT_FIELD: Record<SmsEventKey, SmsEventField> = {
+  INVOICE_PAID: "evtInvoicePaid",
+  DAILY_FEES_PAID: "evtDailyFeesPaid",
+  LEARNER_BILLED: "evtLearnerBilled",
+  LEARNER_PRESENT: "evtLearnerPresent",
+  LEARNER_ABSENT: "evtLearnerAbsent",
+  RESULTS_PUBLISHED: "evtResultsPublished",
+  PAYMENT_RECEIPT: "evtPaymentReceipt",
+  OVERPAYMENT_CREDIT: "evtOverpaymentCredit",
+};
+
+/** True when the school's per-event toggle for this event is switched on. */
+export async function smsEventEnabled(db: PrismaClient, schoolId: string, event: SmsEventKey): Promise<boolean> {
+  const field = EVT_FIELD[event];
+  if (!field) return false; // unknown event — safe default: don't send
+  const setting = await db.smsSetting.findUnique({
+    where: { schoolId },
+    select: {
+      evtInvoicePaid: true, evtDailyFeesPaid: true, evtLearnerBilled: true, evtLearnerPresent: true,
+      evtLearnerAbsent: true, evtResultsPublished: true, evtPaymentReceipt: true, evtOverpaymentCredit: true,
+    },
+  });
+  return !!setting?.[field]; // no SmsSetting row → false: don't send
+}
+
 /* ── Automation rules (iedupro parity) ───────────────────────
    An active SmsAutomation for a trigger overrides the built-in default
    message body; counts and last-run are tracked on the rule itself.

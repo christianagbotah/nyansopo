@@ -1,8 +1,10 @@
 "use client";
 /* Nyansapo — Finance & Analytics (iedupro parity).
-   Income dashboard · Student ledger · AR aging · Terminal bills · Expenditure. */
-import { useCallback, useEffect, useMemo, useState } from "react";
+   Income dashboard · Student ledger · AR aging · Terminal bills · Expenditure ·
+   CI3 statements (receivables · payables · income & expenditure). */
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
+import { canModule } from "@/lib/rbac";
 import { apiGet, apiPost } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -24,6 +26,7 @@ import { cn } from "@/lib/utils";
 import {
   TrendingUp, Wallet, AlertTriangle, Receipt, PieChart, BookOpenText, Timer, FileText, Plus,
   ArrowUpRight, ArrowDownLeft, Printer, Banknote, Trash2, Search, Users, ReceiptText, Download,
+  HandCoins, Scale,
 } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
@@ -82,10 +85,19 @@ const EXPENSE_CATEGORIES: { key: string; label: string }[] = [
 const catLabel = (k: string) => EXPENSE_CATEGORIES.find((c) => c.key === k)?.label ?? k;
 
 export function Finance() {
-  const { currentSchoolId } = useStore();
+  const { currentSchoolId, navTarget } = useStore();
   const [data, setData] = useState<FinanceData | null>(null);
   const [yearId, setYearId] = useState<string | null>(null);
   const [tab, setTab] = useState("income");
+
+  /* CI3-statements deep links (Reports module quick cards, iedupro nested nav):
+     ?tab=statements | receivables | payables | income-expenditure → open the tab. */
+  const [appliedTarget, setAppliedTarget] = useState<any>(null);
+  if (navTarget !== appliedTarget) {
+    setAppliedTarget(navTarget);
+    const t = navTarget?.tab;
+    if (t && ["statements", "receivables", "payables", "income-expenditure"].includes(t)) setTab("statements");
+  }
 
   const load = (y?: string) => {
     if (!currentSchoolId) return;
@@ -130,6 +142,7 @@ export function Finance() {
           <TabsTrigger value="bills">Terminal bills</TabsTrigger>
           <TabsTrigger value="expenditure">Expenditure</TabsTrigger>
           <TabsTrigger value="advanced">Advanced reports</TabsTrigger>
+          <TabsTrigger value="statements">CI3 statements</TabsTrigger>
         </TabsList>
 
         {/* ── CASHIER REPORTS ── */}
@@ -208,6 +221,11 @@ export function Finance() {
         </TabsContent>
         <TabsContent value="advanced">
           <AdvancedReportsTab />
+        </TabsContent>
+
+        {/* ── CI3 STATEMENTS (receivables · payables · income & expenditure) ── */}
+        <TabsContent value="statements">
+          <StatementsTab />
         </TabsContent>
       </Tabs>
     </div>
@@ -543,7 +561,7 @@ function TerminalBill({ bill, landscape }: { bill: TerminalBill; landscape?: boo
 
 /* ── EXPENDITURE ────────────────────────────────────────────── */
 function ExpenditureTab({ data, onRefresh }: { data: FinanceData; onRefresh: () => void }) {
-  const { currentSchoolId } = useStore();
+  const { currentSchoolId, setModule, session } = useStore();
   const [dialog, setDialog] = useState(false);
   const [category, setCategory] = useState("UTILITIES");
   const [description, setDescription] = useState("");
@@ -597,7 +615,16 @@ function ExpenditureTab({ data, onRefresh }: { data: FinanceData; onRefresh: () 
         </CardContent>
       </Card>
       <Card className="lg:col-span-2">
-        <CardHeader className="pb-3"><CardTitle className="text-base">Recent expenses</CardTitle></CardHeader>
+        <CardHeader className="pb-3 flex-row items-center justify-between space-y-0 flex-wrap gap-2">
+          <CardTitle className="text-base">Recent expenses</CardTitle>
+          {/* staff costs live in HR & Payroll — surfaced here so the bursar's
+              expenditure view links to salary runs without hunting the nav */}
+          {canModule(session?.role, session?.permissions, "payroll") && (
+            <Button size="sm" variant="outline" className="gap-1" title="Salaries & staff costs — HR & Payroll module" onClick={() => setModule("payroll")}>
+              Payroll runs <ArrowUpRight className="size-3.5" />
+            </Button>
+          )}
+        </CardHeader>
         <CardContent className="p-0">
           <div className="px-3 py-2 border-b">
             <FilterBar active={expFiltersActive} onClear={() => { setExpCat("all"); setExpMethod("all"); setExpSearch(""); }} count={filteredExpenses.length} total={data.expenditure.recent.length} label="Expense filters">
@@ -1287,6 +1314,635 @@ function AdvancedReportsTab() {
               </CardContent>
             </Card>
           )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════
+   CI3 STATEMENTS — Task 5 parity with scripts/ci3app …/admin/reports/
+   (receivables · payables · income_expenditure). Everything renders as a
+   printable statement: per-class / per-category sub-total rows in bold,
+   grand-total footers and the two-sided account with SURPLUS/(DEFICIT). */
+type AgingBuckets = { currentCents: number; d1Cents: number; d31Cents: number; d61Cents: number; d90Cents: number };
+const AGING_COLS: { key: keyof AgingBuckets; label: string }[] = [
+  { key: "currentCents", label: "Current" },
+  { key: "d1Cents", label: "1–30" },
+  { key: "d31Cents", label: "31–60" },
+  { key: "d61Cents", label: "61–90" },
+  { key: "d90Cents", label: "90+" },
+];
+
+function StatementsTab() {
+  const { navTarget } = useStore();
+  const [rep, setRep] = useState<"receivables" | "payables" | "income-expenditure">("receivables");
+  /* deep link from the Reports module quick cards picks the exact statement */
+  const [appliedTarget, setAppliedTarget] = useState<any>(null);
+  if (navTarget !== appliedTarget) {
+    setAppliedTarget(navTarget);
+    const t = navTarget?.tab;
+    if (t === "payables") setRep("payables");
+    if (t === "income-expenditure") setRep("income-expenditure");
+    if (t === "statements" || t === "receivables") setRep("receivables");
+  }
+  const PICKS: { key: typeof rep; label: string; icon: typeof Timer }[] = [
+    { key: "receivables", label: "Receivables", icon: Timer },
+    { key: "payables", label: "Payables", icon: HandCoins },
+    { key: "income-expenditure", label: "Income & Expenditure", icon: Scale },
+  ];
+  return (
+    <div className="space-y-4">
+      <div className="no-print flex flex-wrap gap-1.5">
+        {PICKS.map((p) => (
+          <Button key={p.key} size="sm" variant={rep === p.key ? "default" : "outline"} className="gap-1.5" onClick={() => setRep(p.key)}>
+            <p.icon className="size-4" /> {p.label}
+          </Button>
+        ))}
+      </div>
+      {rep === "receivables" && <ReceivablesReport />}
+      {rep === "payables" && <PayablesReport />}
+      {rep === "income-expenditure" && <IncomeExpenditureReport />}
+    </div>
+  );
+}
+
+/* ── RECEIVABLES — per-student outstanding on open invoices, aged by due date,
+   class sub-totals + grand total (CI3 get_receivables.php + get_fct_ daily
+   arrears riding alongside). */
+type ReceivablesStatement = {
+  period: { from: string | null; to: string | null; termId: string | null };
+  terms: { id: string; label: string; isCurrent: boolean }[];
+  rows: { studentId: string; name: string; classroom: string | null; invoices: number; billedCents: number; discountCents: number; paidCents: number; outstandingCents: number; dailyArrearsCents: number; aging: AgingBuckets }[];
+  classes: { classroom: string; students: number; invoices: number; billedCents: number; paidCents: number; outstandingCents: number; dailyArrearsCents: number; aging: AgingBuckets }[];
+  totals: { students: number; invoices: number; billedCents: number; paidCents: number; discountCents: number; outstandingCents: number; dailyArrearsCents: number; aging: AgingBuckets };
+  dailyOnly: { students: number; amountCents: number };
+};
+
+function ReceivablesReport() {
+  const { currentSchoolId, schools } = useStore();
+  const schoolName = schools.find((s) => s.id === currentSchoolId)?.name ?? "";
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [termId, setTermId] = useState("all");
+  const [data, setData] = useState<ReceivablesStatement | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = () => {
+    if (!currentSchoolId) return;
+    setBusy(true);
+    const params = new URLSearchParams({ action: "receivables" });
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    if (termId !== "all") params.set("termId", termId);
+    apiGet<ReceivablesStatement>(`/api/school/${currentSchoolId}/ops/finance?${params.toString()}`)
+      .then(setData)
+      .catch((e) => toast({ title: "Could not load receivables", description: e.message, variant: "destructive" }))
+      .finally(() => setBusy(false));
+  };
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/set-state-in-effect
+
+  // flat render list: class rows, each block closing with a bold sub-total row
+  const items = useMemo(() => {
+    if (!data) return [] as ({ kind: "row"; row: ReceivablesStatement["rows"][number] } | { kind: "subtotal"; cls: ReceivablesStatement["classes"][number] })[];
+    const byClass = new Map(data.classes.map((c) => [c.classroom, c]));
+    const out: ({ kind: "row"; row: ReceivablesStatement["rows"][number] } | { kind: "subtotal"; cls: ReceivablesStatement["classes"][number] })[] = [];
+    let prev: string | null = null;
+    for (const r of data.rows) {
+      const cls = r.classroom ?? "Unassigned";
+      if (prev !== null && cls !== prev) {
+        const sub = byClass.get(prev);
+        if (sub) out.push({ kind: "subtotal", cls: sub });
+      }
+      out.push({ kind: "row", row: r });
+      prev = cls;
+    }
+    if (prev !== null) {
+      const sub = byClass.get(prev);
+      if (sub) out.push({ kind: "subtotal", cls: sub });
+    }
+    return out;
+  }, [data]);
+
+  const agingCell = (cents: number, bold = false) => (
+    <td className={cn("px-3 py-2.5 text-right tabular-nums", bold && "font-semibold", cents === 0 && "text-muted-foreground")}>
+      {cents ? fmtCedi(cents) : "—"}
+    </td>
+  );
+
+  function exportCsv() {
+    if (!data) return;
+    const header = ["Student", "Class", "Invoices", "Billed (GHS)", "Paid (GHS)", "Outstanding (GHS)", "Daily arrears (GHS)", "Current (GHS)", "1-30 (GHS)", "31-60 (GHS)", "61-90 (GHS)", "90+ (GHS)"];
+    const cents = (c: number) => (c / 100).toFixed(2);
+    const lines: (string | number)[][] = [];
+    for (const it of items) {
+      if (it.kind === "row") {
+        lines.push([it.row.name, it.row.classroom ?? "", it.row.invoices, cents(it.row.billedCents), cents(it.row.paidCents), cents(it.row.outstandingCents), cents(it.row.dailyArrearsCents), cents(it.row.aging.currentCents), cents(it.row.aging.d1Cents), cents(it.row.aging.d31Cents), cents(it.row.aging.d61Cents), cents(it.row.aging.d90Cents)]);
+      } else {
+        lines.push([`Sub-total — ${it.cls.classroom}`, `${it.cls.students} learners`, it.cls.invoices, cents(it.cls.billedCents), cents(it.cls.paidCents), cents(it.cls.outstandingCents), cents(it.cls.dailyArrearsCents), cents(it.cls.aging.currentCents), cents(it.cls.aging.d1Cents), cents(it.cls.aging.d31Cents), cents(it.cls.aging.d61Cents), cents(it.cls.aging.d90Cents)]);
+      }
+    }
+    lines.push(["GRAND TOTAL", `${data.totals.students} learners`, data.totals.invoices, cents(data.totals.billedCents), cents(data.totals.paidCents), cents(data.totals.outstandingCents), cents(data.totals.dailyArrearsCents), cents(data.totals.aging.currentCents), cents(data.totals.aging.d1Cents), cents(data.totals.aging.d31Cents), cents(data.totals.aging.d61Cents), cents(data.totals.aging.d90Cents)]);
+    csvDownload(`Receivables_${from || "all"}_${to || "all"}.csv`, header, lines);
+  }
+
+  const termLabel = data?.terms.find((t) => t.id === termId)?.label ?? null;
+
+  return (
+    <div className="space-y-4">
+      <Card className="no-print">
+        <CardContent className="pt-4 flex flex-wrap gap-2 items-end">
+          <div className="space-y-1"><Label className="text-xs">Billed from</Label><DateField value={from} onChange={(v) => setFrom(v ?? "")} className="h-9 w-40" /></div>
+          <div className="space-y-1"><Label className="text-xs">Billed to</Label><DateField value={to} onChange={(v) => setTo(v ?? "")} className="h-9 w-40" /></div>
+          <div className="space-y-1">
+            <Label className="text-xs">Term</Label>
+            <Select value={termId} onValueChange={setTermId}>
+              <SelectTrigger className="h-9 w-44"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All terms</SelectItem>
+                {(data?.terms ?? []).map((t) => <SelectItem key={t.id} value={t.id}>{t.label}{t.isCurrent ? " (current)" : ""}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <Button size="sm" className="h-9 gap-1.5" onClick={load} disabled={busy}><FileText className="size-4" /> {busy ? "Loading…" : "Generate statement"}</Button>
+        </CardContent>
+      </Card>
+
+      {!data ? <Card><CardContent><LoadingBlock label="Aging the receivables…" /></CardContent></Card> : (
+        <>
+          <div className="no-print flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Timer className="size-4" />
+              {data.totals.students} learners · {data.totals.invoices} open invoices · <b className="text-foreground tabular-nums">{fmtCedi(data.totals.outstandingCents)}</b> receivable
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={exportCsv}><Download className="size-4" /> Export CSV</Button>
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => window.print()}><Printer className="size-4" /> Print</Button>
+            </div>
+          </div>
+
+          <div className="print-area">
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">Accounts receivables — {schoolName}</CardTitle>
+                <p className="text-xs text-muted-foreground">
+                  {data.period.from || data.period.to
+                    ? `Invoices billed ${data.period.from ? fmtDate(data.period.from) : "…"} – ${data.period.to ? fmtDate(data.period.to) : "…"}`
+                    : "All open invoices"}
+                  {termLabel ? ` · ${termLabel}` : ""} · aged from the due date · rendered {new Date().toLocaleString("en-GB")}
+                </p>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="overflow-x-auto nice-scroll max-h-[560px]">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 bg-secondary/70 backdrop-blur">
+                      <tr className="text-left border-b text-xs uppercase tracking-wide text-muted-foreground">
+                        <th className="px-3 py-2.5 font-medium">Student</th>
+                        <th className="px-3 py-2.5 font-medium hidden lg:table-cell">Class</th>
+                        <th className="px-3 py-2.5 font-medium text-right">Inv.</th>
+                        <th className="px-3 py-2.5 font-medium text-right hidden xl:table-cell">Billed</th>
+                        <th className="px-3 py-2.5 font-medium text-right hidden xl:table-cell">Paid</th>
+                        <th className="px-3 py-2.5 font-medium text-right">Outstanding</th>
+                        <th className="px-3 py-2.5 font-medium text-right hidden md:table-cell">Daily arrears</th>
+                        {AGING_COLS.map((c) => <th key={c.key} className="px-3 py-2.5 font-medium text-right">{c.label}</th>)}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {items.length === 0 && <tr><td colSpan={12}><EmptyState title="No open receivables in this window" hint="Every invoice billed in this period is settled — the school is whole." /></td></tr>}
+                      {items.map((it, i) => it.kind === "row" ? (
+                        <tr key={`r${i}`} className="border-b last:border-0 hover:bg-secondary/30">
+                          <td className="px-3 py-2.5 font-medium">{it.row.name}</td>
+                          <td className="px-3 py-2.5 hidden lg:table-cell text-muted-foreground">{it.row.classroom ?? "—"}</td>
+                          <td className="px-3 py-2.5 text-right tabular-nums">{it.row.invoices}</td>
+                          <td className="px-3 py-2.5 text-right tabular-nums hidden xl:table-cell">{fmtCedi(it.row.billedCents)}</td>
+                          <td className="px-3 py-2.5 text-right tabular-nums hidden xl:table-cell">{fmtCedi(it.row.paidCents)}</td>
+                          <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-destructive">{fmtCedi(it.row.outstandingCents)}</td>
+                          <td className="px-3 py-2.5 text-right tabular-nums hidden md:table-cell">{it.row.dailyArrearsCents ? fmtCedi(it.row.dailyArrearsCents) : "—"}</td>
+                          {AGING_COLS.map((c) => <Fragment key={c.key}>{agingCell(it.row.aging[c.key])}</Fragment>)}
+                        </tr>
+                      ) : (
+                        <tr key={`s${i}`} className="border-b bg-secondary/50 font-semibold">
+                          <td className="px-3 py-2" colSpan={2}>{it.cls.classroom} — sub-total · {it.cls.students} learners</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{it.cls.invoices}</td>
+                          <td className="px-3 py-2 text-right tabular-nums hidden xl:table-cell">{fmtCedi(it.cls.billedCents)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums hidden xl:table-cell">{fmtCedi(it.cls.paidCents)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums text-destructive">{fmtCedi(it.cls.outstandingCents)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums hidden md:table-cell">{it.cls.dailyArrearsCents ? fmtCedi(it.cls.dailyArrearsCents) : "—"}</td>
+                          {AGING_COLS.map((c) => <Fragment key={c.key}>{agingCell(it.cls.aging[c.key], true)}</Fragment>)}
+                        </tr>
+                      ))}
+                      {items.length > 0 && (
+                        <tr className="border-t-2 bg-primary/5 font-bold">
+                          <td className="px-3 py-3" colSpan={2}>GRAND TOTAL — {data.totals.students} learners</td>
+                          <td className="px-3 py-3 text-right tabular-nums">{data.totals.invoices}</td>
+                          <td className="px-3 py-3 text-right tabular-nums hidden xl:table-cell">{fmtCedi(data.totals.billedCents)}</td>
+                          <td className="px-3 py-3 text-right tabular-nums hidden xl:table-cell">{fmtCedi(data.totals.paidCents)}</td>
+                          <td className="px-3 py-3 text-right tabular-nums text-destructive">{fmtCedi(data.totals.outstandingCents)}</td>
+                          <td className="px-3 py-3 text-right tabular-nums hidden md:table-cell">{data.totals.dailyArrearsCents ? fmtCedi(data.totals.dailyArrearsCents) : "—"}</td>
+                          {AGING_COLS.map((c) => <Fragment key={c.key}>{agingCell(data.totals.aging[c.key], true)}</Fragment>)}
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                {data.dailyOnly.amountCents > 0 && (
+                  <p className="px-3 py-2 text-[10px] text-muted-foreground border-t">
+                    A further {fmtCedi(data.dailyOnly.amountCents)} of daily-service arrears sits with {data.dailyOnly.students} learners who have no open invoice (CI3 fct receivables) — collect them from the daily register in Fees.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ── PAYABLES — everything the school owes: pending supplier purchase orders,
+   approved-but-unpaid payroll runs and learner credit balances (CI3 advance
+   payments, get_payables.php / get_fct_payables.php parity). */
+type PayablesStatement = {
+  period: { from: string | null; to: string | null };
+  purchaseOrders: { rows: { poNo: string; supplier: string; supplierPhone: string | null; expectedDate: string | null; createdAt: string; lines: number; totalCents: number; note: string | null }[]; suppliers: { supplier: string; phone: string | null; orders: number; totalCents: number }[]; totalCents: number };
+  payroll: { rows: { id: string; period: string; status: string; totalGrossCents: number; totalDeductionsCents: number; totalNetCents: number; approvedByName: string | null; createdAt: string }[]; totalCents: number };
+  credits: { rows: { studentId: string; name: string; classroom: string | null; balanceCents: number }[]; totalCents: number };
+  totals: { purchaseOrdersCents: number; purchaseOrdersCount: number; payrollCents: number; payrollCount: number; creditsCents: number; creditsCount: number; totalCents: number };
+};
+
+function PayablesReport() {
+  const { currentSchoolId, schools } = useStore();
+  const schoolName = schools.find((s) => s.id === currentSchoolId)?.name ?? "";
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [data, setData] = useState<PayablesStatement | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = () => {
+    if (!currentSchoolId) return;
+    setBusy(true);
+    const params = new URLSearchParams({ action: "payables" });
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    apiGet<PayablesStatement>(`/api/school/${currentSchoolId}/ops/finance?${params.toString()}`)
+      .then(setData)
+      .catch((e) => toast({ title: "Could not load payables", description: e.message, variant: "destructive" }))
+      .finally(() => setBusy(false));
+  };
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/set-state-in-effect
+
+  // PO rows grouped by supplier, each block closing with a bold supplier sub-total
+  const poItems = useMemo(() => {
+    type PoRow = PayablesStatement["purchaseOrders"]["rows"][number];
+    type Item = { kind: "row"; row: PoRow } | { kind: "subtotal"; supplier: string; orders: number; totalCents: number };
+    const rows = [...(data?.purchaseOrders.rows ?? [])].sort((a, b) => a.supplier.localeCompare(b.supplier) || a.poNo.localeCompare(b.poNo));
+    const out: Item[] = [];
+    let prev: string | null = null;
+    let acc = { orders: 0, totalCents: 0 };
+    for (const r of rows) {
+      if (prev !== null && r.supplier !== prev) {
+        out.push({ kind: "subtotal", supplier: prev, ...acc });
+        acc = { orders: 0, totalCents: 0 };
+      }
+      out.push({ kind: "row", row: r });
+      acc.orders += 1;
+      acc.totalCents += r.totalCents;
+      prev = r.supplier;
+    }
+    if (prev !== null) out.push({ kind: "subtotal", supplier: prev, ...acc });
+    return out;
+  }, [data]);
+
+  return (
+    <div className="space-y-4">
+      <Card className="no-print">
+        <CardContent className="pt-4 flex flex-wrap gap-2 items-end">
+          <div className="space-y-1"><Label className="text-xs">Expected from</Label><DateField value={from} onChange={(v) => setFrom(v ?? "")} className="h-9 w-40" /></div>
+          <div className="space-y-1"><Label className="text-xs">Expected to</Label><DateField value={to} onChange={(v) => setTo(v ?? "")} className="h-9 w-40" /></div>
+          <Button size="sm" className="h-9 gap-1.5" onClick={load} disabled={busy}><FileText className="size-4" /> {busy ? "Loading…" : "Generate statement"}</Button>
+          <p className="w-full text-xs text-muted-foreground">Windows the pending purchase orders and approved payroll runs; learner credit wallets are live balances and always show in full.</p>
+        </CardContent>
+      </Card>
+
+      {!data ? <Card><CardContent><LoadingBlock label="Adding up what the school owes…" /></CardContent></Card> : (
+        <>
+          <div className="no-print flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <HandCoins className="size-4" />
+              {data.totals.purchaseOrdersCount} pending orders · {data.totals.payrollCount} unpaid payroll runs · {data.totals.creditsCount} credit wallets
+            </div>
+            <Button size="sm" variant="outline" className="gap-1.5" onClick={() => window.print()}><Printer className="size-4" /> Print</Button>
+          </div>
+
+          <div className="print-area space-y-4">
+            <Card>
+              <CardHeader className="pb-3"><CardTitle className="text-base">Accounts payables — {schoolName}</CardTitle>
+                <p className="text-xs text-muted-foreground">
+                  {data.period.from || data.period.to ? `Orders expected ${data.period.from ? fmtDate(data.period.from) : "…"} – ${data.period.to ? fmtDate(data.period.to) : "…"}` : "All pending orders"} · rendered {new Date().toLocaleString("en-GB")}
+                </p>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="overflow-x-auto nice-scroll max-h-[420px]">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 bg-secondary/70 backdrop-blur">
+                      <tr className="text-left border-b text-xs uppercase tracking-wide text-muted-foreground">
+                        <th className="px-3 py-2.5 font-medium">PO #</th>
+                        <th className="px-3 py-2.5 font-medium">Supplier</th>
+                        <th className="px-3 py-2.5 font-medium hidden md:table-cell">Expected</th>
+                        <th className="px-3 py-2.5 font-medium text-right hidden sm:table-cell">Lines</th>
+                        <th className="px-3 py-2.5 font-medium text-right">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {poItems.length === 0 && <tr><td colSpan={5}><EmptyState title="No pending purchase orders" hint="Nothing ordered and awaiting delivery in this window." /></td></tr>}
+                      {poItems.map((it, i) => it.kind === "row" ? (
+                        <tr key={`p${i}`} className="border-b last:border-0 hover:bg-secondary/30">
+                          <td className="px-3 py-2.5 font-mono text-xs">{it.row.poNo}</td>
+                          <td className="px-3 py-2.5">
+                            <div className="font-medium">{it.row.supplier}</div>
+                            {it.row.supplierPhone && <div className="text-[11px] text-muted-foreground">{it.row.supplierPhone}</div>}
+                          </td>
+                          <td className="px-3 py-2.5 hidden md:table-cell text-muted-foreground whitespace-nowrap">{it.row.expectedDate ? fmtDate(it.row.expectedDate) : fmtDate(it.row.createdAt)}</td>
+                          <td className="px-3 py-2.5 text-right tabular-nums hidden sm:table-cell">{it.row.lines}</td>
+                          <td className="px-3 py-2.5 text-right tabular-nums font-semibold">{fmtCedi(it.row.totalCents)}</td>
+                        </tr>
+                      ) : (
+                        <tr key={`ps${i}`} className="border-b bg-secondary/50 font-semibold">
+                          <td className="px-3 py-2" colSpan={4}>{it.supplier} — sub-total · {it.orders} order{it.orders === 1 ? "" : "s"}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{fmtCedi(it.totalCents)}</td>
+                        </tr>
+                      ))}
+                      {poItems.length > 0 && (
+                        <tr className="border-t-2 bg-primary/5 font-bold">
+                          <td className="px-3 py-3" colSpan={4}>Sub-total — pending purchase orders</td>
+                          <td className="px-3 py-3 text-right tabular-nums">{fmtCedi(data.purchaseOrders.totalCents)}</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-3"><CardTitle className="text-base">Approved payroll awaiting payment</CardTitle></CardHeader>
+              <CardContent className="p-0">
+                <div className="overflow-x-auto nice-scroll max-h-[300px]">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 bg-secondary/70 backdrop-blur">
+                      <tr className="text-left border-b text-xs uppercase tracking-wide text-muted-foreground">
+                        <th className="px-3 py-2.5 font-medium">Period</th>
+                        <th className="px-3 py-2.5 font-medium hidden sm:table-cell">Approved by</th>
+                        <th className="px-3 py-2.5 font-medium text-right">Gross</th>
+                        <th className="px-3 py-2.5 font-medium text-right hidden md:table-cell">Deductions</th>
+                        <th className="px-3 py-2.5 font-medium text-right">Net due</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.payroll.rows.length === 0 && <tr><td colSpan={5}><EmptyState title="No approved-but-unpaid payroll runs" hint="Runs must be approved in Payroll before they count as payable; drafts and rejected runs never do." /></td></tr>}
+                      {data.payroll.rows.map((r) => (
+                        <tr key={r.id} className="border-b last:border-0 hover:bg-secondary/30">
+                          <td className="px-3 py-2.5 font-medium">{r.period}</td>
+                          <td className="px-3 py-2.5 hidden sm:table-cell text-muted-foreground">{r.approvedByName ?? "—"}</td>
+                          <td className="px-3 py-2.5 text-right tabular-nums">{fmtCedi(r.totalGrossCents)}</td>
+                          <td className="px-3 py-2.5 text-right tabular-nums hidden md:table-cell">{fmtCedi(r.totalDeductionsCents)}</td>
+                          <td className="px-3 py-2.5 text-right tabular-nums font-semibold">{fmtCedi(r.totalNetCents)}</td>
+                        </tr>
+                      ))}
+                      {data.payroll.rows.length > 0 && (
+                        <tr className="border-t-2 bg-primary/5 font-bold">
+                          <td className="px-3 py-3" colSpan={4}>Sub-total — payroll payable</td>
+                          <td className="px-3 py-3 text-right tabular-nums">{fmtCedi(data.payroll.totalCents)}</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-3"><CardTitle className="text-base">Learner credit balances — advance payments owed to parents</CardTitle></CardHeader>
+              <CardContent className="p-0">
+                <div className="overflow-x-auto nice-scroll max-h-[300px]">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 bg-secondary/70 backdrop-blur">
+                      <tr className="text-left border-b text-xs uppercase tracking-wide text-muted-foreground">
+                        <th className="px-3 py-2.5 font-medium">Learner</th>
+                        <th className="px-3 py-2.5 font-medium hidden sm:table-cell">Class</th>
+                        <th className="px-3 py-2.5 font-medium text-right">Credit owed</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.credits.rows.length === 0 && <tr><td colSpan={3}><EmptyState title="No learner credits outstanding" hint="Overpayments and manual credits the school owes back to parents." /></td></tr>}
+                      {data.credits.rows.map((r) => (
+                        <tr key={r.studentId} className="border-b last:border-0 hover:bg-secondary/30">
+                          <td className="px-3 py-2.5 font-medium">{r.name}</td>
+                          <td className="px-3 py-2.5 hidden sm:table-cell text-muted-foreground">{r.classroom ?? "—"}</td>
+                          <td className="px-3 py-2.5 text-right tabular-nums font-semibold">{fmtCedi(r.balanceCents)}</td>
+                        </tr>
+                      ))}
+                      {data.credits.rows.length > 0 && (
+                        <tr className="border-t-2 bg-primary/5 font-bold">
+                          <td className="px-3 py-3" colSpan={2}>Sub-total — learner credits</td>
+                          <td className="px-3 py-3 text-right tabular-nums">{fmtCedi(data.credits.totalCents)}</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+
+            <div className={cn("flex items-center justify-between rounded-xl border-2 px-4 py-3.5", data.totals.totalCents > 0 ? "border-destructive/40 bg-destructive/5" : "border-border bg-secondary/40")}>
+              <div>
+                <div className="font-bold text-lg">TOTAL PAYABLE</div>
+                <div className="text-xs text-muted-foreground">orders + payroll + learner credits · CI3 accounts payables</div>
+              </div>
+              <div className={cn("text-2xl font-bold tabular-nums", data.totals.totalCents > 0 ? "text-destructive" : "")}>{fmtCedi(data.totals.totalCents)}</div>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ── INCOME & EXPENDITURE — the formal two-sided account statement
+   (CI3 income_expenditure.php): lettered income sections with per-method /
+   per-service sub-totals, expenditure by category plus received orders and
+   paid payroll, closing on SURPLUS/(DEFICIT). */
+type IeStatement = {
+  period: { from: string; to: string };
+  income: { sections: { key: string; label: string; rows: { label: string; count: number; amountCents: number }[]; subtotalCents: number }[]; totalCents: number };
+  expenditure: {
+    categories: { category: string; count: number; amountCents: number }[];
+    expensesCents: number;
+    purchaseOrders: { rows: { poNo: string; supplier: string; receivedAt: string | null; totalCents: number }[]; totalCents: number };
+    payroll: { rows: { period: string; paidAt: string | null; totalNetCents: number }[]; totalCents: number };
+    totalCents: number;
+  };
+  surplusCents: number;
+};
+
+function IncomeExpenditureReport() {
+  const { currentSchoolId, schools } = useStore();
+  const schoolName = schools.find((s) => s.id === currentSchoolId)?.name ?? "";
+  const [from, setFrom] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10));
+  const [to, setTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const [data, setData] = useState<IeStatement | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = () => {
+    if (!currentSchoolId) return;
+    setBusy(true);
+    const params = new URLSearchParams({ action: "income-expenditure", from, to });
+    apiGet<IeStatement>(`/api/school/${currentSchoolId}/ops/finance?${params.toString()}`)
+      .then(setData)
+      .catch((e) => toast({ title: "Could not build the account", description: e.message, variant: "destructive" }))
+      .finally(() => setBusy(false));
+  };
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/set-state-in-effect
+
+  const methodLabel = (sectionKey: string, label: string) =>
+    sectionKey === "invoices" || sectionKey === "other" ? PAYMENT_LABELS[label] ?? label : label;
+
+  return (
+    <div className="space-y-4">
+      <Card className="no-print">
+        <CardContent className="pt-4 flex flex-wrap gap-2 items-end">
+          <div className="space-y-1"><Label className="text-xs">From</Label><DateField value={from} onChange={(v) => setFrom(v ?? "")} className="h-9 w-40" /></div>
+          <div className="space-y-1"><Label className="text-xs">To</Label><DateField value={to} onChange={(v) => setTo(v ?? "")} className="h-9 w-40" /></div>
+          <Button size="sm" className="h-9 gap-1.5" onClick={load} disabled={busy}><Scale className="size-4" /> {busy ? "Loading…" : "Generate account"}</Button>
+        </CardContent>
+      </Card>
+
+      {!data ? <Card><CardContent><LoadingBlock label="Balancing the books…" /></CardContent></Card> : (
+        <>
+          <div className="no-print flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Scale className="size-4" />
+              {fmtDate(data.period.from)} – {fmtDate(data.period.to)} · income <b className="text-foreground tabular-nums">{fmtCedi(data.income.totalCents)}</b> vs expenditure <b className="text-foreground tabular-nums">{fmtCedi(data.expenditure.totalCents)}</b>
+            </div>
+            <Button size="sm" variant="outline" className="gap-1.5" onClick={() => window.print()}><Printer className="size-4" /> Print</Button>
+          </div>
+
+          <div className="print-area space-y-4">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* ── INCOME side ── */}
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">INCOME — {schoolName}</CardTitle>
+                <p className="text-xs text-muted-foreground">{fmtDate(data.period.from)} to {fmtDate(data.period.to)}</p>
+              </CardHeader>
+              <CardContent className="p-0">
+                <table className="w-full text-sm">
+                  <tbody>
+                    {data.income.sections.map((s, si) => {
+                      const letter = String.fromCharCode(65 + si);
+                      return (
+                        <Fragment key={s.key}>
+                          <tr className="bg-secondary/60"><td className="px-3 py-2 font-semibold text-[13px]" colSpan={3}>{letter}. {s.label}</td></tr>
+                          {s.rows.map((r) => (
+                            <tr key={`${s.key}-${r.label}`} className="border-b last:border-0">
+                              <td className="px-3 py-2 pl-8 text-muted-foreground">{methodLabel(s.key, r.label)}</td>
+                              <td className="px-3 py-2 text-right text-xs text-muted-foreground w-14">{r.count ? `× ${r.count}` : ""}</td>
+                              <td className="px-3 py-2 text-right tabular-nums w-36">{fmtCedi(r.amountCents)}</td>
+                            </tr>
+                          ))}
+                          {s.rows.length === 0 && <tr><td className="px-3 py-2 pl-8 text-xs text-muted-foreground" colSpan={3}>Nothing collected in this window</td></tr>}
+                          <tr className="bg-secondary/30 font-semibold">
+                            <td className="px-3 py-2 text-right" colSpan={2}>Sub-total ({letter})</td>
+                            <td className="px-3 py-2 text-right tabular-nums">{fmtCedi(s.subtotalCents)}</td>
+                          </tr>
+                        </Fragment>
+                      );
+                    })}
+                    <tr className="border-t-2 bg-primary/10 font-bold">
+                      <td className="px-3 py-3 text-right" colSpan={2}>TOTAL INCOME</td>
+                      <td className="px-3 py-3 text-right tabular-nums text-primary">{fmtCedi(data.income.totalCents)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </CardContent>
+            </Card>
+
+            {/* ── EXPENDITURE side ── */}
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">EXPENDITURE</CardTitle>
+                <p className="text-xs text-muted-foreground">Bursar&apos;s book · inventory purchases · payroll paid</p>
+              </CardHeader>
+              <CardContent className="p-0">
+                <table className="w-full text-sm">
+                  <tbody>
+                    <tr className="bg-secondary/60"><td className="px-3 py-2 font-semibold text-[13px]" colSpan={3}>A. Operating expenses (bursar&apos;s book)</td></tr>
+                    {data.expenditure.categories.map((c) => (
+                      <tr key={c.category} className="border-b last:border-0">
+                        <td className="px-3 py-2 pl-8 text-muted-foreground">{catLabel(c.category)}</td>
+                        <td className="px-3 py-2 text-right text-xs text-muted-foreground w-14">× {c.count}</td>
+                        <td className="px-3 py-2 text-right tabular-nums w-36">{fmtCedi(c.amountCents)}</td>
+                      </tr>
+                    ))}
+                    {data.expenditure.categories.length === 0 && <tr><td className="px-3 py-2 pl-8 text-xs text-muted-foreground" colSpan={3}>No expenses recorded in this window</td></tr>}
+                    <tr className="bg-secondary/30 font-semibold">
+                      <td className="px-3 py-2 text-right" colSpan={2}>Sub-total (A)</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{fmtCedi(data.expenditure.expensesCents)}</td>
+                    </tr>
+
+                    <tr className="bg-secondary/60"><td className="px-3 py-2 font-semibold text-[13px]" colSpan={3}>B. Inventory purchases — received orders</td></tr>
+                    {data.expenditure.purchaseOrders.rows.map((po) => (
+                      <tr key={po.poNo} className="border-b last:border-0">
+                        <td className="px-3 py-2 pl-8 text-muted-foreground">{po.poNo} · {po.supplier}{po.receivedAt ? ` · ${fmtDate(po.receivedAt)}` : ""}</td>
+                        <td />
+                        <td className="px-3 py-2 text-right tabular-nums">{fmtCedi(po.totalCents)}</td>
+                      </tr>
+                    ))}
+                    {data.expenditure.purchaseOrders.rows.length === 0 && <tr><td className="px-3 py-2 pl-8 text-xs text-muted-foreground" colSpan={3}>No orders received in this window</td></tr>}
+                    <tr className="bg-secondary/30 font-semibold">
+                      <td className="px-3 py-2 text-right" colSpan={2}>Sub-total (B)</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{fmtCedi(data.expenditure.purchaseOrders.totalCents)}</td>
+                    </tr>
+
+                    <tr className="bg-secondary/60"><td className="px-3 py-2 font-semibold text-[13px]" colSpan={3}>C. Salaries paid via payroll (net)</td></tr>
+                    {data.expenditure.payroll.rows.map((r) => (
+                      <tr key={r.period} className="border-b last:border-0">
+                        <td className="px-3 py-2 pl-8 text-muted-foreground">{r.period}{r.paidAt ? ` · paid ${fmtDate(r.paidAt)}` : ""}</td>
+                        <td />
+                        <td className="px-3 py-2 text-right tabular-nums">{fmtCedi(r.totalNetCents)}</td>
+                      </tr>
+                    ))}
+                    {data.expenditure.payroll.rows.length === 0 && <tr><td className="px-3 py-2 pl-8 text-xs text-muted-foreground" colSpan={3}>No payroll paid in this window</td></tr>}
+                    <tr className="bg-secondary/30 font-semibold">
+                      <td className="px-3 py-2 text-right" colSpan={2}>Sub-total (C)</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{fmtCedi(data.expenditure.payroll.totalCents)}</td>
+                    </tr>
+
+                    <tr className="border-t-2 bg-destructive/10 font-bold">
+                      <td className="px-3 py-3 text-right" colSpan={2}>TOTAL EXPENDITURE</td>
+                      <td className="px-3 py-3 text-right tabular-nums text-destructive">{fmtCedi(data.expenditure.totalCents)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </CardContent>
+            </Card>
+            </div>
+
+            {/* ── SURPLUS / (DEFICIT) ── */}
+            <Card className={cn("border-2", data.surplusCents > 0 ? "border-emerald-500/40" : data.surplusCents < 0 ? "border-destructive/40" : "border-border")}>
+              <CardContent className="py-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="font-bold text-lg">
+                    {data.surplusCents > 0 ? "SURPLUS" : data.surplusCents < 0 ? "(DEFICIT)" : "BREAK-EVEN"}
+                  </div>
+                  <div className={cn("text-2xl font-bold tabular-nums", data.surplusCents > 0 ? "text-emerald-600" : data.surplusCents < 0 ? "text-destructive" : "")}>
+                    {data.surplusCents < 0 ? `(${fmtCedi(Math.abs(data.surplusCents))})` : fmtCedi(data.surplusCents)}
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">income − expenditure · CI3 income &amp; expenditure account</p>
+              </CardContent>
+            </Card>
+          </div>
         </>
       )}
     </div>

@@ -21,6 +21,7 @@ import { CommandPalette } from "@/components/command-palette";
 import { MetroMenu, MetroEdgeTrigger } from "@/components/metro-menu";
 import { PAGE_INDEX, type PageEntry } from "@/lib/page-index";
 import { applyThemeToDOM, type SchoolTheme } from "@/lib/theme";
+import { sortClassrooms } from "@/lib/classes";
 import { Dashboard } from "@/components/modules/dashboard";
 import { Students } from "@/components/modules/students";
 import { Admissions } from "@/components/modules/admissions";
@@ -114,7 +115,8 @@ const bandOf = (grade: string, stage?: string | null): LevelBand =>
 
 function levelGroups(classrooms: { id: string; name: string; grade: string; stage?: string | null }[]): { band: string; label: string; classes: { id: string; name: string }[] }[] {
   const byBand = new Map<string, { label: string; classes: { id: string; name: string }[] }>();
-  for (const c of [...classrooms].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))) {
+  // CI3 getFullClassList ordering: Creche → Nursery → KG → Basic 1..6 → JHS → int'l
+  for (const c of sortClassrooms(classrooms.map((x) => ({ ...x, gradeLevel: x.grade })))) {
     const band = bandOf(c.grade, c.stage);
     const e = byBand.get(band.key) ?? { label: band.label, classes: [] };
     e.classes.push({ id: c.id, name: c.name });

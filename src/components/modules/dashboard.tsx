@@ -5,10 +5,15 @@ import { apiGet } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { StatCard, ModuleHeader, LoadingBlock, SeverityBadge, StatusBadge } from "@/components/ui-helpers";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { StatCard, ModuleHeader, LoadingBlock, SeverityBadge, StatusBadge, EmptyState } from "@/components/ui-helpers";
 import { fmtCedi, fmtDate, PAYMENT_LABELS, FLAG_LABELS, fmtDateShort } from "@/lib/format";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell } from "recharts";
-import { Banknote, CalendarCheck, Flag, TrendingUp, Users, AlertTriangle, ArrowLeftRight, Inbox, UtensilsCrossed, Calculator, Package, Smartphone, Bus, Droplets, BookOpen, Baby, UserPlus, ClipboardList, MessageSquareText, BellRing, HandCoins, PiggyBank, Receipt, LayoutList } from "lucide-react";
+import { Banknote, CalendarCheck, Flag, TrendingUp, Users, AlertTriangle, ArrowLeftRight, Inbox, UtensilsCrossed, Calculator, Package, Smartphone, Bus, Droplets, BookOpen, Baby, UserPlus, ClipboardList, MessageSquareText, BellRing, HandCoins, PiggyBank, Receipt, LayoutList, Filter } from "lucide-react";
+import { OwnerAssistant } from "@/components/owner-assistant";
 
 type Dash = {
   school: any; year: { name: string } | null; term: any;
@@ -31,9 +36,22 @@ type OpsOverview = {
   sms: { credits: number; sentThisMonth: number; autoReceipts: boolean };
   transport: { routes: number; learners: number; capacity: number; fareRevenue: number };
   dailyToday: DailyTodayRow[];
+  dailyTodayByMethod?: Record<string, { method: string; cents: number }[]>;
+  incomeToday?: { totalCents: number; count: number; invoicesCents: number; dailyCents: number; byMethod: { method: string; cents: number }[] };
   dailyArrearsCents: number;
   classroomBands: ClassroomBand[];
   myClasses: MyClass[];
+};
+
+type PaymentsPayload = {
+  date: string;
+  total: number;
+  count: number;
+  byMethod: { method: string; cents: number }[];
+  bySource: { invoices: number; daily: number };
+  rows: { id: string; receiptNo: string; student: string; classroom: string; category: string; amountCents: number; legs: { method: string; amountCents: number; reference?: string | null }[]; paidAt: string; receivedByName: string | null; services: { service: string; cents: number }[] }[];
+  services: { id: string; name: string }[];
+  classrooms: { id: string; name: string }[];
 };
 
 const SERVICE_ICONS: Record<string, React.ReactNode> = {
@@ -52,6 +70,9 @@ export function Dashboard() {
   const [data, setData] = useState<Dash | null>(null);
   const [ops, setOps] = useState<OpsOverview | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // CI3 modal_daily_revenue — “income received today” breakdown modal state
+  const [revOpen, setRevOpen] = useState(false);
+  const [revPreset, setRevPreset] = useState<{ source: string; serviceId: string }>({ source: "all", serviceId: "all" });
   const isTeacher = session?.role === "TEACHER";
 
   const load = () => {
@@ -124,10 +145,12 @@ export function Dashboard() {
               <div className="mt-1 text-2xl font-bold tabular-nums">{stats.parentCount ?? "—"}</div>
               <div className="text-[11px] text-muted-foreground">Guardians with portal logins</div>
             </button>
-            <button onClick={() => setModule("cashier", { tab: "portal" })} className="rounded-xl border border-r-4 border-r-emerald-500 bg-card p-4 text-left hover:bg-secondary/40 transition-colors">
-              <div className="flex items-center justify-between"><span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Cash today</span><HandCoins className="size-4 text-emerald-500" /></div>
-              <div className="mt-1 text-2xl font-bold tabular-nums">{ops ? fmtCedi(ops.daily.todayCollected, { compact: true }) : "—"}</div>
-              <div className="text-[11px] text-muted-foreground">Counter + wallets collected today</div>
+            <button onClick={() => { setRevPreset({ source: "all", serviceId: "all" }); setRevOpen(true); }} className="rounded-xl border border-r-4 border-r-emerald-500 bg-card p-4 text-left hover:bg-secondary/40 transition-colors">
+              <div className="flex items-center justify-between"><span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Income received today</span><HandCoins className="size-4 text-emerald-500" /></div>
+              <div className="mt-1 text-2xl font-bold tabular-nums">{ops?.incomeToday ? fmtCedi(ops.incomeToday.totalCents, { compact: true }) : "—"}</div>
+              <div className="text-[11px] text-muted-foreground">
+                {ops?.incomeToday ? `${ops.incomeToday.count} payment${ops.incomeToday.count === 1 ? "" : "s"} · fees GH₵${(ops.incomeToday.invoicesCents / 100).toFixed(0)} + daily GH₵${(ops.incomeToday.dailyCents / 100).toFixed(0)}` : "click for the breakdown"}
+              </div>
             </button>
             <button onClick={() => setModule("classes")} className="rounded-xl border border-r-4 border-r-amber-500 bg-card p-4 text-left hover:bg-secondary/40 transition-colors">
               <div className="flex items-center justify-between"><span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Classes</span><LayoutList className="size-4 text-amber-500" /></div>
@@ -239,20 +262,35 @@ export function Dashboard() {
         </div>
       )}
 
-      {/* daily-fees strip — per daily-service "received today" cards + unpaid balances
-          (admin/finance-visible roles only, same gate as the ops strip above) */}
+      {/* daily-fees strip — per daily-service "received today" cards with a
+          per-payment-method breakdown (CI3 parity); click opens the payments
+          modal pre-filtered to that service with the full filter set */}
       {ops && !isTeacher && (ops.dailyToday?.length ?? 0) > 0 && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mt-3">
-          {ops.dailyToday.map((d) => (
-            <button key={d.service} onClick={() => setModule("daily")} className="text-left rounded-xl border bg-card hover:bg-secondary/40 transition-colors p-4">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground truncate">{d.label} · today</span>
-                {SERVICE_ICONS[cat(d.label)] ?? SERVICE_ICONS.OTHER}
-              </div>
-              <div className="mt-1.5 text-xl font-bold tabular-nums text-primary">{fmtCedi(d.cents, { compact: true })}</div>
-              <div className="text-[11px] text-muted-foreground">{d.txns} charge{d.txns === 1 ? "" : "s"} received today</div>
-            </button>
-          ))}
+          {ops.dailyToday.map((d) => {
+            const mix = ops.dailyTodayByMethod?.[d.service] ?? [];
+            return (
+              <button key={d.service} onClick={() => { setRevPreset({ source: "daily", serviceId: d.service }); setRevOpen(true); }}
+                className="text-left rounded-xl border bg-card hover:bg-secondary/40 transition-colors p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground truncate">{d.label} · today</span>
+                  {SERVICE_ICONS[cat(d.label)] ?? SERVICE_ICONS.OTHER}
+                </div>
+                <div className="mt-1.5 text-xl font-bold tabular-nums text-primary">{fmtCedi(d.cents, { compact: true })}</div>
+                <div className="text-[11px] text-muted-foreground">{d.txns} charge{d.txns === 1 ? "" : "s"} received today</div>
+                {mix.length > 0 && (
+                  <div className="mt-1.5 space-y-0.5">
+                    {mix.slice(0, 3).map((m) => (
+                      <div key={m.method} className="flex justify-between text-[10px] text-muted-foreground">
+                        <span className="truncate">{PAYMENT_LABELS[m.method] ?? m.method}</span>
+                        <span className="tabular-nums font-medium">{fmtCedi(m.cents, { compact: true })}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </button>
+            );
+          })}
           <button onClick={() => setModule("daily", { tab: "ledger" })}
             className="text-left rounded-xl border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/30 hover:bg-red-100 dark:hover:bg-red-950/50 transition-colors p-4">
             <div className="flex items-center justify-between gap-2">
@@ -454,7 +492,184 @@ export function Dashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {/* CI3 modal_daily_revenue — “income received today” breakdown.
+          key-remount applies the preset (source/service) as initial state on open */}
+      {revOpen && (
+        <DailyRevenueDialog
+          key={`${revPreset.source}:${revPreset.serviceId}`}
+          open={revOpen}
+          onOpenChange={setRevOpen}
+          preset={revPreset}
+        />
+      )}
+
+      {/* school-owner AI assistant — typed + voice */}
+      {!isTeacher && <OwnerAssistant />}
     </div>
+  );
+}
+
+/* ── CI3 modal_daily_revenue.php parity — today's revenue breakdown modal.
+   Date picker + source (all / invoice fees / daily fees) + payment-method,
+   classroom and daily-service filters; summary cards (total, by source,
+   by method — split-aware) and the full payment list underneath. */
+function DailyRevenueDialog({ open, onOpenChange, preset }: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  preset: { source: string; serviceId: string };
+}) {
+  const { currentSchoolId } = useStore();
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [source, setSource] = useState(preset.source);
+  const [method, setMethod] = useState("all");
+  const [classroomId, setClassroomId] = useState("all");
+  const [serviceId, setServiceId] = useState(preset.serviceId);
+  const [rows, setRows] = useState<PaymentsPayload | null>(null);
+
+  // fetch on open + whenever a filter changes (stale-while-revalidate: the
+  // previous list stays visible until the new one lands; null shows LoadingBlock)
+  useEffect(() => {
+    if (!open || !currentSchoolId) return;
+    let cancelled = false;
+    apiGet<PaymentsPayload>(`/api/school/${currentSchoolId}/ops/overview?action=payments&date=${date}&source=${source}&method=${method}&classroomId=${classroomId}&serviceId=${serviceId}`)
+      .then((d) => { if (!cancelled) setRows(d); })
+      .catch(() => { if (!cancelled) setRows(null); });
+    return () => { cancelled = true; };
+  }, [open, currentSchoolId, date, source, method, classroomId, serviceId]);
+
+  const methodOptions = [...(rows?.byMethod ?? [])];
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-3xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><Receipt className="size-4" /> Income received — {rows ? rows.count : "…"} payment{rows?.count === 1 ? "" : "s"}</DialogTitle>
+          <DialogDescription>
+            {rows ? <>Total <b className="text-primary">{fmtCedi(rows.total)}</b> — invoice fees {fmtCedi(rows.bySource.invoices)} · daily fees {fmtCedi(rows.bySource.daily)}</> : "loading…"}
+          </DialogDescription>
+        </DialogHeader>
+
+        {/* filters — CI3 modal_daily_revenue: fee type / class / source */}
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+          <div className="space-y-1">
+            <Label className="text-xs">Date</Label>
+            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="h-9" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Source</Label>
+            <Select value={source} onValueChange={setSource}>
+              <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All income</SelectItem>
+                <SelectItem value="invoices">Invoice fees</SelectItem>
+                <SelectItem value="daily">Daily fees</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Method</Label>
+            <Select value={method} onValueChange={setMethod}>
+              <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All methods</SelectItem>
+                {methodOptions.map((m) => <SelectItem key={m.method} value={m.method}>{PAYMENT_LABELS[m.method] ?? m.method}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Class</Label>
+            <Select value={classroomId} onValueChange={setClassroomId}>
+              <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All classes</SelectItem>
+                {(rows?.classrooms ?? []).map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Service</Label>
+            <Select value={serviceId} onValueChange={setServiceId}>
+              <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All services</SelectItem>
+                {(rows?.services ?? []).map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        {/* method mix chips */}
+        {rows && rows.byMethod.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {rows.byMethod.map((m) => (
+              <Badge key={m.method} variant="secondary" className="gap-1.5">
+                {PAYMENT_LABELS[m.method] ?? m.method} · {fmtCedi(m.cents)}
+              </Badge>
+            ))}
+          </div>
+        )}
+
+        {/* payment list */}
+        {!rows ? (
+          <LoadingBlock label="Loading payments…" />
+        ) : rows.rows.length === 0 ? (
+          <EmptyState icon={<Filter className="size-5" />} title="No payments match" hint="Try widening the filters or another date." />
+        ) : (
+          <div className="rounded-lg border overflow-hidden">
+            <div className="max-h-[46vh] overflow-y-auto nice-scroll">
+              <table className="w-full text-sm">
+                <thead className="bg-secondary/60 sticky top-0 z-10">
+                  <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+                    <th className="px-3 py-2 font-semibold">Receipt</th>
+                    <th className="px-3 py-2 font-semibold">Learner</th>
+                    <th className="px-3 py-2 font-semibold">Class</th>
+                    <th className="px-3 py-2 font-semibold">Method</th>
+                    <th className="px-3 py-2 font-semibold text-right">Amount</th>
+                    <th className="px-3 py-2 font-semibold text-right">Time</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.rows.map((r) => (
+                    <tr key={r.id} className="border-b last:border-0 hover:bg-secondary/30">
+                      <td className="px-3 py-2.5">
+                        <div className="font-mono text-xs">{r.receiptNo}</div>
+                        <div className="text-[10px] text-muted-foreground">{r.category === "DAILY" ? "daily fees" : "invoice fees"}{r.services.length ? ` · ${r.services.map((s) => s.service).join(", ")}` : ""}</div>
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <div className="font-medium">{r.student}</div>
+                        {r.receivedByName && <div className="text-[10px] text-muted-foreground">by {r.receivedByName}</div>}
+                      </td>
+                      <td className="px-3 py-2.5 text-xs text-muted-foreground">{r.classroom || "—"}</td>
+                      <td className="px-3 py-2.5">
+                        {r.legs.length > 1 ? (
+                          <div className="space-y-0.5">
+                            {r.legs.map((l, i) => (
+                              <div key={i} className="text-[11px] flex items-center gap-1.5">
+                                <Badge variant="outline" className="text-[9px] px-1 py-0">split</Badge>
+                                <span>{PAYMENT_LABELS[l.method] ?? l.method}</span>
+                                <span className="tabular-nums font-medium">{fmtCedi(l.amountCents, { compact: true })}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-xs">{PAYMENT_LABELS[r.legs[0]?.method] ?? r.legs[0]?.method ?? "—"}</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2.5 text-right font-semibold tabular-nums">{fmtCedi(r.amountCents)}</td>
+                      <td className="px-3 py-2.5 text-right text-xs text-muted-foreground">{new Date(r.paidAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex items-center justify-between px-3 py-2 bg-secondary/40 text-xs">
+              <span className="text-muted-foreground">{rows.count} payment{rows.count === 1 ? "" : "s"} · {date}</span>
+              <span className="font-semibold tabular-nums">{fmtCedi(rows.total)}</span>
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 

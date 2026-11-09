@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { sortClassrooms } from "@/lib/classes";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
 import { sendSms } from "@/lib/sms";
@@ -236,15 +237,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   const term = await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId } }, include: { academicYear: true } });
 
-  const classrooms = await db.classroom.findMany({
+  const classrooms =sortClassrooms(await db.classroom.findMany({
     where: { schoolId },
     include: {
       classTeacher: true,
       _count: { select: { enrollments: { where: { status: "ACTIVE" } } } },
-      feeStructures: { where: { termId: term?.id }, include: { items: true }, orderBy: { id: "desc" }, take: 1 },
+      feeStructures: { where: { termId: term?.id }, include: { items: true }, take: 1 },
     },
-    orderBy: [{ gradeLevel: "asc" }, { name: "asc" }],
-  });
+    }));
 
   const discounts = await db.discount.findMany({
     where: { schoolId, scope: "INVOICE", active: true },

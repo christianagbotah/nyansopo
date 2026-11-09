@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { sortClassrooms } from "@/lib/classes";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
 import { paymentMethodLabel, resolveTransportFare, effectivePrice, type CollectMethodPart } from "@/lib/daily-billing";
@@ -90,7 +91,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   // ── CI3 my_collections parity: detailed rows (per-fee-type split per
   //    transaction) + class summary, for the Detailed / Class Summary reports ──
   const classroomById = new Map<string, string>();
-  (await db.classroom.findMany({ where: { schoolId }, select: { id: true, name: true } })).forEach((c) => classroomById.set(c.id, c.name));
+  (sortClassrooms(await db.classroom.findMany({ where: { schoolId }, select: { id: true, name: true, gradeLevel: true } }))).forEach((c) => classroomById.set(c.id, c.name));
   const classByStudent = new Map<string, string>();
   (await db.enrollment.findMany({ where: { schoolId, status: "ACTIVE" }, select: { studentId: true, classroomId: true } })).forEach((e) => classByStudent.set(e.studentId, classroomById.get(e.classroomId) ?? ""));
   const rows = payments.map((p) => {

@@ -119,6 +119,24 @@ async function main() {
   console.log(`✅ attendance backfill — ${picked.map((c) => `${c.name} (${c.enrollments.length} learners)`).join(" · ")}`);
   console.log(`   window ${start.toISOString().slice(0, 10)} → ${end.toISOString().slice(0, 10)} (${days.length} school days, term: ${term.name})`);
   console.log(`   created ${createdSessions} sessions / ${createdRecords} records · ${skipped} days already had sessions (skipped)`);
+
+  // guarantee the smoke-analytics precondition: at least one EXCUSED (with a
+  // reason) inside the B6 October window — when seed.ts already covered those
+  // days the featured-mark pass above never runs for them, so flip one ABSENT
+  const b6 = picked.find((c) => c.name.includes("Basic 6"));
+  if (b6) {
+    const oct = await db.attendanceRecord.findFirst({
+      where: {
+        status: "ABSENT",
+        session: { classroomId: b6.id, date: { gte: new Date("2026-10-01"), lt: new Date("2026-11-01") } },
+      },
+      orderBy: { id: "asc" },
+    });
+    if (oct) {
+      await db.attendanceRecord.update({ where: { id: oct.id }, data: { status: "EXCUSED", excusedReason: EXCUSE_REASONS[0] } });
+      console.log("   ensured one EXCUSED B6 October record for analytics parity");
+    }
+  }
 }
 
 export { main as seedAttendanceExtra };

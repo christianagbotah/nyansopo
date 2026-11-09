@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { sortClassrooms } from "@/lib/classes";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
 import { sendAutomated } from "@/lib/sms";
@@ -41,6 +42,7 @@ const noteSelect = {
   title: true, description: true, weekNumber: true, lessonDate: true, objectives: true,
   activities: true, content: true, status: true, feedback: true, version: true, sourceNoteId: true,
   submittedAt: true, reviewedAt: true, reviewedByName: true, createdAt: true, updatedAt: true,
+  strandCode: true, strandName: true, subStrandCode: true, subStrandName: true,
   strandId: true, subStrandId: true, contentStandardId: true, indicatorIds: true,
   coreCompetencies: true, tlm: true, assessment: true,
   strand: { select: { id: true, name: true, code: true, curriculum: true, subjectName: true, gradeLevel: true } },
@@ -51,6 +53,11 @@ const noteSelect = {
   subject: { select: { name: true } },
   reviews: { orderBy: { createdAt: "asc" as const }, select: { id: true, action: true, actorName: true, comment: true, createdAt: true } },
 };
+
+/** Optional free-text strand register fields (iEduPro ln parity): CODE and
+ *  NAME are captured separately from the framework alignment chain — trimmed,
+ *  capped, empty string → null so clearing the input clears the column. */
+const strandText = (v: unknown) => (typeof v === "string" ? (v.trim().slice(0, 200) || null) : null);
 
 /** Validate + resolve the optional curriculum-alignment chain sent by the note
  *  editor: strand › sub-strand › content standard › indicators. Each node must
@@ -143,7 +150,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   // ── overview: everything the module needs on load ──
   const [classrooms, subjects, terms, term, schoolRow] = await Promise.all([
-    db.classroom.findMany({ where: { schoolId }, orderBy: { name: "asc" }, select: { id: true, name: true, gradeLevel: true, classTeacherId: true } }),
+    sortClassrooms(await db.classroom.findMany({ where: { schoolId }, select: { id: true, name: true, gradeLevel: true, classTeacherId: true } })),
     db.subject.findMany({ where: { schoolId }, orderBy: { name: "asc" }, select: { id: true, name: true, code: true } }),
     db.term.findMany({
       where: { academicYear: { schoolId } },
@@ -265,6 +272,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       coreCompetencies: typeof body.coreCompetencies === "string" ? body.coreCompetencies.slice(0, 2000) : null,
       tlm: typeof body.tlm === "string" ? body.tlm.slice(0, 2000) : null,
       assessment: typeof body.assessment === "string" ? body.assessment.slice(0, 2000) : null,
+      // strand register (code + name) — free-text, echoed on the note list & print
+      strandCode: strandText(body.strandCode),
+      strandName: strandText(body.strandName),
+      subStrandCode: strandText(body.subStrandCode),
+      subStrandName: strandText(body.subStrandName),
     };
 
     if (id) {
@@ -353,6 +365,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           title: body.title ?? `${src.title} (copy)`, description: src.description,
           weekNumber: wk, lessonDate: new Date(), objectives: src.objectives,
           activities: src.activities, content: src.content,
+          strandCode: src.strandCode, strandName: src.strandName,
+          subStrandCode: src.subStrandCode, subStrandName: src.subStrandName,
           strandId: src.strandId, subStrandId: src.subStrandId, contentStandardId: src.contentStandardId,
           indicatorIds: src.indicatorIds, coreCompetencies: src.coreCompetencies, tlm: src.tlm, assessment: src.assessment,
           status: "DRAFT", sourceNoteId: src.id,

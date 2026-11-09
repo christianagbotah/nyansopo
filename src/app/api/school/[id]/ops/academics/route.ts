@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { sortClassrooms } from "@/lib/classes";
 import { db } from "@/lib/db";
 import { assertResultsEditable } from "@/lib/result-approval";
 import { opsAuth } from "@/lib/ops-auth";
@@ -444,7 +445,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   /* ── QUESTION PAPERS (CI3 question_paper parity) ── */
   if (tab === "papers") {
-    const classrooms = await db.classroom.findMany({ where: { schoolId }, orderBy: { name: "asc" } });
+    const classrooms =sortClassrooms(await db.classroom.findMany({ where: { schoolId }, }));
     const papers = await db.questionPaper.findMany({ where: { schoolId }, include: { classroom: true }, orderBy: { updatedAt: "desc" }, take: 200 });
     return NextResponse.json({
       classrooms: classrooms.map((c) => ({ id: c.id, name: c.name })),
@@ -486,7 +487,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 
   /* ── default bootstrap for all tabs ── */
-  const classrooms = await db.classroom.findMany({ where: { schoolId }, orderBy: { name: "asc" } });
+  const classrooms =sortClassrooms(await db.classroom.findMany({ where: { schoolId }, }));
   const subjects = await db.subject.findMany({ where: { schoolId }, orderBy: { name: "asc" } });
   const currentTerm = await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId } }, include: { academicYear: true } });
   const grades = await db.rawScoreGrade.findMany({ where: { schoolId }, orderBy: { sortOrder: "asc" } });

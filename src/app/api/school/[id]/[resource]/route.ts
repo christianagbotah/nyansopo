@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { sortClassrooms } from "@/lib/classes";
 import { db } from "@/lib/db";
 import { getUser, canOperateSchool } from "@/lib/session";
 import { canAny } from "@/lib/rbac";
 import { gradeFor } from "@/lib/grading";
-import { sendSms, sendAutomated } from "@/lib/sms";
+import { sendSms, sendAutomated, smsEventEnabled } from "@/lib/sms";
 import { invoicePaymentReceipt } from "@/lib/receipt-payload";
 import { nextInvoiceNo, nextReceiptNo, nextStudentIndex } from "@/lib/codes";
 import { effectiveValue } from "@/lib/discounts";
@@ -142,7 +143,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       /* CI3 bill_item catalog (student_payment.php “Add Billing Item”) + the
          class roster that feeds the Create-Invoice wizard's student picker */
       const billItems = await db.billItem.findMany({ where: { schoolId }, orderBy: [{ sortOrder: "asc" }, { title: "asc" }] });
-      const classrooms = await db.classroom.findMany({ where: { schoolId }, orderBy: { name: "asc" }, select: { id: true, name: true, gradeLevel: true, stageLabel: true } });
+      const classrooms =sortClassrooms(await db.classroom.findMany({ where: { schoolId }, select: {  id: true, name: true, gradeLevel: true, stageLabel: true  } }));
       const roster = await db.enrollment.findMany({
         where: { schoolId, status: "ACTIVE" },
         include: { student: { select: { id: true, firstName: true, lastName: true, nyansapoIndex: true, guardianName: true, guardianPhone: true } }, classroom: { select: { id: true, name: true, gradeLevel: true } } },
@@ -170,7 +171,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       const classId = q("classId");
       const dateStr = q("date") ?? new Date().toISOString().slice(0, 10);
       const date = new Date(dateStr);
-      const classrooms = await db.classroom.findMany({ where: { schoolId }, orderBy: { name: "asc" } });
+      const classrooms =sortClassrooms(await db.classroom.findMany({ where: { schoolId }, }));
       if (!classId) return NextResponse.json({ classrooms: classrooms.map((c) => ({ id: c.id, name: c.name, grade: c.gradeLevel, stage: c.stageLabel })), session: null, date: dateStr, termId: null, students: [] });
       const term = await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId } } });
       let session = await db.attendanceSession.findFirst({ where: { classroomId: classId, date }, include: { records: { include: { student: true } } } });
@@ -192,7 +193,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
     case "gradebook": {
       const classId = q("classId");
-      const classrooms = await db.classroom.findMany({ where: { schoolId }, orderBy: { name: "asc" } });
+      const classrooms =sortClassrooms(await db.classroom.findMany({ where: { schoolId }, }));
       const subjects = await db.subject.findMany({ where: { schoolId }, orderBy: { name: "asc" } });
       const term = await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId } } });
       if (!classId) return NextResponse.json({ classrooms: classrooms.map((c) => ({ id: c.id, name: c.name })), subjects: subjects.map((s) => ({ id: s.id, name: s.name, code: s.code })), termId: term?.id, classroom: null, students: [], assessments: [] });
@@ -218,7 +219,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       const years = await db.academicYear.findMany({ where: { schoolId }, include: { terms: true } }, );
       const allTerms = years.flatMap((y) => y.terms.map((t) => ({ id: t.id, name: `${t.name} — ${y.name}`, isCurrent: t.isCurrent })));
       const tid = termId ?? allTerms.find((t) => t.isCurrent)?.id;
-      const classrooms = await db.classroom.findMany({ where: { schoolId }, orderBy: { name: "asc" } });
+      const classrooms =sortClassrooms(await db.classroom.findMany({ where: { schoolId }, }));
       const cards = await db.reportCard.findMany({ where: { termId: tid }, include: { student: true, results: true }, orderBy: { classPosition: "asc" } });
       return NextResponse.json({
         terms: allTerms, termId: tid,
@@ -235,7 +236,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
     case "settings": {
       const years = await db.academicYear.findMany({ where: { schoolId }, include: { terms: true } });
-      const classrooms = await db.classroom.findMany({ where: { schoolId }, orderBy: { name: "asc" } });
+      const classrooms =sortClassrooms(await db.classroom.findMany({ where: { schoolId }, include: { sections: { orderBy: [{ sortOrder: "asc" }, { name: "asc" }] } } }));
       const subjects = await db.subject.findMany({ where: { schoolId } });
       const staff = await db.staff.findMany({ where: { schoolId } });
       const remarkTemplates = await db.remarkTemplate.findMany({ where: { schoolId }, orderBy: [{ category: "asc" }, { minPercent: "asc" }] });
@@ -268,7 +269,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       return NextResponse.json({
         school: { ...school, group: school.group ? { id: school.group.id, name: school.group.name, proprietorName: school.group.proprietorName } : null },
         years: years.map((y) => ({ id: y.id, name: y.name, isCurrent: y.isCurrent, terms: y.terms.map((t) => ({ id: t.id, name: t.name, startsAt: t.startsAt, endsAt: t.endsAt, isCurrent: t.isCurrent })) })),
-        classrooms: classrooms.map((c) => ({ id: c.id, name: c.name, grade: c.gradeLevel, stage: c.stageLabel, capacity: c.capacity })),
+        classrooms: classrooms.map((c) => ({ id: c.id, name: c.name, grade: c.gradeLevel, stage: c.stageLabel, capacity: c.capacity, sections: c.sections.map((s) => ({ id: s.id, name: s.name, sortOrder: s.sortOrder, capacity: s.capacity })) })),
         subjects: subjects.map((s) => ({ id: s.id, name: s.name, code: s.code })),
         staff: staff.map((s) => ({ id: s.id, fullName: s.fullName, role: s.role, title: s.title })),
         remarkTemplates: remarkTemplates.map((t) => ({ id: t.id, category: t.category, minPercent: t.minPercent, maxPercent: t.maxPercent, text: t.text, active: t.active })),
@@ -619,9 +620,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             },
           });
         }
-        // auto receipt SMS to the guardian
+        // auto receipt SMS to the guardian — per-event toggles (evt*) gate each trigger
         const smsSetting = await db.smsSetting.findUnique({ where: { schoolId } });
-        if (smsSetting?.autoPaymentReceipts) {
+        if (smsSetting?.autoPaymentReceipts && (await smsEventEnabled(db, schoolId, "PAYMENT_RECEIPT"))) {
           const balanceAfter = inv.totalCents - inv.discountCents - paid;
           await sendAutomated({
             db, schoolId, trigger: "PAYMENT_RECEIVED",
@@ -631,6 +632,24 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
               balance: `GH₵${(Math.max(0, balanceAfter) / 100).toFixed(2)}`, receipt: payment.receiptNo,
               date: new Date().toLocaleDateString("en-GB"),
             },
+            studentId: inv.studentId, recipientName: inv.student.guardianName, recipientPhone: inv.student.guardianPhone, sentByName: user.fullName,
+          });
+        }
+        // billed invoice settled in full — dedicated INVOICE_PAID event (evtInvoicePaid)
+        if (paid >= inv.totalCents - inv.discountCents && (await smsEventEnabled(db, schoolId, "INVOICE_PAID"))) {
+          await sendAutomated({
+            db, schoolId, trigger: "PAYMENT_RECEIVED",
+            defaultBody: `${inv.student.firstName}'s bill (${inv.invoiceNo}) is now FULLY PAID. Thank you!`,
+            vars: { student: inv.student.firstName, amount: `GH₵${(requested / 100).toFixed(2)}`, balance: "GH₵0.00", receipt: payment.receiptNo, date: new Date().toLocaleDateString("en-GB") },
+            studentId: inv.studentId, recipientName: inv.student.guardianName, recipientPhone: inv.student.guardianPhone, sentByName: user.fullName,
+          });
+        }
+        // overpayment banked as prepaid credit — OVERPAYMENT_CREDIT event
+        if (excess > 0 && (await smsEventEnabled(db, schoolId, "OVERPAYMENT_CREDIT"))) {
+          await sendAutomated({
+            db, schoolId, trigger: "PAYMENT_RECEIVED",
+            defaultBody: `An overpayment of GH₵${(excess / 100).toFixed(2)} for ${inv.student.firstName} has been banked as prepaid credit — it will be applied to future bills automatically.`,
+            vars: { student: inv.student.firstName, amount: `GH₵${(excess / 100).toFixed(2)}`, receipt: payment.receiptNo, date: new Date().toLocaleDateString("en-GB") },
             studentId: inv.studentId, recipientName: inv.student.guardianName, recipientPhone: inv.student.guardianPhone, sentByName: user.fullName,
           });
         }
@@ -715,7 +734,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         }
         // invoice-issued automation: notify guardians of freshly generated bills
         const issuedSetting = await db.smsSetting.findUnique({ where: { schoolId } });
-        if (created > 0 && issuedSetting?.autoFeeReminders) {
+        if (created > 0 && issuedSetting?.autoFeeReminders && (await smsEventEnabled(db, schoolId, "LEARNER_BILLED"))) {
           const newly = await db.invoice.findMany({ where: { termId: term.id, schoolId }, include: { student: true }, orderBy: { createdAt: "desc" }, take: created });
           for (const inv of newly) {
             const payable = inv.totalCents - inv.discountCents;
@@ -756,9 +775,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         for (const r of records) {
           await db.attendanceRecord.create({ data: { sessionId: session.id, studentId: r.studentId, status: r.status, markedOffline: !!offline } });
         }
-        // auto absence alerts to guardians (deduplicated per learner + date)
+        // per-event attendance SMS: ABSENT (evtLearnerAbsent) + PRESENT (evtLearnerPresent)
         const smsSetting = await db.smsSetting.findUnique({ where: { schoolId } });
-        if (smsSetting?.autoAbsenceAlerts && !offline) {
+        if (smsSetting?.autoAbsenceAlerts && !offline && (await smsEventEnabled(db, schoolId, "LEARNER_ABSENT"))) {
           const absent = records.filter((r: any) => r.status === "ABSENT");
           for (const r of absent) {
             const already = await db.smsMessage.findFirst({ where: { schoolId, studentId: r.studentId, category: "ATTENDANCE", sentAt: { gte: new Date(new Date(date).setHours(0, 0, 0, 0)) } } });
@@ -768,6 +787,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             await sendAutomated({
               db, schoolId, trigger: "ABSENCE_MARKED",
               defaultBody: `${st.firstName} was marked ABSENT today (${new Date(date).toLocaleDateString("en-GB")}). Please contact the school if this is unexpected.`,
+              vars: { student: st.firstName, date: new Date(date).toLocaleDateString("en-GB") },
+              studentId: st.id, recipientName: st.guardianName, recipientPhone: st.guardianPhone, sentByName: user.fullName,
+            });
+          }
+        }
+        if (!offline && (await smsEventEnabled(db, schoolId, "LEARNER_PRESENT"))) {
+          const present = records.filter((r: any) => r.status === "PRESENT");
+          for (const r of present) {
+            const already = await db.smsMessage.findFirst({ where: { schoolId, studentId: r.studentId, category: "ATTENDANCE", body: { contains: "PRESENT" }, sentAt: { gte: new Date(new Date(date).setHours(0, 0, 0, 0)) } } });
+            if (already) continue;
+            const st = await db.student.findUnique({ where: { id: r.studentId } });
+            if (!st) continue;
+            await sendAutomated({
+              db, schoolId, trigger: "ABSENCE_MARKED",
+              defaultBody: `${st.firstName} was marked PRESENT today (${new Date(date).toLocaleDateString("en-GB")}).`,
               vars: { student: st.firstName, date: new Date(date).toLocaleDateString("en-GB") },
               studentId: st.id, recipientName: st.guardianName, recipientPhone: st.guardianPhone, sentByName: user.fullName,
             });

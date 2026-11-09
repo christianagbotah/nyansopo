@@ -11,7 +11,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { ModuleHeader, LoadingBlock, EmptyState, StatusBadge } from "@/components/ui-helpers";
 import { toast } from "@/hooks/use-toast";
 import { fmtDate } from "@/lib/format";
-import { GraduationCap, Sparkles, Printer, Wand2, Send, RefreshCcw, Layers, FileText, Pencil, Save, Plus, Trash2, Eye, BookMarked, Baby, ClipboardCheck, Lock, LockOpen, History, ShieldCheck } from "lucide-react";
+import { GraduationCap, Sparkles, Printer, Wand2, Send, RefreshCcw, Layers, FileText, Pencil, Save, Plus, Trash2, Eye, BookMarked, Baby, ClipboardCheck, Lock, LockOpen, History, ShieldCheck, ArrowUpRight, HandCoins, Scale, Timer } from "lucide-react";
 import { ClassicSheet, ModernSheet, CompactSheet, CrecheSheet, WaecStatement, type SheetData, type CrecheSheetData } from "@/components/report-sheets";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -51,7 +51,7 @@ type RepData = {
 };
 
 export function Reports() {
-  const { currentSchoolId, navTarget } = useStore();
+  const { currentSchoolId, navTarget, setModule } = useStore();
   const [data, setData] = useState<RepData | null>(null);
   const [termId, setTermId] = useState<string | null>(null);
   const [classId, setClassId] = useState<string | null>(null);
@@ -267,6 +267,7 @@ export function Reports() {
           <TabsTrigger value="cumulative" className="gap-1.5"><Layers className="size-4" /> Cumulative</TabsTrigger>
           <TabsTrigger value="papers" className="gap-1.5"><BookMarked className="size-4" /> Question papers</TabsTrigger>
           <TabsTrigger value="control" className="gap-1.5"><ShieldCheck className="size-4" /> Results control</TabsTrigger>
+          <TabsTrigger value="finance" className="gap-1.5"><Scale className="size-4" /> Financial statements</TabsTrigger>
         </TabsList>
 
         {/* ── TERMINAL REPORT CARDS (existing module flow) ── */}
@@ -357,6 +358,11 @@ export function Reports() {
         {/* ── RESULTS CONTROL (CI3 academic_control_dashboard parity) ── */}
         <TabsContent value="control" className="mt-4">
           <ResultsControlTab />
+        </TabsContent>
+
+        {/* ── FINANCIAL STATEMENTS — CI3 parity quick access (deep links into Finance) ── */}
+        <TabsContent value="finance" className="mt-4">
+          <FinancialStatementsQuickAccess />
         </TabsContent>
       </Tabs>
 
@@ -1052,6 +1058,51 @@ function ResultsControlTab() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+/* ── CI3 FINANCIAL STATEMENTS — quick access (parity with the CI3 reports
+   tabs Receivables | Payables | Income & Expenditure). The heavy filter bars,
+   sub-total tables and print layouts live in Finance → CI3 statements; these
+   cards deep-link straight to each statement via the module nav target. */
+function FinancialStatementsQuickAccess() {
+  const { setModule } = useStore();
+  const CARDS: { tab: string; icon: typeof Scale; title: string; desc: string; tone: string }[] = [
+    {
+      tab: "receivables", icon: Timer, title: "Accounts receivables", tone: "text-destructive",
+      desc: "Outstanding balances per learner on open invoices, aged current / 1–30 / 31–60 / 61–90 / 90+ days from the due date, with class sub-totals and a grand total.",
+    },
+    {
+      tab: "payables", icon: HandCoins, title: "Accounts payables", tone: "text-amber-600",
+      desc: "Everything the school owes — pending supplier purchase orders, approved-but-unpaid payroll runs and learner credit balances (advance payments owed to parents).",
+    },
+    {
+      tab: "income-expenditure", icon: Scale, title: "Income & expenditure", tone: "text-primary",
+      desc: "The formal account statement — income by source and method against expenditure by category, received orders and paid payroll, closing with a surplus or deficit.",
+    },
+  ];
+  return (
+    <div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {CARDS.map((c) => (
+          <Card key={c.tab}>
+            <CardContent className="pt-5 space-y-3">
+              <c.icon className={`size-8 ${c.tone}`} />
+              <div>
+                <div className="font-semibold">{c.title}</div>
+                <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{c.desc}</p>
+              </div>
+              <Button size="sm" className="gap-1.5" onClick={() => setModule("finance", { tab: c.tab })}>
+                Open statement <ArrowUpRight className="size-3.5" />
+              </Button>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+      <p className="text-xs text-muted-foreground mt-3">
+        CI3 financial-reports parity — the full statements (date filters, term picker, sub-total rows, print &amp; CSV) live in <b>Finance → CI3 statements</b>.
+      </p>
     </div>
   );
 }

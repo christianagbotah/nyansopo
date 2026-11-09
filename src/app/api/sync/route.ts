@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { getUser } from "@/lib/session";
 import { nextInvoiceNo, nextReceiptNo, nextStudentIndex } from "@/lib/codes";
 import { sanitizeCollectItems, collectDailyItems, markPresentForDate, applyTransportUsage, TRANSPORT_USAGES, type TransportUsage } from "@/lib/daily-billing";
-import { sendAutomated } from "@/lib/sms";
+import { sendAutomated, smsEventEnabled } from "@/lib/sms";
 
 // POST /api/sync — flush the offline action queue (idempotent per clientId)
 export async function POST(req: NextRequest) {
@@ -52,8 +52,9 @@ export async function POST(req: NextRequest) {
             });
             const present = op.payload.markPresent ? await markPresentForDate(db, { schoolId, studentId, date: day }) : null;
             // auto receipt SMS — same trigger as the counter, fires when the queue flushes
+            // gated by the daily-fee payment event (evtDailyFeesPaid)
             const setting = await db.smsSetting.findUnique({ where: { schoolId } });
-            if (setting?.autoPaymentReceipts) {
+            if (setting?.autoPaymentReceipts && (await smsEventEnabled(db, schoolId, "DAILY_FEES_PAID"))) {
               await sendAutomated({
                 db, schoolId, trigger: "PAYMENT_RECEIVED",
                 defaultBody: `We have received GH₵${(collected.payment.amountCents / 100).toFixed(2)} for ${learner.firstName} (${collected.payment.receiptNo}) towards daily services. Thank you.`,

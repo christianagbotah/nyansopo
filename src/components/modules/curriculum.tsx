@@ -25,7 +25,7 @@ import { useToast } from "@/hooks/use-toast";
 import { CURRICULA, CurriculumKey, frameworkGrade } from "@/lib/curricula";
 import {
   NotebookPen, BookMarked, ListChecks, LibraryBig, ClipboardCheck, Plus, Pencil, Copy, Trash2,
-  Printer, FileText, CheckCircle2, Undo2, Eye, ExternalLink, FileCheck2, Wand2,
+  Printer, FileText, CheckCircle2, Undo2, Eye, ExternalLink, FileCheck2, Wand2, Sparkles, Loader2,
 } from "lucide-react";
 
 // ── types ──────────────────────────────────────────────────────
@@ -34,6 +34,9 @@ type Note = {
   id: string; staffId: string; classroomId: string; subjectId: string; termId: string; templateId: string | null;
   title: string; description: string | null; weekNumber: number; lessonDate: string;
   objectives: string; activities: string; content: string;
+  // strand register (iEduPro ln parity): CODE + NAME as free text alongside the
+  // framework alignment chain below, so unaligned notes still print the strand
+  strandCode: string | null; strandName: string | null; subStrandCode: string | null; subStrandName: string | null;
   strandId: string | null; subStrandId: string | null; contentStandardId: string | null;
   indicatorIds: string | null; coreCompetencies: string | null; tlm: string | null; assessment: string | null;
   strand: { id: string; name: string; code: string | null; curriculum: string; subjectName: string; gradeLevel: string } | null;
@@ -44,6 +47,17 @@ type Note = {
   createdAt: string; updatedAt: string;
   staff: { fullName: string }; classroom: { name: string; gradeLevel: string }; subject: { name: string };
   reviews: Review[];
+};
+/** /api/ai lesson-note field shape (generate + refine responses) */
+type LessonNoteAI = {
+  title?: string; description?: string; objectives?: string; activities?: string; content?: string;
+  tlm?: string; assessment?: string; coreCompetencies?: string;
+  strandCode?: string; strandName?: string; subStrandCode?: string; subStrandName?: string;
+};
+/** /api/ai/curriculum-suggest response */
+type StrandSuggestion = {
+  strandCode?: string; strandName?: string; subStrandCode?: string; subStrandName?: string;
+  indicators?: string[]; rationale?: string;
 };
 type Template = {
   id: string; name: string; subjectId: string | null; subject: string | null;
@@ -101,6 +115,14 @@ const ACTION_LABEL: Record<string, string> = {
   ENDORSE: "Endorsed", REQUEST_REVISION: "Returned for revision", RESUBMIT: "Resubmitted after revision",
 };
 const today = () => new Date().toISOString().slice(0, 10);
+
+/** Human strand line for list rows / print: free-text register code+name first,
+ *  falling back to the framework alignment when only that is set. */
+function noteStrandLine(n: Note): string {
+  const strand = [n.strandCode ?? n.strand?.code ?? null, n.strandName ?? n.strand?.name ?? null].filter(Boolean).join(" · ");
+  const sub = [n.subStrandCode ?? n.subStrand?.code ?? null, n.subStrandName ?? n.subStrand?.name ?? null].filter(Boolean).join(" · ");
+  return strand ? `${strand}${sub ? ` › ${sub}` : ""}` : "";
+}
 
 export function Curriculum() {
   const { currentSchoolId, navTarget } = useStore();
@@ -228,9 +250,9 @@ export function Curriculum() {
           <TabsTrigger value="framework" className="gap-1.5"><BookMarked className="size-4" /> Framework</TabsTrigger>
         </TabsList>
 
-        <NotesTab data={data} onEdit={(n) => setNoteForm({ ...n })} onView={setViewing} onCopy={(n) => setNoteForm({ classroomId: n.classroomId, subjectId: n.subjectId, termId: n.termId, weekNumber: Math.min(15, n.weekNumber + 1), title: n.title, objectives: n.objectives, activities: n.activities, content: n.content, description: n.description, strandId: n.strandId, subStrandId: n.subStrandId, contentStandardId: n.contentStandardId, indicatorIds: n.indicatorIds, coreCompetencies: n.coreCompetencies, tlm: n.tlm, assessment: n.assessment, strand: n.strand, subStrand: n.subStrand, contentStandard: n.contentStandard, sourceNoteId: n.id, status: "PENDING" })} onDelete={(n) => post({ action: "note.delete", id: n.id }, "Lesson note deleted")} busy={busy} />
+        <NotesTab data={data} onEdit={(n) => setNoteForm({ ...n })} onView={setViewing} onCopy={(n) => setNoteForm({ classroomId: n.classroomId, subjectId: n.subjectId, termId: n.termId, weekNumber: Math.min(15, n.weekNumber + 1), title: n.title, objectives: n.objectives, activities: n.activities, content: n.content, description: n.description, strandCode: n.strandCode, strandName: n.strandName, subStrandCode: n.subStrandCode, subStrandName: n.subStrandName, strandId: n.strandId, subStrandId: n.subStrandId, contentStandardId: n.contentStandardId, indicatorIds: n.indicatorIds, coreCompetencies: n.coreCompetencies, tlm: n.tlm, assessment: n.assessment, strand: n.strand, subStrand: n.subStrand, contentStandard: n.contentStandard, sourceNoteId: n.id, status: "PENDING" })} onDelete={(n) => post({ action: "note.delete", id: n.id }, "Lesson note deleted")} busy={busy} />
         {data.canReview && <ReviewTab data={data} onView={setViewing} onReview={setReviewing} />}
-        <TemplatesTab data={data} onEdit={(t) => setTemplateForm({ ...t })} onNew={() => setTemplateForm({})} onDelete={(t) => post({ action: "template.delete", id: t.id }, "Template deleted")} busy={busy} onUseTemplate={(t) => setNoteForm({ templateId: t.id, title: t.name, objectives: t.objectives, activities: t.activities, content: t.content, description: t.description, weekNumber: data.term?.weeksElapsed ?? 1, lessonDate: today(), status: "PENDING" })} />
+        <TemplatesTab data={data} onEdit={(t) => setTemplateForm({ ...t })} onNew={() => setTemplateForm({})} onDelete={(t) => post({ action: "template.delete", id: t.id }, "Template deleted")} busy={busy} onUseTemplate={(t) => setNoteForm({ templateId: t.id, title: t.name, objectives: t.objectives, activities: t.activities, content: t.content, description: t.description, strandName: t.strand ?? undefined, subStrandName: t.subStrand ?? undefined, weekNumber: data.term?.weeksElapsed ?? 1, lessonDate: today(), status: "PENDING" })} />
         <SyllabusTab data={data} syllabusClass={syllabusClass} setSyllabusClass={setSyllabusClass} syllabusSubject={syllabusSubject} setSyllabusSubject={setSyllabusSubject} topics={topics} coverage={coverage} onEdit={(t) => setTopicForm({ ...t })} onNew={(week) => setTopicForm({ weekNumber: week, classroomId: syllabusClass, subjectId: syllabusSubject !== "all" ? syllabusSubject : undefined })} onToggle={async (t, completed) => { await post({ action: "syllabus.save", id: t.id, classroomId: syllabusClass, subjectId: t.subjectId, weekNumber: t.weekNumber, topic: t.topic, completed }, completed ? "Topic marked as taught" : "Topic reopened"); }} onDelete={(t) => post({ action: "syllabus.delete", id: t.id }, "Topic removed")} busy={busy} />
         <MaterialsTab data={data} materials={materials} onNew={() => setMaterialForm({})} onEdit={(m) => setMaterialForm({ ...m })} onDelete={(m) => post({ action: "material.delete", id: m.id }, "Material removed")} busy={busy} />
         <CompletionTab data={data} />
@@ -351,7 +373,11 @@ function NotesTab({ data, onEdit, onView, onCopy, onDelete, busy }: {
                       <div className="text-[11px] text-muted-foreground">{fmtDate(n.lessonDate)} · v{n.version}{n.sourceNoteId ? " · copied" : ""}</div>
                     </button>
                   </TableCell>
-                  <TableCell><div className="text-sm">{n.classroom.name}</div><div className="text-[11px] text-muted-foreground">{n.subject.name}</div></TableCell>
+                  <TableCell>
+                    <div className="text-sm">{n.classroom.name}</div>
+                    <div className="text-[11px] text-muted-foreground">{n.subject.name}</div>
+                    {noteStrandLine(n) && <div className="text-[11px] text-muted-foreground">{noteStrandLine(n)}</div>}
+                  </TableCell>
                   <TableCell className="tabular-nums">W{n.weekNumber}</TableCell>
                   {data.canReview && <TableCell className="text-sm">{n.staff.fullName}{own ? " (you)" : ""}</TableCell>}
                   <TableCell>
@@ -391,6 +417,7 @@ function ReviewTab({ data, onView, onReview }: { data: Overview; onView: (n: Not
                 <Badge variant="secondary">{n.classroom.name}</Badge>
                 <Badge variant="outline">{n.subject.name}</Badge>
                 <Badge variant="outline">Week {n.weekNumber}</Badge>
+                {noteStrandLine(n) && <Badge variant="outline" className="max-w-72 truncate font-normal">{noteStrandLine(n)}</Badge>}
               </div>
               <div className="text-xs text-muted-foreground mt-1">
                 {n.staff.fullName} · submitted {fmtDate(n.submittedAt ?? n.createdAt)} · v{n.version}
@@ -678,12 +705,18 @@ function NoteDialogForm({ data, form, busy, onClose, onSave }: {
     weekNumber: form.weekNumber ?? data.term?.weeksElapsed ?? 1, lessonDate: form.lessonDate ? form.lessonDate.slice(0, 10) : today(),
     title: form.title ?? "", description: form.description ?? "", objectives: form.objectives ?? "", activities: form.activities ?? "", content: form.content ?? "",
     fwCurriculum: form.strand?.curriculum ?? data.curricula[0] ?? "GES",
+    strandCode: form.strandCode ?? "", strandName: form.strandName ?? "", subStrandCode: form.subStrandCode ?? "", subStrandName: form.subStrandName ?? "",
     strandId: form.strandId ?? "", subStrandId: form.subStrandId ?? "", contentStandardId: form.contentStandardId ?? "",
     indicatorIds: (() => { try { return form.indicatorIds ? (JSON.parse(form.indicatorIds) as string[]) : []; } catch { return []; } })(),
     coreCompetencies: form.coreCompetencies ?? "", tlm: form.tlm ?? "", assessment: form.assessment ?? "",
   }));
   const editing = !!form.id;
   const termId = f.termId || data.terms.find((t) => t.isCurrent)?.id || data.terms[0]?.id || "";
+
+  /* ── AI actions: draft / refine / next-strand suggestion ── */
+  const [aiBusy, setAiBusy] = useState<null | "generate" | "refine" | "suggest">(null);
+  const [refineOpen, setRefineOpen] = useState(false);
+  const [refineInstruction, setRefineInstruction] = useState("");
 
   /* ── curriculum framework for the chosen class+subject+curriculum ── */
   const fwSubjectName = data.subjects.find((s) => s.id === f.subjectId)?.name ?? "";
@@ -732,11 +765,97 @@ function NoteDialogForm({ data, form, busy, onClose, onSave }: {
     setF({ ...f, objectives: f.objectives ? `${f.objectives}\n${lines.join("\n")}` : `By the end of the lesson, learners will be able to:\n${lines.join("\n")}` });
   };
 
+  /* ── AI drafting (GES SBC/CCP register style) ── */
+  const applyAI = (r: LessonNoteAI) => {
+    setF((prev) => ({
+      ...prev,
+      ...(r.title ? { title: r.title } : {}),
+      ...(r.description ? { description: r.description } : {}),
+      ...(r.objectives ? { objectives: r.objectives } : {}),
+      ...(r.activities ? { activities: r.activities } : {}),
+      ...(r.content ? { content: r.content } : {}),
+      ...(r.tlm ? { tlm: r.tlm } : {}),
+      ...(r.assessment ? { assessment: r.assessment } : {}),
+      ...(r.coreCompetencies ? { coreCompetencies: r.coreCompetencies } : {}),
+      ...(r.strandCode ? { strandCode: r.strandCode } : {}),
+      ...(r.strandName ? { strandName: r.strandName } : {}),
+      ...(r.subStrandCode ? { subStrandCode: r.subStrandCode } : {}),
+      ...(r.subStrandName ? { subStrandName: r.subStrandName } : {}),
+    }));
+  };
+
+  const aiDraft = async () => {
+    if (!schoolId || !f.classroomId || !f.subjectId) return;
+    setAiBusy("generate");
+    try {
+      const indicators = (fwStandard?.indicators ?? []).filter((i) => f.indicatorIds.includes(i.id))
+        .map((i) => `${i.code ? `${i.code} — ` : ""}${i.statement}`);
+      const r = await apiPost<LessonNoteAI>("/api/ai/lesson-note-generate", {
+        schoolId,
+        draft: {
+          classroomId: f.classroomId, subjectId: f.subjectId, weekNumber: f.weekNumber,
+          strandCode: f.strandCode, strandName: f.strandName, subStrandCode: f.subStrandCode, subStrandName: f.subStrandName,
+          indicators, topicHint: [f.title, f.description].filter(Boolean).join(" — ") || undefined,
+        },
+      });
+      applyAI(r);
+      toast({ title: "AI draft ready", description: "Review and adjust before submitting for review." });
+    } catch (e: any) {
+      toast({ title: "AI draft failed", description: e.message, variant: "destructive" });
+    } finally { setAiBusy(null); }
+  };
+
+  const aiRefine = async () => {
+    if (!schoolId || !form.id || !refineInstruction.trim()) return;
+    setAiBusy("refine");
+    try {
+      const r = await apiPost<LessonNoteAI>("/api/ai/lesson-note-refine", { schoolId, lessonNoteId: form.id, instruction: refineInstruction.trim() });
+      applyAI(r);
+      toast({ title: "AI refinement applied", description: "Saved to the note — review and resubmit." });
+    } catch (e: any) {
+      toast({ title: "AI refine failed", description: e.message, variant: "destructive" });
+    } finally { setAiBusy(null); }
+  };
+
+  const suggestNext = async () => {
+    if (!schoolId || !f.classroomId || !f.subjectId) return;
+    setAiBusy("suggest");
+    try {
+      const r = await apiPost<StrandSuggestion>("/api/ai/curriculum-suggest", { schoolId, classroomId: f.classroomId, subjectId: f.subjectId });
+      // match the suggestion back onto the framework pickers when it exists there
+      const norm = (v?: string | null) => (v ?? "").trim().toLowerCase();
+      const strandMatch = (fwTree ?? []).find((s) => (r.strandCode && s.code === r.strandCode) || (r.strandName && norm(s.name) === norm(r.strandName))) ?? null;
+      const subMatch = strandMatch?.subStrands?.find((b) => (r.subStrandCode && b.code === r.subStrandCode) || (r.subStrandName && norm(b.name) === norm(r.subStrandName))) ?? null;
+      const nextAlign: Record<string, unknown> =
+        strandMatch && strandMatch.id !== f.strandId
+          ? { strandId: strandMatch.id, subStrandId: subMatch?.id ?? "", contentStandardId: "", indicatorIds: [] }
+          : subMatch && subMatch.id !== f.subStrandId
+            ? { subStrandId: subMatch.id, contentStandardId: "", indicatorIds: [] }
+            : {};
+      setF((prev) => ({
+        ...prev,
+        strandCode: r.strandCode || prev.strandCode,
+        strandName: r.strandName || prev.strandName,
+        subStrandCode: r.subStrandCode || prev.subStrandCode,
+        subStrandName: r.subStrandName || prev.subStrandName,
+        ...nextAlign,
+        ...(r.indicators?.length && !prev.objectives.trim()
+          ? { objectives: `By the end of the lesson, learners will be able to:\n${r.indicators.map((i) => `• ${i}`).join("\n")}` }
+          : {}),
+      }));
+      toast({ title: `Next: ${r.strandName || "strand"}${r.subStrandName ? ` › ${r.subStrandName}` : ""}`, description: r.rationale || undefined });
+    } catch (e: any) {
+      toast({ title: "AI suggestion failed", description: e.message, variant: "destructive" });
+    } finally { setAiBusy(null); }
+  };
+
   const payload = () => ({
     id: form.id, classroomId: f.classroomId, subjectId: f.subjectId, termId,
     weekNumber: f.weekNumber, lessonDate: f.lessonDate, title: f.title, description: f.description,
     objectives: f.objectives, activities: f.activities, content: f.content,
     templateId: f.templateId && f.templateId !== "none" ? f.templateId : null,
+    strandCode: f.strandCode || null, strandName: f.strandName || null,
+    subStrandCode: f.subStrandCode || null, subStrandName: f.subStrandName || null,
     strandId: f.strandId || null, subStrandId: f.subStrandId || null, contentStandardId: f.contentStandardId || null,
     indicatorIds: f.indicatorIds, coreCompetencies: f.coreCompetencies || null, tlm: f.tlm || null, assessment: f.assessment || null,
   });
@@ -799,7 +918,12 @@ function NoteDialogForm({ data, form, busy, onClose, onSave }: {
         <div className="rounded-xl border bg-muted/30 p-3 space-y-3">
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Curriculum alignment</div>
-            {fwTree && fwTree.length > 0 && <span className="text-[11px] text-muted-foreground">{fwTree.length} strands available</span>}
+            <div className="flex items-center gap-2">
+              {fwTree && fwTree.length > 0 && <span className="text-[11px] text-muted-foreground">{fwTree.length} strands available</span>}
+              <Button type="button" size="sm" variant="outline" className="h-7 gap-1 text-xs" disabled={aiBusy !== null || !f.classroomId || !f.subjectId} onClick={suggestNext} title="Let AI suggest the next strand & sub-strand for this class and subject">
+                {aiBusy === "suggest" ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3" />} Suggest next
+              </Button>
+            </div>
           </div>
           <FormGrid cols={3}>
             <FormField label="Curriculum">
@@ -809,7 +933,10 @@ function NoteDialogForm({ data, form, busy, onClose, onSave }: {
               </Select>
             </FormField>
             <FormField label={CURRICULA[f.fwCurriculum as CurriculumKey]?.hierarchy.strand ?? "Strand"}>
-              <Select value={f.strandId} onValueChange={(v) => setF({ ...f, strandId: v, subStrandId: "", contentStandardId: "", indicatorIds: [] })}>
+              <Select value={f.strandId} onValueChange={(v) => {
+                const s = (fwTree ?? []).find((x) => x.id === v) ?? null;
+                setF({ ...f, strandId: v, subStrandId: "", contentStandardId: "", indicatorIds: [], ...(v !== "none" && s ? { strandCode: s.code ?? "", strandName: s.name } : {}) });
+              }}>
                 <SelectTrigger><SelectValue placeholder={fwTree === null ? "Choose class & subject first" : "Not aligned"} /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">Not aligned</SelectItem>
@@ -818,13 +945,34 @@ function NoteDialogForm({ data, form, busy, onClose, onSave }: {
               </Select>
             </FormField>
             <FormField label={CURRICULA[f.fwCurriculum as CurriculumKey]?.hierarchy.subStrand ?? "Sub-strand"}>
-              <Select value={f.subStrandId} onValueChange={(v) => setF({ ...f, subStrandId: v, contentStandardId: "", indicatorIds: [] })} disabled={!fwStrand}>
+              <Select value={f.subStrandId} onValueChange={(v) => {
+                const b = (fwStrand?.subStrands ?? []).find((x) => x.id === v) ?? null;
+                setF({ ...f, subStrandId: v, contentStandardId: "", indicatorIds: [], ...(v !== "none" && b ? { subStrandCode: b.code ?? "", subStrandName: b.name } : {}) });
+              }} disabled={!fwStrand}>
                 <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">—</SelectItem>
                   {(fwStrand?.subStrands ?? []).map((b) => <SelectItem key={b.id} value={b.id}>{b.code ? `${b.code} · ` : ""}{b.name}</SelectItem>)}
                 </SelectContent>
               </Select>
+            </FormField>
+          </FormGrid>
+
+          {/* ── strand register (iEduPro ln parity): CODE + NAME as printed on the
+              GES lesson-note register — auto-filled from the framework pickers
+              above, editable free-text when a note isn't framework-aligned ── */}
+          <FormGrid cols={2}>
+            <FormField label="Strand code" hint="As printed on the register">
+              <Input value={f.strandCode} onChange={(e) => setF({ ...f, strandCode: e.target.value })} placeholder="e.g. B4.1" className="h-8" />
+            </FormField>
+            <FormField label="Strand name">
+              <Input value={f.strandName} onChange={(e) => setF({ ...f, strandName: e.target.value })} placeholder="e.g. Number" className="h-8" />
+            </FormField>
+            <FormField label="Sub-strand code">
+              <Input value={f.subStrandCode} onChange={(e) => setF({ ...f, subStrandCode: e.target.value })} placeholder="e.g. B4.1.1" className="h-8" />
+            </FormField>
+            <FormField label="Sub-strand name">
+              <Input value={f.subStrandName} onChange={(e) => setF({ ...f, subStrandName: e.target.value })} placeholder="e.g. Counting, Representation & Cardinality" className="h-8" />
             </FormField>
           </FormGrid>
           {fwSub && (fwSub.standards ?? []).length > 0 && (
@@ -857,6 +1005,35 @@ function NoteDialogForm({ data, form, busy, onClose, onSave }: {
             </div>
           )}
         </div>
+
+        {/* ── AI drafting + the lesson plan proper ── */}
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Lesson plan</div>
+          <div className="flex gap-1.5">
+            <Button type="button" size="sm" variant="outline" className="h-7 gap-1 text-xs" disabled={aiBusy !== null || !f.classroomId || !f.subjectId} onClick={aiDraft} title="Draft the whole note from the class, subject, week & strand focus">
+              {aiBusy === "generate" ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3" />} AI draft
+            </Button>
+            {editing && (
+              <Button type="button" size="sm" variant="outline" className="h-7 gap-1 text-xs" disabled={aiBusy !== null} onClick={() => setRefineOpen((v) => !v)} title="Ask AI to refine the saved note with an instruction">
+                <Wand2 className="size-3" /> AI refine
+              </Button>
+            )}
+          </div>
+        </div>
+        {refineOpen && editing && (
+          <div className="rounded-xl border bg-muted/30 p-3 space-y-2">
+            <Input value={refineInstruction} onChange={(e) => setRefineInstruction(e.target.value)} placeholder="e.g. Make the activities more learner-centred · add TLMs for a low-resource classroom" />
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[11px] text-muted-foreground">Applied to the saved note, then pulled back into this form — review and resubmit.</p>
+              <div className="flex gap-1.5 shrink-0">
+                <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setRefineOpen(false)}>Hide</Button>
+                <Button type="button" size="sm" className="h-7 gap-1 text-xs" disabled={aiBusy !== null || !refineInstruction.trim()} onClick={aiRefine}>
+                  {aiBusy === "refine" ? <Loader2 className="size-3 animate-spin" /> : <Wand2 className="size-3" />} Refine note
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
 
         <FormGrid cols={3}>
           <FormField label="Lesson objectives" span={3} hint="By the end of the lesson learners can…">
@@ -930,10 +1107,10 @@ function NoteViewDialog({ note, onClose }: { note: Note | null; onClose: () => v
                   <div className="font-bold text-lg">{note.classroom.name} — {note.subject.name}</div>
                   <div className="text-sm font-medium">{note.title}</div>
                   <div className="text-xs text-muted-foreground">Week {note.weekNumber} · {fmtDate(note.lessonDate)} · v{note.version}</div>
-                  {note.strand && (
+                  {(noteStrandLine(note) || note.contentStandard) && (
                     <div className="text-[11px] text-muted-foreground mt-1">
-                      {CURRICULA_MAP[note.strand.curriculum] ?? note.strand.curriculum} · {note.strand.code ? `${note.strand.code} ` : ""}{note.strand.name}
-                      {note.subStrand ? ` › ${note.subStrand.name}` : ""}
+                      {note.strand ? `${CURRICULA_MAP[note.strand.curriculum] ?? note.strand.curriculum} · ` : ""}
+                      {noteStrandLine(note)}
                       {note.contentStandard ? ` · ${note.contentStandard.code ?? ""}` : ""}
                     </div>
                   )}

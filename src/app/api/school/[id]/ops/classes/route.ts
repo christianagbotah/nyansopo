@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { sortClassrooms } from "@/lib/classes";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
 
-// ── GET /api/school/[id]/ops/classes — classes, teachers, subjects, timetable ──
+// ── GET /api/school/[id]/ops/classes — classes, sections, teachers, subjects, timetable ──
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: schoolId } = await params;
   const auth = await opsAuth(req, schoolId, "GET", { perms: ["classes.view"] });
@@ -11,15 +12,22 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const url = new URL(req.url);
   const classroomId = url.searchParams.get("classroomId") ?? undefined;
 
-  const classrooms = await db.classroom.findMany({
+  const classrooms = sortClassrooms(await db.classroom.findMany({
     where: { schoolId },
     include: {
       classTeacher: true,
-      timetableSlots: { include: { subject: true, staff: true }, orderBy: [{ dayOfWeek: "asc" }, { startMinute: "asc" }] },
-      _count: { select: { enrollments: { where: { status: "ACTIVE" } } } },
+      timetableSlots: { include: { subject: true, staff: true } },
+      sections: { orderBy: [{ sortOrder: "asc" }, { name: "asc" }], include: { _count: { select: { enrollments: { where: { status: "ACTIVE" } } } } } },
+      _count: {
+        select: {
+          enrollments: { where: { status: "ACTIVE" } },
+          feeStructures: true, assessments: true, attendanceSessions: true, timetableSlots: true,
+          dailyServiceRates: true, onlineExams: true, questionPapers: true, lessonNoteTemplates: true,
+          lessonNotes: true, studyMaterials: true, syllabusTopics: true, resultApprovals: true,
+        },
+      },
     },
-    orderBy: [{ gradeLevel: "asc" }, { name: "asc" }],
-  });
+  }));
 
   const staff = await db.staff.findMany({
     where: { schoolId, active: true },
@@ -39,6 +47,20 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       classTeacherId: c.classTeacherId,
       classTeacher: c.classTeacher?.fullName ?? null,
       enrolled: c._count.enrollments,
+      sections: c.sections.map((s) => ({
+        id: s.id,
+        name: s.name,
+        sortOrder: s.sortOrder,
+        capacity: s.capacity,
+        note: s.note,
+        enrolled: s._count.enrollments,
+      })),
+      // any dependent record blocks Edit + Delete (CI3 parity: guarded classes)
+      recordCount:
+        c._count.enrollments + c._count.feeStructures + c._count.assessments + c._count.attendanceSessions +
+        c._count.timetableSlots + c._count.dailyServiceRates + c._count.onlineExams + c._count.questionPapers +
+        c._count.lessonNoteTemplates + c._count.lessonNotes + c._count.studyMaterials + c._count.syllabusTopics +
+        c._count.resultApprovals,
       slots: c.timetableSlots.map((s) => ({
         id: s.id,
         subjectId: s.subjectId,
@@ -90,11 +112,63 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   if (action === "delete-classroom") {
     const { id } = body;
-    const existing = await db.classroom.findUnique({ where: { id }, include: { _count: { select: { enrollments: true } } } });
+    const existing = await db.classroom.findUnique({
+      where: { id },
+      include: {
+        _count: {
+          select: {
+            enrollments: true, feeStructures: true, assessments: true, attendanceSessions: true,
+            timetableSlots: true, dailyServiceRates: true, onlineExams: true, questionPapers: true,
+            lessonNoteTemplates: true, lessonNotes: true, studyMaterials: true, syllabusTopics: true,
+            resultApprovals: true, sections: true,
+          },
+        },
+      },
+    });
     if (!existing || existing.schoolId !== schoolId) return NextResponse.json({ error: "Class not found" }, { status: 404 });
-    if (existing._count.enrollments > 0) return NextResponse.json({ error: `Cannot delete — ${existing._count.enrollments} learner(s) are enrolled in this class` }, { status: 400 });
+    const used =
+      existing._count.enrollments + existing._count.feeStructures + existing._count.assessments +
+      existing._count.attendanceSessions + existing._count.dailyServiceRates + existing._count.onlineExams +
+      existing._count.questionPapers + existing._count.lessonNoteTemplates + existing._count.lessonNotes +
+      existing._count.studyMaterials + existing._count.syllabusTopics + existing._count.resultApprovals;
+    if (used > 0) return NextResponse.json({ error: `Cannot delete — this class has ${used} dependent record(s) (enrolments, fee structures, marks, attendance, timetable etc.)` }, { status: 400 });
+    if (existing._count.sections > 0) await db.section.deleteMany({ where: { classroomId: id } });
     await db.timetableSlot.deleteMany({ where: { classroomId: id } });
     await db.classroom.delete({ where: { id } });
+    return NextResponse.json({ ok: true });
+  }
+
+  // ── SECTION management (streams within a class) ──────────────────────
+  if (action === "save-section") {
+    const { id, classroomId, name, sortOrder, capacity, note } = body;
+    if (!classroomId) return NextResponse.json({ error: "Class is required" }, { status: 400 });
+    if (!name?.trim()) return NextResponse.json({ error: "Section name is required" }, { status: 400 });
+    const room = await db.classroom.findUnique({ where: { id: classroomId } });
+    if (!room || room.schoolId !== schoolId) return NextResponse.json({ error: "Class not found" }, { status: 404 });
+    const data = {
+      name: String(name).trim(),
+      sortOrder: Number(sortOrder) || 0,
+      capacity: capacity == null || capacity === "" ? null : Math.max(1, Number(capacity)),
+      note: note?.trim() || null,
+    };
+    if (id) {
+      const existing = await db.section.findUnique({ where: { id } });
+      if (!existing || existing.schoolId !== schoolId) return NextResponse.json({ error: "Section not found" }, { status: 404 });
+      const updated = await db.section.update({ where: { id }, data }).catch(() => null);
+      if (!updated) return NextResponse.json({ error: `A section called “${data.name}” already exists in this class` }, { status: 400 });
+      return NextResponse.json({ section: updated });
+    }
+    const created = await db.section.create({ data: { ...data, classroomId, schoolId } }).catch(() => null);
+    if (!created) return NextResponse.json({ error: `A section called “${data.name}” already exists in this class` }, { status: 400 });
+    return NextResponse.json({ section: created });
+  }
+
+  if (action === "delete-section") {
+    const { id } = body;
+    const existing = await db.section.findUnique({ where: { id }, include: { _count: { select: { enrollments: true } } } });
+    if (!existing || existing.schoolId !== schoolId) return NextResponse.json({ error: "Section not found" }, { status: 404 });
+    if (existing._count.enrollments > 0) return NextResponse.json({ error: `Cannot delete — ${existing._count.enrollments} learner(s) are placed in this section` }, { status: 400 });
+    await db.section.delete({ where: { id } });
     return NextResponse.json({ ok: true });
   }
 

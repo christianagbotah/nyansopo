@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { sortClassrooms } from "@/lib/classes";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
 import { sendSms, sendAutomated, renderTemplate } from "@/lib/sms";
@@ -28,7 +29,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const delivered = await db.smsMessage.count({ where: { schoolId, status: "DELIVERED" } });
 
   // audiences: classes for targeted sending
-  const classrooms = await db.classroom.findMany({ where: { schoolId }, orderBy: { name: "asc" } });
+  const classrooms =sortClassrooms(await db.classroom.findMany({ where: { schoolId }, }));
   const enrolled = await db.enrollment.findMany({ where: { schoolId, status: "ACTIVE" }, include: { student: true, classroom: true } });
   const automations = await db.smsAutomation.findMany({ where: { schoolId }, orderBy: { createdAt: "asc" } });
 
@@ -42,7 +43,16 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   return NextResponse.json({
     gateway: gatewayConfigStatus(),
-    setting: setting ? { provider: setting.provider, senderId: setting.senderId, credits: setting.credits, autoFeeReminders: setting.autoFeeReminders, autoAbsenceAlerts: setting.autoAbsenceAlerts, autoPaymentReceipts: setting.autoPaymentReceipts, autoLessonNoteAlerts: setting.autoLessonNoteAlerts } : null,
+    setting: setting ? {
+      provider: setting.provider, senderId: setting.senderId, credits: setting.credits,
+      autoFeeReminders: setting.autoFeeReminders, autoAbsenceAlerts: setting.autoAbsenceAlerts,
+      autoPaymentReceipts: setting.autoPaymentReceipts, autoLessonNoteAlerts: setting.autoLessonNoteAlerts,
+      // per-event notification gates (iEduPro parity)
+      evtInvoicePaid: setting.evtInvoicePaid, evtDailyFeesPaid: setting.evtDailyFeesPaid,
+      evtLearnerBilled: setting.evtLearnerBilled, evtLearnerPresent: setting.evtLearnerPresent,
+      evtLearnerAbsent: setting.evtLearnerAbsent, evtResultsPublished: setting.evtResultsPublished,
+      evtPaymentReceipt: setting.evtPaymentReceipt, evtOverpaymentCredit: setting.evtOverpaymentCredit,
+    } : null,
     templates: templates.map((t) => ({ id: t.id, name: t.name, category: t.category, body: t.body, isDefault: t.isDefault })),
     messages: messages.map((m) => ({ id: m.id, recipientName: m.recipientName, recipientPhone: m.recipientPhone, body: m.body, category: m.category, status: m.status, sentByName: m.sentByName, sentAt: m.sentAt, errorReason: m.errorReason })),
     stats: { total, delivered, deliveredRate: total ? Math.round((delivered / total) * 100) : 0, credits: setting?.credits ?? 0 },
@@ -65,13 +75,36 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (action === "save-settings") {
     const { provider, senderId, autoFeeReminders, autoAbsenceAlerts, autoPaymentReceipts, autoLessonNoteAlerts } = body;
     const existing = await db.smsSetting.findUnique({ where: { schoolId } });
+    // per-event gates: preserve the stored value when the caller omits the key
+    // (legacy save-settings callers — smoke suites, provider switches — must
+    // not silently disable notifications they never touched)
+    const evtFields = [
+      "evtInvoicePaid", "evtDailyFeesPaid", "evtLearnerBilled", "evtLearnerPresent",
+      "evtLearnerAbsent", "evtResultsPublished", "evtPaymentReceipt", "evtOverpaymentCredit",
+    ] as const;
+    const evtData: Record<string, boolean> = {};
+    for (const f of evtFields) {
+      if (body[f] !== undefined) evtData[f] = Boolean(body[f]);
+    }
     const data = {
       provider: ["ARKESEL", "TERMII", "HUBTEL"].includes(provider) ? provider : "SIMULATED", senderId: senderId ?? "NYANSAPO",
       autoFeeReminders: !!autoFeeReminders, autoAbsenceAlerts: !!autoAbsenceAlerts, autoPaymentReceipts: !!autoPaymentReceipts,
       // lesson-note toggle: preserve the stored value when the caller omits it
       ...(autoLessonNoteAlerts !== undefined ? { autoLessonNoteAlerts: !!autoLessonNoteAlerts } : existing ? {} : { autoLessonNoteAlerts: true }),
+      ...evtData,
     };
-    const setting = existing ? await db.smsSetting.update({ where: { schoolId }, data }) : await db.smsSetting.create({ data: { ...data, schoolId } });
+    const setting = existing
+      ? await db.smsSetting.update({ where: { schoolId }, data })
+      : await db.smsSetting.create({
+          data: {
+            ...data, schoolId,
+            // sensible per-event defaults for a brand-new settings row
+            evtInvoicePaid: evtData.evtInvoicePaid ?? true, evtDailyFeesPaid: evtData.evtDailyFeesPaid ?? true,
+            evtLearnerBilled: evtData.evtLearnerBilled ?? true, evtLearnerPresent: evtData.evtLearnerPresent ?? false,
+            evtLearnerAbsent: evtData.evtLearnerAbsent ?? true, evtResultsPublished: evtData.evtResultsPublished ?? true,
+            evtPaymentReceipt: evtData.evtPaymentReceipt ?? true, evtOverpaymentCredit: evtData.evtOverpaymentCredit ?? true,
+          },
+        });
     return NextResponse.json({ setting });
   }
 

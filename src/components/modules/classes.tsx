@@ -15,16 +15,20 @@ import { ModuleHeader, LoadingBlock, EmptyState } from "@/components/ui-helpers"
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
-  CalendarDays, Plus, Pencil, Trash2, Users, Printer, GraduationCap, Clock, X, LayoutGrid,
+  CalendarDays, Plus, Pencil, Trash2, Users, Printer, GraduationCap, Clock, X, LayoutGrid, Layers, Lock,
 } from "lucide-react";
 
 type Slot = {
   id: string; subjectId: string | null; subjectName: string; subjectCode?: string | null;
   staffId: string | null; staffName: string | null; dayOfWeek: number; startMinute: number; endMinute: number; notes?: string | null;
 };
+type SectionRow = {
+  id: string; name: string; sortOrder: number; capacity: number | null; note: string | null; enrolled: number;
+};
 type ClassRow = {
   id: string; name: string; gradeLevel: string; stageLabel?: string | null; capacity: number;
   classTeacherId: string | null; classTeacher: string | null; enrolled: number; slots: Slot[];
+  sections: SectionRow[]; recordCount: number;
 };
 type StaffRow = { id: string; name: string; category: string; position: string | null; role: string; subjects: string[] };
 type SubjectRow = { id: string; name: string; code: string; isCore: boolean };
@@ -44,6 +48,10 @@ export function Classes() {
   // class form
   const [classFormOpen, setClassFormOpen] = useState(false);
   const [editClass, setEditClass] = useState<Partial<ClassRow> | null>(null);
+
+  // section form (create / edit a stream within the selected class)
+  const [sectionFormOpen, setSectionFormOpen] = useState(false);
+  const [editSection, setEditSection] = useState<Partial<SectionRow> | null>(null);
 
   // slot form
   const [slotForm, setSlotForm] = useState<null | { id?: string; subjectId: string; subjectName: string; staffId: string; day: string; start: string; end: string }>(null);
@@ -90,10 +98,43 @@ export function Classes() {
   }
 
   async function deleteClass(c: ClassRow) {
-    if (!confirm(`Delete ${c.name}? This removes its timetable. Enrolled learners block deletion.`)) return;
+    if (c.recordCount > 0) {
+      toast({ title: "Cannot delete", description: `This class has ${c.recordCount} dependent record(s) — enrolments, fee structures, marks, attendance, timetable etc. Clear them first.`, variant: "destructive" });
+      return;
+    }
+    if (!confirm(`Delete ${c.name}? This removes its sections and timetable.`)) return;
     try {
       await apiPost(`/api/school/${currentSchoolId}/ops/classes`, { action: "delete-classroom", id: c.id });
       toast({ title: "Class deleted" }); load();
+    } catch (e: any) { toast({ title: "Cannot delete", description: e.message, variant: "destructive" }); }
+  }
+
+  async function saveSection() {
+    if (!editSection || !cls) return;
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/classes`, {
+        action: "save-section",
+        id: editSection.id ?? null,
+        classroomId: cls.id,
+        name: editSection.name,
+        sortOrder: editSection.sortOrder ?? 0,
+        capacity: editSection.capacity ?? null,
+        note: editSection.note ?? "",
+      });
+      toast({ title: editSection.id ? "Section updated" : "Section created" });
+      setSectionFormOpen(false); setEditSection(null); load();
+    } catch (e: any) { toast({ title: "Save failed", description: e.message, variant: "destructive" }); }
+  }
+
+  async function deleteSection(s: SectionRow) {
+    if (s.enrolled > 0) {
+      toast({ title: "Cannot delete", description: `${s.enrolled} learner(s) are placed in this section. Move them first.`, variant: "destructive" });
+      return;
+    }
+    if (!confirm(`Delete section ${s.name}?`)) return;
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/classes`, { action: "delete-section", id: s.id });
+      toast({ title: "Section deleted" }); load();
     } catch (e: any) { toast({ title: "Cannot delete", description: e.message, variant: "destructive" }); }
   }
 
@@ -146,24 +187,72 @@ export function Classes() {
         {/* ── class list ── */}
         <div className="space-y-2.5">
           {data.classrooms.map((c) => (
-            <button key={c.id} onClick={() => setSelected(c.id)}
-              className={cn("w-full text-left rounded-xl border p-3.5 transition-colors",
+            <div key={c.id}
+              className={cn("w-full rounded-xl border p-3.5 transition-colors",
                 c.id === selected ? "border-primary bg-primary/5 ring-1 ring-primary" : "border-border hover:border-primary/40 hover:bg-secondary/40")}>
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-semibold text-sm">{c.name}</span>
-                {c.id === selected && <Badge className="bg-primary text-[10px]">open</Badge>}
+              <button className="w-full text-left" onClick={() => setSelected(c.id)}>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold text-sm">{c.name}</span>
+                  {c.id === selected && <Badge className="bg-primary text-[10px]">open</Badge>}
+                </div>
+                <div className="text-[11px] text-muted-foreground mt-0.5">{c.stageLabel ?? c.gradeLevel}</div>
+                <div className="flex items-center gap-2 mt-2 flex-wrap">
+                  <Badge variant={c.enrolled >= c.capacity ? "destructive" : "secondary"} className="text-[10px] gap-1">
+                    <Users className="size-2.5" /> {c.enrolled}/{c.capacity}
+                  </Badge>
+                  {c.sections.length > 0 && (
+                    <Badge variant="outline" className="text-[10px] gap-1"><Layers className="size-2.5" /> {c.sections.length} section{c.sections.length > 1 ? "s" : ""}</Badge>
+                  )}
+                  {c.slots.length > 0 && (
+                    <Badge variant="outline" className="text-[10px] gap-1"><CalendarDays className="size-2.5" /> {c.slots.length} periods</Badge>
+                  )}
+                </div>
+                {c.classTeacher && <div className="text-[11px] text-muted-foreground mt-1.5 truncate">👨‍🏫 {c.classTeacher}</div>}
+              </button>
+              {/* class Edit + Delete — disabled when the class has ANY records */}
+              <div className="flex gap-1 mt-2 pt-2 border-t border-border/60">
+                <Button size="sm" variant="outline" className="h-7 px-2 gap-1 text-[11px]"
+                  disabled={c.recordCount > 0}
+                  title={c.recordCount > 0 ? `Locked — ${c.recordCount} dependent record(s) exist (enrolments, fees, marks…)` : "Edit this class"}
+                  onClick={() => { setEditClass(c); setClassFormOpen(true); }}>
+                  {c.recordCount > 0 ? <Lock className="size-3" /> : <Pencil className="size-3" />} Edit
+                </Button>
+                <Button size="sm" variant="outline" className="h-7 px-2 gap-1 text-[11px] text-destructive hover:text-destructive"
+                  disabled={c.recordCount > 0}
+                  title={c.recordCount > 0 ? `Locked — ${c.recordCount} dependent record(s) exist` : "Delete this class"}
+                  onClick={() => deleteClass(c)}>
+                  {c.recordCount > 0 ? <Lock className="size-3" /> : <Trash2 className="size-3" />} Delete
+                </Button>
               </div>
-              <div className="text-[11px] text-muted-foreground mt-0.5">{c.stageLabel ?? c.gradeLevel}</div>
-              <div className="flex items-center gap-2 mt-2 flex-wrap">
-                <Badge variant={c.enrolled >= c.capacity ? "destructive" : "secondary"} className="text-[10px] gap-1">
-                  <Users className="size-2.5" /> {c.enrolled}/{c.capacity}
-                </Badge>
-                {c.slots.length > 0 && (
-                  <Badge variant="outline" className="text-[10px] gap-1"><CalendarDays className="size-2.5" /> {c.slots.length} periods</Badge>
-                )}
-              </div>
-              {c.classTeacher && <div className="text-[11px] text-muted-foreground mt-1.5 truncate">👨‍🏫 {c.classTeacher}</div>}
-            </button>
+              {/* sections of this class — ordered streams with their own guarded Edit/Delete */}
+              {c.sections.length > 0 && (
+                <div className="mt-2 space-y-1.5">
+                  {c.sections.map((s) => (
+                    <div key={s.id} className={cn("rounded-lg border px-2.5 py-2 flex items-center justify-between gap-2",
+                      c.id === selected ? "border-primary/30 bg-background" : "border-border/70 bg-secondary/20")}>
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold truncate">{c.name} — {s.name}</div>
+                        <div className="text-[10px] text-muted-foreground">
+                          {s.enrolled} learner{s.enrolled === 1 ? "" : "s"}{s.capacity ? ` · cap ${s.capacity}` : ""}{s.sortOrder ? ` · order ${s.sortOrder}` : ""}
+                        </div>
+                      </div>
+                      <div className="flex gap-1 shrink-0">
+                        <button className="rounded-md p-1.5 hover:bg-secondary disabled:opacity-40 disabled:cursor-not-allowed"
+                          disabled={s.enrolled > 0} title={s.enrolled > 0 ? `Locked — ${s.enrolled} learner(s) placed in this section` : "Edit section"}
+                          onClick={() => { setSelected(c.id); setEditSection(s); setSectionFormOpen(true); }}>
+                          {s.enrolled > 0 ? <Lock className="size-3" /> : <Pencil className="size-3" />}
+                        </button>
+                        <button className="rounded-md p-1.5 hover:bg-destructive/10 text-destructive disabled:opacity-40 disabled:cursor-not-allowed"
+                          disabled={s.enrolled > 0} title={s.enrolled > 0 ? `Locked — ${s.enrolled} learner(s) placed in this section` : "Delete section"}
+                          onClick={() => { setSelected(c.id); deleteSection(s); }}>
+                          {s.enrolled > 0 ? <Lock className="size-3" /> : <Trash2 className="size-3" />}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           ))}
           {data.classrooms.length === 0 && (
             <EmptyState icon={<GraduationCap className="size-5" />} title="No classes yet" hint="Create your first class to start building timetables." />
@@ -173,10 +262,9 @@ export function Classes() {
               <Plus className="size-3.5" /> Add class
             </Button>
             {cls && (
-              <>
-                <Button size="sm" variant="outline" onClick={() => { setEditClass(cls); setClassFormOpen(true); }}><Pencil className="size-3.5" /></Button>
-                <Button size="sm" variant="outline" className="text-destructive hover:text-destructive" onClick={() => deleteClass(cls)}><Trash2 className="size-3.5" /></Button>
-              </>
+              <Button size="sm" variant="outline" className="flex-1 gap-1" onClick={() => { setEditSection({ sortOrder: (cls.sections.at(-1)?.sortOrder ?? 0) + 1 }); setSectionFormOpen(true); }}>
+                <Layers className="size-3.5" /> Add section
+              </Button>
             )}
           </div>
         </div>
@@ -328,6 +416,45 @@ export function Classes() {
             <Button onClick={saveClass} disabled={!editClass?.name?.trim() || !editClass?.gradeLevel?.trim()}>
               {editClass?.id ? "Save changes" : "Create class"}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── section form dialog ── */}
+      <Dialog open={sectionFormOpen} onOpenChange={(o) => { setSectionFormOpen(o); if (!o) setEditSection(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {editSection?.id ? "Edit section" : "New section"}
+              {cls && <Badge variant="secondary" className="font-normal">{cls.name}</Badge>}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label>Section name *</Label>
+              <Input value={editSection?.name ?? ""} placeholder="Gold · Green · A · B"
+                onChange={(e) => setEditSection({ ...editSection, name: e.target.value })} />
+              <p className="text-[11px] text-muted-foreground">Streams within the class — shown as “{cls?.name ?? "Class"} — Section”.</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Sort order</Label>
+              <Input type="number" min={0} value={editSection?.sortOrder ?? 0}
+                onChange={(e) => setEditSection({ ...editSection, sortOrder: Number(e.target.value) })} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Capacity (optional)</Label>
+              <Input type="number" min={1} value={editSection?.capacity ?? ""}
+                onChange={(e) => setEditSection({ ...editSection, capacity: e.target.value === "" ? null : Number(e.target.value) })} />
+            </div>
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label>Note (optional)</Label>
+              <Input value={editSection?.note ?? ""} placeholder="e.g. Streamed by ability for English & Maths"
+                onChange={(e) => setEditSection({ ...editSection, note: e.target.value })} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setSectionFormOpen(false); setEditSection(null); }}>Cancel</Button>
+            <Button onClick={saveSection} disabled={!editSection?.name?.trim()}>{editSection?.id ? "Save changes" : "Create section"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

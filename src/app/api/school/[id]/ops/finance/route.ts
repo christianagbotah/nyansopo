@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
+import { sortClassrooms } from "@/lib/classes";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
 
 /* ── GET /api/school/[id]/ops/finance — income dashboard, expenditure, aging,
    student credit wallets (prepaid credits from overpayment — CI3 parity) ──
-   iedupro parity: Income & Revenue analytics, AR aging, expenditure dashboard. */
+   iedupro parity: Income & Revenue analytics, AR aging, expenditure dashboard.
+   ?action= credits | credit-history | receivables | payables | income-expenditure
+   (CI3 financial-statement parity); no action → the full dashboard payload. */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: schoolId } = await params;
   const url = new URL(req.url);
@@ -82,6 +85,315 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       student: { name: `${student.firstName} ${student.lastName}` },
       balanceCents: ledger.length ? ledger[ledger.length - 1].balanceAfter : 0,
       rows: ledger.map((r) => ({ id: r.id, at: r.at.toISOString(), kind: r.kind, amountCents: r.amountCents, balanceAfter: r.balanceAfter, note: r.note, byName: r.byName, invoiceNo: r.invoiceId ? invNoById.get(r.invoiceId) ?? null : null })),
+    });
+  }
+
+  /* ══════════════════ CI3 STATEMENTS — Task 5 (reports parity) ══════════════════
+     Receivables · Payables · Income & Expenditure, mirroring
+     scripts/ci3app …/views/backend/admin/reports/{get_receivables,get_payables,
+     income_expenditure}.php. All money in integer pesewas (cents). */
+
+  // ── receivables: per-student outstanding on open invoices, aged by due date ──
+  // CI3 get_receivables.php lists the invoices owing per student; get_fct_
+  // receivables.php rides the daily-fee arrears alongside. from/to & termId scope
+  // which invoices count (CI3's "customize" period); aging is as of today.
+  if (action === "receivables") {
+    const auth = await opsAuth(req, schoolId, "GET", { perms: ["finance.view"] });
+    if (!auth.ok) return auth.res;
+
+    const from = q("from");
+    const to = q("to");
+    const termId = q("termId");
+    const created = dayRange(from, to);
+
+    const [invoices, dailyOwed, classrooms, year] = await Promise.all([
+      db.invoice.findMany({
+        where: {
+          schoolId, writtenOff: false, status: { in: ["UNPAID", "PARTIAL", "OVERDUE"] },
+          ...(termId ? { termId } : {}),
+          ...(created ? { createdAt: created } : {}),
+        },
+        include: { student: { include: { enrollments: { where: { status: "ACTIVE" }, take: 1, include: { classroom: { select: { name: true, gradeLevel: true } } } } } } },
+      }),
+      db.dailyCharge.groupBy({ by: ["studentId"], where: { schoolId, status: "OWED" }, _sum: { amountCents: true } }),
+      db.classroom.findMany({ where: { schoolId }, select: { name: true, gradeLevel: true } }),
+      db.academicYear.findFirst({ where: { schoolId, isCurrent: true }, include: { terms: { orderBy: { sequence: "asc" } } } }),
+    ]);
+
+    const dailyByStudent = new Map(dailyOwed.map((d) => [d.studentId, d._sum.amountCents ?? 0]));
+    // school class order (KG → B9) so statements follow the register, not the alphabet
+    const classOrder = new Map(sortClassrooms(classrooms).map((c, i) => [c.name, i]));
+    const rankOf = (name: string | null) => classOrder.get(name ?? "") ?? classrooms.length + 1;
+
+    const nowMs = Date.now();
+    type Aging = { currentCents: number; d1Cents: number; d31Cents: number; d61Cents: number; d90Cents: number };
+    const AGING_KEYS = ["currentCents", "d1Cents", "d31Cents", "d61Cents", "d90Cents"] as const;
+    const zeroAging = (): Aging => ({ currentCents: 0, d1Cents: 0, d31Cents: 0, d61Cents: 0, d90Cents: 0 });
+    type StuRow = {
+      studentId: string; name: string; classroom: string | null; rank: number; invoices: number;
+      billedCents: number; discountCents: number; paidCents: number; outstandingCents: number; dailyArrearsCents: number; aging: Aging;
+    };
+    const byStudent = new Map<string, StuRow>();
+    for (const inv of invoices) {
+      const bal = inv.totalCents - inv.discountCents - inv.paidCents;
+      if (bal <= 0) continue; // settled / overpaid rows are not receivables
+      const classroom = inv.student.enrollments[0]?.classroom?.name ?? inv.classroomName ?? null;
+      let row = byStudent.get(inv.studentId);
+      if (!row) {
+        row = {
+          studentId: inv.studentId, name: `${inv.student.firstName} ${inv.student.lastName}`, classroom, rank: rankOf(classroom),
+          invoices: 0, billedCents: 0, discountCents: 0, paidCents: 0, outstandingCents: 0,
+          dailyArrearsCents: dailyByStudent.get(inv.studentId) ?? 0, aging: zeroAging(),
+        };
+        byStudent.set(inv.studentId, row);
+      }
+      row.invoices += 1;
+      row.billedCents += inv.totalCents;
+      row.discountCents += inv.discountCents;
+      row.paidCents += inv.paidCents;
+      row.outstandingCents += bal;
+      const days = inv.dueDate ? Math.floor((nowMs - inv.dueDate.getTime()) / 864e5) : 0;
+      const k = days < 1 ? "currentCents" : days <= 30 ? "d1Cents" : days <= 60 ? "d31Cents" : days <= 90 ? "d61Cents" : "d90Cents";
+      row.aging[k] += bal;
+    }
+
+    const rows = [...byStudent.values()]
+      .sort((a, b) => a.rank - b.rank || (a.classroom ?? "").localeCompare(b.classroom ?? "") || b.outstandingCents - a.outstandingCents || a.name.localeCompare(b.name))
+      .map(({ rank, ...r }) => r);
+
+    // per-class sub-totals (bold rows in the statement) + grand total
+    type ClassAgg = { classroom: string; students: number; invoices: number; billedCents: number; paidCents: number; outstandingCents: number; dailyArrearsCents: number; aging: Aging };
+    const classAgg = new Map<string, ClassAgg>();
+    const totals = { students: 0, invoices: 0, billedCents: 0, paidCents: 0, discountCents: 0, outstandingCents: 0, dailyArrearsCents: 0, aging: zeroAging() };
+    for (const r of rows) {
+      const cls = r.classroom ?? "Unassigned";
+      const g = classAgg.get(cls) ?? { classroom: cls, students: 0, invoices: 0, billedCents: 0, paidCents: 0, outstandingCents: 0, dailyArrearsCents: 0, aging: zeroAging() };
+      g.students += 1;
+      g.invoices += r.invoices;
+      g.billedCents += r.billedCents;
+      g.paidCents += r.paidCents;
+      g.outstandingCents += r.outstandingCents;
+      g.dailyArrearsCents += r.dailyArrearsCents;
+      for (const k of AGING_KEYS) g.aging[k] += r.aging[k];
+      classAgg.set(cls, g);
+      totals.students += 1;
+      totals.invoices += r.invoices;
+      totals.billedCents += r.billedCents;
+      totals.discountCents += r.discountCents;
+      totals.paidCents += r.paidCents;
+      totals.outstandingCents += r.outstandingCents;
+      totals.dailyArrearsCents += r.dailyArrearsCents;
+      for (const k of AGING_KEYS) totals.aging[k] += r.aging[k];
+    }
+
+    // daily-fee arrears that belongs to learners with no open invoice (CI3 keeps
+    // those in the separate fct report) — surfaced so nothing is hidden
+    const dailyOnly = { students: 0, amountCents: 0 };
+    for (const [sid, amt] of dailyByStudent) {
+      if (!byStudent.has(sid)) { dailyOnly.students += 1; dailyOnly.amountCents += amt; }
+    }
+
+    return NextResponse.json({
+      period: { from: from ?? null, to: to ?? null, termId: termId ?? null },
+      terms: year?.terms.map((t) => ({ id: t.id, label: t.name, isCurrent: t.isCurrent })) ?? [],
+      rows,
+      classes: [...classAgg.values()],
+      totals,
+      dailyOnly,
+    });
+  }
+
+  // ── payables: everything the school OWES right now ──
+  // CI3 get_payables.php/get_fct_payables.php tracked advance payments (negative
+  // invoice dues and wallet balances) the school owes parents — in Nyansapo those
+  // live in StudentCredit wallets. The statement adds the obligations CI3 never
+  // modelled: pending supplier purchase orders and approved-but-unpaid payroll.
+  if (action === "payables") {
+    const auth = await opsAuth(req, schoolId, "GET", { perms: ["finance.view"] });
+    if (!auth.ok) return auth.res;
+
+    const from = q("from");
+    const to = q("to");
+    const range = dayRange(from, to);
+
+    const [purchaseOrders, payrollRuns, creditAgg] = await Promise.all([
+      // PENDING = ordered, not yet received/settled; window on expected delivery
+      db.purchaseOrder.findMany({
+        where: { schoolId, status: "PENDING", ...(range ? { OR: [{ expectedDate: range }, { AND: [{ expectedDate: null }, { createdAt: range }] }] } : {}) },
+        include: { supplier: true },
+        orderBy: [{ expectedDate: "asc" }, { poNo: "asc" }],
+      }),
+      // APPROVED and awaiting cash — DRAFT / PENDING_APPROVAL / REJECTED / PAID excluded
+      db.payrollRun.findMany({ where: { schoolId, status: "APPROVED", ...(range ? { createdAt: range } : {}) }, orderBy: { period: "asc" } }),
+      db.studentCredit.groupBy({ by: ["studentId"], where: { schoolId }, _sum: { amountCents: true } }),
+    ]);
+
+    const poRows = purchaseOrders.map((po) => {
+      let lines = 0;
+      try { lines = (JSON.parse(po.linesJson ?? "[]") as unknown[]).length; } catch { lines = 0; }
+      return {
+        poNo: po.poNo, supplier: po.supplier?.name ?? "Unassigned supplier", supplierPhone: po.supplier?.phone ?? null,
+        expectedDate: po.expectedDate?.toISOString() ?? null, createdAt: po.createdAt.toISOString(),
+        lines, totalCents: po.totalCents, note: po.note,
+      };
+    });
+    const bySupplier = new Map<string, { supplier: string; phone: string | null; orders: number; totalCents: number }>();
+    for (const r of poRows) {
+      const g = bySupplier.get(r.supplier) ?? { supplier: r.supplier, phone: r.supplierPhone, orders: 0, totalCents: 0 };
+      g.orders += 1;
+      g.totalCents += r.totalCents;
+      bySupplier.set(r.supplier, g);
+    }
+
+    const payrollRows = payrollRuns.map((run) => ({
+      id: run.id, period: run.period, status: run.status,
+      totalGrossCents: run.totalGrossCents, totalDeductionsCents: run.totalDeductionsCents, totalNetCents: run.totalNetCents,
+      approvedByName: run.approvedByName, createdAt: run.createdAt.toISOString(),
+    }));
+
+    // advance payments owed to parents — live credit balances (CI3 wallet parity)
+    const creditRows = creditAgg
+      .filter((c) => (c._sum.amountCents ?? 0) > 0)
+      .map((c) => ({ studentId: c.studentId, balanceCents: c._sum.amountCents ?? 0 }));
+    const creditStudents = creditRows.length
+      ? await db.student.findMany({ where: { id: { in: creditRows.map((r) => r.studentId) } }, include: { enrollments: { where: { status: "ACTIVE" }, take: 1, include: { classroom: { select: { name: true } } } } } })
+      : [];
+    const studentById = new Map(creditStudents.map((s) => [s.id, s]));
+    const credits = creditRows
+      .map((r) => {
+        const s = studentById.get(r.studentId);
+        return {
+          studentId: r.studentId,
+          name: s ? `${s.firstName} ${s.lastName}` : "Unknown learner",
+          classroom: s?.enrollments[0]?.classroom?.name ?? null,
+          balanceCents: r.balanceCents,
+        };
+      })
+      .sort((a, b) => b.balanceCents - a.balanceCents || a.name.localeCompare(b.name));
+
+    const purchaseOrdersCents = poRows.reduce((s, r) => s + r.totalCents, 0);
+    const payrollCents = payrollRows.reduce((s, r) => s + r.totalNetCents, 0);
+    const creditsCents = credits.reduce((s, r) => s + r.balanceCents, 0);
+
+    return NextResponse.json({
+      period: { from: from ?? null, to: to ?? null },
+      purchaseOrders: { rows: poRows, suppliers: [...bySupplier.values()].sort((a, b) => b.totalCents - a.totalCents), totalCents: purchaseOrdersCents },
+      payroll: { rows: payrollRows, totalCents: payrollCents },
+      credits: { rows: credits, totalCents: creditsCents },
+      totals: {
+        purchaseOrdersCents, purchaseOrdersCount: poRows.length,
+        payrollCents, payrollCount: payrollRows.length,
+        creditsCents, creditsCount: credits.length,
+        totalCents: purchaseOrdersCents + payrollCents + creditsCents,
+      },
+    });
+  }
+
+  // ── income & expenditure account (CI3 income_expenditure.php layout) ──
+  // INCOME: billed-invoice receipts (method sub-totals) · daily services
+  // collection per service (CI3's feeding/breakfast/classes/water/transport
+  // lines) · transport fares · store sales · other income (unattached receipts).
+  // EXPENDITURE: the bursar's expense book by category · received purchase
+  // orders (inventory cash out) · payroll paid (net salaries).
+  // Footer: SURPLUS/(DEFICIT) = income − expenditure.
+  if (action === "income-expenditure") {
+    const auth = await opsAuth(req, schoolId, "GET", { perms: ["finance.view"] });
+    if (!auth.ok) return auth.res;
+
+    const now = new Date();
+    const from = q("from") ?? new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString().slice(0, 10);
+    const to = q("to") ?? now.toISOString().slice(0, 10);
+    const range = dayRange(from, to)!;
+
+    const [payments, expenses, receivedOrders, paidRuns] = await Promise.all([
+      db.payment.findMany({ where: { schoolId, voided: false, paymentType: "PAYMENT", paidAt: range }, include: { dailyCharges: { include: { service: { select: { name: true } } } } } }),
+      db.expense.findMany({ where: { schoolId, expenseDate: range } }),
+      db.purchaseOrder.findMany({ where: { schoolId, status: "RECEIVED", receivedAt: range }, include: { supplier: true }, orderBy: { receivedAt: "asc" } }),
+      db.payrollRun.findMany({ where: { schoolId, status: "PAID", paidAt: range }, orderBy: { period: "asc" } }),
+    ]);
+
+    // ── income side ──
+    const invMethods = new Map<string, { count: number; amountCents: number }>();
+    const otherMethods = new Map<string, { count: number; amountCents: number }>();
+    const dailyServices = new Map<string, number>();
+    let invoicesCents = 0, dailyCents = 0, transportCents = 0, posCents = 0, otherCents = 0, transportCount = 0, posCount = 0;
+    for (const p of payments) {
+      if (p.category === "DAILY") {
+        // per-service split from the linked charges; wallet top-up remainder kept apart
+        let allocated = 0;
+        for (const c of p.dailyCharges) {
+          dailyServices.set(c.service.name, (dailyServices.get(c.service.name) ?? 0) + c.amountCents);
+          allocated += c.amountCents;
+        }
+        const rest = p.amountCents - allocated;
+        if (rest > 0) dailyServices.set("Wallet top-ups & unallocated", (dailyServices.get("Wallet top-ups & unallocated") ?? 0) + rest);
+        dailyCents += p.amountCents;
+      } else if (p.invoiceId) {
+        // CI3 billed-invoice income — receipts tied to an invoice, split by method
+        const m = invMethods.get(p.method) ?? { count: 0, amountCents: 0 };
+        m.count += 1;
+        m.amountCents += p.amountCents;
+        invMethods.set(p.method, m);
+        invoicesCents += p.amountCents;
+      } else if (p.category === "POS") {
+        posCents += p.amountCents;
+        posCount += 1;
+      } else if (p.category === "TRANSPORT") {
+        transportCents += p.amountCents;
+        transportCount += 1;
+      } else {
+        // CI3 "other income": money in that is not tied to any invoice
+        const m = otherMethods.get(p.method) ?? { count: 0, amountCents: 0 };
+        m.count += 1;
+        m.amountCents += p.amountCents;
+        otherMethods.set(p.method, m);
+        otherCents += p.amountCents;
+      }
+    }
+
+    // ── expenditure side ──
+    const expenseCats = new Map<string, { count: number; amountCents: number }>();
+    for (const e of expenses) {
+      const g = expenseCats.get(e.category) ?? { count: 0, amountCents: 0 };
+      g.count += 1;
+      g.amountCents += e.amountCents;
+      expenseCats.set(e.category, g);
+    }
+    const expensesCents = expenses.reduce((s, e) => s + e.amountCents, 0);
+    const purchaseOrdersCents = receivedOrders.reduce((s, po) => s + po.totalCents, 0);
+    const payrollCents = paidRuns.reduce((s, r) => s + r.totalNetCents, 0);
+
+    const incomeTotal = invoicesCents + dailyCents + transportCents + posCents + otherCents;
+    const expenditureTotal = expensesCents + purchaseOrdersCents + payrollCents;
+
+    type IeSection = { key: string; label: string; rows: { label: string; count: number; amountCents: number }[]; subtotalCents: number };
+    const methodRows = (m: Map<string, { count: number; amountCents: number }>) =>
+      [...m.entries()].map(([label, v]) => ({ label, count: v.count, amountCents: v.amountCents })).sort((a, b) => b.amountCents - a.amountCents);
+    const sections: IeSection[] = [
+      { key: "invoices", label: "Billed invoices (school fees, PTA…)", rows: methodRows(invMethods), subtotalCents: invoicesCents },
+      { key: "daily", label: "Daily services collection", rows: [...dailyServices.entries()].map(([label, amountCents]) => ({ label, count: 0, amountCents })).sort((a, b) => b.amountCents - a.amountCents), subtotalCents: dailyCents },
+    ];
+    if (transportCents > 0) sections.push({ key: "transport", label: "Transport fares", rows: [{ label: "Fare payments", count: transportCount, amountCents: transportCents }], subtotalCents: transportCents });
+    if (posCents > 0) sections.push({ key: "pos", label: "Store sales (inventory)", rows: [{ label: "Products / items sold", count: posCount, amountCents: posCents }], subtotalCents: posCents });
+    if (otherCents > 0) sections.push({ key: "other", label: "Other income", rows: methodRows(otherMethods), subtotalCents: otherCents });
+
+    return NextResponse.json({
+      period: { from, to },
+      income: { sections, totalCents: incomeTotal },
+      expenditure: {
+        categories: [...expenseCats.entries()].map(([category, v]) => ({ category, count: v.count, amountCents: v.amountCents })).sort((a, b) => b.amountCents - a.amountCents),
+        expensesCents,
+        purchaseOrders: {
+          rows: receivedOrders.map((po) => ({ poNo: po.poNo, supplier: po.supplier?.name ?? "Unassigned supplier", receivedAt: po.receivedAt?.toISOString() ?? null, totalCents: po.totalCents })),
+          totalCents: purchaseOrdersCents,
+        },
+        payroll: {
+          rows: paidRuns.map((r) => ({ period: r.period, paidAt: r.paidAt?.toISOString() ?? null, totalNetCents: r.totalNetCents })),
+          totalCents: payrollCents,
+        },
+        totalCents: expenditureTotal,
+      },
+      surplusCents: incomeTotal - expenditureTotal,
     });
   }
 
@@ -441,7 +753,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     // roster of cashiers for the filter dropdown (anyone who ever recorded a payment)
     const cashiersRaw = await db.payment.findMany({ where: { schoolId, receivedByName: { not: null } }, select: { receivedByName: true }, distinct: ["receivedByName"] });
-    const classrooms = await db.classroom.findMany({ where: { schoolId }, orderBy: { name: "asc" }, select: { id: true, name: true } });
+    const classrooms =sortClassrooms(await db.classroom.findMany({ where: { schoolId }, select: {  id: true, name: true, gradeLevel: true } }));
 
     return NextResponse.json({
       period: { from: from.toISOString(), to: to.toISOString(), collector: collector ?? null },
@@ -483,4 +795,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 async function creditBalance(schoolId: string, studentId: string): Promise<number> {
   const agg = await db.studentCredit.aggregate({ where: { schoolId, studentId }, _sum: { amountCents: true } });
   return agg._sum.amountCents ?? 0;
+}
+
+/* Day-window helper for the CI3 statement actions: YYYY-MM-DD search params →
+ * a Prisma DateTime filter anchored at UTC midnight (matches ops/reports). */
+function dayRange(from?: string, to?: string): { gte?: Date; lte?: Date } | undefined {
+  if (!from && !to) return undefined;
+  return {
+    ...(from ? { gte: new Date(`${from}T00:00:00.000Z`) } : {}),
+    ...(to ? { lte: new Date(`${to}T23:59:59.999Z`) } : {}),
+  };
 }

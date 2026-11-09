@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
 import { apiGet, apiPost, apiPostQueueable } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,11 +15,12 @@ import { fmtCedi, fmtDate, PAYMENT_LABELS } from "@/lib/format";
 import { canAny } from "@/lib/rbac";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { Banknote, Receipt, AlertTriangle, CheckCircle2, Plus, Flag, Printer, Wallet, Ticket, Percent, UserPlus, XCircle, ListChecks, Copy as CopyIcon, Eye, Link2, ClipboardList, ShieldCheck, Undo2, PencilLine, Trash2, FileWarning, Ban, Download, History, ArrowRightLeft, PiggyBank, HandCoins, CopyPlus, FileUp, Smartphone } from "lucide-react";
+import { Banknote, Receipt, AlertTriangle, CheckCircle2, Plus, Flag, Printer, Wallet, Ticket, Percent, UserPlus, XCircle, ListChecks, Copy as CopyIcon, Eye, Link2, ClipboardList, ShieldCheck, Undo2, PencilLine, Trash2, FileWarning, Ban, Download, History, ArrowRightLeft, PiggyBank, HandCoins, CopyPlus, FileUp, Smartphone, Search, UserRound, GraduationCap } from "lucide-react";
 import { ReceiptDocument, BulkReceiptsDocument, RECEIPT_STYLES, type ReceiptStyle } from "@/components/receipts";
 import { BillItemsTab, CreateInvoicesTab, type BillItemRow, type RosterRow } from "@/components/modules/fees-billing";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import { DiscountProfilesTab, DiscountApprovalsTab, type DiscountData } from "@/components/modules/discounts-workspace";
 
 type FeeData = {
@@ -71,6 +72,8 @@ export function Fees() {
   const [termId, setTermId] = useState<string | null>(null);
   const [tab, setTab] = useState("invoices");
   const [payFor, setPayFor] = useState<FeeData["invoices"][0] | null>(null);
+  // "Take payment" (CI3 modal_take_payment) — opened blank from the module header
+  const [payOpen, setPayOpen] = useState(false);
   const [flagFor, setFlagFor] = useState<FeeData["invoices"][0] | null>(null);
   const [discFor, setDiscFor] = useState<FeeData["invoices"][0] | null>(null);
   // clone-previous-term billing + bulk arrears CSV import (CI3 parity)
@@ -222,10 +225,17 @@ export function Fees() {
         title="Fees & Billing"
         description="Term-based billing in Ghana Cedis — tuition, exam, books, ICT, meals & transport. Record MoMo, cash and bank payments; chase arrears; flag defaulters to the network."
         actions={
-          <Select value={termId ?? ""} onValueChange={(v) => { setTermId(v); load(v); }}>
-            <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
-            <SelectContent>{data.terms.map((t) => <SelectItem key={t.id} value={t.id}>{t.name}{t.isCurrent ? " (current)" : ""}</SelectItem>)}</SelectContent>
-          </Select>
+          <>
+            {canAny(session?.permissions, ["fees.collect", "fees.manage"]) && (
+              <Button className="gap-1.5" onClick={() => setPayOpen(true)}>
+                <Wallet className="size-4" /> Take payment
+              </Button>
+            )}
+            <Select value={termId ?? ""} onValueChange={(v) => { setTermId(v); load(v); }}>
+              <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
+              <SelectContent>{data.terms.map((t) => <SelectItem key={t.id} value={t.id}>{t.name}{t.isCurrent ? " (current)" : ""}</SelectItem>)}</SelectContent>
+            </Select>
+          </>
         }
       />
 
@@ -507,9 +517,12 @@ export function Fees() {
       </Tabs>
 
       <PayDialog
+        open={payOpen || !!payFor}
         invoice={payFor}
-        onOpenChange={(o) => !o && setPayFor(null)}
-        onDone={(rc) => { setReceipt(rc); setPayFor(null); load(termId ?? undefined); }}
+        roster={data.roster}
+        invoices={data.invoices}
+        onOpenChange={(o) => { if (!o) { setPayOpen(false); setPayFor(null); } }}
+        onDone={(rc) => { setReceipt(rc); setPayOpen(false); setPayFor(null); load(termId ?? undefined); }}
         onCreditHistory={(studentId, name) => setCreditHistoryFor({ studentId, name })}
       />
       <FlagDialog
@@ -665,116 +678,412 @@ export function Fees() {
   );
 }
 
-function PayDialog({ invoice, onOpenChange, onDone, onCreditHistory }: {
-  invoice: any;
+/* ── TAKE PAYMENT (CI3 modal_take_payment.php parity) ─────────────────────
+   Learner search right on the modal → STUDENT'S DETAILS → open-invoice
+   picker → single or SPLIT payment, with the print-receipt toggle.
+   Opened blank from the module header or pre-filled from an invoice row. */
+function openInvoicesFor(invoices: FeeData["invoices"], studentId: string | null) {
+  const due = (d: string | null) => (d ? new Date(d).getTime() : Number.MAX_SAFE_INTEGER);
+  return invoices.filter((i) => i.studentId === studentId && i.balance > 0).sort((a, b) => due(a.dueDate) - due(b.dueDate));
+}
+
+function PayDialog({ open, invoice, roster, invoices, onOpenChange, onDone, onCreditHistory }: {
+  open: boolean;
+  invoice: FeeData["invoices"][0] | null;
+  roster: RosterRow[];
+  invoices: FeeData["invoices"];
   onOpenChange: (o: boolean) => void;
   onDone: (receipt: any) => void;
   onCreditHistory?: (studentId: string, name: string) => void;
 }) {
   const { currentSchoolId, online } = useStore();
+  const [studentId, setStudentId] = useState<string | null>(null);
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [query, setQuery] = useState(""); // debounced 300ms (CI3 parity)
+  const [showResults, setShowResults] = useState(false);
   const [amount, setAmount] = useState("");
-  const [method, setMethod] = useState("MOMO_MTN");
-  const [reference, setReference] = useState("");
+  const [method, setMethod] = useState("MOMO_MTN"); // "SPLIT" = two methods
+  const [receiptNo, setReceiptNo] = useState("");
+  const [txnId, setTxnId] = useState("");
+  const [bankName, setBankName] = useState("");
+  const [chequeNo, setChequeNo] = useState("");
+  const [splitMethodA, setSplitMethodA] = useState("CASH");
+  const [splitAmountA, setSplitAmountA] = useState("");
+  const [splitMethodB, setSplitMethodB] = useState("MOMO_MTN");
+  const [splitAmountB, setSplitAmountB] = useState("");
+  const [printReceipt, setPrintReceipt] = useState(true);
   const [busy, setBusy] = useState(false);
   const [creditBal, setCreditBal] = useState(0);
+  const searchWrapRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { if (invoice) setAmount((invoice.balance / 100).toFixed(2)); }, [invoice]);
-  // prepaid credit the learner already holds (overpayments banked earlier)
+  /* reset everything whenever the modal closes (CI3 reloads it fresh) */
+  useEffect(() => {
+    if (open) return;
+    setStudentId(null); setSelectedInvoiceId(null); setSearch(""); setQuery(""); setShowResults(false);
+    setAmount(""); setMethod("MOMO_MTN"); setReceiptNo(""); setTxnId(""); setBankName(""); setChequeNo("");
+    setSplitMethodA("CASH"); setSplitAmountA(""); setSplitMethodB("MOMO_MTN"); setSplitAmountB("");
+    setPrintReceipt(true); setBusy(false);
+  }, [open]);
+
+  /* preselected path: opened from an invoice row — populate that learner */
+  useEffect(() => {
+    if (!open || !invoice) return;
+    setStudentId(invoice.studentId);
+    setSelectedInvoiceId(invoice.id);
+    setSearch(invoice.student.toUpperCase());
+    setAmount((invoice.balance / 100).toFixed(2));
+  }, [open, invoice]);
+
+  /* debounced learner search — 300ms, min 2 chars, over the roster */
+  useEffect(() => {
+    const t = setTimeout(() => setQuery(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+  const owesById = useMemo(() => {
+    const m = new Map<string, number>();
+    invoices.forEach((i) => { if (i.balance > 0) m.set(i.studentId, (m.get(i.studentId) ?? 0) + i.balance); });
+    return m;
+  }, [invoices]);
+  const results = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (q.length < 2) return [];
+    return roster
+      .filter((s) => `${s.name} ${s.index} ${s.classroom}`.toLowerCase().includes(q))
+      .sort((a, b) => (owesById.get(b.id) ?? 0) - (owesById.get(a.id) ?? 0) || a.name.localeCompare(b.name))
+      .slice(0, 50);
+  }, [query, roster, owesById]);
+  const searching = search.trim() !== query;
+
+  /* click-outside closes the results dropdown; re-focusing the input reopens it */
+  useEffect(() => {
+    if (!open) return;
+    const onDocDown = (e: MouseEvent) => {
+      if (searchWrapRef.current && !searchWrapRef.current.contains(e.target as Node)) setShowResults(false);
+    };
+    document.addEventListener("mousedown", onDocDown);
+    return () => document.removeEventListener("mousedown", onDocDown);
+  }, [open]);
+
+  const studentInvoices = useMemo(() => openInvoicesFor(invoices, studentId), [invoices, studentId]);
+  const selectedInvoice = studentInvoices.find((i) => i.id === selectedInvoiceId) ?? null;
+  const student = roster.find((s) => s.id === studentId) ?? null;
+  const studentName = student?.name ?? invoices.find((i) => i.studentId === studentId)?.student ?? null;
+  const studentClass = student?.classroom ?? invoices.find((i) => i.studentId === studentId)?.classroom ?? null;
+  const totalPayable = studentId ? owesById.get(studentId) ?? 0 : 0;
+
+  /* prepaid credit the learner already holds (overpayments banked earlier) */
   useEffect(() => {
     setCreditBal(0);
-    if (!invoice?.studentId || !currentSchoolId) return;
-    apiGet<{ balanceCents: number }>(`/api/school/${currentSchoolId}/ops/finance?action=credit-history&studentId=${invoice.studentId}`)
+    if (!studentId || !currentSchoolId) return;
+    apiGet<{ balanceCents: number }>(`/api/school/${currentSchoolId}/ops/finance?action=credit-history&studentId=${studentId}`)
       .then((d) => setCreditBal(d.balanceCents ?? 0))
       .catch(() => setCreditBal(0));
-  }, [invoice, currentSchoolId]);
+  }, [studentId, currentSchoolId]);
+
+  function pickStudent(s: RosterRow) {
+    setStudentId(s.id);
+    setSearch(s.name.toUpperCase());
+    setQuery(s.name.toUpperCase());
+    setShowResults(false);
+    // default-select the OLDEST open invoice (CI3 arrears-first settlement)
+    const oldest = openInvoicesFor(invoices, s.id)[0];
+    if (oldest) { setSelectedInvoiceId(oldest.id); setAmount((oldest.balance / 100).toFixed(2)); }
+    else { setSelectedInvoiceId(null); setAmount(""); }
+  }
+  function pickInvoice(inv: FeeData["invoices"][0]) {
+    setSelectedInvoiceId(inv.id);
+    setAmount((inv.balance / 100).toFixed(2));
+  }
+
+  const amountCents = Math.round((parseFloat(amount || "0") || 0) * 100);
+  const splitACents = Math.round((parseFloat(splitAmountA || "0") || 0) * 100);
+  const splitBCents = Math.round((parseFloat(splitAmountB || "0") || 0) * 100);
+  const splitSumCents = splitACents + splitBCents;
+  const splitBalanced = splitACents > 0 && splitBCents > 0 && splitSumCents === amountCents;
+  const chequeNeeded = method === "CHEQUE" || (method === "SPLIT" && (splitMethodA === "CHEQUE" || splitMethodB === "CHEQUE"));
+  const chequeMissing = chequeNeeded && (!bankName.trim() || !chequeNo.trim());
+  const canSubmit = !!selectedInvoice && !busy && amountCents > 0 && (method !== "SPLIT" || splitBalanced) && !chequeMissing;
+
+  /* one record-payment call — offline it enqueues on the sync queue */
+  async function recordOne(payMethod: string, cents: number): Promise<{ queued: boolean; receipt: any; credit: number }> {
+    const ref = payMethod.startsWith("MOMO") ? txnId.trim() || undefined : receiptNo.trim() || undefined;
+    const bank = payMethod === "CHEQUE" ? bankName.trim() || undefined : undefined;
+    const chq = payMethod === "CHEQUE" ? chequeNo.trim() || undefined : undefined;
+    const payload = { action: "record-payment", invoiceId: selectedInvoice!.id, amountCents: cents, method: payMethod, reference: ref, bankName: bank, chequeNo: chq };
+    const res = await apiPostQueueable<any>(
+      `/api/school/${currentSchoolId}/fees`, "payment", payload,
+      `Payment ${fmtCedi(cents)} — ${studentName ?? "learner"}`,
+      (p, clientId) => ({ ...p, schoolId: currentSchoolId, amountCents: cents, method: payMethod, reference: ref, bankName: bank, chequeNo: chq, paidAt: new Date().toISOString(), invoiceId: selectedInvoice!.id, payloadClientId: clientId, clientId })
+    );
+    if (res.queued) return { queued: true, receipt: null, credit: 0 };
+    return { queued: false, receipt: res.data?.receipt ?? res.data?.payment ?? null, credit: res.data?.creditCreated ?? 0 };
+  }
 
   async function submit() {
-    if (!invoice || !currentSchoolId) return;
-    const cents = Math.round(parseFloat(amount || "0") * 100);
-    if (!cents || cents <= 0) { toast({ title: "Enter a valid amount" }); return; }
+    if (!selectedInvoice || !currentSchoolId || !canSubmit) return;
     setBusy(true);
     try {
-      const payload = { action: "record-payment", invoiceId: invoice.id, amountCents: cents, method, reference: reference || undefined };
-      const res = await apiPostQueueable<any>(
-        `/api/school/${currentSchoolId}/fees`, "payment", payload,
-        `Payment ${fmtCedi(cents)} — ${invoice.student}`,
-        (p, clientId) => ({ ...p, schoolId: currentSchoolId, amountCents: cents, method, reference, paidAt: new Date().toISOString(), invoiceId: invoice.id, payloadClientId: clientId, clientId })
-      );
-      if (res.queued) {
-        toast({ title: "Queued offline", description: "Receipt will be issued automatically when you reconnect." });
-        onDone(null);
-      } else {
-        if (res.data?.creditCreated) {
-          toast({ title: "Payment received", description: `Overpayment of ${fmtCedi(res.data.creditCreated)} banked as prepaid credit — it will be applied to future bills.` });
+      if (method === "SPLIT") {
+        const legs: [string, number][] = [[splitMethodA, splitACents], [splitMethodB, splitBCents]];
+        let queued = 0, ok = 0, okCents = 0, credit = 0;
+        let lastReceipt: any = null;
+        const errors: string[] = [];
+        for (const [m, c] of legs) {
+          try {
+            const r = await recordOne(m, c);
+            if (r.queued) queued++;
+            else { ok++; okCents += c; if (r.receipt) lastReceipt = r.receipt; credit += r.credit; }
+          } catch (e: any) { errors.push(`${PAYMENT_LABELS[m] ?? m}: ${e.message}`); }
         }
-        onDone(res.data?.receipt ?? res.data?.payment ?? null);
+        if (queued === 2) {
+          toast({ title: "Queued offline", description: "Both legs of the split are queued — receipts will be issued automatically when you reconnect." });
+          onDone(null);
+        } else if (ok === 2) {
+          toast({ title: "Split payment recorded", description: `${fmtCedi(amountCents)} collected in two receipts.` });
+          if (credit > 0) toast({ title: "Payment received", description: `Overpayment of ${fmtCedi(credit)} banked as prepaid credit — it will be applied to future bills.` });
+          onDone(printReceipt ? lastReceipt : null);
+        } else if (ok + queued === 2) {
+          toast({ title: "Split payment recorded", description: `One receipt issued now and one leg queued to sync when you reconnect${credit ? ` · ${fmtCedi(credit)} banked as prepaid credit` : ""}.` });
+          onDone(printReceipt ? lastReceipt : null);
+        } else if (ok + queued === 1) {
+          toast({ title: "Partial payment recorded", description: `Only one leg of the split succeeded — ${fmtCedi(okCents)} received${errors.length ? `; failed leg: ${errors.join(" · ")}` : ""}. Re-take the failed part if it is still owed.`, variant: "destructive" });
+          onDone(printReceipt ? lastReceipt : null);
+        } else {
+          toast({ title: "Payment failed", description: errors.join(" · ") || "Both legs failed.", variant: "destructive" });
+        }
+      } else {
+        const r = await recordOne(method, amountCents);
+        if (r.queued) {
+          toast({ title: "Queued offline", description: "Receipt will be issued automatically when you reconnect." });
+          onDone(null);
+        } else {
+          if (r.credit > 0) toast({ title: "Payment received", description: `Overpayment of ${fmtCedi(r.credit)} banked as prepaid credit — it will be applied to future bills.` });
+          onDone(printReceipt ? r.receipt : null);
+        }
       }
     } catch (e: any) {
       toast({ title: "Payment failed", description: e.message, variant: "destructive" });
     } finally { setBusy(false); }
   }
 
+  const resultsOpen = showResults && query.trim().length >= 2;
+
+  function splitRow(label: string, m: string, setM: (v: string) => void, amt: string, setAmt: (v: string) => void) {
+    return (
+      <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-1">
+          <Label className="text-[11px] font-semibold uppercase tracking-wide">{label} — method</Label>
+          <Select value={m} onValueChange={setM} disabled={!selectedInvoice}>
+            <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {Object.entries(PAYMENT_LABELS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1">
+          <Label className="text-[11px] font-semibold uppercase tracking-wide">{label} — amount (GH₵)</Label>
+          <Input type="number" step="0.01" min="0" value={amt} onChange={(e) => setAmt(e.target.value)} className="h-9" disabled={!selectedInvoice} />
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <Dialog open={!!invoice} onOpenChange={onOpenChange}>
-      <DialogContent>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg max-h-[92vh] overflow-y-auto nice-scroll">
         <DialogHeader>
-          <DialogTitle>Receive payment — {invoice?.student}</DialogTitle>
+          <DialogTitle className="flex items-center gap-2"><Receipt className="size-4" /> Take payment</DialogTitle>
           <DialogDescription>
-            {invoice?.invoiceNo} · balance <b className="text-destructive">{invoice ? fmtCedi(invoice.balance) : ""}</b>
+            {selectedInvoice
+              ? <>{selectedInvoice.invoiceNo} · balance <b className="text-destructive">{fmtCedi(selectedInvoice.balance)}</b></>
+              : "Search for a learner, pick an open invoice, then record the payment."}
             {!online && " · offline, will queue & sync"}
           </DialogDescription>
         </DialogHeader>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label>Amount (GH₵) *</Label>
-            <Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
-            <p className="text-[11px] text-muted-foreground">Amounts above the balance are banked as prepaid credit.</p>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Method</Label>
-            <Select value={method} onValueChange={setMethod}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {Object.entries(PAYMENT_LABELS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1.5 sm:col-span-2">
-            {method !== "CASH" && (
-              <>
-                <Label>{method === "CHEQUE" ? "Cheque number" : method.startsWith("MOMO") ? "MoMo transaction ID" : "Transaction / bank reference"}</Label>
-                <Input placeholder={method === "CHEQUE" ? "e.g. 100234" : "e.g. MP2401.5533.77 GCASH"} value={reference} onChange={(e) => setReference(e.target.value)} />
-                <p className="text-[11px] text-muted-foreground">
-                  {method.startsWith("MOMO")
-                    ? "The parent sent money from their own wallet to the school — copy the transaction ID from their wallet SMS."
-                    : "Printed on the receipt and the audit trail."}
-                </p>
-              </>
+
+        <div className="space-y-4">
+          {/* SELECT STUDENT (CI3) */}
+          <section className="space-y-2">
+            <div className="font-mono text-xs font-bold uppercase tracking-wider text-muted-foreground border-b pb-1.5">Select student</div>
+            <div className="relative" ref={searchWrapRef}>
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground pointer-events-none" />
+              <Input
+                value={search} autoComplete="off"
+                onChange={(e) => { setSearch(e.target.value); setShowResults(true); }}
+                onFocus={() => { if (query.trim().length >= 2) setShowResults(true); }}
+                placeholder="Type student name or code to search…"
+                className="h-12 pl-10 text-base"
+              />
+              {resultsOpen && (
+                <div className="absolute top-full inset-x-0 z-50 mt-1 max-h-96 overflow-y-auto nice-scroll rounded-lg border bg-popover shadow-lg">
+                  {searching ? (
+                    <div className="p-4 text-center text-sm text-muted-foreground">Searching…</div>
+                  ) : results.length ? (
+                    results.map((s) => {
+                      const owes = owesById.get(s.id) ?? 0;
+                      return (
+                        <button key={s.id} type="button" onClick={() => pickStudent(s)}
+                          className="flex w-full items-center justify-between gap-3 border-b last:border-0 px-4 py-3 text-left transition-colors hover:bg-secondary/50">
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-semibold uppercase">{s.name}</div>
+                            <div className="mt-0.5 flex items-center gap-3 text-xs text-muted-foreground">
+                              <span className="flex min-w-0 items-center gap-1"><UserRound className="size-3 shrink-0" />{s.index}</span>
+                              <span className="flex min-w-0 items-center gap-1"><GraduationCap className="size-3 shrink-0" />{s.classroom}</span>
+                            </div>
+                          </div>
+                          <div className="shrink-0 text-right">
+                            <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Owes</div>
+                            <div className={cn("text-sm font-bold tabular-nums", owes > 0 ? "text-destructive" : "text-muted-foreground")}>{fmtCedi(owes)}</div>
+                          </div>
+                        </button>
+                      );
+                    })
+                  ) : (
+                    <div className="p-4 text-center text-sm text-muted-foreground">No learners match “{query.trim()}”.</div>
+                  )}
+                </div>
+              )}
+            </div>
+          </section>
+
+          {/* STUDENT'S DETAILS (CI3) */}
+          <section className="space-y-2">
+            <div className="font-mono text-xs font-bold uppercase tracking-wider text-muted-foreground border-b pb-1.5">Student&rsquo;s details</div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+              <div className="text-sm font-semibold uppercase text-muted-foreground">Name:</div>
+              <div className="text-sm font-semibold uppercase truncate">{studentName ?? "No student selected"}</div>
+              <div className="text-sm font-semibold uppercase text-muted-foreground">Class:</div>
+              <div className="text-sm font-semibold uppercase truncate">{studentClass ?? "No class assigned"}</div>
+              <div className="text-sm font-semibold uppercase text-muted-foreground">Total payable:</div>
+              <div className="text-sm font-semibold uppercase tabular-nums">{studentId ? fmtCedi(totalPayable) : "—"}</div>
+            </div>
+            {creditBal > 0 && (
+              <div className="rounded-lg border border-emerald-500/50 bg-emerald-50 dark:bg-emerald-950/40 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300 flex flex-wrap items-center justify-between gap-2">
+                <span className="flex items-center gap-1.5 font-medium">
+                  <Wallet className="size-3.5" />
+                  Prepaid credit available: <b>{fmtCedi(creditBal)}</b> — applied automatically to the next generated bill.
+                </span>
+                {onCreditHistory && studentId && (
+                  <button type="button" className="underline underline-offset-2 shrink-0 font-medium" onClick={() => onCreditHistory(studentId, studentName ?? "")}>
+                    View history
+                  </button>
+                )}
+              </div>
+            )}
+          </section>
+
+          {/* OPEN INVOICES — pick the payment target (CI3 modal_take_payment2) */}
+          {studentId && (
+            <section className="space-y-2">
+              <div className="font-mono text-xs font-bold uppercase tracking-wider text-muted-foreground border-b pb-1.5">Select invoice</div>
+              {studentInvoices.length === 0 && (
+                <p className="rounded-lg bg-secondary/60 px-3 py-2 text-xs text-muted-foreground">No outstanding fees for this learner — nothing to collect.</p>
+              )}
+              <div className="space-y-1.5">
+                {studentInvoices.map((inv) => {
+                  const active = inv.id === selectedInvoiceId;
+                  return (
+                    <button key={inv.id} type="button" onClick={() => pickInvoice(inv)}
+                      className={cn("w-full rounded-lg border px-3 py-2 text-left transition-colors", active ? "border-primary bg-primary/5" : "hover:bg-secondary/40")}>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <span className={cn("size-2.5 shrink-0 rounded-full border-2", active ? "border-primary bg-primary" : "border-muted-foreground/40")} aria-hidden />
+                          <span className="font-mono text-xs font-medium truncate">{inv.invoiceNo}</span>
+                        </div>
+                        <span className="shrink-0 text-sm font-bold tabular-nums text-destructive">{fmtCedi(inv.balance)}</span>
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 pl-[1.15rem] text-[11px] text-muted-foreground">
+                        <span>Total <span className="tabular-nums">{fmtCedi(inv.total)}</span></span>
+                        <span>Paid <span className="tabular-nums text-emerald-600">{fmtCedi(inv.paid)}</span></span>
+                        <span>Due {fmtDate(inv.dueDate)}</span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
+          {/* PAYMENT FORM (CI3 field order) */}
+          <section className="space-y-3 border-t pt-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold uppercase tracking-wide">Payment mode</Label>
+                <Select value={method} onValueChange={setMethod} disabled={!selectedInvoice}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="SPLIT">Split payment (two methods)</SelectItem>
+                    {Object.entries(PAYMENT_LABELS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold uppercase tracking-wide">Amount (GH₵) *</Label>
+                <Input type="number" step="0.01" min="0" placeholder="600" value={amount} onChange={(e) => setAmount(e.target.value)} disabled={!selectedInvoice} />
+                <p className="text-[11px] text-muted-foreground">Amounts above the balance are banked as prepaid credit.</p>
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label className="text-xs font-bold uppercase tracking-wide">Receipt no.</Label>
+                <Input value={receiptNo} onChange={(e) => setReceiptNo(e.target.value)} placeholder="4012252" className="tracking-wider" disabled={!selectedInvoice} />
+                <p className="text-[11px] text-muted-foreground">Optional — printed on the receipt and the audit trail.</p>
+              </div>
+            </div>
+
+            {/* conditional per-method fields (CI3 showMthodDetails) */}
+            {method !== "SPLIT" && method.startsWith("MOMO") && (
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold uppercase tracking-wide">Transaction ID <span className="font-normal normal-case text-muted-foreground">(optional — auto-generated if empty)</span></Label>
+                <Input value={txnId} onChange={(e) => setTxnId(e.target.value)} placeholder="Leave empty to auto-generate" className="tracking-wider" disabled={!selectedInvoice} />
+                <p className="text-[11px] text-muted-foreground">The parent sent money from their own wallet to the school — copy the transaction ID from their wallet SMS.</p>
+              </div>
+            )}
+            {chequeNeeded && (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-bold uppercase tracking-wide">Bank name *</Label>
+                  <Input value={bankName} onChange={(e) => setBankName(e.target.value)} placeholder="e.g. Ecobank" disabled={!selectedInvoice} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-bold uppercase tracking-wide">Cheque no. *</Label>
+                  <Input value={chequeNo} onChange={(e) => setChequeNo(e.target.value)} placeholder="0011234567812345" className="tracking-wider" disabled={!selectedInvoice} />
+                </div>
+                {chequeMissing && <p className="sm:col-span-2 text-[11px] text-destructive">Bank name and cheque number are required for cheque payments.</p>}
+              </div>
             )}
             {method === "CASH" && (
               <p className="text-[11px] text-muted-foreground rounded-lg bg-secondary/60 px-3 py-2">
                 Cash at the counter — no transaction reference needed. Online checkouts and MoMo prompts are issued from the MoMo &amp; Links module.
               </p>
             )}
-          </div>
-          {creditBal > 0 && (
-            <div className="sm:col-span-2 rounded-lg border border-emerald-500/50 bg-emerald-50 dark:bg-emerald-950/40 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300 flex flex-wrap items-center justify-between gap-2">
-              <span className="flex items-center gap-1.5 font-medium">
-                <Wallet className="size-3.5" />
-                Prepaid credit available: <b>{fmtCedi(creditBal)}</b> — applied automatically to the next generated bill.
-              </span>
-              {onCreditHistory && invoice && (
-                <button type="button" className="underline underline-offset-2 shrink-0 font-medium" onClick={() => onCreditHistory(invoice.studentId, invoice.student)}>
-                  View history
-                </button>
-              )}
-            </div>
-          )}
+
+            {/* SPLIT — two methods, amounts must add up */}
+            {method === "SPLIT" && (
+              <div className="space-y-3 rounded-lg border bg-secondary/20 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="font-mono text-xs font-bold uppercase tracking-wider text-muted-foreground">Split — two methods</div>
+                  <div className={cn("text-xs font-semibold tabular-nums", amountCents > 0 && splitBalanced ? "text-emerald-600" : "text-destructive")}>
+                    Total: {fmtCedi(splitSumCents)}{amountCents > 0 && !splitBalanced ? ` of ${fmtCedi(amountCents)}` : ""}
+                  </div>
+                </div>
+                {splitRow("First", splitMethodA, setSplitMethodA, splitAmountA, setSplitAmountA)}
+                {splitRow("Second", splitMethodB, setSplitMethodB, splitAmountB, setSplitAmountB)}
+                <p className="text-[11px] text-muted-foreground">Both amounts must be above zero and together equal the payment amount above.</p>
+              </div>
+            )}
+          </section>
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={submit} disabled={busy} className="gap-1.5">{busy ? "Recording…" : <><Receipt className="size-4" /> Record payment</>}</Button>
-        </DialogFooter>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3">
+          <div className="flex items-center gap-2">
+            <Label htmlFor="pay-print-receipt" className="text-xs font-bold uppercase tracking-wide text-muted-foreground cursor-pointer">Print receipt?</Label>
+            <Switch id="pay-print-receipt" checked={printReceipt} onCheckedChange={setPrintReceipt} aria-label="Print receipt" />
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>Cancel</Button>
+            <Button onClick={submit} disabled={!canSubmit} className="gap-1.5">{busy ? "Recording…" : <><Receipt className="size-4" /> Take payment</>}</Button>
+          </div>
+        </div>
       </DialogContent>
     </Dialog>
   );

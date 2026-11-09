@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { sortClassrooms } from "@/lib/classes";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
 
@@ -26,7 +27,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   if (!term) return NextResponse.json({ error: "No term found" }, { status: 404 });
 
   const terms = await db.term.findMany({ where: { academicYear: { schoolId } }, include: { academicYear: true }, orderBy: [{ academicYear: { name: "asc" } }, { sequence: "asc" }] });
-  const classrooms = await db.classroom.findMany({ where: { schoolId }, orderBy: { name: "asc" }, select: { id: true, name: true, gradeLevel: true } });
+  const classrooms =sortClassrooms(await db.classroom.findMany({ where: { schoolId }, select: {  id: true, name: true, gradeLevel: true  } }));
   const classIds = classrooms.map((c) => c.id);
 
   const [enrollments, portfolioEntries, assessments, approvals] = await Promise.all([

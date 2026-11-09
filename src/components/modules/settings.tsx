@@ -18,7 +18,7 @@ import { CURRICULA } from "@/lib/curricula";
 import { THEME_PRESETS, DEFAULT_THEME, applyThemeToDOM, type SchoolTheme } from "@/lib/theme";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import {Settings as SettingsIcon, GraduationCap, BookOpen, Users, CalendarRange, Plus, Save, MessageSquareQuote, Sparkles, Trash2, Award, Pencil, Baby, Sigma, PencilLine, ChevronDown, ChevronRight, ImageUp, ReceiptText, ShieldCheck, Banknote, Palette, CheckCircle2} from "lucide-react";
+import {Settings as SettingsIcon, GraduationCap, BookOpen, Users, CalendarRange, Plus, Save, MessageSquareQuote, Sparkles, Trash2, Award, Pencil, Baby, Sigma, PencilLine, ChevronDown, ChevronRight, ImageUp, ReceiptText, ShieldCheck, Banknote, Palette, CheckCircle2, Layers} from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 
@@ -570,7 +570,10 @@ export function Settings() {
         <TabsContent value="classes">
           <Card>
             <CardHeader className="pb-3 flex-row items-center justify-between space-y-0">
-              <CardTitle className="text-base">Classes & streams</CardTitle>
+              <div>
+                <CardTitle className="text-base">Classes & streams</CardTitle>
+                <p className="text-xs text-muted-foreground mt-1">Ordered Creche → Nursery → KG → Basic 1–6 → JHS · create classes, sections and assign streams in <b>Classes &amp; Timetable</b>.</p>
+              </div>
               <Button size="sm" className="gap-1.5" onClick={() => setClsOpen(true)}><Plus className="size-4" /> Add class</Button>
             </CardHeader>
             <CardContent className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -579,6 +582,13 @@ export function Settings() {
                   <div className="font-medium text-sm">{c.name}</div>
                   <div className="text-xs text-muted-foreground">{c.stage} · capacity {c.capacity}</div>
                   <Badge variant="secondary" className="mt-2">{c.grade}</Badge>
+                  {(c.sections ?? []).length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {c.sections.map((s: any) => (
+                        <Badge key={s.id} variant="outline" className="text-[10px] gap-1"><Layers className="size-2.5" /> {s.name}</Badge>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ))}
             </CardContent>

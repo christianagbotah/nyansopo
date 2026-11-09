@@ -16,13 +16,35 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatCard, ModuleHeader, LoadingBlock, EmptyState, FilterBar, FilterSelect, FilterSearch } from "@/components/ui-helpers";
 import { fmtDateTime } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
-import { Smartphone, Send, FileText, History, Settings2, Plus, CheckCheck, XCircle, AlertTriangle, Wallet, Zap, Megaphone, ClipboardCheck } from "lucide-react";
+import { Smartphone, Send, FileText, History, Settings2, Plus, CheckCheck, XCircle, AlertTriangle, Bell, Wallet, Zap, Megaphone, ClipboardCheck } from "lucide-react";
 
 type Template = { id: string; name: string; category: string; body: string; isDefault: boolean };
 type Automation = { id: string; name: string; trigger: string; recipients: string; body: string; offsetDays: number; active: boolean; lastRunAt: string | null; sentCount: number };
 type Message = { id: string; recipientName: string; recipientPhone: string; body: string; category: string; status: string; sentByName: string | null; sentAt: string; errorReason: string | null };
+
+/* ── Per-event notification gates (iEduPro parity) ──
+   One switch per automated trigger, persisted on SmsSetting.evt*.
+   Defaults mirror the Prisma schema — present-marking is OFF (volume). */
+type SmsEventToggles = {
+  evtInvoicePaid: boolean; evtDailyFeesPaid: boolean; evtLearnerBilled: boolean; evtLearnerPresent: boolean;
+  evtLearnerAbsent: boolean; evtResultsPublished: boolean; evtPaymentReceipt: boolean; evtOverpaymentCredit: boolean;
+};
+const EVT_DEFAULTS: SmsEventToggles = {
+  evtInvoicePaid: true, evtDailyFeesPaid: true, evtLearnerBilled: true, evtLearnerPresent: false,
+  evtLearnerAbsent: true, evtResultsPublished: true, evtPaymentReceipt: true, evtOverpaymentCredit: true,
+};
+const EVENT_TOGGLES: { field: keyof SmsEventToggles; label: string; desc: string }[] = [
+  { field: "evtInvoicePaid", label: "Invoice paid", desc: "Billed invoice paid in full" },
+  { field: "evtDailyFeesPaid", label: "Daily fees paid", desc: "Daily fee payment made (lunch, bus…)" },
+  { field: "evtLearnerBilled", label: "Learner billed", desc: "Learner billed / invoice issued" },
+  { field: "evtLearnerPresent", label: "Learner present", desc: "Learner marked present — high volume, off by default" },
+  { field: "evtLearnerAbsent", label: "Learner absent", desc: "Learner marked absent" },
+  { field: "evtResultsPublished", label: "Results published", desc: "End-of-term results released" },
+  { field: "evtPaymentReceipt", label: "Payment receipt", desc: "Receipt confirmation for any fee payment" },
+  { field: "evtOverpaymentCredit", label: "Overpayment credit", desc: "Overpayment banked as prepaid credit" },
+];
 type SmsData = {
-  setting: { provider: string; senderId: string; credits: number; autoFeeReminders: boolean; autoAbsenceAlerts: boolean; autoPaymentReceipts: boolean; autoLessonNoteAlerts: boolean } | null;
+  setting: ({ provider: string; senderId: string; credits: number; autoFeeReminders: boolean; autoAbsenceAlerts: boolean; autoPaymentReceipts: boolean; autoLessonNoteAlerts: boolean } & SmsEventToggles) | null;
   gateway?: { arkesel: boolean; termii: boolean; hubtel?: boolean };
   templates: Template[];
   messages: Message[];
@@ -370,13 +392,23 @@ function SettingsTab({ data, onSaved }: { data: SmsData; onSaved: () => void }) 
   const [absence, setAbsence] = useState(!!data.setting?.autoAbsenceAlerts);
   const [receipts, setReceipts] = useState(!!data.setting?.autoPaymentReceipts);
   const [lessonNotes, setLessonNotes] = useState(data.setting?.autoLessonNoteAlerts !== false);
+  const [evt, setEvt] = useState<SmsEventToggles>(() => ({
+    evtInvoicePaid: data.setting?.evtInvoicePaid ?? EVT_DEFAULTS.evtInvoicePaid,
+    evtDailyFeesPaid: data.setting?.evtDailyFeesPaid ?? EVT_DEFAULTS.evtDailyFeesPaid,
+    evtLearnerBilled: data.setting?.evtLearnerBilled ?? EVT_DEFAULTS.evtLearnerBilled,
+    evtLearnerPresent: data.setting?.evtLearnerPresent ?? EVT_DEFAULTS.evtLearnerPresent,
+    evtLearnerAbsent: data.setting?.evtLearnerAbsent ?? EVT_DEFAULTS.evtLearnerAbsent,
+    evtResultsPublished: data.setting?.evtResultsPublished ?? EVT_DEFAULTS.evtResultsPublished,
+    evtPaymentReceipt: data.setting?.evtPaymentReceipt ?? EVT_DEFAULTS.evtPaymentReceipt,
+    evtOverpaymentCredit: data.setting?.evtOverpaymentCredit ?? EVT_DEFAULTS.evtOverpaymentCredit,
+  }));
   const [topup, setTopup] = useState("500");
   const [busy, setBusy] = useState(false);
 
   async function save() {
     setBusy(true);
     try {
-      await apiPost(`/api/school/${currentSchoolId}/ops/sms`, { action: "save-settings", provider, senderId, autoFeeReminders: fee, autoAbsenceAlerts: absence, autoPaymentReceipts: receipts, autoLessonNoteAlerts: lessonNotes });
+      await apiPost(`/api/school/${currentSchoolId}/ops/sms`, { action: "save-settings", provider, senderId, autoFeeReminders: fee, autoAbsenceAlerts: absence, autoPaymentReceipts: receipts, autoLessonNoteAlerts: lessonNotes, ...evt });
       toast({ title: "Settings saved" });
       onSaved();
     } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
@@ -438,6 +470,23 @@ function SettingsTab({ data, onSaved }: { data: SmsData; onSaved: () => void }) 
               <Switch checked={x.val} onCheckedChange={x.set} />
             </div>
           ))}
+        </CardContent>
+      </Card>
+      <Card className="lg:col-span-2">
+        <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><Bell className="size-4" /> Per-event notifications</CardTitle></CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-xs text-muted-foreground">One master switch per automated event — a trigger only texts guardians when its switch is on, keeping credit spend predictable.</p>
+          <div className="grid gap-4 sm:grid-cols-2">
+            {EVENT_TOGGLES.map((e) => (
+              <div key={e.field} className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium">{e.label}</div>
+                  <div className="text-xs text-muted-foreground">{e.desc}</div>
+                </div>
+                <Switch checked={evt[e.field]} onCheckedChange={(v) => setEvt({ ...evt, [e.field]: v } as SmsEventToggles)} />
+              </div>
+            ))}
+          </div>
         </CardContent>
       </Card>
       <Card>

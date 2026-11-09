@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { sortClassrooms } from "@/lib/classes";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
 import { recalcDailySubsidies, recalcProfileApplications } from "@/lib/discounts";
@@ -26,7 +27,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       include: { discount: true, profile: { include: { rules: true } }, student: { include: { enrollments: { where: { status: "ACTIVE" }, include: { classroom: true }, take: 1 } } } },
     }),
     db.dailyService.findMany({ where: { schoolId }, orderBy: { name: "asc" } }),
-    db.classroom.findMany({ where: { schoolId }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
+    sortClassrooms(await db.classroom.findMany({ where: { schoolId }, select: { id: true, name: true, gradeLevel: true } })),
   ]);
 
   return NextResponse.json({
@@ -239,9 +240,26 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const amount = dType === "PERCENT" ? Math.round((gross * dValue) / 100) : Math.min(dValue, gross);
     const newDiscount = Math.min(gross, (inv.discountCents || 0) + amount);
     const balance = gross - newDiscount;
-    const status = inv.paidCents >= balance ? "PAID" : inv.paidCents > 0 ? "PARTIAL" : "UNPAID";
-    const updated = await db.invoice.update({ where: { id: invoiceId }, data: { discountCents: newDiscount, discountReason: name, status } });
-    return NextResponse.json({ invoice: { id: updated.id, discount: updated.discountCents, discountReason: updated.discountReason, status: updated.status } });
+    // over-paid guard (accounting invariant): if the learner already paid more
+    // than the newly-discounted balance, the excess is banked as prepaid credit
+    // instead of leaving paidCents above the cap (fees.tsx promises exactly this)
+    let creditCreated = 0;
+    let paidCents = inv.paidCents;
+    if (inv.paidCents > balance) {
+      creditCreated = inv.paidCents - balance;
+      paidCents = balance;
+      const agg = await db.studentCredit.aggregate({ where: { schoolId, studentId: inv.studentId }, _sum: { amountCents: true } });
+      await db.studentCredit.create({
+        data: {
+          schoolId, studentId: inv.studentId, kind: "CREDIT", amountCents: creditCreated,
+          balanceAfter: (agg._sum.amountCents ?? 0) + creditCreated,
+          note: `Discount (${name}) applied to ${inv.invoiceNo} after full payment — excess banked as prepaid credit`, byName: user.fullName,
+        },
+      });
+    }
+    const status = paidCents >= balance ? "PAID" : paidCents > 0 ? "PARTIAL" : "UNPAID";
+    const updated = await db.invoice.update({ where: { id: invoiceId }, data: { discountCents: newDiscount, discountReason: name, status, ...(creditCreated ? { paidCents } : {}) } });
+    return NextResponse.json({ invoice: { id: updated.id, discount: updated.discountCents, discountReason: updated.discountReason, status: updated.status }, ...(creditCreated ? { creditCreated } : {}) });
   }
 
   return NextResponse.json({ error: "Unknown action" }, { status: 400 });

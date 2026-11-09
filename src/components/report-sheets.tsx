@@ -9,10 +9,13 @@
    · CompactSheet  — primary / KG descriptor sheet (code · raw score ·
      grade · descriptor) — no ranking, iedupro enhanced-print style
    All A4 print-optimised; wrap in .print-area — each sheet carries
-   .print-sheet so bulk printing paginates cleanly. */
+   .print-sheet so bulk printing paginates cleanly, and break-inside-avoid
+   (CI3 .page-container { page-break-inside: avoid } parity) keeps a sheet
+   or a subject row from being sliced across a page boundary. */
 import { Badge } from "@/components/ui/badge";
 import { LogoMark, KenteStrip } from "@/components/brand";
 import { SCALES_TABLE } from "@/lib/grading-scale";
+import { cn } from "@/lib/utils";
 
 export type SheetResult = {
   subject: string; code?: string | null; isCore?: boolean;
@@ -79,7 +82,7 @@ export function ClassicSheet({ d }: { d: SheetData }) {
   const hasSplit = d.results.some((r) => r.classScore != null || r.examScore != null);
   const aggregate = d.curriculum === "GES" || !d.curriculum ? beceAggregate(d.results) : null;
   return (
-    <div className="print-sheet bg-card text-card-foreground rounded-xl border shadow-sm overflow-hidden mx-auto max-w-[860px]">
+    <div className="print-sheet break-inside-avoid bg-card text-card-foreground rounded-xl border shadow-sm overflow-hidden mx-auto max-w-[860px]">
       {/* letterhead */}
       <div className="px-8 pt-6 pb-4 text-center border-b-2 border-foreground/80">
         <div className="flex items-center justify-center gap-3">
@@ -131,7 +134,7 @@ export function ClassicSheet({ d }: { d: SheetData }) {
               const band = bands.bands.find((b) => r.total >= b.min) ?? bands.bands[bands.bands.length - 1];
               const chip = GRADE_CHIPS[gradeChipIdx(d.curriculum, r.grade)];
               return (
-                <tr key={i} className={i % 2 ? "bg-secondary/40" : ""}>
+                <tr key={i} className={cn("break-inside-avoid", i % 2 && "bg-secondary/40")}>
                   <td className="px-3 py-1.5 border-t border-foreground/20 font-medium">
                     {r.isCore && <span title="Core subject" className="mr-1 text-amber-600 dark:text-amber-400">★</span>}
                     {r.subject}
@@ -148,7 +151,7 @@ export function ClassicSheet({ d }: { d: SheetData }) {
                 </tr>
               );
             })}
-            <tr className="bg-foreground/10 font-semibold">
+            <tr className="break-inside-avoid bg-foreground/10 font-semibold">
               <td className="px-3 py-2 border-t-2 border-foreground/50">Overall average</td>
               {hasSplit && <td colSpan={2} className="px-2 py-2 border-t-2 border-foreground/50 text-center text-[10px] uppercase tracking-widest text-muted-foreground">Class 30 + Exam 70</td>}
               <td className="px-2 py-2 border-t-2 border-foreground/50 text-center tabular-nums">{d.average ?? "—"}%</td>
@@ -224,7 +227,7 @@ export function ModernSheet({ d }: { d: SheetData }) {
   const bands = gradingBands(d.curriculum);
   const aggregate = d.curriculum === "GES" || !d.curriculum ? beceAggregate(d.results) : null;
   return (
-    <div className="print-sheet bg-card text-card-foreground rounded-xl border shadow-sm overflow-hidden mx-auto max-w-[780px]">
+    <div className="print-sheet break-inside-avoid bg-card text-card-foreground rounded-xl border shadow-sm overflow-hidden mx-auto max-w-[780px]">
       <KenteStrip />
       <div className="p-6">
         <div className="flex items-center justify-between gap-3">
@@ -242,7 +245,7 @@ export function ModernSheet({ d }: { d: SheetData }) {
           <div className="rounded-lg bg-secondary/60 p-2.5"><div className="text-[10px] uppercase text-muted-foreground">Learner</div><div className="font-semibold">{d.student.name}</div></div>
           <div className="rounded-lg bg-secondary/60 p-2.5"><div className="text-[10px] uppercase text-muted-foreground">Index</div><div className="font-mono text-xs font-semibold mt-0.5">{d.student.index ?? "—"}</div></div>
           <div className="rounded-lg bg-secondary/60 p-2.5"><div className="text-[10px] uppercase text-muted-foreground">Class</div><div className="font-semibold">{d.student.classroom}</div></div>
-          <div className="rounded-lg bg-secondary/60 p-2.5"><div className="text-[10px] uppercase text-muted-foreground">Position</div><div className="font-semibold">{d.position} of {d.classSize}</div></div>
+          <div className="rounded-lg bg-secondary/60 p-2.5"><div className="text-[10px] uppercase text-muted-foreground">Position</div><div className="font-semibold">{d.position != null ? `${d.position} of ${d.classSize ?? "—"}` : "—"}</div></div>
         </div>
 
         <table className="w-full text-sm mt-4 border rounded-lg overflow-hidden">
@@ -262,7 +265,7 @@ export function ModernSheet({ d }: { d: SheetData }) {
               const band = bands.bands.find((b) => r.total >= b.min) ?? bands.bands[bands.bands.length - 1];
               const chip = GRADE_CHIPS[gradeChipIdx(d.curriculum, r.grade)];
               return (
-                <tr key={i} className="border-t">
+                <tr key={i} className="border-t break-inside-avoid">
                   <td className="px-2.5 py-2 font-medium">{r.isCore && <span className="mr-1 text-amber-600 dark:text-amber-400">★</span>}{r.subject}</td>
                   <td className="px-2 py-2 text-center tabular-nums text-muted-foreground">{r.classScore ?? "—"}</td>
                   <td className="px-2 py-2 text-center tabular-nums text-muted-foreground">{r.examScore ?? "—"}</td>
@@ -277,7 +280,7 @@ export function ModernSheet({ d }: { d: SheetData }) {
         </table>
 
         <div className="grid sm:grid-cols-4 gap-2 mt-4 text-sm">
-          <div className="rounded-lg bg-secondary/60 p-2.5"><div className="text-[10px] uppercase text-muted-foreground">Average</div><div className="font-bold text-lg">{d.average}%</div></div>
+          <div className="rounded-lg bg-secondary/60 p-2.5"><div className="text-[10px] uppercase text-muted-foreground">Average</div><div className="font-bold text-lg">{d.average != null ? `${d.average}%` : "—"}</div></div>
           <div className="rounded-lg bg-secondary/60 p-2.5"><div className="text-[10px] uppercase text-muted-foreground">Conduct</div><div className="font-semibold">{d.conduct ?? "—"}</div></div>
           <div className="rounded-lg bg-secondary/60 p-2.5"><div className="text-[10px] uppercase text-muted-foreground">Interests</div><div className="font-semibold">{d.interest ?? "—"}</div></div>
           <div className="rounded-lg bg-secondary/60 p-2.5"><div className="text-[10px] uppercase text-muted-foreground">{aggregate != null ? "BECE aggregate" : "Promotion"}</div><div className="font-semibold">{aggregate != null ? `${aggregate} (best six)` : (d.promotion ?? "—")}</div></div>
@@ -306,7 +309,7 @@ export function ModernSheet({ d }: { d: SheetData }) {
 export function CompactSheet({ d }: { d: SheetData }) {
   const bands = gradingBands(d.curriculum);
   return (
-    <div className="print-sheet bg-card text-card-foreground rounded-xl border shadow-sm overflow-hidden mx-auto max-w-[820px]">
+    <div className="print-sheet break-inside-avoid bg-card text-card-foreground rounded-xl border shadow-sm overflow-hidden mx-auto max-w-[820px]">
       <div className="px-8 pt-6 pb-4">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -346,7 +349,7 @@ export function CompactSheet({ d }: { d: SheetData }) {
               const band = bands.bands.find((b) => r.total >= b.min) ?? bands.bands[bands.bands.length - 1];
               const chip = GRADE_CHIPS[gradeChipIdx(d.curriculum, r.grade)];
               return (
-                <tr key={i} className={i % 2 ? "bg-secondary/40" : ""}>
+                <tr key={i} className={cn("break-inside-avoid", i % 2 && "bg-secondary/40")}>
                   <td className="px-2.5 py-2 border-t border-foreground/20 font-mono text-[11px] text-muted-foreground">{r.code ?? "—"}</td>
                   <td className="px-3 py-2 border-t border-foreground/20 font-medium">{r.subject}</td>
                   <td className="px-2 py-2 border-t border-foreground/20 text-center tabular-nums font-semibold">{r.total}</td>
@@ -355,7 +358,7 @@ export function CompactSheet({ d }: { d: SheetData }) {
                 </tr>
               );
             })}
-            <tr className="bg-foreground/10 font-semibold">
+            <tr className="break-inside-avoid bg-foreground/10 font-semibold">
               <td colSpan={2} className="px-3 py-2 border-t-2 border-foreground/50">Overall performance</td>
               <td className="px-2 py-2 border-t-2 border-foreground/50 text-center tabular-nums">{d.average ?? "—"}%</td>
               <td colSpan={2} className="px-3 py-2 border-t-2 border-foreground/50 text-center">
@@ -436,7 +439,7 @@ const CRECHE_CHIPS: Record<string, string> = {
 
 export function CrecheSheet({ d }: { d: CrecheSheetData }) {
   return (
-    <div className="print-sheet bg-card text-card-foreground rounded-xl border shadow-sm overflow-hidden mx-auto max-w-[760px]">
+    <div className="print-sheet break-inside-avoid bg-card text-card-foreground rounded-xl border shadow-sm overflow-hidden mx-auto max-w-[760px]">
       {/* letterhead */}
       <div className="px-7 pt-5 pb-3 text-center border-b-2 border-foreground/80">
         <div className="flex items-center justify-center gap-3">
@@ -480,7 +483,7 @@ export function CrecheSheet({ d }: { d: CrecheSheetData }) {
         {/* per-domain skill tables */}
         <div className="mt-4 space-y-4">
           {d.domains.map((dom) => (
-            <div key={dom.domain}>
+            <div key={dom.domain} className="break-inside-avoid">
               <div className="flex flex-wrap items-center justify-between gap-2 bg-foreground text-background px-3 py-1.5">
                 <span className="font-semibold uppercase text-[11px] tracking-wider">{dom.domain}</span>
                 <span className="flex items-center gap-2 text-[10px]">
@@ -495,7 +498,7 @@ export function CrecheSheet({ d }: { d: CrecheSheetData }) {
               <table className="w-full text-[12px] border border-t-0 border-foreground/40">
                 <tbody>
                   {dom.skills.map((s, i) => (
-                    <tr key={i} className={i % 2 ? "bg-secondary/40" : ""}>
+                    <tr key={i} className={cn("break-inside-avoid", i % 2 && "bg-secondary/40")}>
                       <td className="px-3 py-1.5 border-t border-foreground/15 w-10 text-center text-[10px] text-muted-foreground tabular-nums">{i + 1}</td>
                       <td className="px-3 py-1.5 border-t border-foreground/15">{s.skill}</td>
                       <td className="px-2 py-1.5 border-t border-foreground/15 text-center w-16">
@@ -610,7 +613,7 @@ export function WaecStatement({ d }: { d: SheetData }) {
   );
 
   return (
-    <div className="bg-white text-black mx-auto max-w-[820px] p-2" style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}>
+    <div className="print-sheet break-inside-avoid bg-white text-black mx-auto max-w-[820px] p-2" style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}>
       <div className="border-[3px] double border-black p-4">
         {/* header */}
         <div className="flex items-center gap-4 border-b-2 border-black pb-3">

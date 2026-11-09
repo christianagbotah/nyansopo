@@ -13,12 +13,33 @@ import { opsAuth } from "@/lib/ops-auth";
 const DAY_MS = 864e5;
 const fmtGhs = (cents: number) => `GH₵${(cents / 100).toFixed(2)}`;
 
-/** invoice status per the fees conventions: PAID when paid ≥ total−discount, PARTIAL above 0, UNPAID at 0 */
-function invoiceStatus(totalCents: number, discountCents: number, paidCents: number): string {
+/** invoice status per the fees conventions: PAID when paid ≥ total−discount, PARTIAL above 0,
+ *  UNPAID at 0, OVERDUE when past the due date and not fully paid (chase-list semantics). */
+function invoiceStatus(totalCents: number, discountCents: number, paidCents: number, dueDate?: Date | null): string {
   const due = totalCents - discountCents;
-  if (paidCents >= due && due > 0) return "PAID";
+  if (due > 0 && paidCents >= due) return "PAID";
+  if (dueDate && dueDate.getTime() < Date.now() && paidCents < due) return "OVERDUE";
   if (paidCents <= 0) return "UNPAID";
   return "PARTIAL";
+}
+
+/** Reconstruct an invoice's settled amount (paidCents) from the live ledger under the
+ *  overpayment-credit semantics: each receipt contributes min(requested, cap-at-the-time) —
+ *  the banked excess lives on StudentCredit CREDIT rows (sourcePaymentId), and credit money
+ *  settled onto the bill lives on APPLY rows. Clamped to [0, total−discount]. */
+async function resyncPaidCents(tx: any, invoiceId: string): Promise<number> {
+  const [inv, live, credits, applies] = await Promise.all([
+    tx.invoice.findUnique({ where: { id: invoiceId }, select: { totalCents: true, discountCents: true } }),
+    tx.payment.aggregate({ where: { invoiceId, voided: false }, _sum: { amountCents: true } }),
+    tx.payment.findMany({ where: { invoiceId, voided: false }, select: { id: true } }).then((rows: { id: string }[]) =>
+      rows.length ? tx.studentCredit.aggregate({ where: { kind: "CREDIT", sourcePaymentId: { in: rows.map((r) => r.id) } }, _sum: { amountCents: true } }) : { _sum: { amountCents: 0 } }),
+    tx.studentCredit.aggregate({ where: { kind: "APPLY", invoiceId }, _sum: { amountCents: true } }),
+  ]);
+  if (!inv) return 0;
+  const credited = Math.max(0, credits._sum.amountCents ?? 0); // banked excess — never settled the bill
+  const applied = Math.abs(applies._sum.amountCents ?? 0); // credit money settled onto the bill
+  const cap = Math.max(0, inv.totalCents - inv.discountCents);
+  return Math.max(0, Math.min(cap, (live._sum.amountCents ?? 0) - credited + applied));
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -480,15 +501,31 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
               return;
             }
             if (reqRow.requestType === "DELETE") {
-              // 1) reverse the linked invoice's paid amount (clamp ≥ 0), recompute status
+              // 1) reverse the linked invoice's paid amount — subtract only the portion
+              //    that actually settled the bill (overpayment excess went to credit)
               if (p.invoiceId) {
                 const inv = await tx.invoice.findUnique({ where: { id: p.invoiceId } });
                 if (inv) {
-                  const paid = Math.max(0, inv.paidCents - p.amountCents);
-                  const status = invoiceStatus(inv.totalCents, inv.discountCents, paid);
+                  const attributable = Math.min(p.amountCents, inv.paidCents);
+                  const paid = Math.max(0, inv.paidCents - attributable);
+                  const status = invoiceStatus(inv.totalCents, inv.discountCents, paid, inv.dueDate);
                   await tx.invoice.update({ where: { id: inv.id }, data: { paidCents: paid, status } });
                   audit += `Invoice ${inv.invoiceNo} paidCents reversed ${fmtGhs(inv.paidCents)} → ${fmtGhs(paid)}, status ${inv.status} → ${status}. `;
                 }
+              }
+              // 1b) reverse any overpayment credit banked from this receipt (append-only ADJUST row)
+              const banked = await tx.studentCredit.findFirst({ where: { kind: "CREDIT", sourcePaymentId: p.id } });
+              if (banked && banked.amountCents > 0) {
+                const agg = await tx.studentCredit.aggregate({ where: { schoolId, studentId: banked.studentId }, _sum: { amountCents: true } });
+                const bal = agg._sum.amountCents ?? 0;
+                await tx.studentCredit.create({
+                  data: {
+                    schoolId, studentId: banked.studentId, kind: "ADJUST", amountCents: -banked.amountCents,
+                    balanceAfter: bal - banked.amountCents,
+                    note: `Receipt ${p.receiptNo} deleted — overpayment credit reversed`, byName: user.fullName,
+                  },
+                });
+                audit += `Prepaid credit reversed ${fmtGhs(banked.amountCents)}. `;
               }
               // 2) unlink any day-charges settled by this receipt so the daily ledger stays honest
               const charges = await tx.dailyCharge.findMany({ where: { paymentId: p.id } });
@@ -508,11 +545,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
               const updated = await tx.payment.update({ where: { id: p.id }, data: { amountCents: newAmount, method: newMethod } });
               audit += `Receipt ${p.receiptNo} adjusted ${fmtGhs(p.amountCents)}/${p.method} → ${fmtGhs(newAmount)}/${newMethod}.`;
               if (p.invoiceId) {
-                const live = await tx.payment.aggregate({ where: { invoiceId: p.invoiceId, voided: false }, _sum: { amountCents: true } });
-                const paid = live._sum.amountCents ?? 0;
+                // ledger-aware resync: payments − banked excess + applied credits, clamped
+                const paid = await resyncPaidCents(tx, p.invoiceId);
                 const inv = await tx.invoice.findUnique({ where: { id: p.invoiceId } });
                 if (inv) {
-                  const status = invoiceStatus(inv.totalCents, inv.discountCents, paid);
+                  const status = invoiceStatus(inv.totalCents, inv.discountCents, paid, inv.dueDate);
                   await tx.invoice.update({ where: { id: inv.id }, data: { paidCents: paid, status } });
                   audit += ` Invoice ${inv.invoiceNo} paidCents re-synced ${fmtGhs(inv.paidCents)} → ${fmtGhs(paid)}, status ${inv.status} → ${status}.`;
                 }
@@ -538,7 +575,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
               const total = nd.totalCents !== undefined ? Math.round(Number(nd.totalCents)) : inv.totalCents;
               const discount = nd.discountCents !== undefined ? Math.round(Number(nd.discountCents)) : inv.discountCents;
               if (!Number.isFinite(total) || total <= 0) throw new Error("Proposed totalCents is invalid");
-              const status = invoiceStatus(total, discount, inv.paidCents);
+              const status = invoiceStatus(total, Math.max(0, discount), inv.paidCents, inv.dueDate);
               await tx.invoice.update({ where: { id: inv.id }, data: { totalCents: total, discountCents: Math.max(0, discount), status } });
               audit = `Invoice ${inv.invoiceNo} adjusted total ${fmtGhs(inv.totalCents)} → ${fmtGhs(total)}${discount !== inv.discountCents ? `, discount ${fmtGhs(inv.discountCents)} → ${fmtGhs(discount)}` : ""}, status ${inv.status} → ${status}.`;
             }
