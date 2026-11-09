@@ -506,7 +506,7 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
       {!kpi && <LoadingBlock label="Counting today's takings…" />}
       {kpi && (
         <div className="sticky top-0 z-10 -mx-1 px-1 pt-1 pb-2 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-[repeat(var(--n),minmax(0,1fr))] gap-2" style={{ "--n": kpiServices.length + 1 } as CSSProperties}>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-[repeat(var(--n),minmax(0,1fr))] gap-2" style={{ "--n": kpiServices.length + 1 } as CSSProperties}>
             {kpiServices.map((s) => {
               const Icon = CAT_ICON[s.category] ?? Wallet;
               return (
@@ -514,8 +514,11 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
                   className={cn("rounded-xl p-2.5 text-left text-white shadow-md transition hover:scale-[1.02] hover:shadow-lg focus-visible:outline-2 focus-visible:outline-offset-2", CAT_GRADIENT[s.category] ?? CAT_GRADIENT.OTHER)}
                   title={`Today's ${s.name} collections — click for the register`}>
                   <div className="flex items-center justify-between gap-1 text-[11px] font-semibold opacity-90">
-                    <span className="truncate flex items-center gap-1"><Icon className="size-3.5 shrink-0" /> {s.name}</span>
-                    {s.chargeMode === "WEEKLY" && <span className="shrink-0 rounded-full bg-white/20 px-1.5 text-[9px]">WK</span>}
+                    <span className="min-w-0 flex items-center gap-1">
+                      <Icon className="size-3.5 shrink-0" />
+                      <span className="line-clamp-2 leading-tight">{s.name}</span>
+                    </span>
+                    {s.chargeMode === "WEEKLY" && <span className="shrink-0 rounded-full bg-white/20 px-1.5 text-[9px]">WKLY</span>}
                   </div>
                   <div className="mt-0.5 text-lg font-extrabold tabular-nums leading-tight" style={{ textShadow: "0 2px 6px rgba(0,0,0,0.35)" }}>{fmt(s.today.collected, { compact: true })}</div>
                   <div className="text-[10px] opacity-90 truncate">{s.today.count} charged{s.today.owedCount > 0 ? ` · ${s.today.owedCount} owing` : ""}</div>
@@ -686,11 +689,16 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
             )}
 
             {/* fee cards grid — CI3 metro cards, EVERY applicable module on one
-                row (fee_cards_grid repeat(N, 1fr)); checkbox + amount inline */}
+                row (fee_cards_grid repeat(N, 1fr)); compact stacked card so the
+                row holds 2, 3, 4 or ALL of the learner's module cards */}
             {activeCards.length === 0 && !info.transport && !(canInvoice && info.invoices.some((i) => i.dueCents > 0)) && (
               <EmptyState title="No fee modules for this learner" hint="No active enrolments, transport assignment or open invoices for the date." />
             )}
-            <div className="grid gap-2.5 grid-cols-1 sm:grid-cols-2 xl:grid-cols-[repeat(var(--m),minmax(0,1fr))]" style={{ "--m": activeCards.length } as CSSProperties}>
+            <div className={cn(
+              "grid gap-2 md:grid-cols-[repeat(var(--m),minmax(0,1fr))]",
+              activeCards.length === 1 ? "grid-cols-1" : "grid-cols-2",
+              activeCards.length >= 3 && "sm:grid-cols-3",
+            )} style={{ "--m": activeCards.length } as CSSProperties}>
               {activeCards.map((c) => {
                 const Icon = CAT_ICON[c.category] ?? Wallet;
                 const paid = cardPayable(c) ? cent(amounts[c.serviceId] ?? "") : 0;
@@ -700,60 +708,59 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
                 const advance = paid - settle;
                 return (
                   <div key={c.serviceId}
-                    className={cn("relative rounded-xl p-3 text-white overflow-hidden shadow-lg transition-all", CAT_GRADIENT[c.category] ?? CAT_GRADIENT.OTHER, dim ? "opacity-55" : collectOn[c.serviceId] ? "ring-2 ring-white/70" : "hover:scale-[1.01]")}>
+                    className={cn("relative rounded-xl p-2.5 text-white overflow-hidden shadow-md transition-all flex flex-col", CAT_GRADIENT[c.category] ?? CAT_GRADIENT.OTHER, dim ? "opacity-55" : collectOn[c.serviceId] ? "ring-2 ring-white/70" : "hover:scale-[1.01]")}>
                     <div className="absolute -top-1/2 -right-1/2 w-[200%] h-[200%] bg-white/10 rotate-45 pointer-events-none" aria-hidden />
-                    <div className="absolute top-1.5 right-1.5 rounded-full bg-white/20 px-1.5 py-0.5 text-[9px] font-semibold">
-                      {c.weekly ? "WEEKLY" : c.optional ? "OPTIONAL" : "REQUIRED"}
+                    <div className="flex items-start gap-1.5 min-w-0">
+                      <Icon className="size-4 shrink-0 drop-shadow mt-px" />
+                      <span className="text-[11px] font-bold leading-tight line-clamp-2 min-w-0">{c.name}</span>
                     </div>
-                    {c.today && (
-                      <div className={cn("absolute top-1.5 left-1.5 rounded-full px-1.5 py-0.5 text-[9px] font-semibold", c.today.status === "PAID" ? "bg-emerald-400/90 text-emerald-950" : "bg-amber-300/90 text-amber-950")}>
-                        {fmt(c.today.amountCents, { compact: true })} · {c.today.status.toLowerCase()}
-                      </div>
-                    )}
-                    <div className="mt-6 flex items-center gap-2">
-                      <Icon className="size-6 shrink-0 drop-shadow" />
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm font-bold leading-tight truncate">{c.name}</div>
-                        <div className="text-base font-extrabold tabular-nums leading-tight" style={{ textShadow: "0 2px 6px rgba(0,0,0,0.35)" }}>
-                          {fmt(c.discountedCents)}<span className="text-[10px] font-medium opacity-80">{c.weekly ? " /wk" : " /day"}</span>
-                          {c.discountCents > 0 && <span className="ml-1 text-[10px] line-through opacity-60 font-normal">{fmt(c.priceCents)}</span>}
-                        </div>
-                      </div>
+                    <div className="mt-1 text-sm font-extrabold tabular-nums leading-none" style={{ textShadow: "0 2px 6px rgba(0,0,0,0.35)" }}>
+                      {fmt(c.discountedCents)}<span className="text-[8px] font-medium opacity-80">{c.weekly ? " /wk" : " /d"}</span>
+                      {c.discountCents > 0 && <span className="ml-1 text-[8px] line-through opacity-60 font-normal">{fmt(c.priceCents, { compact: true })}</span>}
                     </div>
-                    {/* per-item prepaid / arrears chips (CI3 daily_fee_wallet parity) */}
-                    {(c.prepaidCents > 0 || c.arrearsCents > 0 || c.discountLabel || waterDone) && (
-                      <div className="mt-1.5 flex flex-wrap gap-1 text-[9px] font-semibold">
-                        {c.prepaidCents > 0 && <span className="rounded-full bg-white/25 px-1.5 py-0.5">prepaid {fmt(c.prepaidCents)}</span>}
-                        {c.arrearsCents > 0 && <span className="rounded-full bg-black/30 px-1.5 py-0.5">arrears {fmt(c.arrearsCents)}</span>}
-                        {c.discountLabel && <span className="rounded-full bg-white/25 px-1.5 py-0.5">{c.discountLabel}</span>}
-                        {waterDone && <span className="rounded-full bg-emerald-300 text-emerald-950 px-1.5 py-0.5 flex items-center gap-0.5"><CheckCircle2 className="size-2.5" /> PAID THIS WEEK</span>}
-                      </div>
-                    )}
-                    {/* collect checkbox + amount INLINE (CI3 compact card) */}
+                    {/* type + per-item status chips (CI3 daily_fee_wallet parity) */}
+                    <div className="mt-1 flex flex-wrap gap-1 text-[8px] font-semibold">
+                      <span className="rounded-full bg-white/20 px-1.5 py-0.5 font-bold">{c.weekly ? "WKLY" : c.optional ? "OPT" : "REQ"}</span>
+                      {c.today && (
+                        <span className={cn("rounded-full px-1.5 py-0.5", c.today.status === "PAID" ? "bg-emerald-400/90 text-emerald-950" : "bg-amber-300/90 text-amber-950")}>
+                          {fmt(c.today.amountCents, { compact: true })} · {c.today.status.toLowerCase()}
+                        </span>
+                      )}
+                      {c.prepaidCents > 0 && <span className="rounded-full bg-white/25 px-1.5 py-0.5">prepaid {fmt(c.prepaidCents, { compact: true })}</span>}
+                      {c.arrearsCents > 0 && <span className="rounded-full bg-black/30 px-1.5 py-0.5">arrears {fmt(c.arrearsCents, { compact: true })}</span>}
+                      {c.discountLabel && <span className="rounded-full bg-white/25 px-1.5 py-0.5">{c.discountLabel}</span>}
+                      {waterDone && <span className="rounded-full bg-emerald-300 text-emerald-950 px-1.5 py-0.5 flex items-center gap-0.5"><CheckCircle2 className="size-2.5" /> PAID THIS WEEK</span>}
+                    </div>
+                    {/* collect toggle above a full-width amount input — stacked
+                        (CI3 compact card) so the card stays narrow at any count */}
                     {!waterDone && (
-                      <div className="mt-2 flex items-stretch gap-1.5">
-                        <label className="shrink-0 flex items-center gap-1.5 rounded-lg bg-white/20 px-2.5 cursor-pointer hover:bg-white/30 transition shadow-sm">
+                      <>
+                        <label className="mt-1.5 flex items-center justify-center gap-1.5 rounded-lg bg-white/20 h-8 cursor-pointer hover:bg-white/30 transition shadow-sm">
                           <input type="checkbox" className="peer sr-only" checked={!!collectOn[c.serviceId]} onChange={(e) => toggleCard(c, e.target.checked)} />
                           <span className="size-4 rounded border-2 border-white/60 bg-white/20 grid place-items-center text-emerald-600 peer-checked:bg-white peer-checked:border-white transition">
                             {collectOn[c.serviceId] ? <CheckCircle2 className="size-3" /> : null}
                           </span>
-                          <span className="text-xs font-bold">Collect{c.optional ? "*" : ""}</span>
+                          <span className="text-[10px] font-bold">Collect{c.optional ? "*" : ""}</span>
                         </label>
                         <Input type="number" step="0.5" min="0" placeholder="0.00" inputMode="decimal" disabled={!collectOn[c.serviceId]}
                           value={amounts[c.serviceId] ?? ""}
                           onChange={(e) => setAmounts((a) => ({ ...a, [c.serviceId]: e.target.value }))}
-                          className="flex-1 min-w-0 h-9 bg-white/90 text-slate-900 font-bold text-base text-right border-white/40 disabled:opacity-50" aria-label={`${c.name} amount`} />
-                      </div>
+                          className="mt-1 w-full h-8 bg-white/90 text-slate-900 font-bold text-sm text-right px-2 border-white/40 disabled:opacity-50" aria-label={`${c.name} amount`} />
+                      </>
                     )}
                     {paid > 0 && (
-                      <div className="mt-1 text-[10px] font-medium opacity-95 truncate">
-                        settles <b>{fmt(settle)}</b>{advance > 0 && <> · banks <b>{fmt(advance)}</b></>}
+                      <div className="mt-1 text-[9px] font-medium opacity-95 truncate">
+                        settles <b>{fmt(settle, { compact: true })}</b>{advance > 0 && <> · banks <b>{fmt(advance, { compact: true })}</b></>}
                       </div>
                     )}
                   </div>
                 );
               })}
             </div>
+
+            {activeCards.some((c) => c.optional) && (
+              <p className="text-[10px] text-muted-foreground">* optional module — collected only when checked; leave unchecked to skip charging it today.</p>
+            )}
 
             {/* approved opt-outs (CI3: the cards that never load) */}
             {offCards.length > 0 && (

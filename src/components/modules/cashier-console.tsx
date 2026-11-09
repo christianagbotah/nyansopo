@@ -130,11 +130,11 @@ export function CashierConsole() {
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-1.5">
               <Label className="text-xs text-muted-foreground hidden sm:block">From</Label>
-              <DateField value={from} onChange={(v) => setFrom(v ?? "")} className="h-8 w-36" />
+              <DateField value={from} onChange={(v) => setFrom(v ?? "")} className="h-8 w-40" />
             </div>
             <div className="flex items-center gap-1.5">
               <Label className="text-xs text-muted-foreground hidden sm:block">To</Label>
-              <DateField value={to} onChange={(v) => setTo(v ?? "")} className="h-8 w-36" />
+              <DateField value={to} onChange={(v) => setTo(v ?? "")} className="h-8 w-40" />
             </div>
             {data && data.collectors.length > 0 && (
               <Select value={collector} onValueChange={setCollector}>
