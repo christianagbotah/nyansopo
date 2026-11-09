@@ -1,12 +1,14 @@
 "use client";
 /* ── Fee Collection Portal — CI3 fee_collection_portal.php parity ──────────
    The full-screen counter view: KPI strip (today's takings per fee type +
-   total), learner search, prepaid/arrears wallet cards with per-item
-   breakdown, gradient fee cards (one per fee module, per-item prepaid and
-   arrears chips, weekly water state, opt-in breakfasts, approved opt-outs,
-   route-based transport with direction + already-boarded), tendered/change
-   rail, held baskets, printable dining coupons and receipt printing. ── */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+   total — every card on ONE row like CI3's dashboardCards), learner search,
+   prepaid/arrears wallet cards with per-item breakdown, compact gradient fee
+   cards (all applicable modules on one row, CI3 fee_cards_grid), multi-method
+   SPLIT payments (daily_fee_payment_splits parity → Payment.splitJson),
+   recent collections with edit (void & re-take) / delete (void) / reprint
+   actions, tendered/change rail, held baskets, printable dining coupons and
+   receipt printing. ── */
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useStore } from "@/lib/store";
 import { apiGet, apiPost, apiPostQueueable } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -24,7 +26,7 @@ import { ReceiptDialog } from "@/components/modules/daily-services";
 import {
   UtensilsCrossed, Droplets, BookOpenCheck, Coffee, Bus, Wallet, Search, Printer, UserCheck,
   PauseCircle, PlayCircle, Trash2, Ticket, TrendingUp, HandCoins, AlertTriangle, CheckCircle2,
-  GraduationCap, Percent, X, Banknote, CircleDollarSign,
+  GraduationCap, Percent, X, Banknote, CircleDollarSign, SplitSquareHorizontal, Pencil, Plus,
 } from "lucide-react";
 
 /* ── types ── */
@@ -176,6 +178,15 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
   const [reportRows, setReportRows] = useState<CouponRow[] | null>(null);
   const [couponOpen, setCouponOpen] = useState(false);
 
+  /* ── split payment mode (CI3 daily_fee_payment_splits parity) ── */
+  const [splitOn, setSplitOn] = useState(false);
+  const [splits, setSplits] = useState<{ method: string; amount: string; reference: string }[]>([]);
+
+  /* ── edit mode: the voided receipt being re-taken (CI3 editModeIndicator) ── */
+  const [editing, setEditing] = useState<{ receiptNo: string; amountCents: number; method: string; category: string } | null>(null);
+  const [voidConfirm, setVoidConfirm] = useState<{ mode: "edit" | "delete"; payment: { id: string; receiptNo: string; amountCents: number; method: string; category: string; paidAt: string }; reason: string } | null>(null);
+  const [voidBusy, setVoidBusy] = useState(false);
+
   const fmt = fmtCedi;
   const cent = (s: string) => Math.round(parseFloat(s || "0") * 100) || 0;
 
@@ -238,10 +249,36 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
     }
   };
 
+  /* ── split helpers: parts must sum to the daily-items total ── */
+  const splitSum = splits.reduce((s, x) => s + cent(x.amount), 0);
+  const splitRemaining = itemTotal - splitSum;
+  const toggleSplit = (on: boolean) => {
+    setSplitOn(on);
+    if (on) {
+      setSplits([{ method: "CASH", amount: itemTotal > 0 ? (itemTotal / 100).toFixed(2) : "", reference: "" }]);
+      setMethod("CASH");
+    } else {
+      setSplits([]);
+    }
+  };
+  const patchSplit = (i: number, patch: Partial<{ method: string; amount: string; reference: string }>) => {
+    setSplits((rows) => rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  };
+  const addSplitRow = () => {
+    setSplits((rows) => [...rows, { method: "MOMO_MTN", amount: "", reference: "" }]);
+  };
+  const fillRemaining = () => {
+    if (splitRemaining <= 0) return;
+    setSplits((rows) => rows.map((r, j) => (j === rows.length - 1 ? { ...r, amount: (splitRemaining / 100).toFixed(2) } : r)));
+  };
+
   const pickStudent = (m: { id: string; name: string; classroom: string }) => {
     setSearchOpen(false);
     setQuery("");
     setDate(todayStr());
+    setEditing(null);
+    setSplitOn(false);
+    setSplits([]);
     loadInfo(m.id, todayStr());
   };
 
@@ -256,6 +293,9 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
     setReference("");
     setDate(todayStr());
     setMarkPresent(true);
+    setEditing(null);
+    setSplitOn(false);
+    setSplits([]);
     searchRef.current?.focus();
   };
 
@@ -273,6 +313,23 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
       toast({ title: "Nothing to collect", description: "Tick Collect on at least one fee card, or pick a transport direction." });
       return;
     }
+    /* split mode: parts must cover the DAILY items total exactly (CI3 splits
+       live on the daily-fee transaction; invoice amounts take the 1st method) */
+    const cleanSplits = splits.filter((s) => cent(s.amount) > 0);
+    if (splitOn) {
+      if (cleanSplits.length < 2) {
+        toast({ title: "Split needs two methods", description: "Add at least two payment parts, or turn Split off to pay with one method." });
+        return;
+      }
+      if (items.length && splitSum !== itemTotal) {
+        toast({ title: "Split does not balance", description: `The parts add up to ${fmt(splitSum)} but the fee items total ${fmt(itemTotal)} — adjust the parts so they match.` });
+        return;
+      }
+    }
+    const methods = splitOn && cleanSplits.length >= 2
+      ? cleanSplits.map((s) => ({ method: s.method, amountCents: cent(s.amount), reference: s.reference.trim() || null }))
+      : undefined;
+    const invMethod = methods?.[0]?.method ?? method;
     setBusy(true);
     let firstReceipt: any = null;
     let queued = false;
@@ -282,13 +339,14 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
           `/api/school/${S}/ops/daily`, "payment",
           {
             action: "pos-collect", studentId: info.student.id, items,
-            method, reference: reference.trim() || undefined,
+            method: invMethod, reference: reference.trim() || undefined,
+            ...(methods ? { methods } : {}),
             paidAt: date,
             transportUsage: usage || undefined,
             markPresent, date,
           },
           `Daily fees ${fmt(itemTotal)} — ${info.student.name}`,
-          (p, clientId) => ({ ...p, category: "DAILY", schoolId: S, studentId: info.student.id, amountCents: itemTotal, method, paidAt: date, clientId }),
+          (p, clientId) => ({ ...p, category: "DAILY", schoolId: S, studentId: info.student.id, amountCents: itemTotal, method: invMethod, paidAt: date, clientId }),
         );
         if (res.queued) queued = true;
         else firstReceipt = res.data?.receipt ?? { ...res.data?.payment, student: info.student.name };
@@ -302,22 +360,68 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
       for (const inv of invoiceItems) {
         const r = await apiPost<any>(`/api/school/${S}/fees`, {
           action: "record-payment", invoiceId: inv.invoiceId, amountCents: inv.amountCents,
-          method, reference: reference.trim() || undefined,
+          method: invMethod, reference: reference.trim() || undefined,
         });
         firstReceipt = firstReceipt ?? r?.receipt ?? r?.payment;
       }
       if (queued) toast({ title: "Queued offline", description: "Receipt will be issued when you reconnect." });
+      else if (editing) toast({ title: "Collection re-taken", description: `${editing.receiptNo} was voided — ${fmt(grandTotal)} re-collected as a new receipt.` });
       else toast({ title: "Collection recorded", description: `${fmt(grandTotal)} from ${info.student.name}.` });
+      setEditing(null);
       if (firstReceipt && autoReceipt && !queued) setReceipt(firstReceipt);
       // remove any held basket for this learner
       persistHeld(held.filter((h) => h.studentId !== info.student.id));
       onDone?.();
       loadKpi();
       loadInfo(info.student.id, date);
+      setSplitOn(false);
+      setSplits([]);
+      setTendered("");
     } catch (e: any) {
       toast({ title: "Collection failed", description: e.message, variant: "destructive" });
     } finally { setBusy(false); }
   }
+
+  /* ── recent-collection row actions (CI3 edit/delete/print) ── */
+  const askVoid = (mode: "edit" | "delete", p: { id: string; receiptNo: string; amountCents: number; method: string; category: string; paidAt: string }) =>
+    setVoidConfirm({ mode, payment: p, reason: "" });
+
+  const doVoid = async () => {
+    const v = voidConfirm;
+    if (!v || !S || !info) return;
+    setVoidBusy(true);
+    try {
+      const r = await apiPost<{ receiptNo: string; chargesReArmed?: number; advancesReversed?: number; invoiceReversed?: number }>(`/api/school/${S}/ops/cashier`, {
+        action: "void-payment", paymentId: v.payment.id, reason: v.reason.trim() || undefined,
+      });
+      if (v.mode === "edit") {
+        const on = v.payment.paidAt.slice(0, 10);
+        setDate(on);
+        setEditing({ receiptNo: v.payment.receiptNo, amountCents: v.payment.amountCents, method: v.payment.method, category: v.payment.category });
+        toast({ title: `${r.receiptNo} voided — edit mode`, description: "Charges are back as arrears; re-take the collection below." });
+        loadInfo(info.student.id, on);
+      } else {
+        toast({ title: "Payment voided", description: `${r.receiptNo} reversed — charges re-armed${r.invoiceReversed ? `, invoice paid reduced by ${fmt(r.invoiceReversed)}` : ""}.` });
+        loadInfo(info.student.id, date);
+      }
+      setVoidConfirm(null);
+      loadKpi();
+      onDone?.();
+    } catch (e: any) {
+      toast({ title: "Could not void the payment", description: e.message, variant: "destructive" });
+    } finally { setVoidBusy(false); }
+  };
+
+  const printRecent = async (p: { id: string; receiptNo: string }) => {
+    if (!S) return;
+    try {
+      const r = await apiPost<{ receipt: any }>(`/api/school/${S}/ops/cashier`, { action: "receipt-payload", paymentId: p.id });
+      if (r?.receipt) setReceipt(r.receipt);
+      else toast({ title: "Receipt not printable", description: "This receipt could not be reconstructed." });
+    } catch (e: any) {
+      toast({ title: "Receipt not printable", description: e.message, variant: "destructive" });
+    }
+  };
 
   /* ── hold / load held ── */
   const holdCurrent = () => {
@@ -396,30 +500,32 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
 
   return (
     <div className="space-y-4">
-      {/* ── KPI strip — today's takings per fee type + total (CI3 dashboardCards) ── */}
+      {/* ── KPI strip — today's takings per fee type + total, ALL on one row
+          (CI3 dashboardCards: repeat(enabled+1, 1fr) — collapses to 2/3 cols
+          on tablet/mobile) ── */}
       {!kpi && <LoadingBlock label="Counting today's takings…" />}
       {kpi && (
         <div className="sticky top-0 z-10 -mx-1 px-1 pt-1 pb-2 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
-          <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-2.5">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-[repeat(var(--n),minmax(0,1fr))] gap-2" style={{ "--n": kpiServices.length + 1 } as CSSProperties}>
             {kpiServices.map((s) => {
               const Icon = CAT_ICON[s.category] ?? Wallet;
               return (
                 <button key={s.id} onClick={() => openReport(s)}
-                  className={cn("rounded-xl p-3 text-left text-white shadow-md transition hover:scale-[1.02] hover:shadow-lg focus-visible:outline-2 focus-visible:outline-offset-2", CAT_GRADIENT[s.category] ?? CAT_GRADIENT.OTHER)}
+                  className={cn("rounded-xl p-2.5 text-left text-white shadow-md transition hover:scale-[1.02] hover:shadow-lg focus-visible:outline-2 focus-visible:outline-offset-2", CAT_GRADIENT[s.category] ?? CAT_GRADIENT.OTHER)}
                   title={`Today's ${s.name} collections — click for the register`}>
                   <div className="flex items-center justify-between gap-1 text-[11px] font-semibold opacity-90">
-                    <span className="truncate flex items-center gap-1"><Icon className="size-3.5" /> {s.name}</span>
-                    {s.chargeMode === "WEEKLY" && <span className="shrink-0 rounded-full bg-white/20 px-1.5 text-[9px]">WEEKLY</span>}
+                    <span className="truncate flex items-center gap-1"><Icon className="size-3.5 shrink-0" /> {s.name}</span>
+                    {s.chargeMode === "WEEKLY" && <span className="shrink-0 rounded-full bg-white/20 px-1.5 text-[9px]">WK</span>}
                   </div>
-                  <div className="mt-1 text-xl font-extrabold tabular-nums" style={{ textShadow: "0 2px 6px rgba(0,0,0,0.35)" }}>{fmt(s.today.collected, { compact: true })}</div>
-                  <div className="text-[11px] opacity-90">{s.today.count} charged{s.today.owedCount > 0 ? ` · ${s.today.owedCount} owing` : ""}</div>
+                  <div className="mt-0.5 text-lg font-extrabold tabular-nums leading-tight" style={{ textShadow: "0 2px 6px rgba(0,0,0,0.35)" }}>{fmt(s.today.collected, { compact: true })}</div>
+                  <div className="text-[10px] opacity-90 truncate">{s.today.count} charged{s.today.owedCount > 0 ? ` · ${s.today.owedCount} owing` : ""}</div>
                 </button>
               );
             })}
-            <div className="rounded-xl p-3 text-white shadow-md bg-gradient-to-br from-emerald-600 to-green-500">
-              <div className="flex items-center gap-1 text-[11px] font-semibold opacity-95"><Banknote className="size-3.5" /> TOTAL TODAY</div>
-              <div className="mt-1 text-xl font-extrabold tabular-nums" style={{ textShadow: "0 2px 6px rgba(0,0,0,0.35)" }}>{fmt(kpi.today.collected, { compact: true })}</div>
-              <div className="text-[11px] opacity-90">{kpi.today.count} charges{kpi.today.owed > 0 ? ` · ${fmt(kpi.today.owed, { compact: true })} owing` : ""}</div>
+            <div className="rounded-xl p-2.5 text-white shadow-md bg-gradient-to-br from-emerald-600 to-green-500">
+              <div className="flex items-center gap-1 text-[11px] font-semibold opacity-95 truncate"><Banknote className="size-3.5 shrink-0" /> TOTAL TODAY</div>
+              <div className="mt-0.5 text-lg font-extrabold tabular-nums leading-tight" style={{ textShadow: "0 2px 6px rgba(0,0,0,0.35)" }}>{fmt(kpi.today.collected, { compact: true })}</div>
+              <div className="text-[10px] opacity-90 truncate">{kpi.today.count} charges{kpi.today.owed > 0 ? ` · ${fmt(kpi.today.owed, { compact: true })} owing` : ""}</div>
             </div>
           </div>
         </div>
@@ -522,33 +628,69 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
               </button>
             </div>
 
-            {/* recent takings at the counter */}
+            {/* recent takings at the counter — edit / delete / print (CI3 parity) */}
             <div className="rounded-xl border bg-card">
               <div className="px-3 py-2 border-b text-xs font-semibold flex items-center gap-1.5"><TrendingUp className="size-3.5 text-primary" /> Recent collections</div>
-              <div className="max-h-64 overflow-y-auto nice-scroll p-2 space-y-1.5">
-                {(info.recentPayments ?? []).length ? info.recentPayments.map((p) => (
-                  <div key={p.id} className="flex items-center justify-between gap-2 rounded-lg bg-secondary/50 px-2.5 py-1.5">
-                    <div className="min-w-0">
-                      <div className="text-xs font-medium truncate">{PAYMENT_LABELS[p.method] ?? p.method}{p.category !== "DAILY" ? " · invoice" : ""}</div>
-                      <div className="text-[10px] text-muted-foreground">{fmtDateTime(p.paidAt)}</div>
+              <div className="max-h-72 overflow-y-auto nice-scroll p-2 space-y-1.5">
+                {(info.recentPayments ?? []).length ? info.recentPayments.map((p) => {
+                  const actionable = p.category !== "POS";
+                  return (
+                    <div key={p.id} className="group flex items-center justify-between gap-2 rounded-lg bg-secondary/50 px-2.5 py-1.5 hover:bg-secondary transition-colors">
+                      <div className="min-w-0">
+                        <div className="text-xs font-medium truncate">{PAYMENT_LABELS[p.method] ?? p.method}{p.category !== "DAILY" ? ` · ${p.category.toLowerCase()}` : ""}</div>
+                        <div className="text-[10px] text-muted-foreground">{fmtDateTime(p.paidAt)}</div>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <div className="text-right">
+                          <div className="text-xs font-bold tabular-nums">{fmt(p.amountCents)}</div>
+                          <div className="text-[10px] text-muted-foreground font-mono">{p.receiptNo}</div>
+                        </div>
+                        {actionable && (
+                          <div className="flex gap-0.5 opacity-60 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                            <Button size="sm" variant="ghost" className="size-7 p-0 text-indigo-600 hover:text-indigo-500 dark:text-indigo-400" title="Print receipt" onClick={() => printRecent(p)}>
+                              <Printer className="size-3.5" />
+                              <span className="sr-only">Print {p.receiptNo}</span>
+                            </Button>
+                            <Button size="sm" variant="ghost" className="size-7 p-0 text-emerald-600 hover:text-emerald-500 dark:text-emerald-400" title="Edit — void & re-take this collection" onClick={() => askVoid("edit", p)}>
+                              <Pencil className="size-3.5" />
+                              <span className="sr-only">Edit {p.receiptNo}</span>
+                            </Button>
+                            <Button size="sm" variant="ghost" className="size-7 p-0 text-destructive hover:text-destructive/80" title="Delete — void this payment" onClick={() => askVoid("delete", p)}>
+                              <Trash2 className="size-3.5" />
+                              <span className="sr-only">Delete {p.receiptNo}</span>
+                            </Button>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                    <div className="text-right shrink-0">
-                      <div className="text-xs font-bold tabular-nums">{fmt(p.amountCents)}</div>
-                      <div className="text-[10px] text-muted-foreground font-mono">{p.receiptNo}</div>
-                    </div>
-                  </div>
-                )) : <div className="text-xs text-muted-foreground text-center py-4">No collections yet for this learner</div>}
+                  );
+                }) : <div className="text-xs text-muted-foreground text-center py-4">No collections yet for this learner</div>}
               </div>
             </div>
           </div>
 
           {/* ── MAIN: fee cards + transaction rail ── */}
           <div className="lg:col-span-2 space-y-4">
-            {/* fee cards grid — CI3 metro cards (one per fee module) */}
+            {/* edit-mode indicator (CI3 editModeIndicator) */}
+            {editing && (
+              <div className="rounded-xl border-2 border-amber-400 bg-amber-50 dark:bg-amber-950/40 p-3 flex flex-wrap items-center gap-3">
+                <div className="size-9 rounded-full bg-amber-400/90 text-amber-950 grid place-items-center shrink-0"><Pencil className="size-4" /></div>
+                <div className="min-w-0 flex-1">
+                  <div className="font-bold text-amber-800 dark:text-amber-200 text-sm leading-tight">EDIT MODE — replacing {editing.receiptNo}</div>
+                  <div className="text-xs text-amber-700 dark:text-amber-300 mt-0.5">
+                    Voided {fmt(editing.amountCents)} ({editing.method}) — the settled charges are back as arrears. Re-take the collection for {fmtDate(date)} below.
+                  </div>
+                </div>
+                <Button size="sm" variant="outline" className="h-8" onClick={() => setEditing(null)}>Done editing</Button>
+              </div>
+            )}
+
+            {/* fee cards grid — CI3 metro cards, EVERY applicable module on one
+                row (fee_cards_grid repeat(N, 1fr)); checkbox + amount inline */}
             {activeCards.length === 0 && !info.transport && !(canInvoice && info.invoices.some((i) => i.dueCents > 0)) && (
               <EmptyState title="No fee modules for this learner" hint="No active enrolments, transport assignment or open invoices for the date." />
             )}
-            <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
+            <div className="grid gap-2.5 grid-cols-1 sm:grid-cols-2 xl:grid-cols-[repeat(var(--m),minmax(0,1fr))]" style={{ "--m": activeCards.length } as CSSProperties}>
               {activeCards.map((c) => {
                 const Icon = CAT_ICON[c.category] ?? Wallet;
                 const paid = cardPayable(c) ? cent(amounts[c.serviceId] ?? "") : 0;
@@ -558,51 +700,54 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
                 const advance = paid - settle;
                 return (
                   <div key={c.serviceId}
-                    className={cn("relative rounded-xl p-4 text-white overflow-hidden shadow-lg transition-all", CAT_GRADIENT[c.category] ?? CAT_GRADIENT.OTHER, dim ? "opacity-55" : collectOn[c.serviceId] ? "ring-2 ring-white/70 scale-[1.01]" : "hover:scale-[1.015]")}>
+                    className={cn("relative rounded-xl p-3 text-white overflow-hidden shadow-lg transition-all", CAT_GRADIENT[c.category] ?? CAT_GRADIENT.OTHER, dim ? "opacity-55" : collectOn[c.serviceId] ? "ring-2 ring-white/70" : "hover:scale-[1.01]")}>
                     <div className="absolute -top-1/2 -right-1/2 w-[200%] h-[200%] bg-white/10 rotate-45 pointer-events-none" aria-hidden />
-                    <div className="absolute top-2 right-2 rounded-full bg-white/20 px-2 py-0.5 text-[10px] font-semibold">
-                      {c.weekly ? "WEEKLY • REQUIRED" : c.optional ? "DAILY • OPTIONAL" : "DAILY • REQUIRED"}
+                    <div className="absolute top-1.5 right-1.5 rounded-full bg-white/20 px-1.5 py-0.5 text-[9px] font-semibold">
+                      {c.weekly ? "WEEKLY" : c.optional ? "OPTIONAL" : "REQUIRED"}
                     </div>
                     {c.today && (
-                      <div className={cn("absolute top-2 left-2 rounded-full px-2 py-0.5 text-[10px] font-semibold", c.today.status === "PAID" ? "bg-emerald-400/90 text-emerald-950" : "bg-amber-300/90 text-amber-950")}>
-                        charged {fmt(c.today.amountCents, { compact: true })} · {c.today.status.toLowerCase()}
+                      <div className={cn("absolute top-1.5 left-1.5 rounded-full px-1.5 py-0.5 text-[9px] font-semibold", c.today.status === "PAID" ? "bg-emerald-400/90 text-emerald-950" : "bg-amber-300/90 text-amber-950")}>
+                        {fmt(c.today.amountCents, { compact: true })} · {c.today.status.toLowerCase()}
                       </div>
                     )}
                     <div className="mt-6 flex items-center gap-2">
-                      <Icon className="size-8 drop-shadow" />
-                      <div className="min-w-0">
-                        <div className="font-bold leading-tight truncate">{c.name}</div>
-                        <div className="text-sm font-extrabold tabular-nums" style={{ textShadow: "0 2px 6px rgba(0,0,0,0.35)" }}>
-                          {fmt(c.discountedCents)}<span className="text-[11px] font-medium opacity-80">{c.weekly ? " /wk" : " /day"}</span>
-                          {c.discountCents > 0 && <span className="ml-1.5 text-[11px] line-through opacity-60 font-normal">{fmt(c.priceCents)}</span>}
+                      <Icon className="size-6 shrink-0 drop-shadow" />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-bold leading-tight truncate">{c.name}</div>
+                        <div className="text-base font-extrabold tabular-nums leading-tight" style={{ textShadow: "0 2px 6px rgba(0,0,0,0.35)" }}>
+                          {fmt(c.discountedCents)}<span className="text-[10px] font-medium opacity-80">{c.weekly ? " /wk" : " /day"}</span>
+                          {c.discountCents > 0 && <span className="ml-1 text-[10px] line-through opacity-60 font-normal">{fmt(c.priceCents)}</span>}
                         </div>
                       </div>
                     </div>
                     {/* per-item prepaid / arrears chips (CI3 daily_fee_wallet parity) */}
-                    <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] font-semibold">
-                      {c.prepaidCents > 0 && <span className="rounded-full bg-white/25 px-2 py-0.5">prepaid {fmt(c.prepaidCents)}</span>}
-                      {c.arrearsCents > 0 && <span className="rounded-full bg-black/30 px-2 py-0.5">arrears {fmt(c.arrearsCents)}</span>}
-                      {c.discountLabel && <span className="rounded-full bg-white/25 px-2 py-0.5">{c.discountLabel}</span>}
-                      {waterDone && <span className="rounded-full bg-emerald-300 text-emerald-950 px-2 py-0.5 flex items-center gap-1"><CheckCircle2 className="size-3" /> PAID THIS WEEK</span>}
-                    </div>
-                    {!waterDone && (
-                      <label className="mt-3 flex items-center gap-2 rounded-xl bg-white/20 px-3 py-2 cursor-pointer hover:bg-white/30 transition shadow-sm">
-                        <input type="checkbox" className="peer sr-only" checked={!!collectOn[c.serviceId]} onChange={(e) => toggleCard(c, e.target.checked)} />
-                        <span className="size-5 rounded-md border-2 border-white/60 bg-white/20 grid place-items-center text-emerald-600 peer-checked:bg-white peer-checked:border-white transition">
-                          {collectOn[c.serviceId] ? <CheckCircle2 className="size-4" /> : null}
-                        </span>
-                        <span className="text-sm font-bold">Collect{c.optional ? " (opt in)" : ""}</span>
-                      </label>
+                    {(c.prepaidCents > 0 || c.arrearsCents > 0 || c.discountLabel || waterDone) && (
+                      <div className="mt-1.5 flex flex-wrap gap-1 text-[9px] font-semibold">
+                        {c.prepaidCents > 0 && <span className="rounded-full bg-white/25 px-1.5 py-0.5">prepaid {fmt(c.prepaidCents)}</span>}
+                        {c.arrearsCents > 0 && <span className="rounded-full bg-black/30 px-1.5 py-0.5">arrears {fmt(c.arrearsCents)}</span>}
+                        {c.discountLabel && <span className="rounded-full bg-white/25 px-1.5 py-0.5">{c.discountLabel}</span>}
+                        {waterDone && <span className="rounded-full bg-emerald-300 text-emerald-950 px-1.5 py-0.5 flex items-center gap-0.5"><CheckCircle2 className="size-2.5" /> PAID THIS WEEK</span>}
+                      </div>
                     )}
-                    {!waterDone && collectOn[c.serviceId] && (
-                      <Input type="number" step="0.5" min="0" placeholder="0.00" inputMode="decimal"
-                        value={amounts[c.serviceId] ?? ""}
-                        onChange={(e) => setAmounts((a) => ({ ...a, [c.serviceId]: e.target.value }))}
-                        className="mt-2 bg-white/90 text-slate-900 font-bold text-lg text-right border-white/40" aria-label={`${c.name} amount`} />
+                    {/* collect checkbox + amount INLINE (CI3 compact card) */}
+                    {!waterDone && (
+                      <div className="mt-2 flex items-stretch gap-1.5">
+                        <label className="shrink-0 flex items-center gap-1.5 rounded-lg bg-white/20 px-2.5 cursor-pointer hover:bg-white/30 transition shadow-sm">
+                          <input type="checkbox" className="peer sr-only" checked={!!collectOn[c.serviceId]} onChange={(e) => toggleCard(c, e.target.checked)} />
+                          <span className="size-4 rounded border-2 border-white/60 bg-white/20 grid place-items-center text-emerald-600 peer-checked:bg-white peer-checked:border-white transition">
+                            {collectOn[c.serviceId] ? <CheckCircle2 className="size-3" /> : null}
+                          </span>
+                          <span className="text-xs font-bold">Collect{c.optional ? "*" : ""}</span>
+                        </label>
+                        <Input type="number" step="0.5" min="0" placeholder="0.00" inputMode="decimal" disabled={!collectOn[c.serviceId]}
+                          value={amounts[c.serviceId] ?? ""}
+                          onChange={(e) => setAmounts((a) => ({ ...a, [c.serviceId]: e.target.value }))}
+                          className="flex-1 min-w-0 h-9 bg-white/90 text-slate-900 font-bold text-base text-right border-white/40 disabled:opacity-50" aria-label={`${c.name} amount`} />
+                      </div>
                     )}
                     {paid > 0 && (
-                      <div className="mt-1.5 text-[11px] font-medium opacity-95">
-                        settles <b>{fmt(settle)}</b>{advance > 0 && <> · banks <b>{fmt(advance)}</b> advance</>}
+                      <div className="mt-1 text-[10px] font-medium opacity-95 truncate">
+                        settles <b>{fmt(settle)}</b>{advance > 0 && <> · banks <b>{fmt(advance)}</b></>}
                       </div>
                     )}
                   </div>
@@ -681,14 +826,32 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
                   )}
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">Method</Label>
-                  <Select value={method} onValueChange={(v) => { setMethod(v); if (v === "CASH") setReference(""); }}>
-                    <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {Object.entries(PAYMENT_LABELS).filter(([k]) => k !== "WALLET" && k !== "TRANSPORT_WALLET").map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                  {method !== "CASH" && <Input placeholder={refHint(method)} value={reference} onChange={(e) => setReference(e.target.value)} className="h-8 text-xs" />}
+                  <div className="flex items-center justify-between gap-1">
+                    <Label className="text-xs">Method</Label>
+                    {/* split toggle (CI3 daily_fee_payment_splits) — online only:
+                       the offline queue flush posts a single method */}
+                    <button type="button" onClick={() => toggleSplit(!splitOn)} disabled={!online || itemTotal <= 0}
+                      title={splitOn ? "Turn off split — pay with one method" : "Split across multiple methods (e.g. part cash + part MoMo)"}
+                      className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold transition border",
+                        splitOn ? "bg-primary text-primary-foreground border-primary" : "bg-secondary/60 text-secondary-foreground border-border hover:bg-secondary",
+                        (!online || itemTotal <= 0) && "opacity-40 cursor-not-allowed")}
+                      aria-pressed={splitOn}>
+                      <SplitSquareHorizontal className="size-3" /> SPLIT
+                    </button>
+                  </div>
+                  {splitOn ? (
+                    <div className="h-9 rounded-md border border-primary/40 bg-primary/5 flex items-center justify-center px-3 gap-1.5 text-xs font-semibold text-primary">
+                      <SplitSquareHorizontal className="size-3.5" /> {splits.length} method{splits.length !== 1 ? "s" : ""} · {fmt(splitSum)}
+                    </div>
+                  ) : (
+                    <Select value={method} onValueChange={(v) => { setMethod(v); if (v === "CASH") setReference(""); }}>
+                      <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {Object.entries(PAYMENT_LABELS).filter(([k]) => k !== "WALLET" && k !== "TRANSPORT_WALLET").map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  )}
+                  {!splitOn && method !== "CASH" && <Input placeholder={refHint(method)} value={reference} onChange={(e) => setReference(e.target.value)} className="h-8 text-xs" />}
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Total</Label>
@@ -708,6 +871,54 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
                   </div>
                 </div>
               </div>
+
+              {/* split rows — one method + amount + reference per part
+                  (CI3 daily_fee_payment_splits parity → Payment.splitJson) */}
+              {splitOn && (
+                <div className="mt-3 rounded-xl border border-primary/30 bg-primary/5 dark:bg-primary/10 p-3 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-xs font-semibold flex items-center gap-1.5"><SplitSquareHorizontal className="size-3.5 text-primary" /> Split payment — each part&apos;s method &amp; amount</div>
+                    <div className="text-xs tabular-nums">
+                      parts <b className={splitSum === itemTotal ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}>{fmt(splitSum)}</b> of {fmt(itemTotal)}
+                      {splitRemaining !== 0 && <span className="text-amber-600 dark:text-amber-400"> · {splitRemaining > 0 ? "remaining" : "over"} {fmt(Math.abs(splitRemaining))}</span>}
+                    </div>
+                  </div>
+                  {splits.map((s, i) => (
+                    <div key={i} className="flex flex-wrap items-center gap-2">
+                      <span className="size-6 shrink-0 rounded-full bg-primary text-primary-foreground grid place-items-center text-[10px] font-bold" aria-hidden>{i + 1}</span>
+                      <Select value={s.method} onValueChange={(v) => patchSplit(i, { method: v, reference: v === "CASH" ? "" : s.reference })}>
+                        <SelectTrigger className="w-[150px] h-9"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {Object.entries(PAYMENT_LABELS).filter(([k]) => k !== "WALLET" && k !== "TRANSPORT_WALLET").map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                      <Input type="number" step="0.5" min="0" inputMode="decimal" placeholder="0.00" value={s.amount}
+                        onChange={(e) => patchSplit(i, { amount: e.target.value })}
+                        className="w-28 h-9 text-right font-bold tabular-nums" aria-label={`Split part ${i + 1} amount`} />
+                      {s.method !== "CASH" && (
+                        <Input placeholder={refHint(s.method)} value={s.reference} onChange={(e) => patchSplit(i, { reference: e.target.value })}
+                          className="flex-1 min-w-[160px] h-9 text-xs" aria-label={`Split part ${i + 1} reference`} />
+                      )}
+                      <Button size="sm" variant="ghost" className="size-9 p-0 shrink-0 text-destructive hover:text-destructive" disabled={splits.length <= 1}
+                        onClick={() => setSplits((rows) => rows.filter((_, j) => j !== i))} title="Remove this part">
+                        <X className="size-4" />
+                        <span className="sr-only">Remove split part {i + 1}</span>
+                      </Button>
+                    </div>
+                  ))}
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
+                    <Button size="sm" variant="outline" className="h-8 gap-1" onClick={addSplitRow} disabled={splits.length >= 4}>
+                      <Plus className="size-3.5" /> Add method
+                    </Button>
+                    <Button size="sm" variant="outline" className="h-8" onClick={fillRemaining} disabled={splitRemaining <= 0}>
+                      Fill remaining {splitRemaining > 0 ? fmt(splitRemaining) : ""}
+                    </Button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">
+                    The parts must add up to the fee items total {fmt(itemTotal)} — any invoice amount in this collection takes the first part&apos;s method.
+                  </p>
+                </div>
+              )}
 
               {/* action bar (CI3 mark present / receipt / hold / collect) */}
               <div className="mt-4 flex flex-wrap items-center justify-end gap-2.5">
@@ -864,6 +1075,36 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
           <DialogFooter>
             <Button variant="outline" onClick={() => setCouponOpen(false)}>Cancel</Button>
             <Button className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white" onClick={printCoupon}><Printer className="size-4" /> Generate &amp; print</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── void confirm (delete / edit a recent collection — CI3
+          delete_transaction confirm modal parity) ── */}
+      <Dialog open={!!voidConfirm} onOpenChange={(o) => !o && setVoidConfirm(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {voidConfirm?.mode === "edit"
+                ? <><Pencil className="size-4 text-amber-600" /> Edit collection</>
+                : <><Trash2 className="size-4 text-destructive" /> Delete collection</>}
+            </DialogTitle>
+            <DialogDescription>
+              {voidConfirm?.mode === "edit"
+                ? `${voidConfirm.payment.receiptNo} — ${fmt(voidConfirm.payment.amountCents)} (${PAYMENT_LABELS[voidConfirm.payment.method] ?? voidConfirm.payment.method}) will be voided, the charges return to arrears and the form reloads for ${fmtDate(voidConfirm.payment.paidAt.slice(0, 10))} so you can re-take it.`
+                : `${voidConfirm?.payment.receiptNo} — ${voidConfirm ? fmt(voidConfirm.payment.amountCents) : ""} (${voidConfirm ? PAYMENT_LABELS[voidConfirm.payment.method] ?? voidConfirm.payment.method : ""}) will be voided: settled charges re-arm as arrears, per-item advances, wallet debits and invoice figures are reversed. The receipt stays on the audit trail.`}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Reason (audit trail)</Label>
+            <Input value={voidConfirm?.reason ?? ""} onChange={(e) => setVoidConfirm((v) => (v ? { ...v, reason: e.target.value } : v))}
+              placeholder={voidConfirm?.mode === "edit" ? "e.g. wrong amount keyed" : "e.g. duplicate collection"} className="h-9" />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setVoidConfirm(null)} disabled={voidBusy}>Cancel</Button>
+            <Button variant={voidConfirm?.mode === "edit" ? "default" : "destructive"} className="gap-1.5" onClick={doVoid} disabled={voidBusy}>
+              {voidBusy ? "Reversing…" : voidConfirm?.mode === "edit" ? <><Pencil className="size-4" /> Void &amp; re-take</> : <><Trash2 className="size-4" /> Void payment</>}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

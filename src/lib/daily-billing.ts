@@ -222,6 +222,147 @@ export async function collectDailyItems(db: PrismaClient, opts: {
   return { payment, breakdown, settledTotal, advanceTotal, paymentType, arrearsBefore: owedBefore, arrearsAfter };
 }
 
+/* ── Payment reversal (CI3 delete_transaction / update_payment parity) ──
+   Voiding a counter payment must restore the ledger EXACTLY as if the money
+   never arrived:
+     • settled DailyCharge rows (paymentId = payment) go back to OWED — the
+       day's charge re-arms as arrears (CI3 keeps charges when the learner was
+       present/late; our charges only exist for chargeable days, so re-arming
+       is always the correct semantic)
+     • per-item ADVANCES banked by the collection (WalletTxn ITEM · TOPUP with
+       note "advance — <receipt>") are clawed back off the item balance with a
+       signed ADJUST txn (floored at zero — a later spend may have consumed it)
+     • wallet-funded payments (method WALLET / TRANSPORT_WALLET) credit the
+       wallet back
+     • invoice payments decrement the invoice's paidCents by the settled part
+       (amount − overpayment credits) and reverse the overpayment credits with
+       signed ADJUST rows so the credit ledger stays auditable
+   The Payment row is NEVER deleted — `voided: true` keeps the receipt
+   discoverable for the audit trail, and every reversal writes its own
+   DailyFeeAudit PAYMENT_REVERSAL row. */
+export type VoidOutcome = {
+  chargesReArmed: number;      // pesewas of charges returned to OWED
+  advancesReversed: number;    // pesewas of per-item advance credit clawed back
+  walletRestored: number;      // pesewas credited back to a wallet-funded payment
+  invoiceReversed: number;     // pesewas removed from the invoice's paidCents
+  creditsReversed: number;     // pesewas of overpayment credit reversed
+};
+
+export async function voidPaymentCore(
+  db: PrismaClient,
+  payment: {
+    id: string; receiptNo: string; schoolId: string; studentId: string | null;
+    invoiceId: string | null; category: string; method: string; amountCents: number;
+  },
+  opts: { byName: string; byRole?: string | null; reason?: string | null },
+): Promise<VoidOutcome> {
+  if (!payment.studentId) throw new Error("Payment has no linked learner");
+  const out: VoidOutcome = { chargesReArmed: 0, advancesReversed: 0, walletRestored: 0, invoiceReversed: 0, creditsReversed: 0 };
+  const studentId = payment.studentId;
+
+  /* 1 · settled charges → back to OWED */
+  const settled = await db.dailyCharge.findMany({ where: { paymentId: payment.id } });
+  for (const c of settled) {
+    await db.dailyCharge.update({ where: { id: c.id }, data: { status: "OWED", paymentId: null } });
+    out.chargesReArmed += c.amountCents;
+  }
+
+  /* 2 · per-item advances banked by this receipt → claw back */
+  const advanceTxns = await db.walletTxn.findMany({
+    where: { studentId, wallet: "ITEM", kind: "TOPUP", amountCents: { gt: 0 }, note: { contains: payment.receiptNo } },
+  });
+  for (const t of advanceTxns) {
+    if (!t.serviceId) continue;
+    const bal = await db.serviceBalance.findUnique({ where: { studentId_serviceId: { studentId, serviceId: t.serviceId } } });
+    const claw = Math.min(bal?.prepaidCents ?? 0, t.amountCents);
+    if (claw > 0) {
+      await db.serviceBalance.update({ where: { studentId_serviceId: { studentId, serviceId: t.serviceId } }, data: { prepaidCents: { decrement: claw } } });
+      await db.walletTxn.create({
+        data: {
+          schoolId: payment.schoolId, studentId, wallet: "ITEM", kind: "ADJUST",
+          amountCents: -claw, balanceAfter: (bal?.prepaidCents ?? 0) - claw,
+          note: `reversal — ${payment.receiptNo}`, byName: opts.byName, serviceId: t.serviceId,
+        },
+      });
+      out.advancesReversed += claw;
+    }
+  }
+
+  /* 3 · wallet-funded payment → credit the wallet back */
+  if (payment.method === "WALLET" || payment.method === "TRANSPORT_WALLET") {
+    const w = await db.studentWallet.findUnique({ where: { studentId } });
+    const walletKind = payment.method === "WALLET" ? "PREPAID" : "TRANSPORT";
+    const before = walletKind === "PREPAID" ? (w?.prepaidCents ?? 0) : (w?.transportCents ?? 0);
+    await db.studentWallet.update({
+      where: { studentId },
+      data: walletKind === "PREPAID" ? { prepaidCents: { increment: payment.amountCents } } : { transportCents: { increment: payment.amountCents } },
+    });
+    await db.walletTxn.create({
+      data: {
+        schoolId: payment.schoolId, studentId, wallet: walletKind, kind: "ADJUST",
+        amountCents: payment.amountCents, balanceAfter: before + payment.amountCents,
+        note: `reversal — ${payment.receiptNo}`, byName: opts.byName,
+      },
+    });
+    out.walletRestored = payment.amountCents;
+  }
+
+  /* 4 · invoice payment → decrement paidCents + reverse overpayment credits */
+  if (payment.invoiceId) {
+    const inv = await db.invoice.findUnique({ where: { id: payment.invoiceId } });
+    if (inv) {
+      const credits = await db.studentCredit.findMany({ where: { sourcePaymentId: payment.id, kind: "CREDIT", amountCents: { gt: 0 } } });
+      const creditsTotal = credits.reduce((s, c) => s + c.amountCents, 0);
+      const settledPart = Math.max(0, payment.amountCents - creditsTotal);
+      const dec = Math.min(settledPart, inv.paidCents);
+      if (dec > 0) {
+        await db.invoice.update({ where: { id: inv.id }, data: { paidCents: { decrement: dec } } });
+        out.invoiceReversed = dec;
+      }
+      for (const c of credits) {
+        const cur = await db.studentCredit.aggregate({ where: { studentId, kind: { in: ["CREDIT", "ADJUST", "DAILY_WALLET", "TRANSFER_IN", "TRANSFER_OUT", "APPLY"] } }, _sum: { amountCents: true } });
+        const balAfter = (cur._sum.amountCents ?? 0) - c.amountCents;
+        await db.studentCredit.create({
+          data: {
+            schoolId: payment.schoolId, studentId, kind: "ADJUST", amountCents: -c.amountCents,
+            balanceAfter: balAfter, sourcePaymentId: payment.id,
+            note: `reversal of overpayment credit — ${payment.receiptNo}`, byName: opts.byName,
+          },
+        });
+        out.creditsReversed += c.amountCents;
+      }
+      // recompute the invoice status from the new paid figure
+      const after = await db.invoice.findUnique({ where: { id: inv.id } });
+      if (after) {
+        const net = after.totalCents - after.discountCents;
+        const status = after.writtenOff ? "WRITTEN_OFF" : after.paidCents >= net && net > 0 ? "PAID" : after.paidCents > 0 ? "PARTIAL" : after.dueDate && after.dueDate < new Date() ? "OVERDUE" : "UNPAID";
+        await db.invoice.update({ where: { id: after.id }, data: { status } });
+      }
+    }
+  }
+
+  /* 5 · flag the row voided (never deleted — audit parity) */
+  await db.payment.update({ where: { id: payment.id }, data: { voided: true } });
+
+  await logDailyFeeAudit(db, {
+    schoolId: payment.schoolId, studentId,
+    actionType: "PAYMENT_REVERSAL",
+    serviceCode: payment.category === "INVOICE" ? "TERMLY_FEES" : "MULTIPLE",
+    amountCents: payment.amountCents,
+    performedByName: opts.byName, performedByRole: opts.byRole ?? "SYSTEM",
+    reference: payment.receiptNo,
+    notes: [
+      `voided by ${opts.byName}${opts.reason ? ` — ${opts.reason}` : ""}`,
+      out.chargesReArmed ? `charges re-armed ${fmtGH(out.chargesReArmed)}` : null,
+      out.advancesReversed ? `advances clawed back ${fmtGH(out.advancesReversed)}` : null,
+      out.walletRestored ? `wallet restored ${fmtGH(out.walletRestored)}` : null,
+      out.invoiceReversed ? `invoice paid reversed ${fmtGH(out.invoiceReversed)}` : null,
+      out.creditsReversed ? `overpayment credits reversed ${fmtGH(out.creditsReversed)}` : null,
+    ].filter(Boolean).join(" · "),
+  });
+  return out;
+}
+
 /** Mark a learner present on the register for the given day (the POS "mark
  *  present" checkbox). Shared by the online counter and the offline flush. */
 export async function markPresentForDate(

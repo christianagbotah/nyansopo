@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { sortClassrooms } from "@/lib/classes";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
-import { paymentMethodLabel, resolveTransportFare, effectivePrice, type CollectMethodPart } from "@/lib/daily-billing";
+import { paymentMethodLabel, resolveTransportFare, effectivePrice, voidPaymentCore, type CollectMethodPart } from "@/lib/daily-billing";
+import { dailyServicesReceipt, invoicePaymentReceipt } from "@/lib/receipt-payload";
 
 // ── GET /api/school/[id]/ops/cashier ──
 //  ?action=student-info → the fee-collection portal payload for ONE learner:
@@ -161,13 +162,57 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   });
 }
 
-// ── POST /api/school/[id]/ops/cashier — student ledger lookup (CI3 parity)
-//    debit/credit running balance across invoices + payments ──
+// ── POST /api/school/[id]/ops/cashier ──
+//    action=ledger          student ledger lookup (cashier.reports)
+//    action=receipt-payload reprint one counter receipt (any collecting right)
+//    action=void-payment    reverse a payment end-to-end (collecting right) ──
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: schoolId } = await params;
-  const auth = await opsAuth(req, schoolId, "POST", { perms: ["cashier.reports"] });
-  if (!auth.ok) return auth.res;
   const body = await req.json().catch(() => ({}));
+  const action = String(body.action ?? "");
+  const need = action === "void-payment"
+    ? ["fees.collect", "daily.collect"]
+    : action === "receipt-payload"
+      ? ["cashier.reports", "fees.collect", "daily.collect"]
+      : ["cashier.reports"];
+  const auth = await opsAuth(req, schoolId, "POST", { perms: need });
+  if (!auth.ok) return auth.res;
+  const user = auth.user;
+
+  /* ── reprint one receipt (portal Recent collections → Print) ── */
+  if (action === "receipt-payload") {
+    const p = await db.payment.findFirst({ where: { id: String(body.paymentId ?? ""), schoolId, voided: false } });
+    if (!p) return NextResponse.json({ error: "Receipt not found" }, { status: 404 });
+    try {
+      const receipt = p.category === "INVOICE"
+        ? await invoicePaymentReceipt(db, p.id)
+        : await dailyServicesReceipt(db, p.id);
+      return NextResponse.json({ receipt });
+    } catch (e: any) {
+      return NextResponse.json({ error: e.message ?? "This receipt cannot be reconstructed" }, { status: 400 });
+    }
+  }
+
+  /* ── void (CI3 delete_transaction parity): charges re-arm as arrears,
+     advances/wallet/invoice figures reverse, audit row written ── */
+  if (action === "void-payment") {
+    const p = await db.payment.findFirst({ where: { id: String(body.paymentId ?? ""), schoolId } });
+    if (!p) return NextResponse.json({ error: "Payment not found" }, { status: 404 });
+    if (p.voided) return NextResponse.json({ error: "This payment is already voided" }, { status: 400 });
+    if (p.paymentType !== "PAYMENT") return NextResponse.json({ error: "Only payments can be voided (not refunds/credits)" }, { status: 400 });
+    if (p.category === "POS") return NextResponse.json({ error: "Store purchases are reversed from the Store module (stock is re-stocked there)" }, { status: 400 });
+    if (!p.studentId) return NextResponse.json({ error: "Payment has no linked learner" }, { status: 400 });
+    try {
+      const out = await voidPaymentCore(db, p, {
+        byName: user.fullName, byRole: user.role,
+        reason: body.reason ? String(body.reason).slice(0, 200) : null,
+      });
+      return NextResponse.json({ ok: true, receiptNo: p.receiptNo, ...out });
+    } catch (e: any) {
+      return NextResponse.json({ error: e.message ?? "Reversal failed" }, { status: 400 });
+    }
+  }
+
   if (body.action !== "ledger") return NextResponse.json({ error: "Unknown action" }, { status: 400 });
   const student = await db.student.findUnique({
     where: { id: String(body.studentId ?? "") },

@@ -251,14 +251,15 @@ export function AppShell() {
   const [navOpen, setNavOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [metroOpen, setMetroOpen] = useState(false);
-  /* sidebar rail: "auto" collapses on wide modules (Fees billing), "open"/"closed"
-     is the user's manual pin — persisted so the workspace stays how they left it */
+  /* sidebar rail: "auto" collapses on wide modules (Fees billing + the Cashier
+     counter — the CI3 portal is a full-width console), "open"/"closed" is the
+     user's manual pin — persisted so the workspace stays how they left it */
   const [rail, setRail] = useState<"auto" | "open" | "closed">(() => {
     if (typeof window === "undefined") return "auto";
     return ((localStorage.getItem("sidebar-rail") as "auto" | "open" | "closed") ?? "auto");
   });
   useEffect(() => { localStorage.setItem("sidebar-rail", rail); }, [rail]);
-  const railCollapsed = rail === "closed" || (rail === "auto" && module === "fees");
+  const railCollapsed = rail === "closed" || (rail === "auto" && (module === "fees" || module === "cashier"));
   /* iEduPro nested navigation: class directory for the level bands
      (Students → level → class; Classes → level → class timetable). Loaded
      from the settings resource of the active school. */
