@@ -1,8 +1,8 @@
 /* Nyansapo — seed student credit wallets (prepaid credits from overpayment,
    CI3 parity) for the demo school Golden Excellence Academy (code GEA).
-   Gives 3 learners small balances: one overpayment credit of GH₵40 (of which
-   GH₵15 is transferred to a sibling, leaving GH₵25), one manual GH₵10 credit,
-   and one transfer-in of GH₵15 — a genuine TRANSFER_OUT/TRANSFER_IN pair.
+   Gives 3 learners small balances: one overpayment credit of ₵40 (of which
+   ₵15 is transferred to a sibling, leaving ₵25), one manual ₵10 credit,
+   and one transfer-in of ₵15 — a genuine TRANSFER_OUT/TRANSFER_IN pair.
    Idempotent — skips when StudentCredit rows already exist for the school.
    Standalone run: bun prisma/seed-credits.ts  (also chainable from seed.ts). */
 import { PrismaClient } from "@prisma/client";
@@ -35,7 +35,7 @@ export async function seedCredits() {
   const bursar = "Mr. Patrick Quaye";
   const head = "Madam Grace Mensah";
 
-  // 1) overpayment: the guardian paid GH₵40 beyond the balance at the counter —
+  // 1) overpayment: the guardian paid ₵40 beyond the balance at the counter —
   //    a manual payment receipt created the credit (sourcePaymentId link)
   const payment = await db.payment.create({
     data: {
@@ -54,7 +54,7 @@ export async function seedCredits() {
       byName: bursar, at: daysAgo(4, 9),
     },
   });
-  // GH₵15 of it moves to a sibling — the TRANSFER_OUT half of the pair
+  // ₵15 of it moves to a sibling — the TRANSFER_OUT half of the pair
   await db.studentCredit.create({
     data: {
       schoolId: school.id, studentId: l1.id, kind: "TRANSFER_OUT",
@@ -84,7 +84,7 @@ export async function seedCredits() {
     },
   });
 
-  console.log(`seed-credits: 3 learners credited at ${school.name} — ${l1.firstName} GH₵25 (overpayment net of transfer), ${l2.firstName} GH₵10 (manual), ${l3.firstName} GH₵15 (transfer-in)`);
+  console.log(`seed-credits: 3 learners credited at ${school.name} — ${l1.firstName} ₵25 (overpayment net of transfer), ${l2.firstName} ₵10 (manual), ${l3.firstName} ₵15 (transfer-in)`);
 }
 
 // standalone run: DATABASE_URL=postgresql://… bun prisma/seed-credits.ts

@@ -70,7 +70,7 @@ async function main() {
         for (const [ri, r] of riders.entries()) {
           const usage = usages[(di * 3 + ri) % usages.length];
           // iEduPro one-way model: the route fare captures a single directional
-          // charge — MORNING/AFTERNOON 1×, BOTH/BOARDED 2×, NOT_USING GH₵0
+          // charge — MORNING/AFTERNOON 1×, BOTH/BOARDED 2×, NOT_USING ₵0
           const oneway = r.route.farePerTripCents || C(4);
           let amount = oneway * 2; let status = "OWED";
           if (usage === "NOT_USING") { status = "WAIVED"; amount = 0; }
@@ -105,7 +105,7 @@ async function main() {
       const st = students[i];
       // every 3rd learner gets a prepaid wallet, every 5th a transport wallet
       if (i % 3 === 0) {
-        const amt = C(10 + ((i * 7) % 30)); // GH₵10–40 spread
+        const amt = C(10 + ((i * 7) % 30)); // ₵10–40 spread
         await db.studentWallet.upsert({
           where: { studentId: st.studentId },
           update: { prepaidCents: { increment: amt } },
@@ -115,7 +115,7 @@ async function main() {
         topups++;
       }
       if (i % 5 === 0) {
-        const amt = C(20 + ((i * 11) % 40)); // GH₵20–60 spread
+        const amt = C(20 + ((i * 11) % 40)); // ₵20–60 spread
         const w = await db.studentWallet.upsert({
           where: { studentId: st.studentId },
           update: { transportCents: { increment: amt } },
@@ -136,7 +136,7 @@ async function main() {
       const st = students[i];
       const svc = i % 7 === 0 ? drinkSvc : i % 4 === 0 ? mealSvc : null;
       if (!svc) continue;
-      const amt = C(5 + ((i * 13) % 25)); // GH₵5–30 spread
+      const amt = C(5 + ((i * 13) % 25)); // ₵5–30 spread
       await db.serviceBalance.upsert({
         where: { studentId_serviceId: { studentId: st.studentId, serviceId: svc.id } },
         update: { prepaidCents: { increment: amt } },

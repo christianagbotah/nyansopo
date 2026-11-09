@@ -151,7 +151,7 @@ async function main() {
   // ── one IN_PROGRESS reconciliation: 6 statement lines, 4 auto-matchable ──
   const stmtDate = day(27);
   // statement end = bank's view: system txns ≤ statement date + one uncleared cheque
-  // the bank knows about (−GH₵95.00) that has no system txn — the classic recon gap
+  // the bank knows about (−₵95.00) that has no system txn — the classic recon gap
   const bankViewTxns = TXNS.filter((t) => t.daysAgo >= 27);
   const statementEndCents =
     1_200_000 + bankViewTxns.reduce((s, t) => s + (t.dir === "DEPOSIT" ? t.amount : -t.amount), 0) - 9_500;
@@ -163,7 +163,7 @@ async function main() {
     { daysAgo: 49, desc: "MoMo cash-out transfer", amount: 96_500 },
     { daysAgo: 43, desc: "Salaries & SSNIT transfer", amount: -87_360 },
     { daysAgo: 36, desc: "ECG electricity & GWCL water", amount: -12_400 },
-    { daysAgo: 33, desc: "PTA development levy", amount: 61_500 }, // GH₵615 vs GH₵620 system — off by a bank fee, manual work
+    { daysAgo: 33, desc: "PTA development levy", amount: 61_500 }, // ₵615 vs ₵620 system — off by a bank fee, manual work
     { daysAgo: 27, desc: "Cheque 0033 — Melchizedek Traders", amount: -9_500 }, // uncleared: no system txn at all
   ];
   for (const it of ITEMS) {

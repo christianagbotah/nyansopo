@@ -247,14 +247,14 @@ async function main() {
   // history for GEA
   const geaStudents = await db.enrollment.findMany({ where: { schoolId: GEA.id, status: "ACTIVE" }, include: { student: true, classroom: true } });
   const smsHistory: { cat: string; body: (st: typeof geaStudents[0]) => string }[] = [
-    { cat: "PAYMENT", body: (st) => `We have received GH₵450.00 for ${st.student.firstName} (RCP-2026-01092). Balance: GH₵0.00. Thank you — Golden Excellence Academy.` },
-    { cat: "FEES", body: (st) => `Dear Parent, ${st.student.firstName}'s fee balance is GH₵850.00 for First Term. Kindly settle at the office or via MoMo. Thank you.` },
+    { cat: "PAYMENT", body: (st) => `We have received ₵450.00 for ${st.student.firstName} (RCP-2026-01092). Balance: ₵0.00. Thank you — Golden Excellence Academy.` },
+    { cat: "FEES", body: (st) => `Dear Parent, ${st.student.firstName}'s fee balance is ₵850.00 for First Term. Kindly settle at the office or via MoMo. Thank you.` },
     { cat: "ATTENDANCE", body: (st) => `${st.student.firstName} was marked ABSENT today (26 Oct 2026). Please contact the school if this is unexpected.` },
     { cat: "ATTENDANCE", body: (st) => `${st.student.firstName} was marked ABSENT today (21 Oct 2026). Please contact the school if this is unexpected.` },
     { cat: "ANNOUNCEMENT", body: () => `Dear Parents, PTA meeting this Friday 4:30pm at the assembly hall. Attendance strongly encouraged. — GEA` },
     { cat: "RESULTS", body: (st) => `${st.student.firstName}'s terminal report is ready. Please collect from the office.` },
     { cat: "TRANSPORT", body: () => `The Adenta Loop bus is running ~15 mins late today. Sorry for the inconvenience.` },
-    { cat: "FEES", body: (st) => `Reminder: ${st.student.firstName}'s fee balance is GH₵1,200.00. Kindly settle to avoid interruption of services.` },
+    { cat: "FEES", body: (st) => `Reminder: ${st.student.firstName}'s fee balance is ₵1,200.00. Kindly settle to avoid interruption of services.` },
   ];
   for (let i = 0; i < 26; i++) {
     const e = pick(geaStudents);
@@ -267,7 +267,7 @@ async function main() {
   for (let i = 0; i < 6; i++) {
     const e = pick(geaStudents);
     await db.smsMessage.create({
-      data: { schoolId: GKA.id, studentId: e.studentId, recipientName: e.student.guardianName, recipientPhone: e.student.guardianPhone, body: `Dear Parent, ${e.student.firstName}'s fee balance is GH₵${int(2, 9) * 50}.00 for First Term. Kindly settle via MoMo. Thank you — GKA.`, category: "FEES", status: "DELIVERED", creditsUsed: 1, sentByName: "Mrs. Josephine Agyemang", sentAt: new Date(today.getTime() - int(1, 12) * 864e5) },
+      data: { schoolId: GKA.id, studentId: e.studentId, recipientName: e.student.guardianName, recipientPhone: e.student.guardianPhone, body: `Dear Parent, ${e.student.firstName}'s fee balance is ₵${int(2, 9) * 50}.00 for First Term. Kindly settle via MoMo. Thank you — GKA.`, category: "FEES", status: "DELIVERED", creditsUsed: 1, sentByName: "Mrs. Josephine Agyemang", sentAt: new Date(today.getTime() - int(1, 12) * 864e5) },
     });
   }
 

@@ -148,7 +148,7 @@ async function main() {
           {
             schoolId, classroomId: jhs3.id, title: "Mathematics — End of Term 1 Paper",
             examName: "End of Term 1 Examination 2026/27", authorName: "Madam Grace Mensah",
-            body: `<h3>SECTION A — OBJECTIVE (40 marks)</h3><p>Answer ALL questions.</p><ol><li>Evaluate 3(2x − 4) when x = 5. <b>(2 marks)</b></li><li>Simplify (a³b²)² ÷ a²b⁴. <b>(2 marks)</b></li><li>Find the HCF of 48 and 180. <b>(2 marks)</b></li></ol><h3>SECTION B — THEORY (60 marks)</h3><p>Answer ANY FOUR questions.</p><ol start="4"><li>(a) Solve the simultaneous equations 2x + y = 7, x − y = 2. <b>(5 marks)</b><br/>(b) The ratio of boys to girls in JHS 3 is 3:4. If there are 28 learners, how many are girls? <b>(5 marks)</b></li><li>A trader bought a bag of rice for GH₵420 and sold it for GH₵483. Find the percentage profit. <b>(10 marks)</b></li></ol>`,
+            body: `<h3>SECTION A — OBJECTIVE (40 marks)</h3><p>Answer ALL questions.</p><ol><li>Evaluate 3(2x − 4) when x = 5. <b>(2 marks)</b></li><li>Simplify (a³b²)² ÷ a²b⁴. <b>(2 marks)</b></li><li>Find the HCF of 48 and 180. <b>(2 marks)</b></li></ol><h3>SECTION B — THEORY (60 marks)</h3><p>Answer ANY FOUR questions.</p><ol start="4"><li>(a) Solve the simultaneous equations 2x + y = 7, x − y = 2. <b>(5 marks)</b><br/>(b) The ratio of boys to girls in JHS 3 is 3:4. If there are 28 learners, how many are girls? <b>(5 marks)</b></li><li>A trader bought a bag of rice for ₵420 and sold it for ₵483. Find the percentage profit. <b>(10 marks)</b></li></ol>`,
           },
           {
             schoolId, classroomId: jhs3.id, title: "Integrated Science — Section B Only",
@@ -215,7 +215,7 @@ async function main() {
           data: {
             schoolId, targetType: "INVOICE", recordId: inv.id, recordCode: inv.invoiceNo,
             requestType: "EDIT",
-            reason: "Term 2 invoice duplicated the sports levy — remove the GH₵15 line.",
+            reason: "Term 2 invoice duplicated the sports levy — remove the ₵15 line.",
             requestedById: bursarUser.id,
             requestedByName: bursarUser.fullName,
             originalData: JSON.stringify({ id: inv.id, invoiceNo: inv.invoiceNo, totalCents: inv.totalCents }),

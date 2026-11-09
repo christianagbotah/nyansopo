@@ -10,7 +10,9 @@ else
   pg_ctl -D /home/z/pgdata -l /home/z/pg.log -w start
 fi
 for i in $(seq 1 20); do
-  if psql -h 127.0.0.1 -p 5433 -U nyansapo -d nyansapo -tc "SELECT 1" > /dev/null 2>&1; then
+  # zonky minimal binaries have no psql — use a raw TCP connect check instead
+  if (exec 3<>/dev/tcp/127.0.0.1/5433) 2>/dev/null; then
+    exec 3>&- 3<&-
     echo "UP: postgresql://nyansapo@127.0.0.1:5433/nyansapo"
     exit 0
   fi

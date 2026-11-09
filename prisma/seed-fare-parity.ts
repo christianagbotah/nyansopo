@@ -57,7 +57,7 @@ async function main() {
     switch (c.usage ?? "BOTH") {
       case "MORNING": case "AFTERNOON": amount = info.oneway; break;          // 1× one-way
       case "BOTH": case "BOARDED": amount = info.oneway * 2; break;          // 2× one-way
-      case "NOT_USING": amount = 0; waived++; break;                          // not riding — GH₵0
+      case "NOT_USING": amount = 0; waived++; break;                          // not riding — ₵0
       default: amount = info.oneway * 2;
     }
     if (c.amountCents !== amount) {
@@ -65,7 +65,7 @@ async function main() {
       recomputed++;
     }
   }
-  console.log(`✅ ${tCharges.length} transport charges checked · ${recomputed} recomputed to one-way model (${waived} waived at GH₵0)`);
+  console.log(`✅ ${tCharges.length} transport charges checked · ${recomputed} recomputed to one-way model (${waived} waived at ₵0)`);
 
   // ── 3. transport service price = median one-way (nominal standard rate) ──
   const median = Object.values(FARES).sort((a, b) => a - b)[Math.floor(Object.keys(FARES).length / 2)] ?? C(4);
@@ -73,7 +73,7 @@ async function main() {
   for (const s of tSvcs) {
     if (s.priceCents !== median) await db.dailyService.update({ where: { id: s.id }, data: { priceCents: median } });
   }
-  console.log(`✅ transport service standard rate = GH₵${(median / 100).toFixed(2)} one-way`);
+  console.log(`✅ transport service standard rate = ₵${(median / 100).toFixed(2)} one-way`);
 
   // ── 4. per-classroom rate overrides (iedupro daily_fee_rates parity) ──
   //      demo: GEA — KG feeding cheaper, JHS feeding higher; water class rates vary
@@ -89,7 +89,7 @@ async function main() {
       const isKG = /KG|Creche|Nursery/i.test(cls.name);
       const isJHS = /JHS|B[789]/i.test(cls.name);
       if (lunch) {
-        // standard GH₵4 feeding: KG GH₵3, JHS GH₵5 (class-level rate matrix)
+        // standard ₵4 feeding: KG ₵3, JHS ₵5 (class-level rate matrix)
         const price = isKG ? C(3) : isJHS ? C(5) : null;
         if (price) { await db.dailyServiceRate.upsert({ where: { serviceId_classroomId: { serviceId: lunch.id, classroomId: cls.id } }, update: { priceCents: price }, create: { serviceId: lunch.id, classroomId: cls.id, priceCents: price } }); rates++; }
       }
