@@ -1,0 +1,28 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "**1. Visible UI elements/text:**\n- Top: two partially cut stat cards — left blue card showing \"0 charged\" (top text cut off), right purple card showing \"0 charged\".\n- Purple card: \"🚌 Transport Fare (bus)\", \"¢21.00\", \"14 charged · 8 owing\"\n- Green card: \"💵 TOTAL TODAY\", \"¢708.50\", \"141 charges · ¢143.00 owing\"\n- White search card: search input with magnifier icon, placeholder \"Search learner by name, index or c...\" (truncated)\n- Pills/buttons: \"✕ Change learner\", \"🕐 Held\" (with orange clock icon), \"🎫 Print coupon\" (green icon)\n- Below: dark circle avatar with \"N\", and a learner row starting: \"Ama Prempeh\" with a \"not marked\" badge on the right.\n\n**2. Cut off at bottom edge:** The learner row for \"Ama Prempeh\" — her purple avatar circle and the \"not marked\" badge are cut mid-row by the viewport. Likely more of a fee module card below, not visible.\n\n**3. Fee module with Collect checkbox + amount input:** No — no checkbox row or numeric input (8.00 / 5.00) appears; the crop ends right at the start of the learner section.\n\n**4. Chips/badges (WKLY, OPT, REQ, prepaid, arrears):** No — none visible. Only badges present are \"not marked\", \"Held\", \"Change learner\", \"Print coupon\".",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1794247224,
+  "id": "20261110020017cd9e8dcff9544650",
+  "model": "glm-5.3-flash",
+  "object": "chat.completion",
+  "request_id": "20261110020017cd9e8dcff9544650",
+  "usage": {
+    "completion_tokens": 325,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 327,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "total_tokens": 652
+  }
+}
