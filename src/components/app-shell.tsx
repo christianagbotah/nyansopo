@@ -39,6 +39,8 @@ import { DailyServices } from "@/components/modules/daily-services";
 import { MomoPayments } from "@/components/modules/momo-payments";
 import { Transportation } from "@/components/modules/transport";
 import { SmsCenter } from "@/components/modules/sms-center";
+import { Accounts } from "@/components/modules/accounts";
+import { Messages } from "@/components/modules/messages";
 import { Payroll } from "@/components/modules/payroll";
 import { Inventory } from "@/components/modules/inventory";
 import { Finance } from "@/components/modules/finance";
@@ -58,6 +60,7 @@ import {
   BookOpen, ShieldCheck, Receipt, Route, UserRound, Home, Backpack, Laptop, BedDouble, NotebookPen, Search, LayoutGrid, SmartphoneNfc,
   QrCode, UserPlus, Printer, Wallet, BarChart3, CalendarDays, HandCoins, FileWarning, ListChecks, ScanLine, ClipboardPen, Percent,
   PanelLeftClose, PanelLeftOpen, Palette, SlidersHorizontal, Archive, FileText, BookMarked, Target,
+  MessagesSquare, Landmark as LedgerIcon, DatabaseBackup,
 } from "lucide-react";
 
 type NavLeaf = { id: string; label: string; icon?: any; target?: NavTarget };
@@ -81,6 +84,7 @@ const SCHOOL_NAV: NavItem[] = [
   { id: "payroll", label: "HR & Payroll", icon: Calculator, section: "Finance" },
   { id: "inventory", label: "Inventory & Stores", icon: Package, section: "Finance" },
   { id: "finance", label: "Finance & Analytics", icon: PieChart, section: "Finance" },
+  { id: "accounts", label: "Accounts & Ledger", icon: LedgerIcon, section: "Finance" },
   { id: "attendance", label: "Attendance", icon: CalendarCheck, section: "Academic" },
   { id: "classes", label: "Classes & Timetable", icon: LayoutList, section: "Academic" },
   { id: "gradebook", label: "Gradebook", icon: ClipboardList, section: "Academic" },
@@ -89,6 +93,7 @@ const SCHOOL_NAV: NavItem[] = [
   { id: "exams", label: "Online Exams", icon: Laptop, section: "Academic" },
   { id: "library", label: "Library", icon: BookOpen, section: "Academic" },
   { id: "sms", label: "SMS Centre", icon: Smartphone, section: "Communication" },
+  { id: "messages", label: "Messages", icon: MessagesSquare, section: "Communication" },
   { id: "ai", label: "AI Assistant", icon: BrainCircuit, section: "Support" },
   { id: "staffhub", label: "My Staff Portal", icon: UserRound, section: "Support" },
   { id: "settings", label: "Settings", icon: SettingsIcon, section: "Support" },
@@ -579,7 +584,9 @@ export function AppShell() {
       }));
   }, [gatingRole, session?.permissions]);
 
-  const show = useCallback((m: string) => navItems.some((i) => i.id === m), [navItems]);
+  // plain function — the React compiler memoizes it; a manual useCallback here
+  // tripped preserve-manual-memoization (navItems is already memoized above)
+  const show = (m: string) => navItems.some((i) => i.id === m);
 
   async function manualSync() {
     if (!queue.length) { toast({ title: "Nothing to sync", description: "Your queue is empty." }); return; }
@@ -682,8 +689,8 @@ export function AppShell() {
 
             {/* install PWA */}
             {installEvent && (
-              <Button size="sm" variant="outline" className="gap-1.5 h-8" onClick={() => { installEvent.prompt(); setInstallEvent(null); }}>
-                <Download className="size-3.5" /> Install app
+              <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs" onClick={() => { installEvent.prompt(); setInstallEvent(null); }}>
+                <Download className="size-3.5" /> <span className="hidden sm:inline">Install app</span>
               </Button>
             )}
 
@@ -821,6 +828,8 @@ export function AppShell() {
              module === "daily" && show("daily") ? <DailyServices /> :
              module === "transport" && show("transport") ? <Transportation /> :
              module === "sms" && show("sms") ? <SmsCenter /> :
+             module === "accounts" && show("accounts") ? <Accounts /> :
+             module === "messages" && show("messages") ? <Messages /> :
              module === "payroll" && show("payroll") ? <Payroll /> :
              module === "inventory" && show("inventory") ? <Inventory /> :
              module === "finance" && show("finance") ? <Finance /> :

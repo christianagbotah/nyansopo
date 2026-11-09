@@ -137,7 +137,9 @@ present as school-level library), WAEC statement of results.
   input per hyphen, joined with commas server-side compatible.
 - Payment-method grouping MUST expand `splitJson` (see the advanced tab /
   cashier byMethod) — never group by the raw `method` column.
-- Remaining CI3 gaps (deliberate, product-direction calls): double-entry
-  accounts & bank reconciliation (Accounts.php), internal messaging,
-  public school-website CMS, email channel, DB backup/restore UI,
-  financial alerts, transaction recovery.
+- ~~Remaining CI3 gaps~~ — update (wave 12): double-entry accounts & bank
+  reconciliation, internal messaging, email channel, and DB backup/restore
+  UI are DONE (see `docs/wave-12-record.md` + agent-ctx/2-a, 2-b, 3-a, 3-b).
+  Still open (product-direction calls): public school-website CMS,
+  financial alerts, transaction recovery, portal-side messaging
+  (parents/students), budgets/fiscal-years/cash-flow (accounts follow-ons).

@@ -14,9 +14,11 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatCard, ModuleHeader, LoadingBlock, EmptyState, FilterBar, FilterSelect, FilterSearch } from "@/components/ui-helpers";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { fmtDateTime } from "@/lib/format";
+import { canAny } from "@/lib/rbac";
 import { toast } from "@/hooks/use-toast";
-import { Smartphone, Send, FileText, History, Settings2, Plus, CheckCheck, XCircle, AlertTriangle, Bell, Wallet, Zap, Megaphone, ClipboardCheck } from "lucide-react";
+import { Smartphone, Send, FileText, History, Settings2, Plus, CheckCheck, XCircle, AlertTriangle, Bell, Wallet, Zap, Megaphone, ClipboardCheck, Mail, RefreshCw, Server, Receipt } from "lucide-react";
 
 type Template = { id: string; name: string; category: string; body: string; isDefault: boolean };
 type Automation = { id: string; name: string; trigger: string; recipients: string; body: string; offsetDays: number; active: boolean; lastRunAt: string | null; sentCount: number };
@@ -85,13 +87,16 @@ const CAT_COLORS: Record<string, string> = {
 };
 
 export function SmsCenter() {
-  const { currentSchoolId, navTarget } = useStore();
+  const { currentSchoolId, navTarget, session } = useStore();
   const [data, setData] = useState<SmsData | null>(null);
   const [tab, setTab] = useState("compose");
   const [tplDialog, setTplDialog] = useState<Template | "new" | null>(null);
   const [category, setCategory] = useState("all");
   const [smsStatus, setSmsStatus] = useState("all");
   const [smsSearch, setSmsSearch] = useState("");
+  /* email channel (CI3 Invoice_email parity) — tab & deep link are gated
+     on email.send; other school roles simply don't see the channel */
+  const canEmail = canAny(session?.permissions, ["email.send"]);
   // client-side status + search on top of the category filter (which reloads from the API)
   const visibleMessages = useMemo(() => (data?.messages ?? []).filter((m) =>
     (smsStatus === "all" || m.status === smsStatus) &&
@@ -103,6 +108,7 @@ export function SmsCenter() {
   if (navTarget !== appliedTarget) {
     setAppliedTarget(navTarget);
     if (navTarget?.tab === "marks") setTab("marks");
+    else if (navTarget?.tab === "email" && canEmail) setTab("email");
   }
 
   const load = (c?: string) => {
@@ -140,6 +146,7 @@ export function SmsCenter() {
           <TabsTrigger value="templates">Templates ({data.templates.length})</TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>
           <TabsTrigger value="noticeboard">Noticeboard</TabsTrigger>
+          {canEmail && <TabsTrigger value="email" className="gap-1.5"><Mail className="size-4" /> Email channel</TabsTrigger>}
           <TabsTrigger value="settings">Settings</TabsTrigger>
         </TabsList>
 
@@ -235,6 +242,15 @@ export function SmsCenter() {
           </Card>
           </div>
         </TabsContent>
+
+        {/* ── EMAIL CHANNEL (CI3 Invoice_email + Email_model parity) — SMTP
+            settings, invoice emailing and the message log, gated on
+            email.send ── */}
+        {canEmail && (
+          <TabsContent value="email">
+            <EmailTab />
+          </TabsContent>
+        )}
 
         <TabsContent value="settings">
           <SettingsTab data={data} onSaved={() => load(category)} />
@@ -995,6 +1011,253 @@ function MarksSmsTab({ data, onSent }: { data: SmsData; onSent: () => void }) {
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction className="gap-1.5" disabled={busy} onClick={send}><Send className="size-3.5" /> {busy ? "Sending…" : "Send now"}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   EMAIL CHANNEL (CI3 Invoice_email + Email_model parity) — SMTP
+   settings per school, invoice emailing (single + bulk) and the
+   message log. Not configured / disabled → SIMULATED sends, the
+   same offline-first philosophy as the SMS demo mode.               */
+type EmailSettings = { enabled: boolean; host: string | null; port: number; secure: boolean; username: string | null; fromName: string | null; fromAddress: string | null; hasPassword: boolean };
+type EmailMessageRow = { id: string; toAddress: string; toName: string | null; subject: string; category: string; status: string; errorReason: string | null; sentByName: string | null; sentAt: string };
+type EmailData = {
+  setting: EmailSettings | null;
+  messages: EmailMessageRow[];
+  stats: { total: number; sent: number; failed: number; simulated: number };
+  invoiceCounts: { emailable: number; withoutEmail: number };
+  termName: string | null;
+};
+
+const EMAIL_CAT_COLORS: Record<string, string> = {
+  INVOICE: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
+  ANNOUNCEMENT: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
+  TEST: "bg-violet-100 text-violet-800 dark:bg-violet-950 dark:text-violet-300",
+  GENERAL: "bg-secondary text-secondary-foreground",
+};
+
+function EmailTab() {
+  const { currentSchoolId } = useStore();
+  const [data, setData] = useState<EmailData | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [testBusy, setTestBusy] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [confirmBulk, setConfirmBulk] = useState(false);
+  // settings form (password is write-only — blank keeps the stored one)
+  const [enabled, setEnabled] = useState(false);
+  const [host, setHost] = useState("");
+  const [port, setPort] = useState("587");
+  const [secure, setSecure] = useState(false);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [fromName, setFromName] = useState("");
+  const [fromAddress, setFromAddress] = useState("");
+
+  const load = () => {
+    if (!currentSchoolId) return;
+    apiGet<EmailData>(`/api/school/${currentSchoolId}/ops/email`)
+      .then((d) => {
+        setData(d);
+        setEnabled(d.setting?.enabled ?? false);
+        setHost(d.setting?.host ?? "");
+        setPort(String(d.setting?.port ?? 587));
+        setSecure(d.setting?.secure ?? false);
+        setUsername(d.setting?.username ?? "");
+        setPassword("");
+        setFromName(d.setting?.fromName ?? "");
+        setFromAddress(d.setting?.fromAddress ?? "");
+      })
+      .catch((e) => toast({ title: "Load failed", description: e.message, variant: "destructive" }));
+  };
+  useEffect(() => { load(); }, [currentSchoolId]);
+
+  async function save() {
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/email`, {
+        action: "save-settings", enabled, host, port: port || undefined, secure, username,
+        password: password || undefined, fromName, fromAddress,
+      });
+      toast({ title: "Email settings saved", description: enabled ? "The channel is live — sends go out over SMTP." : "Saved with the channel disabled — sends are logged as simulated." });
+      load();
+    } catch (e: any) { toast({ title: "Save failed", description: e.message, variant: "destructive" }); } finally { setBusy(false); }
+  }
+
+  async function testSend() {
+    setTestBusy(true);
+    try {
+      const res = await apiPost<{ message: { status: string; toAddress: string; errorReason: string | null } }>(`/api/school/${currentSchoolId}/ops/email`, { action: "test-send" });
+      const st = res.message.status;
+      toast({
+        title: st === "SENT" ? "Test email delivered" : st === "SIMULATED" ? "Test logged (simulated)" : "Test email failed",
+        description: st === "SIMULATED" ? `SMTP is not enabled — the test to ${res.message.toAddress} was logged only.` : res.message.errorReason ?? `Delivered to ${res.message.toAddress}.`,
+        variant: st === "FAILED" ? "destructive" : undefined,
+      });
+      load();
+    } catch (e: any) { toast({ title: "Test send failed", description: e.message, variant: "destructive" }); } finally { setTestBusy(false); }
+  }
+
+  async function bulkSend() {
+    setBulkBusy(true);
+    try {
+      const res = await apiPost<{ sent: number; skipped: number; failed: number }>(`/api/school/${currentSchoolId}/ops/email`, { action: "bulk-send-invoices", scope: "UNPAID" });
+      toast({
+        title: `${res.sent} invoice email${res.sent === 1 ? "" : "s"} logged`,
+        description: [res.skipped ? `${res.skipped} skipped — no guardian email` : null, res.failed ? `${res.failed} failed — check the log` : null].filter(Boolean).join(" · ") || "All logged for the current term.",
+      });
+      setConfirmBulk(false);
+      load();
+    } catch (e: any) { toast({ title: "Bulk send failed", description: e.message, variant: "destructive" }); } finally { setBulkBusy(false); }
+  }
+
+  if (!data) return <LoadingBlock label="Loading email channel…" />;
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* ── (1) SMTP settings ── */}
+        <Card className="lg:col-span-2">
+          <CardHeader className="pb-3 flex-row items-center justify-between space-y-0">
+            <CardTitle className="text-base flex items-center gap-2"><Server className="size-4" /> SMTP settings</CardTitle>
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-muted-foreground text-xs hidden sm:inline">{data.setting?.enabled ? "Live" : "Disabled"}</span>
+              <Switch checked={enabled} onCheckedChange={setEnabled} aria-label="Enable email channel" />
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>SMTP host</Label>
+                <Input value={host} onChange={(e) => setHost(e.target.value)} placeholder="smtp.gmail.com" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Port</Label>
+                <Input type="number" value={port} onChange={(e) => setPort(e.target.value)} placeholder="587" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Username</Label>
+                <Input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="fees@yourschool.edu.gh" autoComplete="off" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Password</Label>
+                <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={data.setting?.hasPassword ? "•••••••• (unchanged)" : "App password / SMTP secret"} autoComplete="new-password" />
+                {data.setting?.hasPassword && <p className="text-[11px] text-muted-foreground">A password is stored — leave blank to keep it.</p>}
+              </div>
+              <div className="space-y-1.5">
+                <Label>From name</Label>
+                <Input value={fromName} onChange={(e) => setFromName(e.target.value)} placeholder="GEA Academy Bursary" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>From address</Label>
+                <Input value={fromAddress} onChange={(e) => setFromAddress(e.target.value)} placeholder="fees@yourschool.edu.gh" />
+              </div>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-sm">
+                <Switch checked={secure} onCheckedChange={setSecure} id="email-secure" aria-label="Use TLS on port 465" />
+                <Label htmlFor="email-secure" className="text-xs font-normal text-muted-foreground cursor-pointer">TLS/SSL (port 465)</Label>
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" className="gap-1.5" onClick={testSend} disabled={testBusy}>{testBusy ? "Sending…" : <><Send className="size-3.5" /> Send test</>}</Button>
+                <Button size="sm" className="gap-1.5" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save settings"}</Button>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {enabled
+                ? "Enabled — emails go out over SMTP using these credentials (Gmail needs an app password)."
+                : "Disabled — every send is logged as SIMULATED so workflows never stall. Flip the switch to go live."}
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* ── (2) invoice emailing ── */}
+        <Card>
+          <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><Receipt className="size-4" /> Invoice emailing</CardTitle></CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-2 gap-2 text-center">
+              <div className="rounded-lg border bg-secondary/40 px-2 py-3">
+                <div className="text-xl font-bold text-primary">{data.invoiceCounts.emailable}</div>
+                <div className="text-[11px] text-muted-foreground">emailable invoices</div>
+              </div>
+              <div className="rounded-lg border bg-secondary/40 px-2 py-3">
+                <div className="text-xl font-bold text-destructive">{data.invoiceCounts.withoutEmail}</div>
+                <div className="text-[11px] text-muted-foreground">no guardian email</div>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {data.termName ? `${data.termName}: ` : "Current term: "}invoice emails carry the full line-item breakdown, totals and MoMo payment hint.
+            </p>
+            <Button size="sm" className="w-full gap-1.5" disabled={!data.invoiceCounts.emailable || bulkBusy} onClick={() => setConfirmBulk(true)}>
+              <Mail className="size-3.5" /> {bulkBusy ? "Sending…" : "Email all unpaid invoices"}
+            </Button>
+            <p className="text-[11px] text-muted-foreground">Single-invoice emails are sent from Fees › Invoices — the mail button on each row.</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* ── (3) message log ── */}
+      <Card>
+        <CardHeader className="pb-3 flex-row flex-wrap items-center justify-between gap-2 space-y-0">
+          <CardTitle className="text-base flex items-center gap-2"><History className="size-4" /> Email log</CardTitle>
+          <div className="flex items-center gap-2">
+            <div className="hidden sm:flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Badge className="bg-emerald-600 text-[10px]">{data.stats.sent}</Badge>
+              <Badge className="bg-amber-500 text-[10px]">{data.stats.simulated}</Badge>
+              <Badge variant="destructive" className="text-[10px]">{data.stats.failed}</Badge>
+              <span>of {data.stats.total}</span>
+            </div>
+            <Button size="sm" variant="outline" className="h-7 gap-1" onClick={load}><RefreshCw className="size-3.5" /> Refresh</Button>
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="max-h-[520px] overflow-y-auto nice-scroll">
+            {data.messages.length === 0 && <EmptyState title="No emails yet" hint="Send a test, or email an invoice from Fees › Invoices." />}
+            {data.messages.map((m) => (
+              <div key={m.id} className="px-4 py-3 border-b last:border-0 hover:bg-secondary/30">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold shrink-0 ${EMAIL_CAT_COLORS[m.category] ?? EMAIL_CAT_COLORS.GENERAL}`}>{m.category}</span>
+                    <span className="font-medium text-sm truncate">{m.toName || m.toAddress}</span>
+                    <span className="text-xs text-muted-foreground font-mono hidden sm:inline">{m.toAddress}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    {m.status === "SENT" ? <Badge className="bg-emerald-600 text-[10px]"><CheckCheck className="size-3" /> Sent</Badge>
+                      : m.status === "SIMULATED" ? <Badge className="bg-amber-500 text-[10px]">Simulated</Badge>
+                      : (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Badge variant="destructive" className="gap-1 text-[10px]"><XCircle className="size-3" /> Failed</Badge>
+                          </TooltipTrigger>
+                          <TooltipContent><span className="max-w-xs block">{m.errorReason || "Send failed"}</span></TooltipContent>
+                        </Tooltip>
+                      )}
+                    <span className="hidden sm:inline">{fmtDateTime(m.sentAt)}</span>
+                  </div>
+                </div>
+                <p className="text-sm mt-1.5 text-muted-foreground truncate">{m.subject}</p>
+                {m.sentByName && <p className="text-[11px] mt-0.5 text-muted-foreground">by {m.sentByName}{m.errorReason && m.status !== "FAILED" ? ` · ${m.errorReason}` : ""}</p>}
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      <AlertDialog open={confirmBulk} onOpenChange={setConfirmBulk}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Email all unpaid invoices?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Every current-term invoice with an outstanding balance goes to the guardian's email ({data.invoiceCounts.emailable} emailable, {data.invoiceCounts.withoutEmail} will be skipped).
+              {" "}Each carries the full line-item breakdown and MoMo payment hint.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction className="gap-1.5" disabled={bulkBusy} onClick={bulkSend}><Mail className="size-3.5" /> {bulkBusy ? "Sending…" : "Email them now"}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

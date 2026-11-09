@@ -15,6 +15,7 @@ import {
   Landmark, Building2, Route, Smartphone, MessageSquareText, FileSpreadsheet, BadgeCheck, Layers,
   Armchair, BookMarked, Network, UsersRound, HeartPulse, ScrollText, Wrench, Timer, Stethoscope,
   Flag, Trees, Sparkles, Scale, FileSearch, ShoppingBasket, GalleryHorizontal, Rows3, Banknote as Bank, Palette,
+  DatabaseBackup,
 } from "lucide-react";
 
 export type PageEntry = {
@@ -139,6 +140,14 @@ export const PAGE_INDEX: PageEntry[] = [
   { id: "pg-suppliers", label: "Suppliers", section: S.finance, module: "inventory", target: { tab: "suppliers" }, perm: ["inventory.manage"], icon: Trees, keywords: ["vendors", "wholesale"] },
   { id: "pg-sms", label: "SMS Centre", section: S.finance, module: "sms", perm: ["sms.view"], icon: Smartphone, keywords: ["text", "message", "compose", "bulk"] },
   { id: "pg-sms-auto", label: "SMS Automation", section: S.finance, module: "sms", target: { tab: "automations" }, perm: ["sms.send"], icon: MessageSquareText, keywords: ["triggers", "birthday", "arrears reminder"] },
+  { id: "pg-email", label: "Email Channel", section: S.finance, module: "sms", target: { tab: "email" }, perm: ["email.send"], icon: MessageSquareText, keywords: ["smtp", "invoice email", "bulk email", "mail"] },
+  { id: "pg-messages", label: "Messages", section: S.finance, module: "messages", perm: ["messages.use"], icon: MessageSquareText, keywords: ["internal", "inbox", "thread", "staff messaging", "compose", "attachment"] },
+  { id: "pg-accounts", label: "Accounts & Ledger", section: S.finance, module: "accounts", perm: ["accounts.view"], icon: Landmark, keywords: ["double entry", "chart of accounts", "accounting", "books"] },
+  { id: "pg-coa", label: "Chart of Accounts", section: S.finance, module: "accounts", target: { tab: "chart" }, perm: ["accounts.view"], icon: Landmark, keywords: ["account codes", "asset", "liability", "equity", "revenue", "expense"] },
+  { id: "pg-journal", label: "Journal Entries", section: S.finance, module: "accounts", target: { tab: "journal" }, perm: ["accounts.view"], icon: ClipboardList, keywords: ["debit", "credit", "posting", "double entry"] },
+  { id: "pg-bank", label: "Bank Accounts", section: S.finance, module: "accounts", target: { tab: "bank" }, perm: ["accounts.view"], icon: Landmark, keywords: ["momo wallet", "bank", "transactions", "deposits"] },
+  { id: "pg-reconcile", label: "Bank Reconciliation", section: S.finance, module: "accounts", target: { tab: "reconcile" }, perm: ["accounts.view"], icon: Scale, keywords: ["statement", "matching", "auto match", "unmatched"] },
+  { id: "pg-acc-reports", label: "Accounting Reports", section: S.finance, module: "accounts", target: { tab: "reports" }, perm: ["accounts.view"], icon: FileSpreadsheet, keywords: ["trial balance", "balance sheet", "income statement", "general ledger"] },
   { id: "pg-ai", label: "AI Assistant", section: S.finance, module: "ai", perm: ["ai.use"], icon: BrainCircuit, keywords: ["chat", "help", "glm"] },
 
   // ── System & Administration ──
@@ -155,6 +164,7 @@ export const PAGE_INDEX: PageEntry[] = [
   { id: "pg-set-earlyyears", label: "Early Years Setup", section: S.system, module: "settings", target: { tab: "earlyyears" }, perm: ["settings.manage"], icon: HeartPulse, keywords: ["creche", "montessori", "baseline"] },
   { id: "pg-set-sba", label: "SBA Weights", section: S.system, module: "settings", target: { tab: "sba" }, perm: ["settings.manage"], icon: Layers, keywords: ["assessment weights", "breakdown"] },
   { id: "pg-set-waec", label: "WAEC & BECE Setup", section: S.system, module: "settings", target: { tab: "waec" }, perm: ["settings.manage"], icon: Flag, keywords: ["bece", "external exam"] },
+  { id: "pg-set-backup", label: "Database Backups", section: S.system, module: "settings", target: { tab: "backup" }, perm: ["backup.manage"], icon: DatabaseBackup, keywords: ["backup", "restore", "dump", "download sql", "snapshot"] },
 
   // ── Self-service portals ──
   { id: "pg-portal", label: "Parent Portal", section: "Self-Service", module: "portal", roles: ["PARENT"], icon: Users, keywords: ["my children", "fees", "guardian"] },
@@ -172,5 +182,5 @@ export const MODULE_LABELS: Record<string, string> = {
   reports: "Reports", exams: "Exams", library: "Library", boarding: "Boarding", payroll: "Payroll",
   inventory: "Store", finance: "Finance", sms: "SMS", ai: "AI", settings: "Settings", rbac: "Access",
   staffhub: "Staff Hub", portal: "Parent Portal", campus: "Learner Portal", branches: "Branches",
-  association: "Association",
+  association: "Association", accounts: "Accounts", messages: "Messages",
 };

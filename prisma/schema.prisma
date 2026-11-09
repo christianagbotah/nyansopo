@@ -54,6 +54,8 @@ model User {
   lastLoginAt       DateTime?
   staffId           String? // link to Staff record — staff self-service portal (payslips, profile)
   staff             Staff?          @relation("UserStaff", fields: [staffId], references: [id])
+  sentThreads       MessageThread[] @relation("MsgSender")
+  receivedThreads   MessageThread[] @relation("MsgRecipient")
   studentId         String? // link to Student record — student portal (own record only)
   linkedStudentIds  String? // JSON array of student ids — parent portal (own children only)
   createdAt         DateTime         @default(now())
@@ -202,6 +204,16 @@ model School {
   mediaAssets         MediaAsset[]
   billItems           BillItem[]
   serviceBalances     ServiceBalance[]
+  // ── backlog E/D/B/A ──
+  dbBackups           DbBackup[]
+  emailSetting        EmailSetting?
+  emailMessages       EmailMessage[]
+  messageThreads      MessageThread[]
+  chartAccounts       ChartAccount[]
+  journalEntries      JournalEntry[]
+  bankAccounts        BankAccount[]
+  bankTxns            BankTxn[]
+  reconciliations     Reconciliation[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1381,6 +1393,209 @@ model MediaAsset {
   sizeBytes Int
   data      Bytes
   createdAt DateTime @default(now())
+}
+
+// ─────────────────────────────────────────────────────────────
+// BACKLOG E — DATABASE BACKUP / RESTORE (CI3 admin/backup parity)
+// CI3: dbutil->backup → ./backup/database_backup/db-*.sql with
+// create / download / delete / restore actions. Port: pg_dump files
+// under db/backups/, tracked here with size + author + note.
+// ─────────────────────────────────────────────────────────────
+model DbBackup {
+  id            String   @id @default(cuid())
+  schoolId      String
+  school        School   @relation(fields: [schoolId], references: [id])
+  filename      String   @unique // db-YYYY-MM-DD_HH-MM-SS.sql
+  sizeBytes     Int      @default(0)
+  note          String?
+  kind          String   @default("MANUAL") // MANUAL | AUTO
+  createdByName String
+  createdAt     DateTime @default(now())
+}
+
+// ─────────────────────────────────────────────────────────────
+// BACKLOG D — EMAIL CHANNEL (CI3 Invoice_email + Email_model parity)
+// SMTP settings per school + an EmailMessage log (SmsMessage pattern).
+// ─────────────────────────────────────────────────────────────
+model EmailSetting {
+  id          String  @id @default(cuid())
+  schoolId    String  @unique
+  school      School  @relation(fields: [schoolId], references: [id])
+  enabled     Boolean @default(false)
+  host        String? // smtp.gmail.com | smtp.zoho.com …
+  port        Int     @default(587)
+  secure      Boolean @default(false) // true = TLS/465
+  username    String?
+  password    String? // server-side only — never returned to the client
+  fromName    String?
+  fromAddress String?
+}
+
+model EmailMessage {
+  id         String   @id @default(cuid())
+  schoolId   String
+  school     School   @relation(fields: [schoolId], references: [id])
+  toAddress  String
+  toName     String?
+  subject    String
+  body       String // HTML body
+  category   String   @default("GENERAL") // INVOICE | ANNOUNCEMENT | GENERAL | TEST
+  status     String   @default("SENT") // SENT | FAILED | SIMULATED
+  errorReason String?
+  sentByName String?
+  studentId  String? // optional learner link (invoice emails)
+  sentAt     DateTime @default(now())
+
+  @@index([schoolId, sentAt])
+}
+
+// ─────────────────────────────────────────────────────────────
+// BACKLOG B — INTERNAL MESSAGING (CI3 message_thread/message parity)
+// CI3: threads keyed by sender/reciever login pairs; messages with
+// ≤4MB attachments; mark-read; delete thread. Port: User↔User threads
+// (either direction reuses the same thread), attachments via MediaAsset.
+// ─────────────────────────────────────────────────────────────
+model MessageThread {
+  id            String    @id @default(cuid())
+  schoolId      String
+  school        School    @relation(fields: [schoolId], references: [id])
+  subject       String
+  senderId      String
+  sender        User      @relation("MsgSender", fields: [senderId], references: [id])
+  recipientId   String
+  recipient     User      @relation("MsgRecipient", fields: [recipientId], references: [id])
+  messages      Message[]
+  lastMessageAt DateTime  @default(now())
+  createdAt     DateTime  @default(now())
+
+  @@index([schoolId, lastMessageAt])
+}
+
+model Message {
+  id            String       @id @default(cuid())
+  threadId      String
+  thread        MessageThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  senderId      String
+  body          String
+  attachmentId  String? // MediaAsset id — ≤4MB (CI3 parity)
+  readAt        DateTime?
+  createdAt     DateTime     @default(now())
+
+  @@index([threadId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────
+// BACKLOG A — DOUBLE-ENTRY ACCOUNTS (CI3 Accounts_model parity)
+// Chart of accounts → journal entries (DRAFT→POSTED→VOIDED, Σdebit=Σcredit)
+// → bank accounts + txns → reconciliation workspace (CI3 Bank_reconciliation).
+// ─────────────────────────────────────────────────────────────
+model ChartAccount {
+  id           String             @id @default(cuid())
+  schoolId     String
+  school       School             @relation(fields: [schoolId], references: [id])
+  code         String // "1000"
+  name         String // "Cash in Hand"
+  type         String // ASSET | LIABILITY | EQUITY | REVENUE | EXPENSE
+  parentId     String?
+  parent       ChartAccount?      @relation("AccTree", fields: [parentId], references: [id])
+  children     ChartAccount[]     @relation("AccTree")
+  isBank       Boolean            @default(false) // appears in Bank accounts pickers
+  isActive     Boolean            @default(true)
+  lines        JournalEntryLine[]
+  bankAccounts BankAccount[]
+
+  @@unique([schoolId, code])
+}
+
+model JournalEntry {
+  id            String             @id @default(cuid())
+  schoolId      String
+  school        School             @relation(fields: [schoolId], references: [id])
+  entryNumber   String             @unique // JE-2026-0001 (sync-safe)
+  entryDate     DateTime
+  description   String
+  reference     String? // receipt / PO / payslip reference
+  status        String             @default("DRAFT") // DRAFT | POSTED | VOIDED
+  createdByName String
+  postedAt      DateTime?
+  postedByName  String?
+  lines         JournalEntryLine[]
+  createdAt     DateTime           @default(now())
+
+  @@index([schoolId, entryDate])
+}
+
+model JournalEntryLine {
+  id          String        @id @default(cuid())
+  entryId     String
+  entry       JournalEntry  @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  accountId   String
+  account     ChartAccount  @relation(fields: [accountId], references: [id])
+  debitCents  Int           @default(0)
+  creditCents Int           @default(0)
+  memo        String?
+}
+
+model BankAccount {
+  id                  String          @id @default(cuid())
+  schoolId            String
+  school              School          @relation(fields: [schoolId], references: [id])
+  name                String // "Main MTN MoMo Wallet"
+  bankName            String?
+  accountNumber       String? // masked on display
+  chartAccountId      String? // linked ledger account (bank txns adjust it)
+  chartAccount        ChartAccount?   @relation(fields: [chartAccountId], references: [id])
+  openingBalanceCents Int             @default(0)
+  isActive            Boolean         @default(true)
+  txns                BankTxn[]
+  reconciliations     Reconciliation[]
+  createdAt           DateTime        @default(now())
+}
+
+model BankTxn {
+  id            String       @id @default(cuid())
+  schoolId      String
+  school        School       @relation(fields: [schoolId], references: [id])
+  bankAccountId String
+  bankAccount   BankAccount  @relation(fields: [bankAccountId], references: [id])
+  date          DateTime
+  direction     String // DEPOSIT (money in) | WITHDRAWAL (money out)
+  amountCents   Int
+  reference     String?
+  description   String
+  source        String       @default("MANUAL") // MANUAL | PAYMENT | EXPENSE | FEES
+  reconciledAt  DateTime? // stamped when a reconciliation completes
+  reconItems    ReconciliationItem[]
+  createdAt     DateTime     @default(now())
+
+  @@index([bankAccountId, date])
+}
+
+model Reconciliation {
+  id                String               @id @default(cuid())
+  schoolId          String
+  school            School               @relation(fields: [schoolId], references: [id])
+  bankAccountId     String
+  bankAccount       BankAccount          @relation(fields: [bankAccountId], references: [id])
+  statementDate     DateTime
+  statementEndCents Int // closing balance per the bank statement
+  status            String               @default("IN_PROGRESS") // IN_PROGRESS | COMPLETED
+  createdByName     String
+  completedAt       DateTime?
+  items             ReconciliationItem[]
+  createdAt         DateTime               @default(now())
+}
+
+model ReconciliationItem {
+  id               String            @id @default(cuid())
+  reconciliationId String
+  reconciliation   Reconciliation    @relation(fields: [reconciliationId], references: [id], onDelete: Cascade)
+  bankTxnId        String? // matched system txn — null = statement-only line
+  bankTxn          BankTxn?          @relation(fields: [bankTxnId], references: [id])
+  date             DateTime
+  description      String
+  amountCents      Int // signed: + deposit, − withdrawal (statement view)
+  matched          Boolean           @default(false)
 }
 
 // ─────────────────────────────────────────────────────────────

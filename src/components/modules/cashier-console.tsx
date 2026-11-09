@@ -110,11 +110,13 @@ export function CashierConsole() {
       .catch((e) => toast({ title: "Could not load collections", description: e.message, variant: "destructive" }))
       .finally(() => setLoading(false));
   }, [currentSchoolId, from, to, collector, canReport]);
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); }, [load]); // eslint-disable-line react-hooks/set-state-in-effect -- async loader (repo convention)
 
   // first permitted tab when the stored tab is out of reach
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot permission redirect (repo convention, cf. conductor-portal)
     if (tab === "collect" && !canCollect) setTab(canReport ? "portal" : "collections");
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot permission redirect (repo convention, cf. conductor-portal)
     if (tab !== "collect" && !canReport) setTab(canCollect ? "collect" : "ledger");
   }, [canCollect, canReport, tab]);
 

@@ -1,12 +1,13 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useStore } from "@/lib/store";
-import { apiGet, apiPost } from "@/lib/api";
+import { apiGet, apiPost, getHeaders } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { DateField } from "@/components/date-field";
+import { fmtDateTime } from "@/lib/format";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -18,7 +19,7 @@ import { CURRICULA } from "@/lib/curricula";
 import { THEME_PRESETS, DEFAULT_THEME, applyThemeToDOM, type SchoolTheme } from "@/lib/theme";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import {Settings as SettingsIcon, GraduationCap, BookOpen, Users, CalendarRange, Plus, Save, MessageSquareQuote, Sparkles, Trash2, Award, Pencil, Baby, Sigma, PencilLine, ChevronDown, ChevronRight, ImageUp, ReceiptText, ShieldCheck, Banknote, Palette, CheckCircle2, Layers} from "lucide-react";
+import {Settings as SettingsIcon, GraduationCap, BookOpen, Users, CalendarRange, Plus, Save, MessageSquareQuote, Sparkles, Trash2, Award, Pencil, Baby, Sigma, PencilLine, ChevronDown, ChevronRight, ImageUp, ReceiptText, ShieldCheck, Banknote, Palette, CheckCircle2, Layers, DatabaseBackup, Download, ArchiveRestore, HardDriveDownload} from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 
@@ -46,6 +47,8 @@ export function Settings() {
   // the colour scheme is the school's super admin / proprietor's call —
   // other admins still see every other tab, just not Theme (settings.theme)
   const canTheme = !!session?.permissions?.includes("settings.theme");
+  // backup/restore can wipe the whole database — CI3 kept it for the top admin only
+  const canBackup = !!session?.permissions?.includes("backup.manage");
   const [data, setData] = useState<any | null>(null);
   const [busy, setBusy] = useState(false);
   const [clsOpen, setClsOpen] = useState(false);
@@ -67,7 +70,7 @@ export function Settings() {
   const [appliedTarget, setAppliedTarget] = useState<any>(null);
   if (navTarget !== appliedTarget) {
     setAppliedTarget(navTarget);
-    if (navTarget?.tab && ["profile", "system", "branding", ...(canTheme ? ["theme"] : []), "classes", "subjects", "calendar", "staff", "grading", "earlyyears", "sba", "waec", "reportlib", "statutory"].includes(navTarget.tab)) setTab(navTarget.tab);
+    if (navTarget?.tab && ["profile", "system", "branding", ...(canTheme ? ["theme"] : []), "classes", "subjects", "calendar", "staff", "grading", "earlyyears", "sba", "waec", "reportlib", "statutory", ...(canBackup ? ["backup"] : [])].includes(navTarget.tab)) setTab(navTarget.tab);
   }
 
   const load = () => {
@@ -168,6 +171,7 @@ export function Settings() {
           <TabsTrigger value="branding" className="gap-1.5"><ReceiptText className="size-4" /> Branding &amp; logos</TabsTrigger>
           {canTheme && <TabsTrigger value="theme" className="gap-1.5"><Palette className="size-4" /> Theme</TabsTrigger>}
           <TabsTrigger value="statutory" className="gap-1.5"><ShieldCheck className="size-4" /> Statutory (SSNIT)</TabsTrigger>
+          {canBackup && <TabsTrigger value="backup" className="gap-1.5"><DatabaseBackup className="size-4" /> Backups</TabsTrigger>}
           <TabsTrigger value="classes">Classes ({data.classrooms.length})</TabsTrigger>
           <TabsTrigger value="subjects">Subjects ({data.subjects.length})</TabsTrigger>
           <TabsTrigger value="calendar">Calendar</TabsTrigger>
@@ -566,6 +570,13 @@ export function Settings() {
             </Card>
           </div>
         </TabsContent>
+
+        {/* ── Database backups (CI3 admin/backup parity — backup.manage only) ── */}
+        {canBackup && currentSchoolId && (
+        <TabsContent value="backup">
+          <BackupTab schoolId={currentSchoolId} />
+        </TabsContent>
+        )}
 
         <TabsContent value="classes">
           <Card>
@@ -1371,6 +1382,236 @@ function SbaConfigTab() {
           {warn && <p className="text-xs text-amber-700 dark:text-amber-400">Tick “Proceed with a non-standard sub-total” above to save a sub-total other than 60.</p>}
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Database backups (CI3 admin/backup parity) — create / download /
+   restore / delete full Postgres dumps of the school-system DB.
+   Gated on backup.manage (SUPER_ADMIN + GROUP_OWNER only).
+   ═══════════════════════════════════════════════════════════════ */
+type BackupRow = {
+  id: string; filename: string; sizeBytes: number; note: string | null;
+  kind: string; createdByName: string; createdAt: string; fileExists: boolean;
+};
+type BackupData = { backups: BackupRow[]; diskUsageBytes: number; dir: string; lastBackupAt: string | null };
+
+function humanBytes(bytes: number): string {
+  if (!bytes) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let v = bytes, i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
+}
+
+function BackupTab({ schoolId }: { schoolId: string }) {
+  const [data, setData] = useState<BackupData | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [note, setNote] = useState("");
+  const [restoreTarget, setRestoreTarget] = useState<BackupRow | null>(null);
+  const [confirmText, setConfirmText] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<BackupRow | null>(null);
+
+  const load = () => {
+    apiGet<BackupData>(`/api/school/${schoolId}/ops/backup`)
+      .then(setData)
+      .catch((e) => toast({ title: "Load failed", description: e.message, variant: "destructive" }));
+  };
+  useEffect(load, [schoolId]);
+
+  async function createBackup() {
+    setCreating(true);
+    try {
+      const d = await apiPost<{ backup: BackupRow; message: string }>(`/api/school/${schoolId}/ops/backup`, { action: "create", note: note.trim() || undefined });
+      toast({ title: "Backup created", description: `${d.backup.filename} · ${humanBytes(d.backup.sizeBytes)} — download a copy and keep it somewhere safe.` });
+      setNote("");
+      load();
+    } catch (e: any) { toast({ title: "Backup failed", description: e.message, variant: "destructive" }); }
+    finally { setCreating(false); }
+  }
+
+  /* fetch → blob download (the API needs the auth header, so no plain link) */
+  async function download(filename: string) {
+    try {
+      const res = await fetch(`/api/school/${schoolId}/ops/backup?file=${encodeURIComponent(filename)}`, { headers: getHeaders() });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `Download failed (${res.status})`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast({ title: "Download started", description: filename });
+    } catch (e: any) { toast({ title: "Download failed", description: e.message, variant: "destructive" }); }
+  }
+
+  async function act(action: string, payload: Record<string, unknown>, okTitle: string, okDesc?: string) {
+    setBusy(true);
+    try {
+      const d = await apiPost<{ message?: string }>(`/api/school/${schoolId}/ops/backup`, { action, ...payload });
+      toast({ title: okTitle, description: okDesc ?? d.message });
+      load();
+      return true;
+    } catch (e: any) {
+      toast({ title: "Failed", description: e.message, variant: "destructive" });
+      return false;
+    } finally { setBusy(false); }
+  }
+
+  async function doRestore() {
+    if (!restoreTarget) return;
+    const ok = await act("restore", { filename: restoreTarget.filename, confirm: "RESTORE" }, "Database restored",
+      `${restoreTarget.filename} replayed — refresh the app to load the restored data.`);
+    setRestoreTarget(null);
+    setConfirmText("");
+    if (ok) load();
+  }
+
+  if (!data) return <LoadingBlock label="Loading backups…" />;
+  const totalSize = data.backups.reduce((a, b) => a + b.sizeBytes, 0);
+
+  return (
+    <div className="space-y-4">
+      {/* CI3 info-alert parity: what these backups are + the restore warning */}
+      <div className="rounded-lg border-l-4 border-amber-400 bg-amber-50 dark:bg-amber-950/40 p-3 text-xs text-muted-foreground">
+        <b className="text-amber-800 dark:text-amber-300">Important:</b> each backup is a full <b>PostgreSQL dump</b> of the school-system database — learners, fees, marks, staff, everything — saved to <code>db/backups/</code> on the server. Download copies regularly and keep them somewhere safe.
+        <br /><b className="text-amber-800 dark:text-amber-300">Warning:</b> restoring a backup <b>replaces all current data</b> with the snapshot!
+      </div>
+
+      {/* create + stats */}
+      <div className="grid gap-4 lg:grid-cols-3">
+        <Card className="lg:col-span-2">
+          <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><DatabaseBackup className="size-4" /> Create a backup</CardTitle></CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-xs text-muted-foreground">Runs a full <code>pg_dump</code> (with DROP statements, so restores fully replace the live tables) and logs it below with its size and author. Large databases can take a minute.</p>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Input value={note} onChange={(e) => setNote(e.target.value)} maxLength={200} placeholder="Optional note — e.g. “before end-of-term promotion”" aria-label="Backup note" />
+              <Button className="gap-1.5 shrink-0" onClick={createBackup} disabled={creating}>
+                {creating ? <span className="size-4 rounded-full border-2 border-current border-t-transparent animate-spin" /> : <Plus className="size-4" />}
+                {creating ? "Dumping database…" : "Create backup"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 lg:grid-cols-1 lg:content-start">
+          <StatCard icon={<DatabaseBackup className="size-4" />} label="Backups" value={data.backups.length} sub={`logged in ${data.dir}`} />
+          <StatCard icon={<HardDriveDownload className="size-4" />} label="On disk" value={humanBytes(data.diskUsageBytes)} sub={`${humanBytes(totalSize)} logged`} />
+          <StatCard label="Last backup" value={data.lastBackupAt ? fmtDateTime(data.lastBackupAt) : "—"} sub={data.lastBackupAt ? "newest first below" : "none yet"} />
+        </div>
+      </div>
+
+      {/* list */}
+      <Card>
+        <CardHeader className="pb-3 flex-row items-center justify-between space-y-0">
+          <div>
+            <CardTitle className="text-base">Available backups ({data.backups.length})</CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">Download · restore (destructive) · delete. Keep 3–5 recent snapshots and clear the rest.</p>
+          </div>
+          {data.backups.length > 0 && (
+            <Button variant="outline" size="sm" className="gap-1.5 text-destructive hover:text-destructive" disabled={busy} onClick={() => act("cleanup", {}, "All backups cleared")}>
+              <Trash2 className="size-4" /> Clear all
+            </Button>
+          )}
+        </CardHeader>
+        <CardContent className="p-0">
+          {data.backups.length === 0 ? (
+            <EmptyState icon={<DatabaseBackup className="size-6" />} title="No backups yet" hint="Create your first backup to get started." />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-secondary/70">
+                  <tr className="text-left border-b">
+                    <th className="px-4 py-2.5 font-medium">Filename</th>
+                    <th className="px-4 py-2.5 font-medium w-24">Size</th>
+                    <th className="px-4 py-2.5 font-medium">Created by</th>
+                    <th className="px-4 py-2.5 font-medium w-40">Date</th>
+                    <th className="px-4 py-2.5 font-medium text-right w-44">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.backups.map((b) => (
+                    <tr key={b.id} className="border-b last:border-0 hover:bg-secondary/30">
+                      <td className="px-4 py-2.5">
+                        <div className="font-medium font-mono text-xs break-all">{b.filename}</div>
+                        <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                          <Badge variant="outline" className="text-[10px]">{b.kind === "AUTO" ? "Automatic" : "Manual"}</Badge>
+                          {b.note && <span className="text-xs text-muted-foreground truncate max-w-56" title={b.note}>{b.note}</span>}
+                          {!b.fileExists && <Badge variant="destructive" className="text-[10px]">file missing</Badge>}
+                        </div>
+                      </td>
+                      <td className="px-4 py-2.5 tabular-nums text-muted-foreground">{humanBytes(b.sizeBytes)}</td>
+                      <td className="px-4 py-2.5 text-muted-foreground">{b.createdByName}</td>
+                      <td className="px-4 py-2.5 text-xs text-muted-foreground">{fmtDateTime(b.createdAt)}</td>
+                      <td className="px-4 py-2.5">
+                        <div className="flex items-center justify-end gap-1">
+                          <Button variant="outline" size="sm" className="size-8 p-0" aria-label={`Download ${b.filename}`} disabled={!b.fileExists} onClick={() => download(b.filename)}>
+                            <Download className="size-4" />
+                          </Button>
+                          <Button variant="outline" size="sm" className="size-8 p-0 text-amber-700 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-400" aria-label={`Restore ${b.filename}`} disabled={!b.fileExists || busy} onClick={() => { setRestoreTarget(b); setConfirmText(""); }}>
+                            <ArchiveRestore className="size-4" />
+                          </Button>
+                          <Button variant="outline" size="sm" className="size-8 p-0 text-destructive hover:text-destructive" aria-label={`Delete ${b.filename}`} disabled={busy} onClick={() => setDeleteTarget(b)}>
+                            <Trash2 className="size-4" />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* restore confirm — destructive, type RESTORE (CI3's js confirm, hardened) */}
+      <Dialog open={!!restoreTarget} onOpenChange={(o) => { if (!o) { setRestoreTarget(null); setConfirmText(""); } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><ArchiveRestore className="size-4 text-amber-600" /> Restore database backup</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="rounded-lg border-l-4 border-destructive bg-destructive/10 p-3 text-xs">
+              <b className="text-destructive">This replaces ALL current data</b> — learners, fees, marks, staff and every other school in the system — with the snapshot in <span className="font-mono">{restoreTarget?.filename}</span> ({restoreTarget ? humanBytes(restoreTarget.sizeBytes) : ""}, {restoreTarget ? fmtDateTime(restoreTarget.createdAt) : ""}). Create a fresh backup first if the current data matters.
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="restore-confirm">Type <b>RESTORE</b> to confirm</Label>
+              <Input id="restore-confirm" value={confirmText} onChange={(e) => setConfirmText(e.target.value)} placeholder="RESTORE" autoComplete="off" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setRestoreTarget(null); setConfirmText(""); }} disabled={busy}>Cancel</Button>
+            <Button variant="destructive" className="gap-1.5" disabled={confirmText !== "RESTORE" || busy} onClick={doRestore}>
+              {busy ? <span className="size-4 rounded-full border-2 border-current border-t-transparent animate-spin" /> : <ArchiveRestore className="size-4" />}
+              {busy ? "Restoring…" : "Restore database"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* delete confirm */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={(o) => { if (!o) setDeleteTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this backup?</AlertDialogTitle>
+            <AlertDialogDescription>
+              <span className="font-mono text-xs">{deleteTarget?.filename}</span> ({deleteTarget ? humanBytes(deleteTarget.sizeBytes) : ""}) will be permanently removed from the server. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" disabled={busy}
+              onClick={() => { if (deleteTarget) act("delete", { filename: deleteTarget.filename }, "Backup deleted"); setDeleteTarget(null); }}>
+              Delete backup
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

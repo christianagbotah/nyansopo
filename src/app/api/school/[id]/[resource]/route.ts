@@ -161,6 +161,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
           classroom: i.classroomName, total: i.totalCents, discount: i.discountCents, discountReason: i.discountReason,
           paid: i.paidCents, balance: i.totalCents - i.discountCents - i.paidCents, status: i.status, dueDate: i.dueDate,
           guardianPhone: i.student.guardianPhone,
+          guardianEmail: i.student.guardianEmail, // per-row invoice email button (ops/email send-invoice)
           payments: i.payments.map((p) => ({ id: p.id, receiptNo: p.receiptNo, amount: p.amountCents, method: p.method, paidAt: p.paidAt, reference: p.reference })),
         })),
         stats: { billed, collected, arrears: billed - collected, count: invoices.length, paid: invoices.filter((i) => i.status === "PAID").length, partial: invoices.filter((i) => i.status === "PARTIAL").length, unpaid: invoices.filter((i) => i.status === "UNPAID" || i.status === "OVERDUE").length },

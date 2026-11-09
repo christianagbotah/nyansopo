@@ -13,7 +13,7 @@ const DEEPLINK_MODULES = [
   "dashboard", "students", "admissions", "fees", "attendance", "gradebook",
   "reports", "exams", "branches", "ai", "association", "settings", "daily", "transport",
   "payroll", "inventory", "finance", "classes", "library", "rbac", "cashier",
-  "conductor", "staffhub", "portal", "campus", "sms",
+  "conductor", "staffhub", "portal", "campus", "sms", "accounts", "messages",
 ];
 
 export default function Home() {

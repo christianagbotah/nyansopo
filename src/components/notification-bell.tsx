@@ -5,7 +5,7 @@
 // is permission-gated server-side, so the bell only ever offers actions the
 // signed-in role can actually perform.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Bell, Package, Percent, Banknote, NotebookPen, ShieldCheck, Inbox } from "lucide-react";
+import { Bell, Package, Percent, Banknote, NotebookPen, ShieldCheck, Inbox, MessageSquare } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { apiGet } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,7 @@ type NotifItem = {
 const KIND_ICON: Record<string, any> = {
   approvals: ShieldCheck, discounts: Percent, records: Inbox,
   notes: NotebookPen, stock: Package, arrears: Banknote,
+  messages: MessageSquare,
 };
 const SEV_DOT: Record<string, string> = {
   danger: "bg-red-500", warning: "bg-amber-500", info: "bg-sky-500",

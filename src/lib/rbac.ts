@@ -46,6 +46,9 @@ export const PERMISSIONS: PermDef[] = [
   // Finance analytics
   { id: "finance.view", label: "Finance dashboards & analytics", group: "Fees & Finance" },
   { id: "finance.manage", label: "Expenses & purchase orders", group: "Fees & Finance" },
+  // Double-entry accounts (CI3 Accounts.php parity)
+  { id: "accounts.view", label: "View chart of accounts & ledgers", group: "Fees & Finance" },
+  { id: "accounts.manage", label: "Journal entries, bank accounts & reconciliation", group: "Fees & Finance" },
   // Academic
   { id: "attendance.view", label: "View attendance", group: "Academic" },
   { id: "attendance.take", label: "Take attendance", group: "Academic" },
@@ -62,6 +65,8 @@ export const PERMISSIONS: PermDef[] = [
   // Communication
   { id: "sms.view", label: "View SMS centre", group: "Communication" },
   { id: "sms.send", label: "Send SMS & manage automations", group: "Communication" },
+  { id: "email.send", label: "Send email & manage the email channel", group: "Communication" },
+  { id: "messages.use", label: "Internal messaging (staff inbox)", group: "Communication" },
   // Library
   { id: "library.view", label: "View library catalogue", group: "Library" },
   { id: "library.issue", label: "Issue & return books", group: "Library" },
@@ -75,6 +80,7 @@ export const PERMISSIONS: PermDef[] = [
   // System
   { id: "settings.manage", label: "School & statutory settings", group: "System" },
   { id: "settings.theme", label: "Set the school colour scheme (Theme tab)", group: "System" },
+  { id: "backup.manage", label: "Database backup & restore", group: "System" },
   { id: "rbac.manage", label: "Manage users, roles & permissions", group: "System" },
   { id: "ai.use", label: "AI assistant", group: "System" },
   // Self-service portals
@@ -113,8 +119,9 @@ export const ROLE_DEFAULTS: Record<string, string[] | "*"> = {
   GROUP_OWNER: minus(ALL_PERM_IDS, ["portal.self", "campus.self"]),
   // iEduPro: only level-1 admins adjudicate receipt/invoice modifications;
   // the school colour scheme is the proprietor/super-admin's call, not every
-  // head of school (per the user: "customizable by the school's super admin")
-  SCHOOL_ADMIN: minus(ALL_PERM_IDS, ["rbac.manage", "approvals.manage", "settings.theme", "portal.self", "campus.self"]),
+  // head of school (per the user: "customizable by the school's super admin").
+  // Backup/restore can wipe the whole school database — same restriction.
+  SCHOOL_ADMIN: minus(ALL_PERM_IDS, ["rbac.manage", "approvals.manage", "settings.theme", "backup.manage", "portal.self", "campus.self"]),
   ACCOUNTANT: [
     "students.view", "admissions.manage",
     "fees.view", "fees.manage", "fees.collect", "payments.momo", "discounts.manage", "cashier.reports",
@@ -123,17 +130,18 @@ export const ROLE_DEFAULTS: Record<string, string[] | "*"> = {
     "payroll.view", "payroll.process",
     "inventory.view", "inventory.manage", "inventory.pos",
     "finance.view", "finance.manage",
+    "accounts.view", "accounts.manage",
     "boarding.view",
-    "sms.view", "sms.send",
+    "sms.view", "sms.send", "email.send", "messages.use",
     "settings.manage", "ai.use", "staffhub.self",
   ],
   CASHIER: [
     "students.view", "fees.view", "fees.collect", "payments.momo", "cashier.reports", "approvals.request",
     "daily.view", "daily.collect",
-    "transport.view", "transport.conduct",
+    "transport.view", "transport.conduct", "messages.use",
   ],
   BUS_CONDUCTOR: [
-    "students.view", "transport.view", "transport.conduct", "daily.view", "staffhub.self",
+    "students.view", "transport.view", "transport.conduct", "daily.view", "staffhub.self", "messages.use",
   ],
   TEACHER: [
     "students.view", "students.manage",
@@ -142,12 +150,12 @@ export const ROLE_DEFAULTS: Record<string, string[] | "*"> = {
     "gradebook.view", "gradebook.enter",
     "curriculum.view", "curriculum.manage",
     "reports.view", "reports.publish", "exams.online",
-    "sms.view", "sms.send",
+    "sms.view", "sms.send", "messages.use",
     "daily.view", "daily.collect",
     "ai.use", "staffhub.self",
   ],
-  NON_TEACHING: ["staffhub.self"],
-  LIBRARIAN: ["students.view", "library.view", "library.issue", "library.manage"],
+  NON_TEACHING: ["staffhub.self", "messages.use"],
+  LIBRARIAN: ["students.view", "library.view", "library.issue", "library.manage", "messages.use"],
   PARENT: ["portal.self"],
   STUDENT: ["campus.self"],
   // Association network roles use their own portal — no school permissions.
@@ -198,6 +206,7 @@ export const PERM_IMPLIES: Record<string, string[]> = {
   "inventory.manage": ["inventory.view"],
   "inventory.pos": ["inventory.view"],
   "finance.manage": ["finance.view"],
+  "accounts.manage": ["accounts.view"],
   "attendance.take": ["attendance.view"],
   "classes.manage": ["classes.view"],
   "gradebook.enter": ["gradebook.view"],
@@ -286,6 +295,8 @@ export const MODULE_PERMS: Record<string, string[]> = {
   reports: ["reports.view"],
   exams: ["exams.online"],
   sms: ["sms.view"],
+  accounts: ["accounts.view"],
+  messages: ["messages.use"],
   ai: ["ai.use"],
   settings: ["settings.manage"],
   library: ["library.view"],

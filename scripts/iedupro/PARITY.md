@@ -89,6 +89,17 @@ Legend: ✅ done & verified · 🟡 partial (notes) · ⬜ not yet
 ## 6. Communication
 - ✅ SMS centre: compose, automations (9 triggers), templates, log, settings
 - ✅ Noticeboard (school notices: audience/priority) → parent & student portals
+- ✅ Email channel (CI3 Invoice_email + Email_model parity, wave 12): SMTP
+      settings per school (password never echoed), test send, invoice emails
+      (inline-styled HTML with line items + outstanding + MoMo hint) per-row
+      from Fees › Invoices + bulk ALL/UNPAID/CLASS, EmailMessage log with
+      SENT/SIMULATED/FAILED chips — unconfigured schools log SIMULATED so
+      workflows never stall (nodemailer)
+- ✅ Internal messaging (CI3 message_thread/message parity, wave 12): staff
+      inbox with two-pane mail client, one thread per unordered staff pair,
+      replies, ≤4MB attachments (MediaAsset), mark-read + unread badges,
+      delete-thread, notification-bell unread item; parents/students excluded
+      this wave (portal-side messaging is the follow-up)
 - 🟡 Lesson notes: INACTIVE in CI3 itself (commented out of their nav)
 
 ## 7. Finance & payroll
@@ -111,8 +122,16 @@ Legend: ✅ done & verified · 🟡 partial (notes) · ⬜ not yet
       statutory-setting rates with 13.5/5.5/5.0 fallbacks, totals, CSV + A4 print
 - ✅ Aging report printable — 0-30/31-60/61-90/90+ buckets (CI3 palette),
       stat cards, detail table, CSV + print
-- 🟡 Bank reconciliation / chart of accounts (CI3 marks most of these
-      sections commented-out in its own nav — represented by finance module)
+- ✅ Double-entry accounts & bank reconciliation (CI3 Accounts.php /
+      Bank_reconciliation.php parity, wave 12): chart of accounts (31-account
+      Ghana seed, parent/child tree, isBank flags), journal entries
+      (DRAFT→POSTED→VOIDED, Σdebit=Σcredit enforced, sync-safe JE-numbers),
+      bank accounts + txn feed, reconciliation workspace (statement lines vs
+      system txns, auto-match ±3d, complete stamps reconciledAt), reports:
+      trial balance (proves ΣDr=ΣCr), balance sheet (balanced check), income
+      statement (SURPLUS/(DEFICIT)), general ledger (opening→running→closing),
+      CSV + print. accounts.view/accounts.manage RBAC. Deliberate CI3 cuts:
+      budgets, fiscal years, audit-trail page, cash-flow statement
 
 ## 8. Portals
 - ✅ Super admin / admin / accountant / cashier / bus conductor (levels 1–5)

@@ -15,7 +15,7 @@ import { fmtCedi, fmtDate, PAYMENT_LABELS } from "@/lib/format";
 import { canAny } from "@/lib/rbac";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { Banknote, Receipt, AlertTriangle, CheckCircle2, Plus, Flag, Printer, Wallet, Ticket, Percent, UserPlus, XCircle, ListChecks, Copy as CopyIcon, Eye, Link2, ClipboardList, ShieldCheck, Undo2, PencilLine, Trash2, FileWarning, Ban, Download, History, ArrowRightLeft, PiggyBank, HandCoins, CopyPlus, FileUp, Smartphone, Search, UserRound, GraduationCap } from "lucide-react";
+import { Banknote, Receipt, AlertTriangle, CheckCircle2, Plus, Flag, Printer, Wallet, Ticket, Percent, UserPlus, XCircle, ListChecks, Copy as CopyIcon, Eye, Link2, ClipboardList, ShieldCheck, Undo2, PencilLine, Trash2, FileWarning, Ban, Download, History, ArrowRightLeft, PiggyBank, HandCoins, CopyPlus, FileUp, Smartphone, Search, UserRound, GraduationCap, Mail } from "lucide-react";
 import { ReceiptDocument, BulkReceiptsDocument, RECEIPT_STYLES, type ReceiptStyle } from "@/components/receipts";
 import { BillItemsTab, CreateInvoicesTab, type BillItemRow, type RosterRow } from "@/components/modules/fees-billing";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -32,7 +32,7 @@ type FeeData = {
   structures: { id: string; classroom: string; classroomId: string; total: number; items: { name: string; amount: number; optional: boolean }[] }[];
   invoices: {
     id: string; invoiceNo: string; student: string; studentId: string; classroom: string | null; total: number; discount: number;
-    discountReason: string | null; paid: number; balance: number; status: string; dueDate: string | null; guardianPhone: string;
+    discountReason: string | null; paid: number; balance: number; status: string; dueDate: string | null; guardianPhone: string; guardianEmail: string | null;
     payments: { id: string; receiptNo: string; amount: number; method: string; paidAt: string; reference: string | null }[];
   }[];
   stats: { billed: number; collected: number; arrears: number; count: number; paid: number; partial: number; unpaid: number };
@@ -93,6 +93,9 @@ export function Fees() {
   }
   const canManageApprovals = canAny(session?.permissions, ["approvals.manage"]);
   const canRequestMods = canAny(session?.permissions, ["approvals.request", "approvals.manage"]);
+  /* email channel (CI3 Invoice_email parity): per-row invoice mail button */
+  const canEmailInvoice = canAny(session?.permissions, ["email.send"]);
+  const [emailFor, setEmailFor] = useState<string | null>(null);
   const [discDialog, setDiscDialog] = useState<DiscountRow | "new" | null>(null);
   const [applyDialog, setApplyDialog] = useState<DiscountRow | null>(null);
   const [receipt, setReceipt] = useState<any | null>(null);
@@ -125,6 +128,23 @@ export function Fees() {
       setBulkSmsOpen(false); setBulkSmsBody("");
     } catch (e: any) { toast({ title: "Send failed", description: e.message, variant: "destructive" }); }
     finally { setBulkBusy(false); }
+  }
+
+  /* email one invoice to the guardian (CI3 Invoice_email::send parity) —
+     the channel logs a row even when SMTP is not configured (SIMULATED) */
+  async function emailInvoice(inv: FeeData["invoices"][0]) {
+    if (!currentSchoolId) return;
+    setEmailFor(inv.id);
+    try {
+      const res = await apiPost<{ message: { status: string; toAddress: string; errorReason: string | null } }>(`/api/school/${currentSchoolId}/ops/email`, { action: "send-invoice", invoiceId: inv.id });
+      const st = res.message.status;
+      toast({
+        title: st === "SENT" ? "Invoice emailed" : st === "SIMULATED" ? "Invoice email logged" : "Invoice email failed",
+        description: st === "SIMULATED" ? "SMTP is not enabled — logged in the email channel (Messaging › Email channel)." : res.message.errorReason ?? `Delivered to ${res.message.toAddress}.`,
+        variant: st === "FAILED" ? "destructive" : undefined,
+      });
+    } catch (e: any) { toast({ title: "Email failed", description: e.message, variant: "destructive" }); }
+    finally { setEmailFor(null); }
   }
 
   function copySelectedLinks() {
@@ -340,6 +360,11 @@ export function Fees() {
                         <td className="px-3 py-2.5 hidden lg:table-cell"><StatusBadge status={inv.status} /></td>
                         <td className="px-3 py-2.5 text-right">
                           <div className="flex gap-1 justify-end">
+                            {canEmailInvoice && (
+                              <Button size="sm" variant="ghost" className="h-7 gap-1" title={inv.guardianEmail ? `Email invoice to ${inv.guardianEmail}` : "No guardian email on file"} aria-label={inv.guardianEmail ? `Email invoice ${inv.invoiceNo} to guardian` : "No guardian email on file"} disabled={!inv.guardianEmail || emailFor === inv.id} onClick={() => emailInvoice(inv)}>
+                                <Mail className={cn("size-3.5", emailFor === inv.id && "animate-pulse")} />
+                              </Button>
+                            )}
                             <Button size="sm" variant="ghost" className="h-7 gap-1" title="Apply discount" onClick={() => setDiscFor(inv)}><Percent className="size-3.5" /></Button>
                             <Button size="sm" variant="ghost" className="h-7 gap-1" title="Copy shareable parent statement link" onClick={() => copyParentLink(inv)}><Link2 className="size-3.5" /></Button>
                             <Button size="sm" variant="outline" className="h-7 gap-1" disabled={inv.balance <= 0} onClick={() => setPayFor(inv)}>

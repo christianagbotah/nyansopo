@@ -136,6 +136,29 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // 6 — unread internal messages (staff inbox, wave 12 messaging)
+  if (can("messages.use")) {
+    const inMyThreads = { schoolId, OR: [{ senderId: user.id }, { recipientId: user.id }] };
+    const unreadMsgs = await db.message.findMany({
+      where: { readAt: null, senderId: { not: user.id }, thread: inMyThreads },
+      orderBy: { createdAt: "desc" }, take: 1,
+      include: { thread: { include: { sender: true, recipient: true } } },
+    });
+    if (unreadMsgs.length) {
+      const cnt = await db.message.count({
+        where: { readAt: null, senderId: { not: user.id }, thread: inMyThreads },
+      });
+      const latest = unreadMsgs[0];
+      const counterpart = latest.thread.senderId === user.id ? latest.thread.recipient : latest.thread.sender;
+      items.push({
+        id: "messages-unread", kind: "messages", severity: "info", count: cnt,
+        title: `${cnt} unread message${cnt > 1 ? "s" : ""}`,
+        detail: `from ${counterpart.fullName} — ${latest.thread.subject}`,
+        module: "messages", at: latest.createdAt,
+      });
+    }
+  }
+
   // most recent first; severities weighted so danger leads ties
   const rank: Record<string, number> = { danger: 0, warning: 1, info: 2 };
   items.sort((a, b) => (rank[a.severity] - rank[b.severity]) || ((b.at?.getTime?.() ?? 0) - (a.at?.getTime?.() ?? 0)));
