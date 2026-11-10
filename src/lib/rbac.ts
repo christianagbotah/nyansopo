@@ -49,6 +49,9 @@ export const PERMISSIONS: PermDef[] = [
   // Double-entry accounts (CI3 Accounts.php parity)
   { id: "accounts.view", label: "View chart of accounts & ledgers", group: "Fees & Finance" },
   { id: "accounts.manage", label: "Journal entries, bank accounts & reconciliation", group: "Fees & Finance" },
+  // Budget management & fiscal years (CI3 Budget_management.php parity, wave 19)
+  { id: "budget.view", label: "View budgets & fiscal years", group: "Fees & Finance" },
+  { id: "budget.manage", label: "Budgets, budget lines & fiscal years", group: "Fees & Finance" },
   // Academic
   { id: "attendance.view", label: "View attendance", group: "Academic" },
   { id: "attendance.take", label: "Take attendance", group: "Academic" },
@@ -131,6 +134,7 @@ export const ROLE_DEFAULTS: Record<string, string[] | "*"> = {
     "inventory.view", "inventory.manage", "inventory.pos",
     "finance.view", "finance.manage",
     "accounts.view", "accounts.manage",
+    "budget.view", "budget.manage",
     "boarding.view",
     "sms.view", "sms.send", "email.send", "messages.use",
     "settings.manage", "ai.use", "staffhub.self",
@@ -207,6 +211,7 @@ export const PERM_IMPLIES: Record<string, string[]> = {
   "inventory.pos": ["inventory.view"],
   "finance.manage": ["finance.view"],
   "accounts.manage": ["accounts.view"],
+  "budget.manage": ["budget.view"],
   "attendance.take": ["attendance.view"],
   "classes.manage": ["classes.view"],
   "gradebook.enter": ["gradebook.view"],
@@ -296,6 +301,7 @@ export const MODULE_PERMS: Record<string, string[]> = {
   exams: ["exams.online"],
   sms: ["sms.view"],
   accounts: ["accounts.view"],
+  budget: ["budget.view"],
   messages: ["messages.use"],
   ai: ["ai.use"],
   settings: ["settings.manage"],

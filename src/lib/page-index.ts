@@ -15,7 +15,7 @@ import {
   Landmark, Building2, Route, Smartphone, MessageSquareText, FileSpreadsheet, BadgeCheck, Layers,
   Armchair, BookMarked, Network, UsersRound, HeartPulse, ScrollText, Wrench, Timer, Stethoscope,
   Flag, Trees, Sparkles, Scale, FileSearch, ShoppingBasket, GalleryHorizontal, Rows3, Banknote as Bank, Palette,
-  DatabaseBackup,
+  DatabaseBackup, PiggyBank,
 } from "lucide-react";
 
 export type PageEntry = {
@@ -148,6 +148,7 @@ export const PAGE_INDEX: PageEntry[] = [
   { id: "pg-bank", label: "Bank Accounts", section: S.finance, module: "accounts", target: { tab: "bank" }, perm: ["accounts.view"], icon: Landmark, keywords: ["momo wallet", "bank", "transactions", "deposits"] },
   { id: "pg-reconcile", label: "Bank Reconciliation", section: S.finance, module: "accounts", target: { tab: "reconcile" }, perm: ["accounts.view"], icon: Scale, keywords: ["statement", "matching", "auto match", "unmatched"] },
   { id: "pg-acc-reports", label: "Accounting Reports", section: S.finance, module: "accounts", target: { tab: "reports" }, perm: ["accounts.view"], icon: FileSpreadsheet, keywords: ["trial balance", "balance sheet", "income statement", "general ledger"] },
+  { id: "pg-budgets", label: "Budgets & Fiscal Years", section: S.finance, module: "budget", perm: ["budget.view"], icon: PiggyBank, keywords: ["budget planning", "fiscal year", "variance", "allocation", "bgt"] },
   { id: "pg-ai", label: "AI Assistant", section: S.finance, module: "ai", perm: ["ai.use"], icon: BrainCircuit, keywords: ["chat", "help", "glm"] },
 
   // ── System & Administration ──
@@ -182,5 +183,5 @@ export const MODULE_LABELS: Record<string, string> = {
   reports: "Reports", exams: "Exams", library: "Library", boarding: "Boarding", payroll: "Payroll",
   inventory: "Store", finance: "Finance", sms: "SMS", ai: "AI", settings: "Settings", rbac: "Access",
   staffhub: "Staff Hub", portal: "Parent Portal", campus: "Learner Portal", branches: "Branches",
-  association: "Association", accounts: "Accounts", messages: "Messages",
+  association: "Association", accounts: "Accounts", messages: "Messages", budget: "Budgets",
 };

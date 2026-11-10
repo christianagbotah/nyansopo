@@ -214,6 +214,8 @@ model School {
   bankAccounts        BankAccount[]
   bankTxns            BankTxn[]
   reconciliations     Reconciliation[]
+  fiscalYears         FiscalYear[]
+  budgets             Budget[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1503,6 +1505,7 @@ model ChartAccount {
   isActive     Boolean            @default(true)
   lines        JournalEntryLine[]
   bankAccounts BankAccount[]
+  budgetLines  BudgetLine[]
 
   @@unique([schoolId, code])
 }
@@ -2291,4 +2294,67 @@ model SchoolSetting {
   value    String // JSON-encoded
 
   @@unique([schoolId, key])
+}
+
+// ─────────────────────────────────────────────────────────────
+// BUDGET MANAGEMENT & FISCAL YEARS (wave 19)
+// CI3 parity: Budget_management.php + Accounts.php budgets() /
+// fiscal_year(). Fiscal years segment the accounting calendar
+// ("2025/26"); budgets allocate expected amounts per chart account
+// over a window. Utilization is computed LIVE from POSTED journal
+// lines only — no cached actuals column, so posting or voiding an
+// entry immediately re-flows every budget variance (same live-
+// compute doctrine as ChartAccount balances). Budget codes
+// (BGT-YYYY-NNNN) are sync-safe CodeCounter mints, scope BGT:<year>.
+// ─────────────────────────────────────────────────────────────
+model FiscalYear {
+  id            String   @id @default(cuid())
+  schoolId      String
+  school        School   @relation(fields: [schoolId], references: [id])
+  name          String // "2025/26"
+  startsAt      DateTime
+  endsAt        DateTime
+  status        String   @default("OPEN") // OPEN | CLOSED
+  isCurrent     Boolean  @default(false)
+  notes         String?
+  createdByName String
+  closedAt      DateTime?
+  closedByName  String?
+  budgets       Budget[]
+  createdAt     DateTime @default(now())
+  @@index([schoolId, startsAt])
+}
+
+model Budget {
+  id               String        @id @default(cuid())
+  schoolId         String
+  school           School        @relation(fields: [schoolId], references: [id])
+  code             String        @unique // BGT-2026-0001 (sync-safe minted)
+  name             String
+  fiscalYearId     String
+  fiscalYear       FiscalYear    @relation(fields: [fiscalYearId], references: [id])
+  startsAt         DateTime
+  endsAt           DateTime
+  status           String        @default("DRAFT") // DRAFT | APPROVED | CLOSED
+  notes            String?
+  totalBudgetedCents Int         @default(0) // denormalized SUM(lines.budgetedCents), recomputed on every line change
+  createdByName    String
+  approvedByName   String?
+  approvedAt       DateTime?
+  closedAt         DateTime?
+  closedByName     String?
+  createdAt        DateTime       @default(now())
+  lines            BudgetLine[]
+  @@index([schoolId, status])
+}
+
+model BudgetLine {
+  id             String       @id @default(cuid())
+  budgetId       String
+  budget         Budget       @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+  chartAccountId String
+  chartAccount   ChartAccount @relation(fields: [chartAccountId], references: [id])
+  budgetedCents  Int
+  notes          String?
+  @@unique([budgetId, chartAccountId])
 }

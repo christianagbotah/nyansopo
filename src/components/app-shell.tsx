@@ -40,6 +40,7 @@ import { MomoPayments } from "@/components/modules/momo-payments";
 import { Transportation } from "@/components/modules/transport";
 import { SmsCenter } from "@/components/modules/sms-center";
 import { Accounts } from "@/components/modules/accounts";
+import { Budgets } from "@/components/modules/budgets";
 import { Messages } from "@/components/modules/messages";
 import { Payroll } from "@/components/modules/payroll";
 import { Inventory } from "@/components/modules/inventory";
@@ -59,7 +60,7 @@ import {
   Download, ChevronDown, ChevronRight, School, MessageSquareText, UtensilsCrossed, Bus, Smartphone, Calculator, Package, PieChart, LayoutList,
   BookOpen, ShieldCheck, Receipt, Route, UserRound, Home, Backpack, Laptop, BedDouble, NotebookPen, Search, LayoutGrid, SmartphoneNfc,
   QrCode, UserPlus, Printer, Wallet, BarChart3, CalendarDays, HandCoins, FileWarning, ListChecks, ScanLine, ClipboardPen, Percent,
-  PanelLeftClose, PanelLeftOpen, Palette, SlidersHorizontal, Archive, FileText, BookMarked, Target,
+  PanelLeftClose, PanelLeftOpen, Palette, SlidersHorizontal, Archive, FileText, BookMarked, Target, PiggyBank,
   MessagesSquare, Landmark as LedgerIcon, DatabaseBackup,
 } from "lucide-react";
 
@@ -85,6 +86,7 @@ const SCHOOL_NAV: NavItem[] = [
   { id: "inventory", label: "Inventory & Stores", icon: Package, section: "Finance" },
   { id: "finance", label: "Finance & Analytics", icon: PieChart, section: "Finance" },
   { id: "accounts", label: "Accounts & Ledger", icon: LedgerIcon, section: "Finance" },
+  { id: "budget", label: "Budgets & Fiscal Years", icon: PiggyBank, section: "Finance" },
   { id: "attendance", label: "Attendance", icon: CalendarCheck, section: "Academic" },
   { id: "classes", label: "Classes & Timetable", icon: LayoutList, section: "Academic" },
   { id: "gradebook", label: "Gradebook", icon: ClipboardList, section: "Academic" },
@@ -830,6 +832,7 @@ export function AppShell() {
              module === "transport" && show("transport") ? <Transportation /> :
              module === "sms" && show("sms") ? <SmsCenter /> :
              module === "accounts" && show("accounts") ? <Accounts /> :
+             module === "budget" && show("budget") ? <Budgets /> :
              module === "messages" && show("messages") ? <Messages /> :
              module === "payroll" && show("payroll") ? <Payroll /> :
              module === "inventory" && show("inventory") ? <Inventory /> :
