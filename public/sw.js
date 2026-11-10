@@ -1,10 +1,13 @@
 /* Nyansapo service worker — offline-first shell + GET response cache.
    Strategy:
    - Navigation & GET API: network-first, fall back to cache when offline.
-   - Static assets: stale-while-revalidate.
+   - Build assets (/_next/static/): network-first with cache fallback —
+     never cache-first (Turbopack reuses dev chunk names; stale chunks
+     caused hydration mismatches).
    - Writes (POST) are queued client-side (lib/api.ts) and flushed via /api/sync.
+   Registration: production builds only (pwa-bootstrap.tsx unregisters in dev).
 */
-const VERSION = "nyansapo-v5";
+const VERSION = "nyansapo-v6";
 const SHELL = ["/", "/manifest.webmanifest", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png", "/apple-touch-icon.png"];
 
 self.addEventListener("install", (e) => {
@@ -31,20 +34,23 @@ self.addEventListener("fetch", (event) => {
   if (IS_DEV) return;
 
   // skip Next.js dev assets / HMR
-  if (url.pathname.startsWith("/_next/webpack-hmr") || url.pathname.startsWith("/_next/static/")) {
-    // static build assets: cache-first (immutable)
-    if (url.pathname.startsWith("/_next/static/")) {
-      event.respondWith(
-        caches.match(req).then((hit) =>
-          hit ??
-          fetch(req).then((res) => {
-            const copy = res.clone();
-            caches.open(VERSION).then((c) => c.put(req, copy));
-            return res;
-          })
-        )
-      );
-    }
+  if (url.pathname.startsWith("/_next/webpack-hmr")) return;
+  if (url.pathname.startsWith("/_next/static/")) {
+    // build assets: network-first with cache fallback. In dev, Turbopack reuses
+    // chunk filenames whose content changes on every edit; cache-first would
+    // run STALE CODE against fresh SSR HTML (hydration mismatches — seen
+    // through the https preview gateway where the IS_DEV guard doesn't fire).
+    // Production chunks are content-hashed and immutable, so network-first
+    // remains correct there (online = one fresh check, offline = cache hit).
+    event.respondWith(
+      fetch(req)
+        .then((res) => {
+          const copy = res.clone();
+          caches.open(VERSION).then((c) => c.put(req, copy));
+          return res;
+        })
+        .catch(() => caches.match(req))
+    );
     return;
   }
 

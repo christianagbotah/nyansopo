@@ -36,13 +36,21 @@ export function PwaBootstrap() {
     };
   }, [setOnline]);
 
-  // register service worker (production-safe: network-first, so no stale UI)
+  // register service worker (production builds only). In dev the SW's
+  // /_next/static/ caching would serve STALE Turbopack chunks — filenames are
+  // reused while their content changes on every edit, so an old chunk (e.g.
+  // pre-currency-sweep "GH₵" text) hydrates against fresh SSR HTML and crashes
+  // with a hydration mismatch. Through the https preview gateway the browser
+  // is NOT on localhost, so dev must not rely on the SW's own IS_DEV guard:
+  // we skip registration AND heal any SW an earlier visit left behind.
   useEffect(() => {
-    if ("serviceWorker" in navigator && window.location.protocol === "https:") {
+    if (!("serviceWorker" in navigator)) return;
+    if (process.env.NODE_ENV === "production") {
       navigator.serviceWorker.register("/sw.js").catch(() => {});
-    } else if ("serviceWorker" in navigator && ["localhost", "127.0.0.1"].includes(window.location.hostname)) {
-      navigator.serviceWorker.register("/sw.js").catch(() => {});
+      return;
     }
+    navigator.serviceWorker.getRegistrations().then((rs) => rs.forEach((r) => r.unregister())).catch(() => {});
+    if (window.caches) window.caches.keys().then((ks) => ks.forEach((k) => window.caches.delete(k))).catch(() => {});
   }, []);
 
   // try flushing on load if online with pending ops
