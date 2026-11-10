@@ -344,7 +344,7 @@ export function Fees() {
                         <td className="px-3 py-2.5">
                           <Checkbox
                             checked={invChecked.has(inv.id)}
-                            onCheckedChange={(v) => setInvChecked((s) => { const n = new Set(s); v ? n.add(inv.id) : n.delete(inv.id); return n; })}
+                            onCheckedChange={(v) => setInvChecked((s) => { const n = new Set(s); if (v) n.add(inv.id); else n.delete(inv.id); return n; })}
                             aria-label={`Select ${inv.invoiceNo}`}
                           />
                         </td>
@@ -429,7 +429,7 @@ export function Fees() {
                         <td className="px-3 py-2.5">
                           <Checkbox
                             checked={checkedReceipts.has(p.id)}
-                            onCheckedChange={(v) => { const next = new Set(checkedReceipts); v ? next.add(p.id) : next.delete(p.id); setCheckedReceipts(next); }}
+                            onCheckedChange={(v) => { const next = new Set(checkedReceipts); if (v) next.add(p.id); else next.delete(p.id); setCheckedReceipts(next); }}
                             aria-label={`Select receipt ${p.receiptNo}`}
                           />
                         </td>

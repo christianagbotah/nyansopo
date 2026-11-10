@@ -64,7 +64,7 @@ export function Students() {
       .catch((e) => toast({ title: "Could not load students", description: e.message, variant: "destructive" }));
     apiGet<any>(`/api/school/${currentSchoolId}/settings`).then((d) => setClassrooms(d.classrooms)).catch(() => {});
   };
-  useEffect(load, [currentSchoolId, statusView]); // eslint-disable-line react-hooks/set-state-in-effect
+  useEffect(load, [currentSchoolId, statusView]);
 
   const filtered = useMemo(() => {
     if (!rows) return [];
@@ -731,7 +731,7 @@ function PromotionWizard({ open, onOpenChange, rows, classrooms, onDone }: { ope
                 return (
                   <button
                     key={r.id}
-                    onClick={() => setPicked((p) => { const n = new Set(p); on ? n.delete(r.id) : n.add(r.id); return n; })}
+                    onClick={() => setPicked((p) => { const n = new Set(p); if (on) n.delete(r.id); else n.add(r.id); return n; })}
                     className={cn("w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors", on ? "bg-primary/10" : "hover:bg-secondary/40")}
                   >
                     <CheckSquare className={cn("size-4", on ? "text-primary" : "text-muted-foreground/50")} />

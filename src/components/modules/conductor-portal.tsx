@@ -51,7 +51,7 @@ export function ConductorPortal() {
       .then((d) => { setData(d); setRouteIdx((i) => Math.min(i, Math.max(0, d.routes.length - 1))); })
       .catch((e) => setErr(e.message));
   }, [currentSchoolId]);
-  useEffect(() => { load(); }, [load]); // eslint-disable-line react-hooks/set-state-in-effect
+  useEffect(() => { load(); }, [load]);
 
   const route = data?.routes[routeIdx];
 

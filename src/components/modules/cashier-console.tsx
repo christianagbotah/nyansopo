@@ -117,7 +117,7 @@ export function CashierConsole() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot permission redirect (repo convention, cf. conductor-portal)
     if (tab === "collect" && !canCollect) setTab(canReport ? "portal" : "collections");
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot permission redirect (repo convention, cf. conductor-portal)
+
     if (tab !== "collect" && !canReport) setTab(canCollect ? "collect" : "ledger");
   }, [canCollect, canReport, tab]);
 
@@ -598,7 +598,7 @@ function PrintReceiptsTab({ data, onReprint }: { data: CashierData | null; onRep
                 {rows.map((r) => (
                   <tr key={r.id} className="border-b last:border-0 hover:bg-secondary/30">
                     <td className="px-3 py-2">
-                      <Checkbox checked={checked.has(r.id)} onCheckedChange={(v) => setChecked((s) => { const n = new Set(s); v ? n.add(r.id) : n.delete(r.id); return n; })} aria-label={`Print ${r.receiptNo}`} />
+                      <Checkbox checked={checked.has(r.id)} onCheckedChange={(v) => setChecked((s) => { const n = new Set(s); if (v) n.add(r.id); else n.delete(r.id); return n; })} aria-label={`Print ${r.receiptNo}`} />
                     </td>
                     <td className="px-3 py-2"><Badge variant="outline" className="font-mono text-[10px]">{r.receiptNo}</Badge></td>
                     <td className="px-3 py-2 font-medium">{r.student}</td>
@@ -655,7 +655,6 @@ function StudentLedgerTab({ data }: { data: CashierData | null }) {
       }
     })();
     return () => { alive = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [studentId, currentSchoolId]);
 
   return (

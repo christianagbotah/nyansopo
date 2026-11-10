@@ -74,7 +74,7 @@ export function RbacConsole() {
       .catch((e) => toast({ title: "Could not load users", description: e.message, variant: "destructive" }))
       .finally(() => setLoading(false));
   }, [currentSchoolId]);
-  useEffect(() => { load(); }, [load]); // eslint-disable-line react-hooks/set-state-in-effect
+  useEffect(() => { load(); }, [load]);
 
   async function act(body: Record<string, unknown>, okMsg: string) {
     try {

@@ -332,7 +332,7 @@ export function BillItemsTab({ billItems, classrooms, onChanged }: {
                       <td className="px-3 py-2">
                         <Checkbox
                           checked={checked.has(b.id)}
-                          onCheckedChange={(v) => setChecked((s) => { const n = new Set(s); v ? n.add(b.id) : n.delete(b.id); return n; })}
+                          onCheckedChange={(v) => setChecked((s) => { const n = new Set(s); if (v) n.add(b.id); else n.delete(b.id); return n; })}
                           aria-label={`Select ${b.title}`}
                         />
                       </td>
@@ -560,7 +560,7 @@ export function CreateInvoicesTab({ billItems, roster, terms, termId, onChanged 
               {filtered.map((r) => {
                 const on = picked.has(r.id);
                 return (
-                  <button key={r.id} onClick={() => setPicked((s) => { const n = new Set(s); on ? n.delete(r.id) : n.add(r.id); return n; })}
+                  <button key={r.id} onClick={() => setPicked((s) => { const n = new Set(s); if (on) n.delete(r.id); else n.add(r.id); return n; })}
                     className={cn("flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors", on ? "bg-primary/10" : "hover:bg-secondary/50")}>
                     {on ? <CheckSquare className="size-4 text-primary shrink-0" /> : <Square className="size-4 text-muted-foreground shrink-0" />}
                     <span className="min-w-0">

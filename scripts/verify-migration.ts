@@ -12,7 +12,7 @@ for (const t of tables) {
   const n = lite.prepare(`SELECT COUNT(*) n FROM "${t}"`).get().n;
   const p = await (pg as any)[t].count();
   const match = n === p;
-  match ? ok++ : bad++;
+  if (match) ok++; else bad++;
   console.log(`${match ? "✓" : "❌"} ${t}: sqlite=${n} pg=${p}`);
 }
 console.log(`\n${ok} tables match, ${bad} mismatch`);
