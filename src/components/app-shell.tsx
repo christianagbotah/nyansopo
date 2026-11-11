@@ -244,7 +244,7 @@ function NavNode({ item, current, target, onSelect }: { item: NavItem; current: 
 }
 
 export function AppShell() {
-  const { session, schools, currentSchoolId, setCurrentSchool, module, navTarget, setModule, online, queue, syncing, logout, setAiOpen } = useStore();
+  const { session, schools, currentSchoolId, setCurrentSchool, module, navTarget, cashierTab, setModule, online, queue, syncing, logout, setAiOpen } = useStore();
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     if (typeof window === "undefined") return "light";
     return ((localStorage.getItem("theme") as "light" | "dark") ?? "light");
@@ -253,15 +253,16 @@ export function AppShell() {
   const [navOpen, setNavOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [metroOpen, setMetroOpen] = useState(false);
-  /* sidebar rail: "auto" collapses on wide modules (Fees billing + the Cashier
-     counter — the CI3 portal is a full-width console), "open"/"closed" is the
-     user's manual pin — persisted so the workspace stays how they left it */
+  /* sidebar rail: "auto" collapses only on the fee collection portal
+     (Cashier › Collection portal — the CI3 portal is a full-width console),
+     "open"/"closed" is the user's manual pin — persisted so the workspace
+     stays how they left it */
   const [rail, setRail] = useState<"auto" | "open" | "closed">(() => {
     if (typeof window === "undefined") return "auto";
     return ((localStorage.getItem("sidebar-rail") as "auto" | "open" | "closed") ?? "auto");
   });
   useEffect(() => { localStorage.setItem("sidebar-rail", rail); }, [rail]);
-  const railCollapsed = rail === "closed" || (rail === "auto" && (module === "fees" || module === "cashier"));
+  const railCollapsed = rail === "closed" || (rail === "auto" && module === "cashier" && cashierTab === "collect");
   /* iEduPro nested navigation: class directory for the level bands
      (Students → level → class; Classes → level → class timetable). Loaded
      from the settings resource of the active school. */
@@ -764,8 +765,9 @@ export function AppShell() {
 
       {/* ── body ── */}
       <div className="flex-1 flex min-h-0">
-        {/* desktop sidebar — collapses to an icon rail on wide modules (fees billing)
-            or when the user pins it closed; the pin button lives in the rail header */}
+        {/* desktop sidebar — collapses to an icon rail only on the fee collection
+            portal (Cashier › Collection portal) or when the user pins it closed;
+            the pin button lives in the rail header */}
         <aside className={cn(
           "theme-sidebar hidden lg:flex flex-col bg-sidebar text-sidebar-foreground sticky top-[61px] self-start h-[calc(100vh-61px)] transition-all duration-200",
           railCollapsed ? "w-14" : "w-64",
@@ -780,11 +782,11 @@ export function AppShell() {
             )}
             <button
               type="button"
-              title={railCollapsed ? "Expand sidebar" : "Collapse sidebar (auto-collapses on wide pages)"}
+              title={railCollapsed ? "Expand sidebar" : "Collapse sidebar (auto-collapses on the collection portal)"}
               onClick={() => setRail(railCollapsed ? "open" : "closed")}
               className={cn("grid place-items-center rounded-md p-1.5 text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground transition-colors", !railCollapsed && "ml-auto")}
             >
-              {railCollapsed ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
+              {railCollapsed ? <PanelLeftOpen className="size-5" /> : <PanelLeftClose className="size-5" />}
             </button>
           </div>
           {railCollapsed ? (
@@ -795,10 +797,10 @@ export function AppShell() {
                   <button key={item.id} type="button" title={item.label}
                     onClick={() => setModule(item.id)}
                     className={cn(
-                      "grid place-items-center size-9 rounded-lg transition-colors",
+                      "grid place-items-center size-10 rounded-lg transition-colors",
                       module === item.id ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm" : "text-sidebar-foreground/60 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
                     )}>
-                    {Icon && <Icon className="size-4" />}
+                    {Icon && <Icon className="size-6" />}
                   </button>
                 );
               })}

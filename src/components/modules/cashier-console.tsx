@@ -77,13 +77,20 @@ const SERVICE_TONE: Record<string, string> = {
 };
 
 export function CashierConsole() {
-  const { currentSchoolId, setModule, navTarget, session, online } = useStore();
+  const { currentSchoolId, setModule, navTarget, setCashierTab, session, online } = useStore();
   const [from, setFrom] = useState(todayStr());
   const [to, setTo] = useState(todayStr());
   const [collector, setCollector] = useState("all");
   const [data, setData] = useState<CashierData | null>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("collect");
+  /* publish every live tab change into the global store so the app shell rail
+     can auto-collapse ONLY on the fee collection portal (tab "collect").
+     Synced in a passive effect: applyTab also runs from the render-phase
+     navTarget adjustment below, and a store update there would trip React's
+     cross-component setState-during-render guard (Home ↔ CashierConsole). */
+  const applyTab = (t: string) => setTab(t);
+  useEffect(() => { setCashierTab(tab); }, [tab]);
 
   /* permission split (wave 10): collecting is fees.collect/daily.collect;
      the reporting tabs are cashier.reports — cashiers can be barred from
@@ -97,7 +104,7 @@ export function CashierConsole() {
   if (navTarget !== appliedTarget) {
     setAppliedTarget(navTarget);
     if (navTarget?.tab && ["collect", "portal", "collections", "summary", "receipts", "ledger", "counter"].includes(navTarget.tab)) {
-      setTab(navTarget.tab === "counter" ? "collect" : navTarget.tab === "portal" ? "collect" : navTarget.tab);
+      applyTab(navTarget.tab === "counter" ? "collect" : navTarget.tab === "portal" ? "collect" : navTarget.tab);
     }
   }
 
@@ -116,9 +123,9 @@ export function CashierConsole() {
   // first permitted tab when the stored tab is out of reach
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot permission redirect (repo convention, cf. conductor-portal)
-    if (tab === "collect" && !canCollect) setTab(canReport ? "portal" : "collections");
+    if (tab === "collect" && !canCollect) applyTab(canReport ? "portal" : "collections");
 
-    if (tab !== "collect" && !canReport) setTab(canCollect ? "collect" : "ledger");
+    if (tab !== "collect" && !canReport) applyTab(canCollect ? "collect" : "ledger");
   }, [canCollect, canReport, tab]);
 
   return (
@@ -150,7 +157,7 @@ export function CashierConsole() {
         }
       />
 
-      <Tabs value={tab} onValueChange={setTab} className="mt-0">
+      <Tabs value={tab} onValueChange={applyTab} className="mt-0">
         <TabsList className="flex-wrap">
           {canCollect && <TabsTrigger value="collect" className="gap-1.5"><Receipt className="size-4" /> Collection portal</TabsTrigger>}
           {canReport && <TabsTrigger value="portal" className="gap-1.5"><TrendingUp className="size-4" /> Overview</TabsTrigger>}
@@ -197,10 +204,10 @@ export function CashierConsole() {
             <Button variant="outline" className="h-auto flex-col gap-1 py-3" onClick={() => setModule("fees", { tab: "create" })}>
               <Receipt className="size-5 text-primary" /><span className="text-xs font-semibold">Create invoices</span><span className="text-[10px] text-muted-foreground">bill learners</span>
             </Button>
-            <Button variant="outline" className="h-auto flex-col gap-1 py-3" onClick={() => setTab("receipts")}>
+            <Button variant="outline" className="h-auto flex-col gap-1 py-3" onClick={() => applyTab("receipts")}>
               <Printer className="size-5 text-primary" /><span className="text-xs font-semibold">Print receipts</span><span className="text-[10px] text-muted-foreground">80mm thermal</span>
             </Button>
-            <Button variant="outline" className="h-auto flex-col gap-1 py-3" onClick={() => setTab("collections")}>
+            <Button variant="outline" className="h-auto flex-col gap-1 py-3" onClick={() => applyTab("collections")}>
               <FileSpreadsheet className="size-5 text-primary" /><span className="text-xs font-semibold">My collections</span><span className="text-[10px] text-muted-foreground">render the day</span>
             </Button>
           </div>
@@ -274,7 +281,7 @@ export function CashierConsole() {
           <Card>
             <CardHeader className="pb-2 flex-row items-center justify-between space-y-0">
               <CardTitle className="text-base">Recent transactions</CardTitle>
-              <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => setTab("collections")}>Full report <ChevronRight className="size-3.5" /></Button>
+              <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => applyTab("collections")}>Full report <ChevronRight className="size-3.5" /></Button>
             </CardHeader>
             <CardContent className="p-0">
               <div className="overflow-x-auto nice-scroll max-h-80">

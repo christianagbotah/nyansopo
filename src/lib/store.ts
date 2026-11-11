@@ -42,6 +42,7 @@ type Store = {
   screen: "landing" | "login" | "app";
   module: ModuleId;
   navTarget: NavTarget;
+  cashierTab: string; // live tab of the cashier console ("collect" = fee collection portal)
   queue: QueuedOp[];
   online: boolean;
   syncing: boolean;
@@ -53,6 +54,7 @@ type Store = {
   setCurrentSchool: (id: string | null) => void;
   setScreen: (s: "landing" | "login" | "app") => void;
   setModule: (m: ModuleId, target?: NavTarget) => void;
+  setCashierTab: (t: string) => void;
   setOnline: (v: boolean) => void;
   setSyncing: (v: boolean) => void;
   setLastSync: (t: number | null) => void;
@@ -72,6 +74,7 @@ export const useStore = create<Store>()(
       screen: "landing",
       module: "dashboard",
       navTarget: null,
+      cashierTab: "collect",
       queue: [],
       online: true,
       syncing: false,
@@ -90,6 +93,7 @@ export const useStore = create<Store>()(
       setCurrentSchool: (id) => set({ currentSchoolId: id }),
       setScreen: (screen) => set({ screen }),
       setModule: (module, target) => set({ module, navTarget: target ?? null }),
+      setCashierTab: (t) => set({ cashierTab: t }),
       setOnline: (online) => set({ online }),
       setSyncing: (syncing) => set({ syncing }),
       setLastSync: (lastSyncAt) => set({ lastSyncAt }),
@@ -97,7 +101,7 @@ export const useStore = create<Store>()(
       clearQueue: () => set({ queue: [] }),
       removeFromQueue: (clientId) => set((st) => ({ queue: st.queue.filter((q) => q.clientId !== clientId) })),
       setAiOpen: (aiOpen) => set({ aiOpen }),
-      logout: () => set({ session: null, schools: [], currentSchoolId: null, screen: "landing", module: "dashboard", navTarget: null, queue: [] }),
+      logout: () => set({ session: null, schools: [], currentSchoolId: null, screen: "landing", module: "dashboard", navTarget: null, cashierTab: "collect", queue: [] }),
     }),
     {
       name: "nyansapo-store",
