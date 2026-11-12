@@ -164,6 +164,7 @@ model School {
   conductItems         ConductItem[]
   discountProfiles     DiscountProfile[]
   roleConfigs          RoleConfig[]
+  termResults          TermResult[]
   smsSetting           SmsSetting?
   smsTemplates         SmsTemplate[]
   smsAutomations       SmsAutomation[]
@@ -306,6 +307,7 @@ model Term {
   lessonNotes        LessonNote[]
   syllabusTopics     SyllabusTopic[]
   resultApprovals    ResultApproval[]
+  termResults        TermResult[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -335,6 +337,7 @@ model Classroom {
   syllabusTopics     SyllabusTopic[]
   resultApprovals    ResultApproval[]
   sections           Section[]
+  termResults        TermResult[]
 }
 
 // Section (stream) within a classroom — iEduPro parity: a class like
@@ -372,6 +375,7 @@ model Subject {
   lessonNotes    LessonNote[]
   studyMaterials StudyMaterial[]
   syllabusTopics SyllabusTopic[]
+  termResults    TermResult[]
 }
 
 model Staff {
@@ -465,6 +469,7 @@ model Student {
   attendanceRecords    AttendanceRecord[]
   flags                StudentFlag[]
   reportCards          ReportCard[]
+  termResults          TermResult[]
   transfers            TransferRecord[]
   recordRequests       RecordRequest[]
   inquiries            AdmissionInquiry[]
@@ -752,6 +757,41 @@ model Mark {
   enteredOffline Boolean    @default(false)
 }
 
+// ─────────────────────────────────────────────────────────────
+// TERM RESULTS & REPORT CARDS (wave 20 — Ghana BECE style)
+// TermResult is the normalized, per student+term+subject ledger:
+// class assessment (≤30) + end-of-term exam (≤70) = total (≤100),
+// graded on the WAEC BECE band (A1..F9) and competition-ranked
+// within the class. ReportCard is the compiled per-student sheet
+// (best-6 aggregate, class position, attendance, remarks).
+// ─────────────────────────────────────────────────────────────
+model TermResult {
+  id          String    @id @default(cuid())
+  schoolId    String
+  school      School    @relation(fields: [schoolId], references: [id])
+  studentId   String
+  student     Student   @relation(fields: [studentId], references: [id])
+  termId      String
+  term        Term      @relation(fields: [termId], references: [id])
+  classroomId String // class the learner sat in when compiled (snapshot)
+  classroom   Classroom @relation(fields: [classroomId], references: [id])
+  subjectId   String
+  subject     Subject   @relation(fields: [subjectId], references: [id])
+  classScore  Float? // class assessment out of 30
+  examScore   Float? // end-of-term exam out of 70
+  total       Float? // weightedTotal = class + exam, out of 100
+  grade       String? // WAEC BECE band: A1..F9 (value 1..9)
+  position    Int? // subject rank within the class (competition ranking — ties share)
+  remarks     String?
+  published   Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([studentId, termId, subjectId])
+  @@index([termId, classroomId])
+  @@index([schoolId])
+}
+
 model ReportCard {
   id            String             @id @default(cuid())
   studentId     String
@@ -774,6 +814,12 @@ model ReportCard {
   published     Boolean            @default(false)
   publishedAt   DateTime?
   createdAt     DateTime           @default(now())
+  // wave 20 — BECE-style compilation
+  aggregate     Float? // best-6 BECE aggregate (lower is better; 6 = all A1)
+  attendancePct Float? // days attended / days taken, for the term
+  promoted      Boolean? // promoted to the next class (avg ≥ 40)
+
+  @@unique([studentId, termId])
 }
 
 model ReportCardResult {

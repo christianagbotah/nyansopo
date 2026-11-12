@@ -22,6 +22,7 @@ SCRIPTS=(
   prisma/seed-parity2.ts
   scripts/seed-parity-extras.ts
   scripts/seed-jhs3-bece.ts
+  prisma/seed-results.ts
   scripts/seed-pos-sales.ts
   prisma/seed-momo.ts
   prisma/seed-bill-items.ts

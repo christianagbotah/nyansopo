@@ -41,6 +41,7 @@ import { Transportation } from "@/components/modules/transport";
 import { SmsCenter } from "@/components/modules/sms-center";
 import { Accounts } from "@/components/modules/accounts";
 import { Budgets } from "@/components/modules/budgets";
+import { Results } from "@/components/modules/results";
 import { Messages } from "@/components/modules/messages";
 import { Payroll } from "@/components/modules/payroll";
 import { Inventory } from "@/components/modules/inventory";
@@ -60,7 +61,7 @@ import {
   Download, ChevronDown, ChevronRight, School, MessageSquareText, UtensilsCrossed, Bus, Smartphone, Calculator, Package, PieChart, LayoutList,
   BookOpen, ShieldCheck, Receipt, Route, UserRound, Home, Backpack, Laptop, BedDouble, NotebookPen, Search, LayoutGrid, SmartphoneNfc,
   QrCode, UserPlus, Printer, Wallet, BarChart3, CalendarDays, HandCoins, FileWarning, ListChecks, ScanLine, ClipboardPen, Percent,
-  PanelLeftClose, PanelLeftOpen, Palette, SlidersHorizontal, Archive, FileText, BookMarked, Target, PiggyBank,
+  PanelLeftClose, PanelLeftOpen, Palette, SlidersHorizontal, Archive, FileText, BookMarked, Target, PiggyBank, Award,
   MessagesSquare, Landmark as LedgerIcon, DatabaseBackup,
 } from "lucide-react";
 
@@ -90,6 +91,7 @@ const SCHOOL_NAV: NavItem[] = [
   { id: "attendance", label: "Attendance", icon: CalendarCheck, section: "Academic" },
   { id: "classes", label: "Classes & Timetable", icon: LayoutList, section: "Academic" },
   { id: "gradebook", label: "Gradebook", icon: ClipboardList, section: "Academic" },
+  { id: "results", label: "Results & Report Cards", icon: Award, section: "Academic" },
   { id: "curriculum", label: "Curriculum & Notes", icon: NotebookPen, section: "Academic" },
   { id: "reports", label: "Exams & Reports", icon: GraduationCap, section: "Academic" },
   { id: "exams", label: "Online Exams", icon: Laptop, section: "Academic" },
@@ -842,6 +844,7 @@ export function AppShell() {
              module === "attendance" && show("attendance") ? <Attendance /> :
              module === "classes" && show("classes") ? <Classes /> :
              module === "gradebook" && show("gradebook") ? <Gradebook /> :
+             module === "results" && show("results") ? <Results /> :
              module === "curriculum" && show("curriculum") ? <Curriculum /> :
              module === "reports" && show("reports") ? <Reports /> :
              module === "exams" && show("exams") ? <OnlineExams /> :

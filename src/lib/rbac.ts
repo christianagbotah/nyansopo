@@ -296,6 +296,7 @@ export const MODULE_PERMS: Record<string, string[]> = {
   attendance: ["attendance.view"],
   classes: ["classes.view"],
   gradebook: ["gradebook.view"],
+  results: ["reports.view"],
   curriculum: ["curriculum.view"],
   reports: ["reports.view"],
   exams: ["exams.online"],

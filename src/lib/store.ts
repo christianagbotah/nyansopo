@@ -25,7 +25,7 @@ export type QueuedOp = { clientId: string; kind: "payment" | "attendance" | "mar
 
 export type ModuleId =
   | "dashboard" | "students" | "admissions" | "fees" | "attendance" | "gradebook"
-  | "reports" | "exams" | "branches" | "ai" | "association" | "settings"
+  | "reports" | "results" | "exams" | "branches" | "ai" | "association" | "settings"
   | "daily" | "transport" | "sms" | "payroll" | "inventory" | "finance" | "classes"
   | "library" | "rbac" | "cashier" | "conductor" | "staffhub" | "portal" | "campus"
   | "boarding" | "curriculum" | "momo" | "accounts" | "messages" | "budget";
