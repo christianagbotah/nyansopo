@@ -15,7 +15,7 @@ import {
   Landmark, Building2, Route, Smartphone, MessageSquareText, FileSpreadsheet, BadgeCheck, Layers,
   Armchair, BookMarked, Network, UsersRound, HeartPulse, ScrollText, Wrench, Timer, Stethoscope,
   Flag, Trees, Sparkles, Scale, FileSearch, ShoppingBasket, GalleryHorizontal, Rows3, Banknote as Bank, Palette,
-  DatabaseBackup, PiggyBank, Award,
+  DatabaseBackup, PiggyBank, Award, Gavel,
 } from "lucide-react";
 
 export type PageEntry = {
@@ -108,6 +108,10 @@ export const PAGE_INDEX: PageEntry[] = [
   { id: "pg-gb-analytics", label: "Gradebook Analytics", section: S.academic, module: "gradebook", target: { tab: "analytics" }, perm: ["gradebook.view"], icon: BarChart3, keywords: ["subject performance", "class average"] },
   { id: "pg-results", label: "Results Broadsheet", section: S.academic, module: "results", target: { tab: "grid" }, perm: ["reports.view"], icon: Award, keywords: ["term results", "report cards", "bece grades", "positions", "aggregate", "publish"] },
   { id: "pg-results-analytics", label: "Term Analytics", section: S.academic, module: "results", target: { tab: "analytics" }, perm: ["reports.view"], icon: BarChart3, keywords: ["waec distribution", "pass rate", "weak subjects", "distinctions", "a1 f9", "term analytics"] },
+  { id: "pg-discipline", label: "Conduct Register", section: S.academic, module: "discipline", target: { tab: "register" }, perm: ["discipline.view"], icon: Gavel, keywords: ["discipline", "incident", "offence", "suspension", "warning", "conduct register"] },
+  { id: "pg-commendations", label: "Commendations", section: S.academic, module: "discipline", target: { tab: "commendations" }, perm: ["discipline.view"], icon: Award, keywords: ["awards", "good deed", "merit", "praise", "positive conduct"] },
+  { id: "pg-discipline-profiles", label: "Learner Conduct Profiles", section: S.academic, module: "discipline", target: { tab: "profiles" }, perm: ["discipline.view"], icon: ScrollText, keywords: ["conduct history", "behaviour record", "repeat offender", "case timeline"] },
+  { id: "pg-discipline-analytics", label: "Conduct Analytics", section: S.academic, module: "discipline", target: { tab: "analytics" }, perm: ["discipline.view"], icon: BarChart3, keywords: ["offence trends", "class conduct ranking", "behaviour analytics"] },
   { id: "pg-notes", label: "Lesson Notes", section: S.academic, module: "curriculum", target: { tab: "notes" }, perm: ["curriculum.manage"], icon: NotebookPen, keywords: ["ges", "strand", "indicator", "scheme of learning", "weekly notes"] },
   { id: "pg-note-review", label: "Review Lesson Notes", section: S.academic, module: "curriculum", target: { tab: "review" }, perm: ["curriculum.review"], icon: BadgeCheck, keywords: ["endorse", "hod", "return"] },
   { id: "pg-templates", label: "Note Templates", section: S.academic, module: "curriculum", target: { tab: "templates" }, perm: ["curriculum.manage"], icon: FileSpreadsheet, keywords: ["reusable", "format"] },
@@ -186,4 +190,5 @@ export const MODULE_LABELS: Record<string, string> = {
   inventory: "Store", finance: "Finance", sms: "SMS", ai: "AI", settings: "Settings", rbac: "Access",
   staffhub: "Staff Hub", portal: "Parent Portal", campus: "Learner Portal", branches: "Branches",
   association: "Association", accounts: "Accounts", messages: "Messages", budget: "Budgets",
+  discipline: "Discipline",
 };

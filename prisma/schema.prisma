@@ -205,6 +205,7 @@ model School {
   mediaAssets         MediaAsset[]
   billItems           BillItem[]
   serviceBalances     ServiceBalance[]
+  disciplineCases     DisciplineCase[]
   // ── backlog E/D/B/A ──
   dbBackups           DbBackup[]
   emailSetting        EmailSetting?
@@ -496,6 +497,7 @@ model Student {
   paymentRequests     PaymentRequest[]
   credits              StudentCredit[]
   crecheRatings        CrecheRating[]
+  disciplineCases      DisciplineCase[]
 }
 
 model Enrollment {
@@ -922,6 +924,42 @@ model StudentFlag {
   resolutionNote  String?
   resolvedByName  String?
   verifications   FlagVerification[]
+}
+
+// ─────────────────────────────────────────────────────────────
+// DISCIPLINE & CONDUCT (wave 25 — iEduPro discipline parity):
+// the day-to-day conduct register. INCIDENT rows are offences with a
+// severity ladder and an OPEN → RESOLVED / ESCALATED workflow;
+// COMMENDATION rows are positive records (academic excellence, service,
+// good deeds) that feed the commendations wall. Guardians can be SMS-notified
+// per case (parentNotifiedAt stamp, message logged in SmsMessage with
+// category DISCIPLINE). Major escalations may also raise a StudentFlag —
+// that stays a manual head-teacher decision, never automatic.
+// ─────────────────────────────────────────────────────────────
+model DisciplineCase {
+  id               String    @id @default(cuid())
+  schoolId         String
+  school           School    @relation(fields: [schoolId], references: [id])
+  studentId        String
+  student          Student   @relation(fields: [studentId], references: [id])
+  kind             String // INCIDENT | COMMENDATION
+  date             DateTime @default(now())
+  category         String // e.g. Late coming, Truancy, Academic excellence
+  severity         String? // MINOR | MODERATE | MAJOR (incidents only)
+  description      String
+  actionTaken      String? // Verbal warning, Parent called, Suspension…
+  status           String @default("OPEN") // OPEN | RESOLVED | ESCALATED
+  resolutionNote   String?
+  resolvedAt       DateTime?
+  recordedByName   String?
+  resolvedByName   String?
+  parentNotifiedAt DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([schoolId, kind, date])
+  @@index([schoolId, status])
+  @@index([studentId, date])
 }
 
 model FlagVerification {
