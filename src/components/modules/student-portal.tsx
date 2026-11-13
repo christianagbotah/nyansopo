@@ -88,6 +88,8 @@ export function StudentPortal() {
   const me = data.me;
   const overdueBooks = me.library.filter((l) => l.overdue);
   const pendingRequests = me.bookRequests.filter((r) => r.status === "PENDING").length;
+  /* wave 21 — only published terminal reports reach the learner */
+  const pubCards = me.reportCards.filter((rc) => rc.published);
 
   return (
     <div>
@@ -99,7 +101,7 @@ export function StudentPortal() {
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
         <Tile icon={<CalendarDays className="size-4" />} label="My attendance" value={me.attendance.rate !== null ? `${me.attendance.rate}%` : "—"} sub={`${me.attendance.present} present of ${me.attendance.total}`} tone={me.attendance.rate !== null && me.attendance.rate >= 90 ? "good" : undefined} />
-        <Tile icon={<GraduationCap className="size-4" />} label="Latest average" value={me.reportCards[0]?.average != null ? `${me.reportCards[0].average}%` : "—"} sub={me.reportCards[0]?.term ?? "awaiting reports"} />
+        <Tile icon={<GraduationCap className="size-4" />} label="Latest average" value={pubCards[0]?.average != null ? `${pubCards[0].average}%` : "—"} sub={pubCards[0]?.term ?? "awaiting published reports"} />
         <Tile icon={<BookOpen className="size-4" />} label="Library books" value={me.library.length} sub={overdueBooks.length ? `${overdueBooks.length} overdue — return soon!` : "none overdue"} tone={overdueBooks.length ? "danger" : undefined} />
         <Tile icon={<Wallet className="size-4" />} label="Fees" value={me.feesBalance > 0 ? fmtCedi(me.feesBalance, { compact: true }) : "Settled"} sub={me.feesBalance > 0 ? "outstanding balance" : "nothing owing — keep it up!"} tone={me.feesBalance > 0 ? "danger" : "good"} />
       </div>
@@ -204,7 +206,8 @@ export function StudentPortal() {
         </TabsContent>
 
         <TabsContent value="results" className="mt-3 space-y-4">
-          {me.reportCards.length ? me.reportCards.map((rc) => (
+          {/* wave 21 — the school publishes results from Results & Report Cards */}
+          {pubCards.length ? pubCards.map((rc) => (
             <Card key={rc.id}>
               <CardHeader className="pb-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -240,7 +243,7 @@ export function StudentPortal() {
                 {rc.headRemark && <p className="mt-2 text-sm rounded-lg bg-secondary/50 p-3"><b>Head of school:</b> {rc.headRemark}</p>}
               </CardContent>
             </Card>
-          )) : <EmptyState icon={<GraduationCap className="size-8" />} title="No reports yet" hint="Your terminal reports appear here once published." />}
+          )) : <EmptyState icon={<GraduationCap className="size-8" />} title={me.reportCards.length ? "Results not published yet" : "No reports yet"} hint={me.reportCards.length ? "Your school has compiled this term's results but hasn't published them yet — they will appear here once released." : "Your terminal reports appear here once published."} />}
         </TabsContent>
 
         <TabsContent value="library" className="mt-3 space-y-4">

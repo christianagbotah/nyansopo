@@ -107,6 +107,8 @@ export function ParentPortal() {
 
   const child = data.children[Math.min(childIdx, data.children.length - 1)];
   const balance = child.invoices.reduce((s, i) => s + i.balance, 0);
+  /* wave 21 — only published terminal reports reach parents */
+  const pubCards = child.reportCards.filter((rc) => rc.published);
 
   return (
     <div>
@@ -134,7 +136,7 @@ export function ParentPortal() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
         <StatTile icon={<Wallet className="size-4" />} label="Fee balance" value={fmtCedi(balance, { compact: true })} sub={balance > 0 ? "across all bills" : "fully settled — medaase!"} tone={balance > 0 ? "danger" : "good"} />
         <StatTile icon={<CalendarCheck className="size-4" />} label="Attendance" value={child.attendance.rate !== null ? `${child.attendance.rate}%` : "—"} sub={`${child.attendance.present} present · ${child.attendance.absent} absent`} />
-        <StatTile icon={<GraduationCap className="size-4" />} label="Latest average" value={child.reportCards[0]?.average != null ? `${child.reportCards[0].average}%` : "—"} sub={child.reportCards[0]?.term ?? "no reports yet"} />
+        <StatTile icon={<GraduationCap className="size-4" />} label="Latest average" value={pubCards[0]?.average != null ? `${pubCards[0].average}%` : "—"} sub={pubCards[0]?.term ?? "no published reports yet"} />
         <StatTile icon={<Bus className="size-4" />} label={child.transport ? "Transport" : "Transport"} value={child.transport ? child.transport.route : "Not enrolled"} sub={child.transport ? `${child.transport.pickupStop ?? "—"} → school` : "no route assigned"} />
       </div>
 
@@ -396,7 +398,9 @@ export function ParentPortal() {
         </TabsContent>
 
         <TabsContent value="reports" className="mt-3 space-y-4">
-          {child.reportCards.length ? child.reportCards.map((rc) => (
+          {/* wave 21 — parents see only PUBLISHED results; the school
+              publishes (and can recall) from Results & Report Cards */}
+          {pubCards.length ? pubCards.map((rc) => (
             <Card key={rc.id}>
               <CardHeader className="pb-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -432,7 +436,7 @@ export function ParentPortal() {
                 {rc.headRemark && <p className="mt-2 text-sm rounded-lg bg-secondary/50 p-3"><b>Head of school:</b> {rc.headRemark}</p>}
               </CardContent>
             </Card>
-          )) : <EmptyState icon={<GraduationCap className="size-8" />} title="No reports yet" hint="Terminal reports appear here once the school publishes them." />}
+          )) : <EmptyState icon={<GraduationCap className="size-8" />} title={child.reportCards.length ? "Results not published yet" : "No reports yet"} hint={child.reportCards.length ? "The school has compiled results for this term but hasn't published them — check back after the head teacher releases them." : "Terminal reports appear here once the school publishes them."} />}
         </TabsContent>
 
         {/* ── LIBRARY (iEduPro parity): books out + request on behalf of the child ── */}

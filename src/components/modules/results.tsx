@@ -8,17 +8,22 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ModuleHeader, LoadingBlock, EmptyState, StatCard } from "@/components/ui-helpers";
+import { ModuleHeader, LoadingBlock, EmptyState, StatCard, StatusBadge } from "@/components/ui-helpers";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
-  Award, Calculator, Eye, GraduationCap, Printer, Users, BookOpen, TrendingUp, ClipboardCheck, Percent, Layers, RefreshCcw,
+  Award, Calculator, Eye, GraduationCap, Printer, Users, BookOpen, TrendingUp, ClipboardCheck,
+  Percent, Layers, RefreshCcw, ScrollText, Send, Undo2,
 } from "lucide-react";
 
 /* ══════════════════════════════════════════════════════════════
-   Results & Report Cards — wave 20 (Ghana BECE style).
+   Results & Report Cards — wave 20 + wave 21 (Ghana BECE style).
 
    One screen for the super-admin / principal:
    • pick a term + class and read the whole results ledger as a
@@ -29,6 +34,9 @@ import {
      TermResult ledger (class 30% + exam 70%), competition-ranks
      every subject and the class, compiles report cards with the
      best-6 BECE aggregate, attendance % and remarks;
+   • publish / recall (wave 21) — flip the whole class-term to
+     published once Results Control has approved it, so the
+     parent & learner portals show it; recall pulls it back;
    • every learner's Ghana-format terminal report prints straight
      from the browser — school header, grades table, remarks and
      signature lines — one sheet or the whole class set.
@@ -84,6 +92,29 @@ type DetailPayload = {
   legacyResults: { subjectName: string; classScore: number | null; examScore: number | null; total: number | null; grade: string | null; remark: string | null; position: number | null }[];
 };
 
+/* wave 21 — publish + transcript payloads */
+type PublishPayload = {
+  ok: true; publish: boolean; results: number; cards: number;
+  term: { name: string; yearName: string };
+  classroom: { name: string };
+};
+type TranscriptTerm = {
+  termId: string; termName: string; yearName: string; classroomName: string;
+  cardId: string | null;
+  totalScore: number | null; average: number | null;
+  classPosition: number | null; classSize: number | null;
+  aggregate: number | null; attendancePct: number | null;
+  promoted: boolean | null; published: boolean;
+  teacherRemark: string | null; headRemark: string | null;
+  rows: { subjectName: string; subjectCode: string | null; classScore: number | null; examScore: number | null; total: number | null; grade: string | null; position: number | null; remark: string | null }[];
+};
+type TranscriptPayload = {
+  school: SchoolInfo;
+  student: { id: string; firstName: string; lastName: string; otherNames: string | null; nyansapoIndex: string; gender: string | null; dateOfBirth: string | null };
+  terms: TranscriptTerm[];
+  summary: { terms: number; bestAggregate: number | null; overallAverage: number | null };
+};
+
 /* ── colour doctrine: green ≥65 · amber 50–64 · red <50 ── */
 const bandTone = (total: number | null | undefined) =>
   total === null || total === undefined
@@ -117,6 +148,13 @@ export function Results() {
   const [detail, setDetail] = useState<DetailPayload | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
+  /* wave 21 — publish / recall + transcript */
+  const [approvalStatus, setApprovalStatus] = useState<string>("DRAFT");
+  const [pubBusy, setPubBusy] = useState(false);
+  const [confirmPub, setConfirmPub] = useState<null | "publish" | "recall">(null);
+  const [transcript, setTranscript] = useState<TranscriptPayload | null>(null);
+  const [transcriptOpen, setTranscriptOpen] = useState(false);
+  const [transcriptLoading, setTranscriptLoading] = useState(false);
 
   /* bootstrap — resolve the school's terms/classes and default selectors
      (current term; the JHS 3 demo class when present, else the first) */
@@ -183,6 +221,58 @@ export function Results() {
     }
   }
 
+  /* wave 21 — Results Control status of the selected class-term.
+     Publishing requires APPROVED or LOCKED; DRAFT/SUBMITTED classes
+     are refused, so the chip + button hint keep the flow honest. */
+  useEffect(() => {
+    if (!currentSchoolId || !termId) return;
+    let alive = true;
+    apiGet<{ rows: { classroomId: string; status: string }[] }>(`/api/school/${currentSchoolId}/ops/academic-control?termId=${termId}`)
+      .then((d) => { if (alive) setApprovalStatus(d.rows.find((r) => r.classroomId === classId)?.status ?? "DRAFT"); })
+      .catch(() => { if (alive) setApprovalStatus("DRAFT"); });
+    return () => { alive = false; };
+  }, [currentSchoolId, termId, classId, refresh]);
+
+  /** Publish / recall the whole class-term (wave 21). */
+  async function publishAction(kind: "publish" | "recall") {
+    if (!currentSchoolId || !termId || !classId) { toast({ title: "Choose a term and a class first" }); return; }
+    setPubBusy(true);
+    try {
+      const res = await apiPost<PublishPayload>("/api/results/publish", {
+        schoolId: currentSchoolId, termId, classId, publish: kind === "publish",
+      });
+      toast({
+        title: kind === "publish" ? "Results published" : "Results recalled to draft",
+        description: kind === "publish"
+          ? `${res.classroom.name} · ${res.term.name} (${res.term.yearName}): ${res.cards} report card${res.cards === 1 ? "" : "s"} and ${res.results} subject result${res.results === 1 ? "" : "s"} are now visible to learners and parents.`
+          : `${res.classroom.name} · ${res.term.name}: ${res.cards} report card${res.cards === 1 ? "" : "s"} pulled back to draft — learners and parents no longer see them.`,
+      });
+      setConfirmPub(null);
+      setRefresh((r) => r + 1);
+    } catch (e: any) {
+      toast({ title: kind === "publish" ? "Publish failed" : "Recall failed", description: e.message, variant: "destructive" });
+    } finally {
+      setPubBusy(false);
+    }
+  }
+
+  /** Open the printable multi-term transcript (wave 21). */
+  async function openTranscript(studentId: string) {
+    if (!currentSchoolId) return;
+    setTranscript(null);
+    setTranscriptLoading(true);
+    setTranscriptOpen(true);
+    try {
+      const d = await apiGet<TranscriptPayload>(`/api/results/transcript?schoolId=${currentSchoolId}&studentId=${studentId}`);
+      setTranscript(d);
+    } catch (e: any) {
+      toast({ title: "Could not open transcript", description: e.message, variant: "destructive" });
+      setTranscriptOpen(false);
+    } finally {
+      setTranscriptLoading(false);
+    }
+  }
+
   /* ── derived grid data ── */
   const subjects = useMemo(() => {
     const map = new Map<string, { id: string; name: string; code: string }>();
@@ -218,6 +308,9 @@ export function Results() {
     };
   }, [data, subjects, students]);
 
+  /* wave 21 — publication gate: publishing needs Results Control approval */
+  const gateOpen = approvalStatus === "APPROVED" || approvalStatus === "LOCKED";
+
   if (!meta) return <LoadingBlock label="Loading results…" />;
 
   const termLabel = meta.terms.find((t) => t.id === termId);
@@ -237,6 +330,23 @@ export function Results() {
               title={canPublish ? "Compile the term results ledger for this class" : "You need the generate & publish reports permission"}>
               <Calculator className={cn("size-4", busy && "animate-pulse")} /> {busy ? "Compiling…" : "Compute term results"}
             </Button>
+            {/* wave 21 — publication, gated on Results Control approval */}
+            {canPublish && kpis.compiled > 0 && kpis.published < kpis.compiled && (
+              <Button size="sm" className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white" disabled={pubBusy || !gateOpen}
+                onClick={() => setConfirmPub("publish")}
+                title={gateOpen
+                  ? `Publish ${kpis.compiled} report card${kpis.compiled === 1 ? "" : "s"} to learners and parents`
+                  : `Results are ${approvalStatus.toLowerCase()} — submit and approve them in Results Control (Exams & Reports) first`}>
+                <Send className={cn("size-4", pubBusy && "animate-pulse")} /> {pubBusy ? "Working…" : "Publish results"}
+              </Button>
+            )}
+            {canPublish && kpis.published > 0 && (
+              <Button size="sm" variant="outline" className="gap-1.5 border-red-300 text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950"
+                disabled={pubBusy} onClick={() => setConfirmPub("recall")}
+                title={`Pull ${kpis.published} published card${kpis.published === 1 ? "" : "s"} back to draft`}>
+                <Undo2 className="size-4" /> Recall to draft
+              </Button>
+            )}
           </div>
         }
       />
@@ -258,6 +368,13 @@ export function Results() {
           </SelectContent>
         </Select>
         {termLabel && <Badge variant="outline" className="text-[11px]">{termLabel.name} · {termLabel.yearName}</Badge>}
+        {/* wave 21 — Results Control state of this class-term */}
+        {hasData && (
+          <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            Results control:
+            <StatusBadge status={approvalStatus} />
+          </span>
+        )}
         <span className="ml-auto hidden lg:flex items-center gap-2 text-[11px] text-muted-foreground">
           <span className="inline-flex items-center gap-1"><span className="size-2 rounded-full bg-emerald-500" /> ≥65</span>
           <span className="inline-flex items-center gap-1"><span className="size-2 rounded-full bg-amber-500" /> 50–64</span>
@@ -303,7 +420,7 @@ export function Results() {
                     <TableHead className="text-center">Pos</TableHead>
                     <TableHead className="text-center" title="Best-6 BECE aggregate (lower is better)">Agg</TableHead>
                     <TableHead className="text-center" title="Attendance">Att %</TableHead>
-                    <TableHead className="text-center">Sheet</TableHead>
+                    <TableHead className="text-center" title="Terminal report & transcript">Sheets</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -344,11 +461,17 @@ export function Results() {
                           ) : "—"}
                         </TableCell>
                         <TableCell className="text-center px-1.5">
-                          {card ? (
-                            <Button size="sm" variant="outline" className="size-7 p-0" title={`Open ${st.name}'s report card`} onClick={() => openCard(card.id)}>
-                              <Eye className="size-3.5" />
+                          <div className="inline-flex items-center gap-1">
+                            {card ? (
+                              <Button size="sm" variant="outline" className="size-7 p-0" title={`Open ${st.name}'s report card`} onClick={() => openCard(card.id)}>
+                                <Eye className="size-3.5" />
+                              </Button>
+                            ) : null}
+                            {/* wave 21 — printable multi-term transcript */}
+                            <Button size="sm" variant="outline" className="size-7 p-0" title={`Open ${st.name}'s academic transcript`} onClick={() => openTranscript(st.id)}>
+                              <ScrollText className="size-3.5" />
                             </Button>
-                          ) : <span className="text-muted-foreground/50">—</span>}
+                          </div>
                         </TableCell>
                       </TableRow>
                     );
@@ -371,6 +494,12 @@ export function Results() {
             <DialogDescription>Print on A4 — the sheet carries the school header, grades, remarks and signature lines.</DialogDescription>
             <div className="flex gap-2 pt-1">
               <Button size="sm" className="gap-1.5" onClick={() => window.print()} disabled={!detail}><Printer className="size-4" /> Print</Button>
+              {/* wave 21 — jump from the terminal report to the full transcript */}
+              {detail && (
+                <Button size="sm" variant="outline" className="gap-1.5" onClick={() => { setDetailOpen(false); openTranscript(detail.student.id); }}>
+                  <ScrollText className="size-4" /> Full transcript
+                </Button>
+              )}
             </div>
           </DialogHeader>
           {detail ? (
@@ -452,6 +581,76 @@ export function Results() {
               />
             ))}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── wave 21 — publish / recall confirmation ── */}
+      <AlertDialog open={confirmPub !== null} onOpenChange={(o) => !o && setConfirmPub(null)}>
+        <AlertDialogContent>
+          {confirmPub === "publish" ? (
+            <>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Publish {kpis.compiled} report card{kpis.compiled === 1 ? "" : "s"} to learners and parents?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  The whole class-term goes live in the learner &amp; parent portals — every subject result, position,
+                  aggregate and remark on the ledger. The Results Control status is <b>{approvalStatus.toLowerCase()}</b>.
+                  You can pull everything back to draft at any time with “Recall to draft”.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={pubBusy}>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                  disabled={pubBusy}
+                  onClick={(e) => { e.preventDefault(); publishAction("publish"); }}>
+                  <Send className="size-4 mr-1.5" /> {pubBusy ? "Publishing…" : "Publish now"}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </>
+          ) : (
+            <>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Recall {kpis.published} published card{kpis.published === 1 ? "" : "s"} to draft?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Learners and parents will immediately stop seeing these results in their portals. Nothing is deleted —
+                  the ledger stays intact and you can re-publish after corrections.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={pubBusy}>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  className="bg-red-600 hover:bg-red-700 text-white"
+                  disabled={pubBusy}
+                  onClick={(e) => { e.preventDefault(); publishAction("recall"); }}>
+                  <Undo2 className="size-4 mr-1.5" /> {pubBusy ? "Recalling…" : "Recall to draft"}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </>
+          )}
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* ── wave 21 — printable multi-term academic transcript ── */}
+      <Dialog open={transcriptOpen} onOpenChange={setTranscriptOpen}>
+        <DialogContent className="max-w-4xl max-h-[92vh] overflow-y-auto nice-scroll">
+          <DialogHeader className="no-print">
+            <DialogTitle className="flex items-center gap-2"><ScrollText className="size-4" /> Academic transcript</DialogTitle>
+            <DialogDescription>Every term on record — print on A4; each term section keeps its own grades table.</DialogDescription>
+            <div className="flex gap-2 pt-1">
+              <Button size="sm" className="gap-1.5" onClick={() => window.print()} disabled={!transcript}><Printer className="size-4" /> Print</Button>
+            </div>
+          </DialogHeader>
+          {transcript ? (
+            <div className="print-area">
+              <TranscriptSheet payload={transcript} />
+            </div>
+          ) : (
+            <div className="space-y-3 pb-4">
+              <Skeleton className="h-16 w-full" />
+              <Skeleton className="h-48 w-full" />
+              <Skeleton className="h-24 w-2/3" />
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>
@@ -574,6 +773,130 @@ function ReportSheet(props: {
           <div className="mt-1 text-neutral-600">Headteacher</div>
           <div className="mt-3 text-neutral-600">Date: ..............................</div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════
+   Academic transcript — wave 21 printable paper.
+   The learner's whole history on one continuous sheet: school
+   header, particulars, one grades table per term (oldest first),
+   the aggregate progression strip and a single headteacher
+   signature line at the end.
+   ══════════════════════════════════════════════════════════════ */
+function TranscriptSheet({ payload }: { payload: TranscriptPayload }) {
+  const p = payload;
+  const studentName = [p.student.lastName, p.student.firstName, p.student.otherNames].filter(Boolean).join(" ");
+  return (
+    <div className="print-sheet bg-white text-neutral-900 font-serif text-[12.5px] leading-snug border border-neutral-300 shadow-sm rounded-md p-5 md:p-7 max-w-[820px] mx-auto">
+      {/* school header */}
+      <div className="flex items-center gap-4 border-b-2 border-neutral-800 pb-3">
+        <div className="grid place-items-center size-14 shrink-0 rounded-full text-white font-bold text-lg" style={{ background: p.school.logoColor }} aria-hidden>
+          {initials(p.school.name)}
+        </div>
+        <div className="min-w-0">
+          <div className="text-xl md:text-2xl font-bold tracking-wide uppercase">{p.school.name}</div>
+          <div className="text-[11.5px] text-neutral-600">
+            {[p.school.gpsAddress, p.school.town, p.school.region].filter(Boolean).join(" · ")}
+            {p.school.phone ? ` · Tel: ${p.school.phone}` : ""}
+            {p.school.email ? ` · ${p.school.email}` : ""}
+          </div>
+          {p.school.motto && <div className="text-[11.5px] italic text-neutral-700 mt-0.5">“{p.school.motto}”</div>}
+        </div>
+        <div className="ml-auto text-right text-[10.5px] text-neutral-500 hidden md:block">
+          <div>EMIS code</div>
+          <div className="font-semibold text-neutral-700">{p.school.code}</div>
+        </div>
+      </div>
+
+      {/* title */}
+      <div className="text-center my-3">
+        <div className="text-base md:text-lg font-bold tracking-[0.2em] uppercase">Academic Transcript</div>
+        <div className="text-[12px] text-neutral-600">Complete terminal-results record · issued {new Date().getFullYear()}</div>
+      </div>
+
+      {/* particulars */}
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-1 border border-neutral-400 rounded-sm px-4 py-2.5 mb-4">
+        <div><span className="text-neutral-500">Name: </span><span className="font-semibold">{studentName}</span></div>
+        <div><span className="text-neutral-500">Index No: </span><span className="font-semibold">{p.student.nyansapoIndex}</span></div>
+        <div><span className="text-neutral-500">Gender: </span><span className="font-semibold">{p.student.gender ?? "—"}</span></div>
+        <div><span className="text-neutral-500">Date of birth: </span><span className="font-semibold">{p.student.dateOfBirth ? String(p.student.dateOfBirth).slice(0, 10) : "—"}</span></div>
+        <div><span className="text-neutral-500">Terms on record: </span><span className="font-semibold">{p.summary.terms}</span></div>
+        <div><span className="text-neutral-500">Best aggregate: </span><span className="font-semibold tabular-nums">{p.summary.bestAggregate ?? "—"}</span></div>
+      </div>
+
+      {/* one section per term, oldest first */}
+      {p.terms.length ? p.terms.map((t, idx) => (
+        <section key={t.termId} className={cn("mb-5", idx > 0 && "pt-3 border-t border-dashed border-neutral-300")}>
+          <div className="flex flex-wrap items-baseline justify-between gap-2 mb-1.5">
+            <div className="text-[13.5px] font-bold tracking-wide uppercase">{t.termName} · {t.yearName}</div>
+            <div className="text-[11.5px] text-neutral-600">Class: {t.classroomName || "—"}</div>
+          </div>
+          <table className="w-full border-collapse text-[11.5px]">
+            <thead>
+              <tr className="bg-neutral-100 text-left">
+                <th className="border border-neutral-400 px-2 py-1">Subject</th>
+                <th className="border border-neutral-400 px-2 py-1 text-center w-14">Class <span className="text-[9.5px]">(30)</span></th>
+                <th className="border border-neutral-400 px-2 py-1 text-center w-14">Exam <span className="text-[9.5px]">(70)</span></th>
+                <th className="border border-neutral-400 px-2 py-1 text-center w-14">Total <span className="text-[9.5px]">(100)</span></th>
+                <th className="border border-neutral-400 px-2 py-1 text-center w-12">Grade</th>
+                <th className="border border-neutral-400 px-2 py-1 text-center w-12">Pos.</th>
+                <th className="border border-neutral-400 px-2 py-1">Remark</th>
+              </tr>
+            </thead>
+            <tbody>
+              {t.rows.length ? t.rows.map((r, i) => (
+                <tr key={i}>
+                  <td className="border border-neutral-400 px-2 py-0.5">{r.subjectName}</td>
+                  <td className="border border-neutral-400 px-2 py-0.5 text-center tabular-nums">{r.classScore ?? "—"}</td>
+                  <td className="border border-neutral-400 px-2 py-0.5 text-center tabular-nums">{r.examScore ?? "—"}</td>
+                  <td className="border border-neutral-400 px-2 py-0.5 text-center font-semibold tabular-nums">{r.total ?? "—"}</td>
+                  <td className="border border-neutral-400 px-2 py-0.5 text-center font-semibold">{r.grade ?? "—"}</td>
+                  <td className="border border-neutral-400 px-2 py-0.5 text-center tabular-nums">{r.position ? ordinal(r.position) : "—"}</td>
+                  <td className="border border-neutral-400 px-2 py-0.5">{r.remark ?? ""}</td>
+                </tr>
+              )) : (
+                <tr><td colSpan={7} className="border border-neutral-400 px-2 py-2 text-center text-neutral-500">No subject results recorded this term.</td></tr>
+              )}
+            </tbody>
+          </table>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-x-4 gap-y-1 border border-neutral-400 border-t-0 rounded-b-sm px-3 py-1.5 text-[11px]">
+            <div><span className="text-neutral-500">Average: </span><span className="font-semibold tabular-nums">{t.average !== null ? fmt1(t.average) : "—"}</span></div>
+            <div><span className="text-neutral-500">Position: </span><span className="font-semibold">{ordinal(t.classPosition)}{t.classSize ? ` of ${t.classSize}` : ""}</span></div>
+            <div><span className="text-neutral-500">Aggregate: </span><span className="font-semibold tabular-nums">{t.aggregate ?? "—"}</span></div>
+            <div><span className="text-neutral-500">Attendance: </span><span className="font-semibold">{t.attendancePct !== null && t.attendancePct !== undefined ? `${t.attendancePct}%` : "—"}</span></div>
+            <div><span className="text-neutral-500">Promotion: </span><span className="font-semibold">{t.promoted === null || t.promoted === undefined ? "—" : t.promoted ? "Promoted" : "Not yet"}</span></div>
+          </div>
+        </section>
+      )) : (
+        <div className="border border-neutral-400 px-3 py-6 text-center text-neutral-500 mb-5">No terminal results on record yet for this learner.</div>
+      )}
+
+      {/* aggregate progression strip */}
+      {p.terms.length > 1 && (
+        <div className="flex flex-wrap items-center gap-2 mb-6 text-[11px]">
+          <span className="text-neutral-500 font-semibold uppercase tracking-wide">Aggregate progression:</span>
+          {p.terms.map((t) => (
+            <span key={t.termId} className="border border-neutral-400 rounded-sm px-2 py-0.5 bg-neutral-50">
+              {t.termName.replace(" Term", "")} <b className="tabular-nums">{t.aggregate ?? "—"}</b>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* overall + signature */}
+      <div className="mb-6 text-[12px]">
+        <span className="text-neutral-500">Overall average across {p.summary.terms} term{p.summary.terms === 1 ? "" : "s"}: </span>
+        <span className="font-semibold tabular-nums">{p.summary.overallAverage !== null ? `${fmt1(p.summary.overallAverage)}%` : "—"}</span>
+      </div>
+      <div className="grid grid-cols-2 gap-10 pt-2 text-[12px]">
+        <div>
+          <div className="border-t border-neutral-800 w-3/4" />
+          <div className="mt-1 text-neutral-600">Headteacher</div>
+          <div className="mt-3 text-neutral-600">Date: ..............................</div>
+        </div>
+        <div className="text-right self-end text-[11px] text-neutral-500">— END OF TRANSCRIPT —</div>
       </div>
     </div>
   );

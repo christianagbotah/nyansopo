@@ -185,7 +185,26 @@ async function main() {
     }
   }
 
-  console.log(`Results seed: ${enrolled.length} learners · ${subjectOrder.length} subjects · ${results} term results · ${cards} report cards (${aggregates} BECE aggregates) for ${cls.name} — ${term.name} (${year?.name}).`);
+  /* wave 21 — Results Control governance for the demo class-term:
+     submit + approve so the "Publish results" flow in the Results &
+     Report Cards module is live on first load (idempotent upsert). */
+  const approval = await db.resultApproval.upsert({
+    where: { classroomId_termId: { classroomId: cls.id, termId: term.id } },
+    create: {
+      schoolId: school.id, classroomId: cls.id, termId: term.id, status: "APPROVED",
+      submittedBy: "Seed — Mr. Kwame Duah (class teacher)", submittedAt: new Date(),
+      approvedBy: "Seed — Head teacher", approvedAt: new Date(),
+      notes: "Demo term results submitted by the class teacher and approved by the head teacher.",
+    },
+    update: { status: "APPROVED" },
+  });
+  const audits = await db.resultApprovalAudit.count({ where: { approvalId: approval.id } });
+  if (!audits) {
+    await db.resultApprovalAudit.create({ data: { approvalId: approval.id, action: "SUBMIT", previousStatus: "DRAFT", newStatus: "SUBMITTED", performedBy: "Seed — Mr. Kwame Duah (class teacher)" } });
+    await db.resultApprovalAudit.create({ data: { approvalId: approval.id, action: "APPROVE", previousStatus: "SUBMITTED", newStatus: "APPROVED", performedBy: "Seed — Head teacher" } });
+  }
+
+  console.log(`Results seed: ${enrolled.length} learners · ${subjectOrder.length} subjects · ${results} term results · ${cards} report cards (${aggregates} BECE aggregates) for ${cls.name} — ${term.name} (${year?.name}). Results control: APPROVED.`);
 }
 
 main().finally(() => db.$disconnect());

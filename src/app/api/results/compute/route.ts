@@ -216,6 +216,9 @@ export async function POST(req: NextRequest) {
           update: {
             classScore: r.classScore, examScore: r.examScore, total: r.total,
             grade: r.grade, position: r.position, remarks: r.remark, classroomId: classId,
+            // wave 21: the ledger changed — anything previously published
+            // is recalled to draft so portals never show stale marks
+            published: false, publishedAt: null,
           },
         });
         resultCount++;
@@ -242,6 +245,8 @@ export async function POST(req: NextRequest) {
           attendancePct, aggregate, promoted,
           teacherRemark: remarks.teacherRemark, headRemark: remarks.headRemark,
           promotion: promoted === null ? null : promoted ? "PROMOTED" : "PROBATION",
+          // wave 21: recomputed cards go back to draft (recall-on-change)
+          published: false, publishedAt: null,
         },
       });
 
