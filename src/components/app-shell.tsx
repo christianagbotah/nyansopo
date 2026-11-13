@@ -56,6 +56,7 @@ import { ParentPortal } from "@/components/modules/parent-portal";
 import { StudentPortal } from "@/components/modules/student-portal";
 import { Boarding } from "@/components/modules/boarding";
 import { Discipline } from "@/components/modules/discipline";
+import { Health } from "@/components/modules/health";
 import {
   LayoutDashboard, Users, Banknote, CalendarCheck, ClipboardList, GraduationCap, ArrowLeftRight, Building2,
   BrainCircuit, Settings as SettingsIcon, Landmark, Menu, CloudOff, Cloud, RefreshCcw, LogOut, Moon, Sun,
@@ -63,7 +64,7 @@ import {
   BookOpen, ShieldCheck, Receipt, Route, UserRound, Home, Backpack, Laptop, BedDouble, NotebookPen, Search, LayoutGrid, SmartphoneNfc,
   QrCode, UserPlus, Printer, Wallet, BarChart3, CalendarDays, HandCoins, FileWarning, ListChecks, ScanLine, ClipboardPen, Percent,
   PanelLeftClose, PanelLeftOpen, Palette, SlidersHorizontal, Archive, FileText, BookMarked, Target, PiggyBank, Award,
-  MessagesSquare, Landmark as LedgerIcon, DatabaseBackup, Gavel, HeartPulse,
+  MessagesSquare, Landmark as LedgerIcon, DatabaseBackup, Gavel, HeartPulse, Stethoscope, Ruler,
 } from "lucide-react";
 
 type NavLeaf = { id: string; label: string; icon?: any; target?: NavTarget };
@@ -91,6 +92,7 @@ const SCHOOL_NAV: NavItem[] = [
   { id: "budget", label: "Budgets & Fiscal Years", icon: PiggyBank, section: "Finance" },
   { id: "attendance", label: "Attendance", icon: CalendarCheck, section: "Academic" },
   { id: "discipline", label: "Discipline & Conduct", icon: Gavel, section: "Academic" },
+  { id: "health", label: "Health & Sick Bay", icon: HeartPulse, section: "Academic" },
   { id: "classes", label: "Classes & Timetable", icon: LayoutList, section: "Academic" },
   { id: "gradebook", label: "Gradebook", icon: ClipboardList, section: "Academic" },
   { id: "results", label: "Results & Report Cards", icon: Award, section: "Academic" },
@@ -383,6 +385,14 @@ export function AppShell() {
       { id: "disc-profiles", label: "Learner profiles", target: { tab: "profiles" } },
       { id: "disc-analytics", label: "Conduct analytics", target: { tab: "analytics" } },
     ];
+    /* health sidebar: the sick-bay register, SHEP screenings, learner health
+       profiles and wellness analytics (wave 26 clinic parity) */
+    const healthChildren: NavChild[] = [
+      { id: "health-sickbay", label: "Sick-bay register", target: { tab: "sickbay" } },
+      { id: "health-screenings", label: "Screenings", target: { tab: "screenings" } },
+      { id: "health-profiles", label: "Health profiles", target: { tab: "profiles" } },
+      { id: "health-analytics", label: "Wellness analytics", target: { tab: "analytics" } },
+    ];
     /* CI3 settings sidebar: general / theme / sms / permissions / payment */
     const settingsChildren: NavChild[] = [
       { id: "set-system", label: "System settings", target: { tab: "system" } },
@@ -424,6 +434,7 @@ export function AppShell() {
       if (item.id === "cashier") enriched.children = cashierChildren;
       if (item.id === "attendance") enriched.children = attendanceChildren;
       if (item.id === "discipline") enriched.children = disciplineChildren;
+      if (item.id === "health") enriched.children = healthChildren;
       if (item.id === "settings") enriched.children = settingsChildren;
       if (item.id === "boarding") enriched.children = boardingChildren;
       if (item.id === "curriculum") enriched.children = curriculumChildren;
@@ -552,6 +563,8 @@ export function AppShell() {
           { key: "m-curr", label: "Lesson Notes", icon: NotebookPen, module: "curriculum", target: { tab: "notes" }, color: C.green, when: open("curriculum") },
           { key: "m-reports", label: "Reports & Marksheets", icon: GraduationCap, module: "reports", color: C.purple, when: open("reports") },
           { key: "m-discipline", label: "Discipline", icon: Gavel, module: "discipline", color: C.red, when: open("discipline") },
+          { key: "m-sickbay", label: "Sick Bay", icon: Stethoscope, module: "health", target: { tab: "sickbay" }, color: C.red, when: open("health") },
+          { key: "m-screenings", label: "Screenings", icon: Ruler, module: "health", target: { tab: "screenings" }, color: C.teal, when: open("health") },
           { key: "m-exams", label: "Online Exams", icon: Laptop, module: "exams", color: C.teal, when: open("exams") },
           { key: "m-library", label: "Library", icon: BookOpen, module: "library", color: C.orange, when: open("library") },
           { key: "m-tt", label: "Timetable", icon: CalendarDays, module: "classes", target: { tab: "timetable" }, color: C.cyan, when: open("classes") },
@@ -855,6 +868,7 @@ export function AppShell() {
              module === "finance" && show("finance") ? <Finance /> :
              module === "attendance" && show("attendance") ? <Attendance /> :
              module === "discipline" && show("discipline") ? <Discipline /> :
+             module === "health" && show("health") ? <Health /> :
              module === "classes" && show("classes") ? <Classes /> :
              module === "gradebook" && show("gradebook") ? <Gradebook /> :
              module === "results" && show("results") ? <Results /> :

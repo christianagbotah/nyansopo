@@ -24,6 +24,7 @@ SCRIPTS=(
   scripts/seed-jhs3-bece.ts
   prisma/seed-results.ts
   prisma/seed-discipline.ts
+  prisma/seed-health.ts
   scripts/seed-pos-sales.ts
   prisma/seed-momo.ts
   prisma/seed-bill-items.ts

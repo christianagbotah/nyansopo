@@ -53,9 +53,9 @@ model User {
   permissionsJson   String? // JSON { extra: string[], denied: string[] } — overrides on top of role defaults
   lastLoginAt       DateTime?
   staffId           String? // link to Staff record — staff self-service portal (payslips, profile)
-  staff             Staff?          @relation("UserStaff", fields: [staffId], references: [id])
-  sentThreads       MessageThread[] @relation("MsgSender")
-  receivedThreads   MessageThread[] @relation("MsgRecipient")
+  staff             Staff?           @relation("UserStaff", fields: [staffId], references: [id])
+  sentThreads       MessageThread[]  @relation("MsgSender")
+  receivedThreads   MessageThread[]  @relation("MsgRecipient")
   studentId         String? // link to Student record — student portal (own record only)
   linkedStudentIds  String? // JSON array of student ids — parent portal (own children only)
   createdAt         DateTime         @default(now())
@@ -135,7 +135,7 @@ model School {
   feeStructures        FeeStructure[]
   invoices             Invoice[]
   payments             Payment[]
-  paymentRequests     PaymentRequest[]
+  paymentRequests      PaymentRequest[]
   enrollments          Enrollment[]
   assessments          Assessment[]
   attendanceSessions   AttendanceSession[]
@@ -180,44 +180,46 @@ model School {
   opsSettings          OpsSetting[]
   studentWallets       StudentWallet[]
   walletTxns           WalletTxn[]
-  libraryBooks        LibraryBook[]
-  libraryLoans        LibraryLoan[]
-  bookRequests        BookRequest[]
-  boardingHouses      BoardingHouse[]
-  dormitories         Dormitory[]
-  beds                Bed[]
-  questionPapers      QuestionPaper[]
+  libraryBooks         LibraryBook[]
+  libraryLoans         LibraryLoan[]
+  bookRequests         BookRequest[]
+  boardingHouses       BoardingHouse[]
+  dormitories          Dormitory[]
+  beds                 Bed[]
+  questionPapers       QuestionPaper[]
   modificationRequests ModificationRequest[]
-  rawScoreGrades      RawScoreGrade[]
-  portfolioEntries    PortfolioEntry[]
-  dailyFeeAudits      DailyFeeAudit[]
-  handoverReports     HandoverReport[]
-  lessonNoteTemplates LessonNoteTemplate[]
-  lessonNotes         LessonNote[]
-  studyMaterials      StudyMaterial[]
-  syllabusTopics      SyllabusTopic[]
-  studentCredits      StudentCredit[]
-  crecheDomains       CrecheDomain[]
-  crecheSkills        CrecheSkill[]
-  crecheRatingScales  CrecheRatingScale[]
-  crecheRatings       CrecheRating[]
-  schoolSettings      SchoolSetting[]
-  mediaAssets         MediaAsset[]
-  billItems           BillItem[]
-  serviceBalances     ServiceBalance[]
-  disciplineCases     DisciplineCase[]
+  rawScoreGrades       RawScoreGrade[]
+  portfolioEntries     PortfolioEntry[]
+  dailyFeeAudits       DailyFeeAudit[]
+  handoverReports      HandoverReport[]
+  lessonNoteTemplates  LessonNoteTemplate[]
+  lessonNotes          LessonNote[]
+  studyMaterials       StudyMaterial[]
+  syllabusTopics       SyllabusTopic[]
+  studentCredits       StudentCredit[]
+  crecheDomains        CrecheDomain[]
+  crecheSkills         CrecheSkill[]
+  crecheRatingScales   CrecheRatingScale[]
+  crecheRatings        CrecheRating[]
+  schoolSettings       SchoolSetting[]
+  mediaAssets          MediaAsset[]
+  billItems            BillItem[]
+  serviceBalances      ServiceBalance[]
+  disciplineCases      DisciplineCase[]
+  healthVisits         HealthVisit[]
+  healthScreenings     HealthScreening[]
   // ── backlog E/D/B/A ──
-  dbBackups           DbBackup[]
-  emailSetting        EmailSetting?
-  emailMessages       EmailMessage[]
-  messageThreads      MessageThread[]
-  chartAccounts       ChartAccount[]
-  journalEntries      JournalEntry[]
-  bankAccounts        BankAccount[]
-  bankTxns            BankTxn[]
-  reconciliations     Reconciliation[]
-  fiscalYears         FiscalYear[]
-  budgets             Budget[]
+  dbBackups            DbBackup[]
+  emailSetting         EmailSetting?
+  emailMessages        EmailMessage[]
+  messageThreads       MessageThread[]
+  chartAccounts        ChartAccount[]
+  journalEntries       JournalEntry[]
+  bankAccounts         BankAccount[]
+  bankTxns             BankTxn[]
+  reconciliations      Reconciliation[]
+  fiscalYears          FiscalYear[]
+  budgets              Budget[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -227,37 +229,37 @@ model School {
 // International schools running several curricula (e.g. GES + Cambridge)
 // pick the framework matching each subject/lesson — no data duplication.
 model CurriculumStrand {
-  id          String   @id @default(cuid())
+  id          String                @id @default(cuid())
   curriculum  String // GES | CAIE | IB
   subjectName String // matched case-insensitively against Subject.name
   gradeLevel  String // "B4" · "B7" · "Stage 4" · "PYP 4" — matches Classroom.gradeLevel
   code        String? // e.g. "B4.1" — NaCCA reference number
   name        String // "Number" · "Oral Language" · "Who we are"
-  sortOrder   Int      @default(0)
+  sortOrder   Int                   @default(0)
   subStrands  CurriculumSubStrand[]
-  lessonNotes LessonNote[] @relation("NoteStrand")
+  lessonNotes LessonNote[]          @relation("NoteStrand")
 
   @@unique([curriculum, subjectName, gradeLevel, name])
   @@index([curriculum, subjectName, gradeLevel])
 }
 
 model CurriculumSubStrand {
-  id        String             @id @default(cuid())
-  strandId  String
-  strand    CurriculumStrand   @relation(fields: [strandId], references: [id], onDelete: Cascade)
-  code      String? // e.g. "B4.1.1"
-  name      String // "Counting, Representation, Cardinality & Ordinality"
-  sortOrder Int                @default(0)
-  standards CurriculumContentStandard[]
-  lessonNotes LessonNote[]     @relation("NoteSubStrand")
+  id          String                      @id @default(cuid())
+  strandId    String
+  strand      CurriculumStrand            @relation(fields: [strandId], references: [id], onDelete: Cascade)
+  code        String? // e.g. "B4.1.1"
+  name        String // "Counting, Representation, Cardinality & Ordinality"
+  sortOrder   Int                         @default(0)
+  standards   CurriculumContentStandard[]
+  lessonNotes LessonNote[]                @relation("NoteSubStrand")
 
   @@unique([strandId, name])
 }
 
 model CurriculumContentStandard {
-  id          String              @id @default(cuid())
+  id          String                @id @default(cuid())
   subStrandId String
-  subStrand   CurriculumSubStrand @relation(fields: [subStrandId], references: [id], onDelete: Cascade)
+  subStrand   CurriculumSubStrand   @relation(fields: [subStrandId], references: [id], onDelete: Cascade)
   code        String? // e.g. "B4.1.1.1"
   statement   String // "Demonstrate understanding of quantities and place value…"
   indicators  CurriculumIndicator[]
@@ -267,12 +269,12 @@ model CurriculumContentStandard {
 }
 
 model CurriculumIndicator {
-  id        String                  @id @default(cuid())
+  id         String                    @id @default(cuid())
   standardId String
-  standard  CurriculumContentStandard @relation(fields: [standardId], references: [id], onDelete: Cascade)
-  code      String? // e.g. "B4.1.1.1.1"
-  statement String // "Model number quantities, place value for multi-digit…"
-  sortOrder Int                     @default(0)
+  standard   CurriculumContentStandard @relation(fields: [standardId], references: [id], onDelete: Cascade)
+  code       String? // e.g. "B4.1.1.1.1"
+  statement  String // "Model number quantities, place value for multi-digit…"
+  sortOrder  Int                       @default(0)
 
   @@unique([standardId, statement])
 }
@@ -315,47 +317,47 @@ model Term {
 // CLASSES, SUBJECTS, STAFF
 // ─────────────────────────────────────────────────────────────
 model Classroom {
-  id                 String              @id @default(cuid())
-  schoolId           String
-  school             School              @relation(fields: [schoolId], references: [id])
-  name               String // "Basic 4 Gold"
-  gradeLevel         String // KG1..B9 | Year 1..13 | PYP 1..MYP 4
-  stageLabel         String? // "Primary (SBC)" | "Cambridge Lower Secondary" | "IB MYP"
-  capacity           Int                 @default(30)
-  classTeacherId     String?
-  classTeacher       Staff?              @relation(fields: [classTeacherId], references: [id])
-  enrollments        Enrollment[]
-  feeStructures      FeeStructure[]
-  assessments        Assessment[]
-  attendanceSessions AttendanceSession[]
-  timetableSlots     TimetableSlot[]
-  dailyServiceRates  DailyServiceRate[]
-  onlineExams        OnlineExam[]
-  questionPapers     QuestionPaper[]
+  id                  String               @id @default(cuid())
+  schoolId            String
+  school              School               @relation(fields: [schoolId], references: [id])
+  name                String // "Basic 4 Gold"
+  gradeLevel          String // KG1..B9 | Year 1..13 | PYP 1..MYP 4
+  stageLabel          String? // "Primary (SBC)" | "Cambridge Lower Secondary" | "IB MYP"
+  capacity            Int                  @default(30)
+  classTeacherId      String?
+  classTeacher        Staff?               @relation(fields: [classTeacherId], references: [id])
+  enrollments         Enrollment[]
+  feeStructures       FeeStructure[]
+  assessments         Assessment[]
+  attendanceSessions  AttendanceSession[]
+  timetableSlots      TimetableSlot[]
+  dailyServiceRates   DailyServiceRate[]
+  onlineExams         OnlineExam[]
+  questionPapers      QuestionPaper[]
   lessonNoteTemplates LessonNoteTemplate[]
-  lessonNotes        LessonNote[]
-  studyMaterials     StudyMaterial[]
-  syllabusTopics     SyllabusTopic[]
-  resultApprovals    ResultApproval[]
-  sections           Section[]
-  termResults        TermResult[]
+  lessonNotes         LessonNote[]
+  studyMaterials      StudyMaterial[]
+  syllabusTopics      SyllabusTopic[]
+  resultApprovals     ResultApproval[]
+  sections            Section[]
+  termResults         TermResult[]
 }
 
 // Section (stream) within a classroom — iEduPro parity: a class like
 // "Basic 4" can run multiple sections (Gold / Green, or A / B), each with
 // its own ordered placement within the class.
 model Section {
-  id          String    @id @default(cuid())
+  id          String       @id @default(cuid())
   schoolId    String
-  school      School    @relation(fields: [schoolId], references: [id])
+  school      School       @relation(fields: [schoolId], references: [id])
   classroomId String
-  classroom   Classroom @relation(fields: [classroomId], references: [id])
+  classroom   Classroom    @relation(fields: [classroomId], references: [id])
   name        String // "Gold" | "A" | "B" — shown as `Class name — Section`
-  sortOrder   Int       @default(0) // ordered within the classroom (CI3 section ordering)
+  sortOrder   Int          @default(0) // ordered within the classroom (CI3 section ordering)
   capacity    Int?
   note        String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
   enrollments Enrollment[]
 
   @@unique([classroomId, name])
@@ -363,20 +365,20 @@ model Section {
 }
 
 model Subject {
-  id             String          @id @default(cuid())
-  schoolId       String
-  school         School          @relation(fields: [schoolId], references: [id])
-  name           String
-  code           String
-  curriculum     String?
-  isCore         Boolean         @default(true)
-  assessments    Assessment[]
-  timetableSlots TimetableSlot[]
+  id                  String               @id @default(cuid())
+  schoolId            String
+  school              School               @relation(fields: [schoolId], references: [id])
+  name                String
+  code                String
+  curriculum          String?
+  isCore              Boolean              @default(true)
+  assessments         Assessment[]
+  timetableSlots      TimetableSlot[]
   lessonNoteTemplates LessonNoteTemplate[]
-  lessonNotes    LessonNote[]
-  studyMaterials StudyMaterial[]
-  syllabusTopics SyllabusTopic[]
-  termResults    TermResult[]
+  lessonNotes         LessonNote[]
+  studyMaterials      StudyMaterial[]
+  syllabusTopics      SyllabusTopic[]
+  termResults         TermResult[]
 }
 
 model Staff {
@@ -415,106 +417,108 @@ model Staff {
   // switch lives on SmsSetting.autoLessonNoteAlerts
   smsNotify      Boolean         @default(true)
   active         Boolean         @default(true)
-  classrooms       Classroom[]
-  payslips         Payslip[]
-  timetableSlots  TimetableSlot[]
-  users            User[]         @relation("UserStaff")
-  housesMastered   BoardingHouse[] @relation("HouseMaster")
-  lessonNotes      LessonNote[]
-  studyMaterials   StudyMaterial[]
+  classrooms     Classroom[]
+  payslips       Payslip[]
+  timetableSlots TimetableSlot[]
+  users          User[]          @relation("UserStaff")
+  housesMastered BoardingHouse[] @relation("HouseMaster")
+  lessonNotes    LessonNote[]
+  studyMaterials StudyMaterial[]
 }
 
 // ─────────────────────────────────────────────────────────────
 // STUDENTS (national registry via nyansapoIndex)
 // ─────────────────────────────────────────────────────────────
 model Student {
-  id                   String                   @id @default(cuid())
-  nyansapoIndex        String                   @unique // NY-YYYY-NNNNNN national student index
-  firstName            String
-  lastName             String
-  otherNames           String?
-  gender               String // M | F
-  dateOfBirth          DateTime?
-  photoSeed            String?
-  guardianName         String
-  guardianPhone        String
-  guardianAltPhone     String?
-  guardianEmail        String?
-  guardianOccupation   String?
-  guardianAddress      String?
-  relationship         String                   @default("Parent")
-  hometown             String?
-  previousSchool       String?
+  id                     String                   @id @default(cuid())
+  nyansapoIndex          String                   @unique // NY-YYYY-NNNNNN national student index
+  firstName              String
+  lastName               String
+  otherNames             String?
+  gender                 String // M | F
+  dateOfBirth            DateTime?
+  photoSeed              String?
+  guardianName           String
+  guardianPhone          String
+  guardianAltPhone       String?
+  guardianEmail          String?
+  guardianOccupation     String?
+  guardianAddress        String?
+  relationship           String                   @default("Parent")
+  hometown               String?
+  previousSchool         String?
   // father / mother detail (iEduPro student_add_new parity)
-  fatherName           String?
-  fatherPhone          String?
-  fatherOccupation     String?
-  motherName           String?
-  motherPhone          String?
-  motherOccupation     String?
+  fatherName             String?
+  fatherPhone            String?
+  fatherOccupation       String?
+  motherName             String?
+  motherPhone            String?
+  motherOccupation       String?
   // medical & background (iEduPro parity)
-  nationality          String?
-  religion             String?
-  bloodGroup           String? // A+ | A- | B+ | B- | AB+ | AB- | O+ | O-
-  allergies            String?
-  medicalConditions    String?
-  emergencyContact     String?
-  photoUrl             String? // portrait data-URL (resized client-side at intake)
-  dietNote             String? // special-diet flag (iEduPro student_on_special_diet): allergies, vegetarian, religious observance…
-  syncClientId         String?                  @unique // offline-queue clientId that created this row — makes /api/sync re-flush idempotent
-  status               String                   @default("ACTIVE") // ACTIVE | TRACKED (not currently enrolled)
-  createdAt            DateTime                 @default(now())
-  enrollments          Enrollment[]
-  invoices             Invoice[]
-  marks                Mark[]
-  attendanceRecords    AttendanceRecord[]
-  flags                StudentFlag[]
-  reportCards          ReportCard[]
-  termResults          TermResult[]
-  transfers            TransferRecord[]
-  recordRequests       RecordRequest[]
-  inquiries            AdmissionInquiry[]
-  riskScores           RiskScore[]
-  serviceEnrollments   DailyServiceEnrollment[]
-  wallet               StudentWallet?
-  walletTxns           WalletTxn[]
-  serviceBalances      ServiceBalance[]
-  dailyCharges         DailyCharge[]
-  dailyMealExceptions  DailyMealException[]
-  transportAssignments TransportAssignment[]
-  smsMessages          SmsMessage[]
-  discountApplications DiscountApplication[]
-  libraryLoans         LibraryLoan[]
-  bookRequests         BookRequest[]
-  portfolioEntries     PortfolioEntry[]
-  dailyFeeAudits       DailyFeeAudit[]
-  bedAssigned          Bed?                @relation("BedOccupant")
-  housePrefectOf       BoardingHouse[]    @relation("HousePrefect")
-  dormPrefectOf        Dormitory[]        @relation("DormitoryPrefect")
-  onlineExamAttempts  OnlineExamAttempt[]
-  stockIssues          StockMovement[]
-  posPayments          Payment[]
-  paymentRequests     PaymentRequest[]
-  credits              StudentCredit[]
-  crecheRatings        CrecheRating[]
-  disciplineCases      DisciplineCase[]
+  nationality            String?
+  religion               String?
+  bloodGroup             String? // A+ | A- | B+ | B- | AB+ | AB- | O+ | O-
+  allergies              String?
+  medicalConditions      String?
+  emergencyContact       String?
+  photoUrl               String? // portrait data-URL (resized client-side at intake)
+  dietNote               String? // special-diet flag (iEduPro student_on_special_diet): allergies, vegetarian, religious observance…
+  syncClientId           String?                  @unique // offline-queue clientId that created this row — makes /api/sync re-flush idempotent
+  status                 String                   @default("ACTIVE") // ACTIVE | TRACKED (not currently enrolled)
+  createdAt              DateTime                 @default(now())
+  enrollments            Enrollment[]
+  invoices               Invoice[]
+  marks                  Mark[]
+  attendanceRecords      AttendanceRecord[]
+  flags                  StudentFlag[]
+  reportCards            ReportCard[]
+  termResults            TermResult[]
+  transfers              TransferRecord[]
+  recordRequests         RecordRequest[]
+  inquiries              AdmissionInquiry[]
+  riskScores             RiskScore[]
+  serviceEnrollments     DailyServiceEnrollment[]
+  wallet                 StudentWallet?
+  walletTxns             WalletTxn[]
+  serviceBalances        ServiceBalance[]
+  dailyCharges           DailyCharge[]
+  dailyMealExceptions    DailyMealException[]
+  transportAssignments   TransportAssignment[]
+  smsMessages            SmsMessage[]
+  discountApplications   DiscountApplication[]
+  libraryLoans           LibraryLoan[]
+  bookRequests           BookRequest[]
+  portfolioEntries       PortfolioEntry[]
+  dailyFeeAudits         DailyFeeAudit[]
+  bedAssigned            Bed?                     @relation("BedOccupant")
+  housePrefectOf         BoardingHouse[]          @relation("HousePrefect")
+  dormPrefectOf          Dormitory[]              @relation("DormitoryPrefect")
+  onlineExamAttempts     OnlineExamAttempt[]
+  stockIssues            StockMovement[]
+  posPayments            Payment[]
+  paymentRequests        PaymentRequest[]
+  credits                StudentCredit[]
+  crecheRatings          CrecheRating[]
+  disciplineCases        DisciplineCase[]
+  healthVisits           HealthVisit[]
+  healthScreeningRecords HealthScreeningRecord[]
 }
 
 model Enrollment {
-  id            String    @id @default(cuid())
-  studentId     String
-  student       Student   @relation(fields: [studentId], references: [id])
-  classroomId   String
-  classroom     Classroom @relation(fields: [classroomId], references: [id])
-  sectionId     String? // optional stream within the class (Section model)
-  section       Section?  @relation(fields: [sectionId], references: [id])
-  schoolId      String
-  school        School    @relation(fields: [schoolId], references: [id])
-  rollNo        Int?
-  admissionDate DateTime
-  exitDate      DateTime?
-  status        String    @default("ACTIVE") // ACTIVE | WITHDRAWN | TRANSFERRED | GRADUATED | EXPELLED
-  exitReason    String?
+  id               String    @id @default(cuid())
+  studentId        String
+  student          Student   @relation(fields: [studentId], references: [id])
+  classroomId      String
+  classroom        Classroom @relation(fields: [classroomId], references: [id])
+  sectionId        String? // optional stream within the class (Section model)
+  section          Section?  @relation(fields: [sectionId], references: [id])
+  schoolId         String
+  school           School    @relation(fields: [schoolId], references: [id])
+  rollNo           Int?
+  admissionDate    DateTime
+  exitDate         DateTime?
+  status           String    @default("ACTIVE") // ACTIVE | WITHDRAWN | TRANSFERRED | GRADUATED | EXPELLED
+  exitReason       String?
   // promotion trail (iEduPro student_promotion parity): the class the learner
   // was moved up from, and when — the placement row itself is reassigned
   promotedFromName String?
@@ -568,9 +572,11 @@ model FeeItem {
   isOptional     Boolean      @default(false)
 }
 
-/* ── BILL ITEM CATALOG (CI3 bill_item — student_payment.php “Add Billing
-   Item” tab): the school-wide reusable fee catalog that feeds the mass
-   invoice wizard. Applicability: specificClassIds > classCategory > ALL. ── */
+/**
+ * ── BILL ITEM CATALOG (CI3 bill_item — student_payment.php “Add Billing
+ * Item” tab): the school-wide reusable fee catalog that feeds the mass
+ * invoice wizard. Applicability: specificClassIds > classCategory > ALL. ──
+ */
 model BillItem {
   id               String   @id @default(cuid())
   schoolId         String
@@ -578,7 +584,7 @@ model BillItem {
   title            String
   category         String   @default("General") // Tuition | Exams | Books | ICT | Meals | Transport | Other…
   classCategory    String   @default("ALL") // ALL | CRECHE | NURSERY | KG | PRIMARY | JHS | SENIOR
-  specificClassIds Json?    // string[] of classroom ids — overrides classCategory
+  specificClassIds Json? // string[] of classroom ids — overrides classCategory
   amountCents      Int
   description      String?
   active           Boolean  @default(true)
@@ -591,26 +597,26 @@ model BillItem {
 }
 
 model Invoice {
-  id             String        @id @default(cuid())
-  invoiceNo      String        @unique
+  id             String           @id @default(cuid())
+  invoiceNo      String           @unique
   studentId      String
-  student        Student       @relation(fields: [studentId], references: [id])
+  student        Student          @relation(fields: [studentId], references: [id])
   schoolId       String
-  school         School        @relation(fields: [schoolId], references: [id])
+  school         School           @relation(fields: [schoolId], references: [id])
   termId         String
-  term           Term          @relation(fields: [termId], references: [id])
+  term           Term             @relation(fields: [termId], references: [id])
   classroomName  String?
   items          InvoiceItem[]
-  totalCents     Int           @default(0)
-  discountCents  Int           @default(0)
+  totalCents     Int              @default(0)
+  discountCents  Int              @default(0)
   discountReason String?
-  paidCents      Int           @default(0)
-  status         String        @default("UNPAID") // PAID | PARTIAL | UNPAID | OVERDUE | WRITTEN_OFF
+  paidCents      Int              @default(0)
+  status         String           @default("UNPAID") // PAID | PARTIAL | UNPAID | OVERDUE | WRITTEN_OFF
   dueDate        DateTime?
-  paymentPlan    String        @default("FULL") // FULL | INSTALLMENTS
-  writtenOff     Boolean       @default(false)
+  paymentPlan    String           @default("FULL") // FULL | INSTALLMENTS
+  writtenOff     Boolean          @default(false)
   writeOffNote   String? // audit: who wrote off, original amount, reason
-  createdAt      DateTime      @default(now())
+  createdAt      DateTime         @default(now())
   payments       Payment[]
   momoRequests   PaymentRequest[]
 }
@@ -624,27 +630,27 @@ model InvoiceItem {
 }
 
 model Payment {
-  id             String        @id @default(cuid())
-  receiptNo      String        @unique
+  id             String          @id @default(cuid())
+  receiptNo      String          @unique
   invoiceId      String?
-  invoice        Invoice?      @relation(fields: [invoiceId], references: [id])
+  invoice        Invoice?        @relation(fields: [invoiceId], references: [id])
   studentId      String?
-  student        Student?      @relation(fields: [studentId], references: [id])
-  category       String        @default("INVOICE") // INVOICE | DAILY
+  student        Student?        @relation(fields: [studentId], references: [id])
+  category       String          @default("INVOICE") // INVOICE | DAILY
   schoolId       String
-  school         School        @relation(fields: [schoolId], references: [id])
+  school         School          @relation(fields: [schoolId], references: [id])
   amountCents    Int
   method         String // CASH | MOMO_MTN | MOMO_TELECEL | MOMO_AT | BANK | CHEQUE | CARD
-  paymentType    String        @default("PAYMENT") // PAYMENT | REFUND | CREDIT
+  paymentType    String          @default("PAYMENT") // PAYMENT | REFUND | CREDIT
   reference      String?
   bankName       String?
   chequeNo       String?
   receivedByName String?
   paidAt         DateTime
-  recordedAt     DateTime      @default(now())
-  offlineQueued  Boolean       @default(false)
+  recordedAt     DateTime        @default(now())
+  offlineQueued  Boolean         @default(false)
   syncedAt       DateTime?
-  voided         Boolean       @default(false)
+  voided         Boolean         @default(false)
   splitJson      Json? // SPLIT collections — [{method, amountCents, reference}] summing to amountCents
   dailyCharges   DailyCharge[]
   appliedRequest PaymentRequest? @relation("HubtelAppliedPayment")
@@ -659,14 +665,14 @@ model Payment {
 // per-item balance or wallet.
 // ─────────────────────────────────────────────────────────────
 model PaymentRequest {
-  id               String          @id @default(cuid())
+  id               String         @id @default(cuid())
   schoolId         String
-  school           School          @relation(fields: [schoolId], references: [id])
+  school           School         @relation(fields: [schoolId], references: [id])
   studentId        String?
-  student          Student?        @relation(fields: [studentId], references: [id])
+  student          Student?       @relation(fields: [studentId], references: [id])
   purpose          String // INVOICE | DAILY_ITEMS | ITEM_BALANCE | WALLET
   invoiceId        String? // INVOICE — the termly fee invoice being settled
-  invoice          Invoice?        @relation(fields: [invoiceId], references: [id])
+  invoice          Invoice?       @relation(fields: [invoiceId], references: [id])
   items            Json? // DAILY_ITEMS / ITEM_BALANCE — [{serviceId, amountCents}]
   walletKind       String? // WALLET — PREPAID | TRANSPORT | ITEM (with items[0])
   amountCents      Int
@@ -674,32 +680,32 @@ model PaymentRequest {
   channel          String? // mtn-gh | vodafone-gh | tigo-gh (prompt)
   payerName        String
   payerMsisdn      String
-  status           String          @default("PENDING") // PENDING | COMPLETED | FAILED | CANCELLED
-  provider         String          @default("HUBTEL") // HUBTEL | SIMULATED
-  clientReference  String          @unique
+  status           String         @default("PENDING") // PENDING | COMPLETED | FAILED | CANCELLED
+  provider         String         @default("HUBTEL") // HUBTEL | SIMULATED
+  clientReference  String         @unique
   providerTxnId    String?
   checkoutToken    String?
   checkoutUrl      String?
-  appliedPaymentId String?         @unique
-  appliedPayment   Payment?        @relation("HubtelAppliedPayment", fields: [appliedPaymentId], references: [id])
+  appliedPaymentId String?        @unique
+  appliedPayment   Payment?       @relation("HubtelAppliedPayment", fields: [appliedPaymentId], references: [id])
   appliedNote      String? // human-readable allocation breakdown
   failureReason    String?
   lastCheckedAt    DateTime?
   completedAt      DateTime?
   createdByName    String?
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
   events           PaymentEvent[]
 }
 
 model PaymentEvent {
-  id        String          @id @default(cuid())
+  id        String         @id @default(cuid())
   requestId String
-  request   PaymentRequest  @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  request   PaymentRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
   kind      String // INITIATED | CALLBACK | STATUS_CHECK | COMPLETED | FAILED | CANCELLED | LINK_SHARED | ERROR
   payload   Json?
   note      String?
-  createdAt DateTime        @default(now())
+  createdAt DateTime       @default(now())
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -846,38 +852,38 @@ model ReportCardResult {
 // class leaves DRAFT; unlocking returns it to DRAFT.
 // ─────────────────────────────────────────────────────────────
 model ResultApproval {
-  id           String   @id @default(cuid())
-  schoolId     String
-  school       School   @relation(fields: [schoolId], references: [id])
-  classroomId  String
-  classroom    Classroom @relation(fields: [classroomId], references: [id])
-  termId       String
-  term         Term     @relation(fields: [termId], references: [id])
-  status       String   @default("DRAFT") // DRAFT | SUBMITTED | APPROVED | LOCKED
-  submittedBy  String?
-  submittedAt  DateTime?
-  approvedBy   String?
-  approvedAt   DateTime?
-  lockedBy     String?
-  lockedAt     DateTime?
-  notes        String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  audits       ResultApprovalAudit[]
+  id          String                @id @default(cuid())
+  schoolId    String
+  school      School                @relation(fields: [schoolId], references: [id])
+  classroomId String
+  classroom   Classroom             @relation(fields: [classroomId], references: [id])
+  termId      String
+  term        Term                  @relation(fields: [termId], references: [id])
+  status      String                @default("DRAFT") // DRAFT | SUBMITTED | APPROVED | LOCKED
+  submittedBy String?
+  submittedAt DateTime?
+  approvedBy  String?
+  approvedAt  DateTime?
+  lockedBy    String?
+  lockedAt    DateTime?
+  notes       String?
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+  audits      ResultApprovalAudit[]
 
   @@unique([classroomId, termId])
 }
 
 model ResultApprovalAudit {
-  id             String          @id @default(cuid())
+  id             String         @id @default(cuid())
   approvalId     String
-  approval       ResultApproval  @relation(fields: [approvalId], references: [id])
+  approval       ResultApproval @relation(fields: [approvalId], references: [id])
   action         String // SUBMIT | APPROVE | LOCK | UNLOCK
   previousStatus String
   newStatus      String
   performedBy    String
   reason         String?
-  createdAt      DateTime        @default(now())
+  createdAt      DateTime       @default(now())
 }
 
 // Report card remarks library — iedupro parity
@@ -943,23 +949,93 @@ model DisciplineCase {
   studentId        String
   student          Student   @relation(fields: [studentId], references: [id])
   kind             String // INCIDENT | COMMENDATION
-  date             DateTime @default(now())
+  date             DateTime  @default(now())
   category         String // e.g. Late coming, Truancy, Academic excellence
   severity         String? // MINOR | MODERATE | MAJOR (incidents only)
   description      String
   actionTaken      String? // Verbal warning, Parent called, Suspension…
-  status           String @default("OPEN") // OPEN | RESOLVED | ESCALATED
+  status           String    @default("OPEN") // OPEN | RESOLVED | ESCALATED
   resolutionNote   String?
   resolvedAt       DateTime?
   recordedByName   String?
   resolvedByName   String?
   parentNotifiedAt DateTime?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   @@index([schoolId, kind, date])
   @@index([schoolId, status])
   @@index([studentId, date])
+}
+
+// HEALTH & WELLNESS CLINIC (wave 26 — sick-bay register & SHEP screenings):
+// the infirmary ledger every Ghanaian school nurse keeps — clinic visits with
+// vitals, treatment and disposition (returned to class / sent home / referred
+// / follow-up), plus whole-school screening events (height, weight, BMI,
+// vision, hearing) with per-learner records.
+
+model HealthVisit {
+  id               String    @id @default(cuid())
+  schoolId         String
+  school           School    @relation(fields: [schoolId], references: [id])
+  studentId        String
+  student          Student   @relation(fields: [studentId], references: [id])
+  date             DateTime  @default(now())
+  category         String // e.g. Fever / malaria suspicion, Headache, Injury
+  severity         String    @default("MINOR") // MINOR | MODERATE | MAJOR
+  complaint        String
+  temperature      Float? // °C at triage
+  treatment        String? // what was done at the sick bay
+  medication       String? // e.g. Paracetamol 500mg × 1
+  disposition      String    @default("RETURNED_CLASS") // RETURNED_CLASS | SENT_HOME | REFERRED | FOLLOWUP
+  status           String    @default("OPEN") // OPEN (follow-up pending) | CLOSED
+  outcomeNote      String?
+  closedAt         DateTime?
+  recordedByName   String?
+  closedByName     String?
+  parentNotifiedAt DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([schoolId, date])
+  @@index([schoolId, status])
+  @@index([studentId, date])
+}
+
+model HealthScreening {
+  id            String                  @id @default(cuid())
+  schoolId      String
+  school        School                  @relation(fields: [schoolId], references: [id])
+  title         String // e.g. "Term 1 Health Screening"
+  screenDate    DateTime
+  status        String                  @default("OPEN") // OPEN (recording) | COMPLETED
+  notes         String?
+  createdByName String?
+  createdAt     DateTime                @default(now())
+  records       HealthScreeningRecord[]
+
+  @@index([schoolId, screenDate])
+}
+
+model HealthScreeningRecord {
+  id             String          @id @default(cuid())
+  screeningId    String
+  screening      HealthScreening @relation(fields: [screeningId], references: [id], onDelete: Cascade)
+  studentId      String
+  student        Student         @relation(fields: [studentId], references: [id])
+  heightCm       Float?
+  weightKg       Float?
+  bmi            Float? // computed on save from height/weight
+  vision         String? // PASS | REFER | free note
+  hearing        String? // PASS | REFER | free note
+  finding        String? // overall finding / observation
+  referred       Boolean         @default(false)
+  note           String?
+  recordedByName String?
+  createdAt      DateTime        @default(now())
+
+  @@unique([screeningId, studentId])
+  @@index([studentId])
 }
 
 model FlagVerification {
@@ -1084,51 +1160,51 @@ model AiChatMessage {
 // class, attempted by learners, auto-marked against the answer key
 // ─────────────────────────────────────────────────────────────
 model OnlineExam {
-  id            String    @id @default(cuid())
+  id            String               @id @default(cuid())
   schoolId      String
-  school        School    @relation(fields: [schoolId], references: [id])
+  school        School               @relation(fields: [schoolId], references: [id])
   classroomId   String?
-  classroom     Classroom? @relation(fields: [classroomId], references: [id])
+  classroom     Classroom?           @relation(fields: [classroomId], references: [id])
   subjectName   String
   title         String
   description   String?
-  durationMins  Int       @default(30)
+  durationMins  Int                  @default(30)
   scheduledAt   DateTime?
-  status        String    @default("DRAFT") // DRAFT | PUBLISHED | CLOSED
+  status        String               @default("DRAFT") // DRAFT | PUBLISHED | CLOSED
   createdByName String?
-  createdAt     DateTime  @default(now())
+  createdAt     DateTime             @default(now())
   questions     OnlineExamQuestion[]
   attempts      OnlineExamAttempt[]
 }
 
 model OnlineExamQuestion {
-  id            String   @id @default(cuid())
+  id            String     @id @default(cuid())
   examId        String
   exam          OnlineExam @relation(fields: [examId], references: [id])
   prompt        String
-  type          String   @default("MCQ") // MCQ | TRUE_FALSE | FILL_BLANKS (CI3 multiple_choice | true_false | fill_in_the_blanks)
-  optionA       String?  // MCQ only
-  optionB       String?  // MCQ only
-  optionC       String?  // MCQ only
-  optionD       String?  // MCQ only
-  correctOption String   // MCQ: A | B | C | D · TRUE_FALSE: TRUE | FALSE · FILL_BLANKS: unused
-  blankAnswers  String?  // FILL_BLANKS only — JSON array of accepted words (lowercase, trimmed)
-  marks         Int      @default(1)
-  sortOrder     Int      @default(0)
+  type          String     @default("MCQ") // MCQ | TRUE_FALSE | FILL_BLANKS (CI3 multiple_choice | true_false | fill_in_the_blanks)
+  optionA       String? // MCQ only
+  optionB       String? // MCQ only
+  optionC       String? // MCQ only
+  optionD       String? // MCQ only
+  correctOption String // MCQ: A | B | C | D · TRUE_FALSE: TRUE | FALSE · FILL_BLANKS: unused
+  blankAnswers  String? // FILL_BLANKS only — JSON array of accepted words (lowercase, trimmed)
+  marks         Int        @default(1)
+  sortOrder     Int        @default(0)
 }
 
 model OnlineExamAttempt {
-  id          String   @id @default(cuid())
+  id          String     @id @default(cuid())
   examId      String
   exam        OnlineExam @relation(fields: [examId], references: [id])
   studentId   String
-  student     Student  @relation(fields: [studentId], references: [id])
+  student     Student    @relation(fields: [studentId], references: [id])
   schoolId    String
-  school      School   @relation(fields: [schoolId], references: [id])
+  school      School     @relation(fields: [schoolId], references: [id])
   answers     String // JSON { "0": "A", "1": "C", … } keyed by question sortOrder
   score       Int?
   startedAt   DateTime? // set when the learner opens the paper — live-monitor signal (score null = still in progress)
-  submittedAt DateTime @default(now())
+  submittedAt DateTime   @default(now())
 
   @@unique([examId, studentId])
 }
@@ -1137,20 +1213,20 @@ model OnlineExamAttempt {
 // DAILY SERVICES (canteen, water, extra classes) — micro-billing
 // ─────────────────────────────────────────────────────────────
 model DailyService {
-  id          String                   @id @default(cuid())
-  schoolId    String
-  school      School                   @relation(fields: [schoolId], references: [id])
-  name        String // Lunch, Breakfast, Sachet Water, Extra Classes
-  category    String // MEAL | DRINK | CLASS | CARE | TRANSPORT | OTHER
-  priceCents  Int // standard school-wide rate (one-way fare for TRANSPORT — the per-trip charge)
-  chargeMode  String                   @default("DAILY") // DAILY (every school day) | WEEKLY (once a week, first school day)
-  weekdays    String                   @default("1,2,3,4,5") // ISO weekdays the service runs (e.g. "3" = Wednesdays only)
-  active      Boolean                  @default(true)
-  optInDaily  Boolean                  @default(false) // optional-by-default service (e.g. breakfast): charged only when the learner opts in for the day
-  enrollments DailyServiceEnrollment[]
-  charges     DailyCharge[]
-  classRates  DailyServiceRate[]
-  balances    ServiceBalance[]
+  id             String                   @id @default(cuid())
+  schoolId       String
+  school         School                   @relation(fields: [schoolId], references: [id])
+  name           String // Lunch, Breakfast, Sachet Water, Extra Classes
+  category       String // MEAL | DRINK | CLASS | CARE | TRANSPORT | OTHER
+  priceCents     Int // standard school-wide rate (one-way fare for TRANSPORT — the per-trip charge)
+  chargeMode     String                   @default("DAILY") // DAILY (every school day) | WEEKLY (once a week, first school day)
+  weekdays       String                   @default("1,2,3,4,5") // ISO weekdays the service runs (e.g. "3" = Wednesdays only)
+  active         Boolean                  @default(true)
+  optInDaily     Boolean                  @default(false) // optional-by-default service (e.g. breakfast): charged only when the learner opts in for the day
+  enrollments    DailyServiceEnrollment[]
+  charges        DailyCharge[]
+  classRates     DailyServiceRate[]
+  balances       ServiceBalance[]
   mealExceptions DailyMealException[]
 }
 
@@ -1158,9 +1234,9 @@ model DailyService {
 //    class-section per fee type). Resolution: student override → class rate →
 //    service standard price. ──
 model DailyServiceRate {
-  id          String        @id @default(cuid())
+  id          String       @id @default(cuid())
   serviceId   String
-  service     DailyService  @relation(fields: [serviceId], references: [id])
+  service     DailyService @relation(fields: [serviceId], references: [id])
   classroomId String
   classroom   Classroom    @relation(fields: [classroomId], references: [id])
   priceCents  Int
@@ -1192,7 +1268,7 @@ model DailyCharge {
   date        DateTime
   amountCents Int
   status      String       @default("OWED") // OWED | PAID | WAIVED
-  usage       String?      // transport fare usage: MORNING | AFTERNOON | BOTH | NOT_USING | BOARDED (TRANSPORT-category services only)
+  usage       String? // transport fare usage: MORNING | AFTERNOON | BOTH | NOT_USING | BOARDED (TRANSPORT-category services only)
   paymentId   String?
   payment     Payment?     @relation(fields: [paymentId], references: [id])
   createdAt   DateTime     @default(now())
@@ -1265,15 +1341,15 @@ model WalletTxn {
 // land back on it as advance). The general StudentWallet.prepaidCents remains
 // a flexible any-item credit line.
 model ServiceBalance {
-  id           String        @id @default(cuid())
+  id           String       @id @default(cuid())
   schoolId     String
-  school       School        @relation(fields: [schoolId], references: [id])
+  school       School       @relation(fields: [schoolId], references: [id])
   studentId    String
-  student      Student       @relation(fields: [studentId], references: [id])
+  student      Student      @relation(fields: [studentId], references: [id])
   serviceId    String
-  service      DailyService  @relation(fields: [serviceId], references: [id])
-  prepaidCents Int           @default(0)
-  updatedAt    DateTime      @default(now()) @updatedAt
+  service      DailyService @relation(fields: [serviceId], references: [id])
+  prepaidCents Int          @default(0)
+  updatedAt    DateTime     @default(now()) @updatedAt
 
   @@unique([studentId, serviceId])
   @@index([schoolId])
@@ -1318,32 +1394,32 @@ model TransportStop {
 
 // Vehicle registry with statutory expiry tracking — iedupro parity
 model Vehicle {
-  id               String    @id @default(cuid())
+  id               String           @id @default(cuid())
   schoolId         String
-  school           School    @relation(fields: [schoolId], references: [id])
-  regNumber        String    @unique
+  school           School           @relation(fields: [schoolId], references: [id])
+  regNumber        String           @unique
   model            String?
-  capacity         Int       @default(15)
+  capacity         Int              @default(15)
   insuranceExpiry  DateTime?
   roadworthyExpiry DateTime?
-  status           String    @default("ACTIVE") // ACTIVE | MAINTENANCE | RETIRED
+  status           String           @default("ACTIVE") // ACTIVE | MAINTENANCE | RETIRED
   notes            String?
-  createdAt        DateTime  @default(now())
+  createdAt        DateTime         @default(now())
   routes           TransportRoute[]
 }
 
 // Driver registry (staff-linked or standalone) — iedupro parity
 model DriverRecord {
-  id            String    @id @default(cuid())
+  id            String           @id @default(cuid())
   schoolId      String
-  school        School    @relation(fields: [schoolId], references: [id])
+  school        School           @relation(fields: [schoolId], references: [id])
   name          String
   phone         String?
   licenseNo     String?
   licenseExpiry DateTime?
   staffId       String? // optional link to a Staff record
-  status        String    @default("ACTIVE") // ACTIVE | SUSPENDED | RETIRED
-  createdAt     DateTime  @default(now())
+  status        String           @default("ACTIVE") // ACTIVE | SUSPENDED | RETIRED
+  createdAt     DateTime         @default(now())
   routes        TransportRoute[]
 }
 
@@ -1397,25 +1473,25 @@ model TransportTrip {
 // SMS ALERTS (gateway-agnostic: Arkesel / Termii / simulated)
 // ─────────────────────────────────────────────────────────────
 model SmsSetting {
-  id                  String  @id @default(cuid())
-  schoolId            String  @unique
-  school              School  @relation(fields: [schoolId], references: [id])
-  provider            String  @default("SIMULATED") // SIMULATED | ARKESEL | TERMII
-  senderId            String  @default("NYANSAPO")
-  credits             Int     @default(500)
-  autoFeeReminders      Boolean @default(true)
-  autoAbsenceAlerts     Boolean @default(true)
-  autoPaymentReceipts   Boolean @default(true)
-  autoLessonNoteAlerts  Boolean @default(true) // teacher SMS when a GES note is returned / endorsed
+  id                   String  @id @default(cuid())
+  schoolId             String  @unique
+  school               School  @relation(fields: [schoolId], references: [id])
+  provider             String  @default("SIMULATED") // SIMULATED | ARKESEL | TERMII
+  senderId             String  @default("NYANSAPO")
+  credits              Int     @default(500)
+  autoFeeReminders     Boolean @default(true)
+  autoAbsenceAlerts    Boolean @default(true)
+  autoPaymentReceipts  Boolean @default(true)
+  autoLessonNoteAlerts Boolean @default(true) // teacher SMS when a GES note is returned / endorsed
   // ── per-event toggles (iEduPro parity — granular control over each trigger) ──
-  evtInvoicePaid        Boolean @default(true) // billed invoice settled in full
-  evtDailyFeesPaid      Boolean @default(true) // daily-fee payment made (lunch/bus etc.)
-  evtLearnerBilled      Boolean @default(true) // invoice issued to a learner
-  evtLearnerPresent     Boolean @default(false) // learner marked present (off by default — volume)
-  evtLearnerAbsent      Boolean @default(true) // learner marked absent
-  evtResultsPublished   Boolean @default(true) // end-of-term results released
-  evtPaymentReceipt     Boolean @default(true) // receipt confirmation for any fee payment
-  evtOverpaymentCredit  Boolean @default(true) // overpayment banked as prepaid credit
+  evtInvoicePaid       Boolean @default(true) // billed invoice settled in full
+  evtDailyFeesPaid     Boolean @default(true) // daily-fee payment made (lunch/bus etc.)
+  evtLearnerBilled     Boolean @default(true) // invoice issued to a learner
+  evtLearnerPresent    Boolean @default(false) // learner marked present (off by default — volume)
+  evtLearnerAbsent     Boolean @default(true) // learner marked absent
+  evtResultsPublished  Boolean @default(true) // end-of-term results released
+  evtPaymentReceipt    Boolean @default(true) // receipt confirmation for any fee payment
+  evtOverpaymentCredit Boolean @default(true) // overpayment banked as prepaid credit
 }
 
 model SmsTemplate {
@@ -1518,19 +1594,19 @@ model EmailSetting {
 }
 
 model EmailMessage {
-  id         String   @id @default(cuid())
-  schoolId   String
-  school     School   @relation(fields: [schoolId], references: [id])
-  toAddress  String
-  toName     String?
-  subject    String
-  body       String // HTML body
-  category   String   @default("GENERAL") // INVOICE | ANNOUNCEMENT | GENERAL | TEST
-  status     String   @default("SENT") // SENT | FAILED | SIMULATED
+  id          String   @id @default(cuid())
+  schoolId    String
+  school      School   @relation(fields: [schoolId], references: [id])
+  toAddress   String
+  toName      String?
+  subject     String
+  body        String // HTML body
+  category    String   @default("GENERAL") // INVOICE | ANNOUNCEMENT | GENERAL | TEST
+  status      String   @default("SENT") // SENT | FAILED | SIMULATED
   errorReason String?
-  sentByName String?
-  studentId  String? // optional learner link (invoice emails)
-  sentAt     DateTime @default(now())
+  sentByName  String?
+  studentId   String? // optional learner link (invoice emails)
+  sentAt      DateTime @default(now())
 
   @@index([schoolId, sentAt])
 }
@@ -1558,14 +1634,14 @@ model MessageThread {
 }
 
 model Message {
-  id            String       @id @default(cuid())
-  threadId      String
-  thread        MessageThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
-  senderId      String
-  body          String
-  attachmentId  String? // MediaAsset id — ≤4MB (CI3 parity)
-  readAt        DateTime?
-  createdAt     DateTime     @default(now())
+  id           String        @id @default(cuid())
+  threadId     String
+  thread       MessageThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  senderId     String
+  body         String
+  attachmentId String? // MediaAsset id — ≤4MB (CI3 parity)
+  readAt       DateTime?
+  createdAt    DateTime      @default(now())
 
   @@index([threadId, createdAt])
 }
@@ -1613,47 +1689,47 @@ model JournalEntry {
 }
 
 model JournalEntryLine {
-  id          String        @id @default(cuid())
+  id          String       @id @default(cuid())
   entryId     String
-  entry       JournalEntry  @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  entry       JournalEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
   accountId   String
-  account     ChartAccount  @relation(fields: [accountId], references: [id])
-  debitCents  Int           @default(0)
-  creditCents Int           @default(0)
+  account     ChartAccount @relation(fields: [accountId], references: [id])
+  debitCents  Int          @default(0)
+  creditCents Int          @default(0)
   memo        String?
 }
 
 model BankAccount {
-  id                  String          @id @default(cuid())
+  id                  String           @id @default(cuid())
   schoolId            String
-  school              School          @relation(fields: [schoolId], references: [id])
+  school              School           @relation(fields: [schoolId], references: [id])
   name                String // "Main MTN MoMo Wallet"
   bankName            String?
   accountNumber       String? // masked on display
   chartAccountId      String? // linked ledger account (bank txns adjust it)
-  chartAccount        ChartAccount?   @relation(fields: [chartAccountId], references: [id])
-  openingBalanceCents Int             @default(0)
-  isActive            Boolean         @default(true)
+  chartAccount        ChartAccount?    @relation(fields: [chartAccountId], references: [id])
+  openingBalanceCents Int              @default(0)
+  isActive            Boolean          @default(true)
   txns                BankTxn[]
   reconciliations     Reconciliation[]
-  createdAt           DateTime        @default(now())
+  createdAt           DateTime         @default(now())
 }
 
 model BankTxn {
-  id            String       @id @default(cuid())
+  id            String               @id @default(cuid())
   schoolId      String
-  school        School       @relation(fields: [schoolId], references: [id])
+  school        School               @relation(fields: [schoolId], references: [id])
   bankAccountId String
-  bankAccount   BankAccount  @relation(fields: [bankAccountId], references: [id])
+  bankAccount   BankAccount          @relation(fields: [bankAccountId], references: [id])
   date          DateTime
   direction     String // DEPOSIT (money in) | WITHDRAWAL (money out)
   amountCents   Int
   reference     String?
   description   String
-  source        String       @default("MANUAL") // MANUAL | PAYMENT | EXPENSE | FEES
+  source        String               @default("MANUAL") // MANUAL | PAYMENT | EXPENSE | FEES
   reconciledAt  DateTime? // stamped when a reconciliation completes
   reconItems    ReconciliationItem[]
-  createdAt     DateTime     @default(now())
+  createdAt     DateTime             @default(now())
 
   @@index([bankAccountId, date])
 }
@@ -1670,19 +1746,19 @@ model Reconciliation {
   createdByName     String
   completedAt       DateTime?
   items             ReconciliationItem[]
-  createdAt         DateTime               @default(now())
+  createdAt         DateTime             @default(now())
 }
 
 model ReconciliationItem {
-  id               String            @id @default(cuid())
+  id               String         @id @default(cuid())
   reconciliationId String
-  reconciliation   Reconciliation    @relation(fields: [reconciliationId], references: [id], onDelete: Cascade)
+  reconciliation   Reconciliation @relation(fields: [reconciliationId], references: [id], onDelete: Cascade)
   bankTxnId        String? // matched system txn — null = statement-only line
-  bankTxn          BankTxn?          @relation(fields: [bankTxnId], references: [id])
+  bankTxn          BankTxn?       @relation(fields: [bankTxnId], references: [id])
   date             DateTime
   description      String
   amountCents      Int // signed: + deposit, − withdrawal (statement view)
-  matched          Boolean           @default(false)
+  matched          Boolean        @default(false)
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1905,34 +1981,34 @@ model PurchaseOrder {
 // LIBRARY (librarian portal) — catalogue & circulation
 // ─────────────────────────────────────────────────────────────
 model LibraryBook {
-  id          String        @id @default(cuid())
-  schoolId    String
-  school      School        @relation(fields: [schoolId], references: [id])
-  title       String
-  author      String?
-  isbn        String?
-  category    String        @default("General") // Storybook | Textbook | Reference | Fiction | Science | History ...
-  copies      Int           @default(1)
-  available   Int           @default(1) // denormalised: copies − active loans
-  shelf       String? // location e.g. "Shelf B-3"
-  createdAt   DateTime      @default(now())
-  loans       LibraryLoan[]
-  requests    BookRequest[]
+  id        String        @id @default(cuid())
+  schoolId  String
+  school    School        @relation(fields: [schoolId], references: [id])
+  title     String
+  author    String?
+  isbn      String?
+  category  String        @default("General") // Storybook | Textbook | Reference | Fiction | Science | History ...
+  copies    Int           @default(1)
+  available Int           @default(1) // denormalised: copies − active loans
+  shelf     String? // location e.g. "Shelf B-3"
+  createdAt DateTime      @default(now())
+  loans     LibraryLoan[]
+  requests  BookRequest[]
 }
 
 model LibraryLoan {
-  id             String       @id @default(cuid())
-  bookId         String
-  book           LibraryBook  @relation(fields: [bookId], references: [id])
-  studentId      String
-  student        Student      @relation(fields: [studentId], references: [id])
-  schoolId       String
-  school         School       @relation(fields: [schoolId], references: [id])
-  issuedAt       DateTime     @default(now())
-  dueAt          DateTime
-  returnedAt     DateTime?
-  issuedByName   String?
-  conditionNote  String? // condition on issue / return
+  id            String      @id @default(cuid())
+  bookId        String
+  book          LibraryBook @relation(fields: [bookId], references: [id])
+  studentId     String
+  student       Student     @relation(fields: [studentId], references: [id])
+  schoolId      String
+  school        School      @relation(fields: [schoolId], references: [id])
+  issuedAt      DateTime    @default(now())
+  dueAt         DateTime
+  returnedAt    DateTime?
+  issuedByName  String?
+  conditionNote String? // condition on issue / return
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1953,22 +2029,22 @@ model OpsSetting {
 // BOARDING (iEduPro boarding_system parity — houses / dormitories / beds)
 // ─────────────────────────────────────────────────────────────
 model BoardingHouse {
-  id              String    @id @default(cuid())
+  id              String      @id @default(cuid())
   schoolId        String
-  school          School    @relation(fields: [schoolId], references: [id])
+  school          School      @relation(fields: [schoolId], references: [id])
   name            String
   description     String?
   houseMasterId   String? // staff — house master / warden
-  houseMaster     Staff?   @relation("HouseMaster", fields: [houseMasterId], references: [id])
+  houseMaster     Staff?      @relation("HouseMaster", fields: [houseMasterId], references: [id])
   prefectId       String? // learner — house prefect
-  prefect         Student? @relation("HousePrefect", fields: [prefectId], references: [id])
-  capacity        Int       @default(0)
+  prefect         Student?    @relation("HousePrefect", fields: [prefectId], references: [id])
+  capacity        Int         @default(0)
   yearEstablished String?
   gpsCode         String?
-  termlyFeeCents  Int       @default(0)
-  status          String    @default("AVAILABLE") // AVAILABLE | ASSIGNED | MAINTENANCE
+  termlyFeeCents  Int         @default(0)
+  status          String      @default("AVAILABLE") // AVAILABLE | ASSIGNED | MAINTENANCE
   dormitories     Dormitory[]
-  createdAt       DateTime  @default(now())
+  createdAt       DateTime    @default(now())
 }
 
 model Dormitory {
@@ -2010,20 +2086,20 @@ model Bed {
 // LIBRARY BOOK REQUESTS (student/parent portal → librarian queue)
 // ─────────────────────────────────────────────────────────────
 model BookRequest {
-  id             String      @id @default(cuid())
-  schoolId       String
-  school         School      @relation(fields: [schoolId], references: [id])
-  bookId         String
-  book           LibraryBook @relation(fields: [bookId], references: [id])
-  studentId      String
-  student        Student     @relation(fields: [studentId], references: [id])
-  startAt        DateTime // requested issue date
-  endAt          DateTime // requested return date
-  status         String      @default("PENDING") // PENDING | ISSUED | REJECTED
-  handledAt      DateTime?
-  handledByName  String?
-  loanId         String? // the LibraryLoan created on accept
-  createdAt      DateTime    @default(now())
+  id            String      @id @default(cuid())
+  schoolId      String
+  school        School      @relation(fields: [schoolId], references: [id])
+  bookId        String
+  book          LibraryBook @relation(fields: [bookId], references: [id])
+  studentId     String
+  student       Student     @relation(fields: [studentId], references: [id])
+  startAt       DateTime // requested issue date
+  endAt         DateTime // requested return date
+  status        String      @default("PENDING") // PENDING | ISSUED | REJECTED
+  handledAt     DateTime?
+  handledByName String?
+  loanId        String? // the LibraryLoan created on accept
+  createdAt     DateTime    @default(now())
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -2132,17 +2208,17 @@ model DailyFeeAudit {
 // CASHIER HANDOVER REPORTS (signed daily float handover)
 // ─────────────────────────────────────────────────────────────
 model HandoverReport {
-  id            String   @id @default(cuid())
-  schoolId      String
-  school        School   @relation(fields: [schoolId], references: [id])
-  date          DateTime
-  cashierId     String
-  cashierName   String
-  receiverId    String
-  receiverName  String
-  totalCents    Int      @default(0)
-  cashCents     Int      @default(0)
-  createdAt     DateTime @default(now())
+  id           String   @id @default(cuid())
+  schoolId     String
+  school       School   @relation(fields: [schoolId], references: [id])
+  date         DateTime
+  cashierId    String
+  cashierName  String
+  receiverId   String
+  receiverName String
+  totalCents   Int      @default(0)
+  cashCents    Int      @default(0)
+  createdAt    DateTime @default(now())
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -2171,49 +2247,49 @@ model LessonNoteTemplate {
 }
 
 model LessonNote {
-  id              String    @id @default(cuid())
-  schoolId        String
-  school          School    @relation(fields: [schoolId], references: [id])
-  staffId         String
-  staff           Staff     @relation(fields: [staffId], references: [id])
-  classroomId     String
-  classroom       Classroom @relation(fields: [classroomId], references: [id])
-  subjectId       String
-  subject         Subject   @relation(fields: [subjectId], references: [id])
-  termId          String
-  term            Term      @relation(fields: [termId], references: [id])
-  templateId      String? // seeded from a LessonNoteTemplate
-  title           String
-  description     String?
-  strandCode      String? // CODE separate from the name (e.g. "B4.1.1") — iEduPro parity
-  strandName      String? // human strand label when not framework-aligned
-  subStrandCode   String? // sub-strand / sub-ln reference code
-  subStrandName   String?
-  strandId        String? // CURRICULUM ALIGNMENT — framework strand/sub-strand/
-  strand          CurriculumStrand?           @relation("NoteStrand", fields: [strandId], references: [id])
-  subStrandId     String? // content standard + chosen indicators (GES SBC,
-  subStrand       CurriculumSubStrand?        @relation("NoteSubStrand", fields: [subStrandId], references: [id])
+  id                String                     @id @default(cuid())
+  schoolId          String
+  school            School                     @relation(fields: [schoolId], references: [id])
+  staffId           String
+  staff             Staff                      @relation(fields: [staffId], references: [id])
+  classroomId       String
+  classroom         Classroom                  @relation(fields: [classroomId], references: [id])
+  subjectId         String
+  subject           Subject                    @relation(fields: [subjectId], references: [id])
+  termId            String
+  term              Term                       @relation(fields: [termId], references: [id])
+  templateId        String? // seeded from a LessonNoteTemplate
+  title             String
+  description       String?
+  strandCode        String? // CODE separate from the name (e.g. "B4.1.1") — iEduPro parity
+  strandName        String? // human strand label when not framework-aligned
+  subStrandCode     String? // sub-strand / sub-ln reference code
+  subStrandName     String?
+  strandId          String? // CURRICULUM ALIGNMENT — framework strand/sub-strand/
+  strand            CurriculumStrand?          @relation("NoteStrand", fields: [strandId], references: [id])
+  subStrandId       String? // content standard + chosen indicators (GES SBC,
+  subStrand         CurriculumSubStrand?       @relation("NoteSubStrand", fields: [subStrandId], references: [id])
   contentStandardId String? // Cambridge unit/objective, IB PYP theme — the
-  contentStandard CurriculumContentStandard?  @relation("NoteStandard", fields: [contentStandardId], references: [id])
-  indicatorIds    String? // JSON array of CurriculumIndicator ids
-  coreCompetencies String? // GES: Communication & Collaboration, Critical Thinking… (newline-separated)
-  tlm             String? // teaching & learning materials
-  assessment      String? // assessment method(s) for the lesson
-  weekNumber      Int // 1..15 within the term
-  lessonDate      DateTime
-  objectives      String    @default("")
-  activities      String    @default("")
-  content         String    @default("")
-  status          String    @default("PENDING") // DRAFT | PENDING | ENDORSED | REVISION_REQUIRED
-  feedback        String? // reviewer comment accompanying a revision request
-  version         Int       @default(1)
-  sourceNoteId    String? // copied from a previous note
-  submittedAt     DateTime?
-  reviewedAt      DateTime?
-  reviewedByName  String?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-  reviews         LessonNoteReview[]
+  contentStandard   CurriculumContentStandard? @relation("NoteStandard", fields: [contentStandardId], references: [id])
+  indicatorIds      String? // JSON array of CurriculumIndicator ids
+  coreCompetencies  String? // GES: Communication & Collaboration, Critical Thinking… (newline-separated)
+  tlm               String? // teaching & learning materials
+  assessment        String? // assessment method(s) for the lesson
+  weekNumber        Int // 1..15 within the term
+  lessonDate        DateTime
+  objectives        String                     @default("")
+  activities        String                     @default("")
+  content           String                     @default("")
+  status            String                     @default("PENDING") // DRAFT | PENDING | ENDORSED | REVISION_REQUIRED
+  feedback          String? // reviewer comment accompanying a revision request
+  version           Int                        @default(1)
+  sourceNoteId      String? // copied from a previous note
+  submittedAt       DateTime?
+  reviewedAt        DateTime?
+  reviewedByName    String?
+  createdAt         DateTime                   @default(now())
+  updatedAt         DateTime                   @updatedAt
+  reviews           LessonNoteReview[]
 
   @@unique([staffId, classroomId, subjectId, termId, weekNumber])
 }
@@ -2229,20 +2305,20 @@ model LessonNoteReview {
 }
 
 model StudyMaterial {
-  id            String     @id @default(cuid())
+  id            String    @id @default(cuid())
   schoolId      String
-  school        School     @relation(fields: [schoolId], references: [id])
+  school        School    @relation(fields: [schoolId], references: [id])
   classroomId   String
-  classroom     Classroom  @relation(fields: [classroomId], references: [id])
+  classroom     Classroom @relation(fields: [classroomId], references: [id])
   subjectId     String?
-  subject       Subject?   @relation(fields: [subjectId], references: [id])
+  subject       Subject?  @relation(fields: [subjectId], references: [id])
   title         String
   description   String?
   linkUrl       String? // external resource / shared-drive link
   body          String? // inline notes & instructions
   authorStaffId String
-  author        Staff      @relation(fields: [authorStaffId], references: [id])
-  createdAt     DateTime   @default(now())
+  author        Staff     @relation(fields: [authorStaffId], references: [id])
+  createdAt     DateTime  @default(now())
 }
 
 model SyllabusTopic {
@@ -2291,11 +2367,11 @@ model CodeCounter {
 // Ledger design mirrors WalletTxn: signed amounts + balanceAfter.
 // ─────────────────────────────────────────────────────────────
 model StudentCredit {
-  id              String    @id @default(cuid())
+  id              String   @id @default(cuid())
   schoolId        String
-  school          School    @relation(fields: [schoolId], references: [id])
+  school          School   @relation(fields: [schoolId], references: [id])
   studentId       String
-  student         Student   @relation(fields: [studentId], references: [id])
+  student         Student  @relation(fields: [studentId], references: [id])
   kind            String // CREDIT (overpayment/manual/refund-in/transfer-in) | APPLY (to invoice) | TRANSFER_OUT | TRANSFER_IN | DAILY_WALLET | ADJUST
   amountCents     Int // signed: + adds credit, - consumes it
   balanceAfter    Int
@@ -2303,7 +2379,7 @@ model StudentCredit {
   sourcePaymentId String? // receipt that created an OVERPAYMENT credit
   note            String?
   byName          String?
-  at              DateTime  @default(now())
+  at              DateTime @default(now())
 
   @@index([schoolId, studentId])
   @@index([invoiceId])
@@ -2316,12 +2392,12 @@ model StudentCredit {
 // plus ordinary numeric subjects ("no category") for written exams.
 // ─────────────────────────────────────────────────────────────
 model CrecheDomain {
-  id        String         @id @default(cuid())
+  id        String        @id @default(cuid())
   schoolId  String
-  school    School         @relation(fields: [schoolId], references: [id])
+  school    School        @relation(fields: [schoolId], references: [id])
   name      String // e.g. "Communication & Language", "Motor Skills"
-  sortOrder Int            @default(0)
-  active    Boolean        @default(true)
+  sortOrder Int           @default(0)
+  active    Boolean       @default(true)
   skills    CrecheSkill[]
 }
 
@@ -2392,43 +2468,45 @@ model SchoolSetting {
 // (BGT-YYYY-NNNN) are sync-safe CodeCounter mints, scope BGT:<year>.
 // ─────────────────────────────────────────────────────────────
 model FiscalYear {
-  id            String   @id @default(cuid())
+  id            String    @id @default(cuid())
   schoolId      String
-  school        School   @relation(fields: [schoolId], references: [id])
+  school        School    @relation(fields: [schoolId], references: [id])
   name          String // "2025/26"
   startsAt      DateTime
   endsAt        DateTime
-  status        String   @default("OPEN") // OPEN | CLOSED
-  isCurrent     Boolean  @default(false)
+  status        String    @default("OPEN") // OPEN | CLOSED
+  isCurrent     Boolean   @default(false)
   notes         String?
   createdByName String
   closedAt      DateTime?
   closedByName  String?
   budgets       Budget[]
-  createdAt     DateTime @default(now())
+  createdAt     DateTime  @default(now())
+
   @@index([schoolId, startsAt])
 }
 
 model Budget {
-  id               String        @id @default(cuid())
-  schoolId         String
-  school           School        @relation(fields: [schoolId], references: [id])
-  code             String        @unique // BGT-2026-0001 (sync-safe minted)
-  name             String
-  fiscalYearId     String
-  fiscalYear       FiscalYear    @relation(fields: [fiscalYearId], references: [id])
-  startsAt         DateTime
-  endsAt           DateTime
-  status           String        @default("DRAFT") // DRAFT | APPROVED | CLOSED
-  notes            String?
-  totalBudgetedCents Int         @default(0) // denormalized SUM(lines.budgetedCents), recomputed on every line change
-  createdByName    String
-  approvedByName   String?
-  approvedAt       DateTime?
-  closedAt         DateTime?
-  closedByName     String?
-  createdAt        DateTime       @default(now())
-  lines            BudgetLine[]
+  id                 String       @id @default(cuid())
+  schoolId           String
+  school             School       @relation(fields: [schoolId], references: [id])
+  code               String       @unique // BGT-2026-0001 (sync-safe minted)
+  name               String
+  fiscalYearId       String
+  fiscalYear         FiscalYear   @relation(fields: [fiscalYearId], references: [id])
+  startsAt           DateTime
+  endsAt             DateTime
+  status             String       @default("DRAFT") // DRAFT | APPROVED | CLOSED
+  notes              String?
+  totalBudgetedCents Int          @default(0) // denormalized SUM(lines.budgetedCents), recomputed on every line change
+  createdByName      String
+  approvedByName     String?
+  approvedAt         DateTime?
+  closedAt           DateTime?
+  closedByName       String?
+  createdAt          DateTime     @default(now())
+  lines              BudgetLine[]
+
   @@index([schoolId, status])
 }
 
@@ -2440,5 +2518,6 @@ model BudgetLine {
   chartAccount   ChartAccount @relation(fields: [chartAccountId], references: [id])
   budgetedCents  Int
   notes          String?
+
   @@unique([budgetId, chartAccountId])
 }

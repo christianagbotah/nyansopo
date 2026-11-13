@@ -68,6 +68,9 @@ export const PERMISSIONS: PermDef[] = [
   // Discipline & conduct (wave 25 — iEduPro discipline parity)
   { id: "discipline.view", label: "View conduct register & commendations", group: "Academic" },
   { id: "discipline.manage", label: "Record incidents, commendations & resolutions", group: "Academic" },
+  // Health & wellness clinic (wave 26 — sick bay & SHEP screenings)
+  { id: "health.view", label: "View sick-bay register & screenings", group: "Health & Welfare" },
+  { id: "health.manage", label: "Record clinic visits, screenings & guardian notices", group: "Health & Welfare" },
   // Communication
   { id: "sms.view", label: "View SMS centre", group: "Communication" },
   { id: "sms.send", label: "Send SMS & manage automations", group: "Communication" },
@@ -154,6 +157,7 @@ export const ROLE_DEFAULTS: Record<string, string[] | "*"> = {
     "students.view", "students.manage",
     "attendance.view", "attendance.take",
     "discipline.view", "discipline.manage",
+    "health.view", "health.manage",
     "classes.view", "classes.manage",
     "gradebook.view", "gradebook.enter",
     "curriculum.view", "curriculum.manage",
@@ -223,6 +227,7 @@ export const PERM_IMPLIES: Record<string, string[]> = {
   "curriculum.review": ["curriculum.view"],
   "reports.publish": ["reports.view"],
   "discipline.manage": ["discipline.view"],
+  "health.manage": ["health.view"],
   "sms.send": ["sms.view"],
   "payments.momo": ["fees.view"],
   "library.issue": ["library.view"],
@@ -303,6 +308,7 @@ export const MODULE_PERMS: Record<string, string[]> = {
   gradebook: ["gradebook.view"],
   results: ["reports.view"],
   discipline: ["discipline.view"],
+  health: ["health.view"],
   curriculum: ["curriculum.view"],
   reports: ["reports.view"],
   exams: ["exams.online"],
