@@ -11,7 +11,7 @@ import { fmtDateTime } from "@/lib/format";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { ModuleHeader, LoadingBlock, StatusBadge, StatCard, EmptyState } from "@/components/ui-helpers";
 import { SCALES_TABLE } from "@/lib/grading-scale";
@@ -19,7 +19,7 @@ import { CURRICULA } from "@/lib/curricula";
 import { THEME_PRESETS, DEFAULT_THEME, applyThemeToDOM, type SchoolTheme } from "@/lib/theme";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import {Settings as SettingsIcon, GraduationCap, BookOpen, Users, CalendarRange, Plus, Save, MessageSquareQuote, Sparkles, Trash2, Award, Pencil, Baby, Sigma, PencilLine, ChevronDown, ChevronRight, ImageUp, ReceiptText, ShieldCheck, Banknote, Palette, CheckCircle2, Layers, DatabaseBackup, Download, ArchiveRestore, HardDriveDownload} from "lucide-react";
+import {Settings as SettingsIcon, GraduationCap, BookOpen, Users, CalendarRange, CalendarPlus, Plus, Save, MessageSquareQuote, Sparkles, Trash2, Award, Pencil, Baby, Sigma, PencilLine, ChevronDown, ChevronRight, ImageUp, ReceiptText, ShieldCheck, Banknote, Palette, CheckCircle2, Layers, DatabaseBackup, Download, ArchiveRestore, HardDriveDownload} from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 
@@ -63,8 +63,6 @@ export function Settings() {
   const [customTheme, setCustomTheme] = useState<{ primary: string; secondary: string; accent: string }>({ primary: DEFAULT_THEME.primary, secondary: DEFAULT_THEME.secondary, accent: DEFAULT_THEME.accent });
   // statutory rates (OpsSetting — shared with payroll runs)
   const [rates, setRates] = useState<any>({ ssnitTier1Employee: 5, ssnitTier1Employer: 13, ssnitTier2: 5, getfund: 2.5, nhil: 2.5 });
-  // per-term "days opened" edits (termId → value as typed)
-  const [daysEdits, setDaysEdits] = useState<Record<string, string>>({});
 
   /* iEduPro nested nav: deep-link to any settings tab */
   const [appliedTarget, setAppliedTarget] = useState<any>(null);
@@ -86,7 +84,6 @@ export function Settings() {
       setCustomTheme({ primary: resolved.primary, secondary: resolved.secondary, accent: resolved.accent });
       applyThemeToDOM(resolved);
       setRates(d.statutory ?? rates);
-      setDaysEdits({});
     }).catch((e) => toast({ title: "Load failed", description: e.message, variant: "destructive" }));
   };
   useEffect(load, [currentSchoolId]);
@@ -618,49 +615,7 @@ export function Settings() {
         </TabsContent>
 
         <TabsContent value="calendar">
-          <div className="space-y-4">
-            {data.years.map((y: any) => (
-              <Card key={y.id}>
-                <CardHeader className="pb-3 flex-row items-center justify-between space-y-0">
-                  <CardTitle className="text-base flex items-center gap-2"><CalendarRange className="size-4" /> {y.name}</CardTitle>
-                  {y.isCurrent && <Badge>Current year</Badge>}
-                </CardHeader>
-                <CardContent className="grid sm:grid-cols-3 gap-3">
-                  {y.terms.map((t: any) => (
-                    <div key={t.id} className={`rounded-lg border p-3 ${t.isCurrent ? "border-primary" : ""}`}>
-                      <div className="font-medium text-sm flex items-center justify-between">{t.name} {t.isCurrent && <Badge variant="secondary">current</Badge>}</div>
-                      <div className="text-xs text-muted-foreground mt-1">{new Date(t.startsAt).toLocaleDateString("en-GB")} → {new Date(t.endsAt).toLocaleDateString("en-GB")}</div>
-                      <div className="mt-2">
-                        <Label className="text-[11px] text-muted-foreground">Days opened (term runtime)</Label>
-                        <Input
-                          type="number" min="0" max="400" className="h-8 mt-1" placeholder="e.g. 60"
-                          value={daysEdits[t.id] ?? (data.daysOpened?.[t.id] != null ? String(data.daysOpened[t.id]) : "")}
-                          onChange={(e) => setDaysEdits({ ...daysEdits, [t.id]: e.target.value })}
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </CardContent>
-                {(() => {
-                  const changed: Record<string, number> = {};
-                  for (const [termId, v] of Object.entries(daysEdits)) {
-                    const n = Number(v);
-                    if (v !== "" && Number.isFinite(n) && n !== (data.daysOpened?.[termId] ?? null)) changed[termId] = n;
-                  }
-                  const hasChanges = Object.keys(changed).length > 0;
-                  return (
-                    <div className="px-6 pb-5 -mt-1">
-                      <Button size="sm" variant="outline" className="gap-1.5" disabled={!hasChanges || busy}
-                        onClick={() => savePreferences({ daysOpened: changed })}>
-                        <Save className="size-3.5" /> Save days opened{hasChanges ? ` (${Object.keys(changed).length})` : ""}
-                      </Button>
-                      <p className="text-[11px] text-muted-foreground mt-1.5">Term runtime used for attendance-rate maths and lesson-note compliance (weeks elapsed ÷ days opened).</p>
-                    </div>
-                  );
-                })()}
-              </Card>
-            ))}
-          </div>
+          <SessionCalendar />
         </TabsContent>
 
         <TabsContent value="staff">
@@ -1608,6 +1563,383 @@ function BackupTab({ schoolId }: { schoolId: string }) {
             <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" disabled={busy}
               onClick={() => { if (deleteTarget) act("delete", { filename: deleteTarget.filename }, "Backup deleted"); setDeleteTarget(null); }}>
               Delete backup
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
+/* ═════════════════════════════════════════════════════════════
+   Wave 24 — Session Setup (Settings → Calendar).
+   Years & terms are the rails every module rides on: registers,
+   invoices, marks and report cards all resolve "the live term"
+   through the isCurrent flags. This tab makes the calendar
+   writable — create years (three terms laid out automatically),
+   add/edit/remove terms, and flip the school's live session with
+   one safe transaction. Terms holding real school data are
+   delete-guarded with a plain-language reason.
+   ═════════════════════════════════════════════════════════════ */
+
+type SessionUsage = {
+  results: number; cards: number; invoices: number; assessments: number;
+  attendanceSessions: number; feeStructures: number; lessonNotes: number;
+  syllabusTopics: number; resultApprovals: number;
+};
+type SessionTerm = { id: string; name: string; sequence: number; startsAt: string; endsAt: string; isCurrent: boolean; usage: SessionUsage };
+type SessionYear = { id: string; name: string; isCurrent: boolean; startsAt: string; endsAt: string; terms: SessionTerm[] };
+type SessionsPayload = { years: SessionYear[]; daysOpened: Record<string, number>; current: { yearId: string | null; termId: string | null } };
+
+const fmtDay = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+const toInput = (iso: string) => {
+  const d = new Date(iso);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
+const usageTotal = (u: SessionUsage) => Object.values(u).reduce((s, n) => s + n, 0);
+function usageChips(u: SessionUsage): { label: string; n: number }[] {
+  return [
+    { label: "results", n: u.results }, { label: "report cards", n: u.cards },
+    { label: "invoices", n: u.invoices }, { label: "assessments", n: u.assessments },
+    { label: "registers", n: u.attendanceSessions }, { label: "fee structures", n: u.feeStructures },
+    { label: "lesson notes", n: u.lessonNotes }, { label: "topics", n: u.syllabusTopics },
+    { label: "approvals", n: u.resultApprovals },
+  ].filter((c) => c.n > 0);
+}
+
+function SessionCalendar() {
+  const { currentSchoolId } = useStore();
+  const [data, setData] = useState<SessionsPayload | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [daysEdits, setDaysEdits] = useState<Record<string, string>>({});
+  const [yearDlg, setYearDlg] = useState<null | { mode: "new" } | { mode: "edit"; year: SessionYear }>(null);
+  const [termDlg, setTermDlg] = useState<null | { mode: "new"; year: SessionYear } | { mode: "edit"; year: SessionYear; term: SessionTerm }>(null);
+  const [del, setDel] = useState<null | { kind: "year" | "term"; id: string; name: string }>(null);
+  const [yearForm, setYearForm] = useState({ name: "", startsAt: "", endsAt: "", autoTerms: true });
+  const [termForm, setTermForm] = useState({ name: "", sequence: "1", startsAt: "", endsAt: "" });
+
+  const load = () => {
+    if (!currentSchoolId) return;
+    apiGet<SessionsPayload>(`/api/school/${currentSchoolId}/ops/sessions`).then(setData)
+      .catch((e) => toast({ title: "Load failed", description: e.message, variant: "destructive" }));
+  };
+  useEffect(load, [currentSchoolId]);
+
+  /* dialog forms reset whenever they open */
+  useEffect(() => {
+    if (!yearDlg) return;
+    if (yearDlg.mode === "edit") setYearForm({ name: yearDlg.year.name, startsAt: toInput(yearDlg.year.startsAt), endsAt: toInput(yearDlg.year.endsAt), autoTerms: false });
+    else setYearForm({ name: "", startsAt: "", endsAt: "", autoTerms: true });
+  }, [yearDlg]);
+  useEffect(() => {
+    if (!termDlg) return;
+    if (termDlg.mode === "edit") setTermForm({ name: termDlg.term.name, sequence: String(termDlg.term.sequence), startsAt: toInput(termDlg.term.startsAt), endsAt: toInput(termDlg.term.endsAt) });
+    else {
+      const next = Math.max(0, ...termDlg.year.terms.map((t) => t.sequence)) + 1;
+      setTermForm({ name: "", sequence: String(Math.min(next, 12)), startsAt: toInput(termDlg.year.startsAt), endsAt: toInput(termDlg.year.endsAt) });
+    }
+  }, [termDlg]);
+
+  if (!data) return <LoadingBlock label="Loading academic sessions…" />;
+  const snap = data; // narrowed snapshot for closures
+
+  async function act(payload: Record<string, unknown>, fallback: string) {
+    setBusy(true);
+    try {
+      const d = await apiPost<{ message?: string }>(`/api/school/${currentSchoolId}/ops/sessions`, payload);
+      toast({ title: d.message ?? fallback });
+      setDel(null);
+      load();
+    } catch (e: any) {
+      toast({ title: "Failed", description: e.message, variant: "destructive" });
+    } finally { setBusy(false); }
+  }
+
+  async function submitYear() {
+    if (!yearDlg) return;
+    setBusy(true);
+    try {
+      const base = { name: yearForm.name.trim(), startsAt: yearForm.startsAt || null, endsAt: yearForm.endsAt || null };
+      const d = yearDlg.mode === "new"
+        ? await apiPost<{ message?: string }>(`/api/school/${currentSchoolId}/ops/sessions`, { action: "create-year", ...base, autoTerms: yearForm.autoTerms })
+        : await apiPost<{ message?: string }>(`/api/school/${currentSchoolId}/ops/sessions`, { action: "update-year", yearId: yearDlg.year.id, ...base });
+      toast({ title: d.message ?? "Saved" });
+      setYearDlg(null);
+      load();
+    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); }
+    finally { setBusy(false); }
+  }
+
+  async function submitTerm() {
+    if (!termDlg) return;
+    const seq = Number(termForm.sequence);
+    if (!Number.isInteger(seq) || seq < 1 || seq > 12) {
+      toast({ title: "Failed", description: "Sequence must be a whole number between 1 and 12", variant: "destructive" });
+      return;
+    }
+    setBusy(true);
+    try {
+      const base = { name: termForm.name.trim() || `Term ${seq}`, sequence: seq, startsAt: termForm.startsAt || null, endsAt: termForm.endsAt || null };
+      const d = termDlg.mode === "edit"
+        ? await apiPost<{ message?: string }>(`/api/school/${currentSchoolId}/ops/sessions`, { action: "update-term", termId: termDlg.term.id, ...base })
+        : await apiPost<{ message?: string }>(`/api/school/${currentSchoolId}/ops/sessions`, { action: "create-term", yearId: termDlg.year.id, ...base });
+      toast({ title: d.message ?? "Saved" });
+      setTermDlg(null);
+      load();
+    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); }
+    finally { setBusy(false); }
+  }
+
+  async function saveDays() {
+    const changed: Record<string, number> = {};
+    for (const [termId, v] of Object.entries(daysEdits)) {
+      const n = Number(v);
+      if (v !== "" && Number.isFinite(n) && n !== (snap.daysOpened?.[termId] ?? null)) changed[termId] = Math.round(n);
+    }
+    if (!Object.keys(changed).length) return;
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/settings`, { action: "update-preferences", daysOpened: changed });
+      toast({ title: "Days opened saved", description: "Attendance-rate maths and lesson-note compliance now use the new term runtime." });
+      setDaysEdits({});
+      load();
+    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); }
+    finally { setBusy(false); }
+  }
+
+  const curYear = data.years.find((y) => y.isCurrent) ?? null;
+  const curTerm = curYear?.terms.find((t) => t.isCurrent) ?? null;
+  const termCount = data.years.reduce((s, y) => s + y.terms.length, 0);
+  const termsInUse = data.years.reduce((s, y) => s + y.terms.filter((t) => usageTotal(t.usage) > 0).length, 0);
+
+  const daysChanged: Record<string, number> = {};
+  for (const [termId, v] of Object.entries(daysEdits)) {
+    const n = Number(v);
+    if (v !== "" && Number.isFinite(n) && n !== (data.daysOpened?.[termId] ?? null)) daysChanged[termId] = Math.round(n);
+  }
+  const daysDirty = Object.keys(daysChanged).length > 0;
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <StatCard icon={<CalendarRange className="size-4" />} label="Academic years" value={data.years.length} sub="sessions on record" />
+        <StatCard label="Terms" value={termCount} sub={`${termsInUse} hold school data`} />
+        <StatCard icon={<CheckCircle2 className="size-4" />} label="Current year" value={curYear?.name ?? "None"} tone="primary" sub={curTerm ? `${curTerm.name} is live` : "no live term"} />
+        <StatCard label="Days opened set" value={Object.keys(data.daysOpened).length} sub="terms with runtime configured" tone="gold" />
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 className="text-sm font-semibold">Academic sessions</h3>
+          <p className="text-xs text-muted-foreground">Registers, invoices, marks and report cards all live inside a term — the flagged current year &amp; term is what the whole school works in.</p>
+        </div>
+        <Button size="sm" className="gap-1.5" onClick={() => setYearDlg({ mode: "new" })}><CalendarPlus className="size-4" /> New academic year</Button>
+      </div>
+
+      {data.years.length === 0 ? (
+        <EmptyState icon={<CalendarRange className="size-5" />} title="No academic years yet" hint="Create the first year — First, Second and Third Term are laid out across its dates automatically." />
+      ) : (
+        <div className="space-y-4">
+          {data.years.map((y) => (
+            <Card key={y.id}>
+              <CardHeader className="pb-3 flex-row flex-wrap items-center justify-between gap-2 space-y-0">
+                <div>
+                  <CardTitle className="text-base flex flex-wrap items-center gap-2">
+                    <CalendarRange className="size-4" /> {y.name}
+                    {y.isCurrent && <Badge>Current year</Badge>}
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground mt-1">{fmtDay(y.startsAt)} → {fmtDay(y.endsAt)} · {y.terms.length} term{y.terms.length === 1 ? "" : "s"}</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {!y.isCurrent && (
+                    <Button size="sm" variant="outline" className="gap-1" disabled={busy} onClick={() => act({ action: "set-current-year", yearId: y.id }, "Current year switched")}>
+                      <CheckCircle2 className="size-3.5" /> Set current
+                    </Button>
+                  )}
+                  <Button size="sm" variant="outline" className="gap-1" onClick={() => setTermDlg({ mode: "new", year: y })}><Plus className="size-3.5" /> Add term</Button>
+                  <Button size="sm" variant="ghost" className="size-8 p-0" aria-label={`Edit ${y.name}`} onClick={() => setYearDlg({ mode: "edit", year: y })}><Pencil className="size-3.5" /></Button>
+                  <Button
+                    size="sm" variant="ghost" className="size-8 p-0 text-destructive"
+                    aria-label={`Delete ${y.name}`}
+                    disabled={busy || y.isCurrent || y.terms.some((t) => usageTotal(t.usage) > 0)}
+                    title={y.isCurrent ? "Current year — switch first" : y.terms.some((t) => usageTotal(t.usage) > 0) ? "In use — clear the term data first" : undefined}
+                    onClick={() => setDel({ kind: "year", id: y.id, name: y.name })}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {y.terms.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No terms yet — add one so this year can hold registers, fees and results.</p>
+                ) : (
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    {y.terms.map((t) => {
+                      const chips = usageChips(t.usage);
+                      const locked = t.isCurrent || chips.length > 0;
+                      return (
+                        <div key={t.id} className={cn("rounded-lg border p-3", t.isCurrent && "border-primary bg-primary/5")}>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="font-medium text-sm flex flex-wrap items-center gap-1.5">
+                                <span className="truncate">{t.name}</span>
+                                <Badge variant="outline" className="text-[10px] shrink-0">T{t.sequence}</Badge>
+                                {t.isCurrent && <Badge variant="secondary" className="text-[10px] shrink-0">live</Badge>}
+                              </div>
+                              <div className="text-xs text-muted-foreground mt-0.5">{fmtDay(t.startsAt)} → {fmtDay(t.endsAt)}</div>
+                            </div>
+                            <div className="flex shrink-0 gap-0.5">
+                              {!t.isCurrent && (
+                                <Button size="sm" variant="ghost" className="h-7 size-7 p-0" aria-label={`Make ${t.name} the live term`} disabled={busy}
+                                  onClick={() => act({ action: "set-current-term", termId: t.id }, "Live term switched")}>
+                                  <CheckCircle2 className="size-3.5" />
+                                </Button>
+                              )}
+                              <Button size="sm" variant="ghost" className="h-7 size-7 p-0" aria-label={`Edit ${t.name}`} onClick={() => setTermDlg({ mode: "edit", year: y, term: t })}>
+                                <Pencil className="size-3" />
+                              </Button>
+                              <Button size="sm" variant="ghost" className="h-7 size-7 p-0 text-destructive" aria-label={`Delete ${t.name}`}
+                                disabled={busy || locked}
+                                title={t.isCurrent ? "Live term — switch first" : chips.length ? "In use" : undefined}
+                                onClick={() => setDel({ kind: "term", id: t.id, name: t.name })}>
+                                <Trash2 className="size-3" />
+                              </Button>
+                            </div>
+                          </div>
+                          {chips.length > 0 && (
+                            <div className="mt-2 flex flex-wrap gap-1">
+                              {chips.map((c) => (
+                                <Badge key={c.label} variant="outline" className="text-[10px] font-normal">{c.n} {c.label}</Badge>
+                              ))}
+                            </div>
+                          )}
+                          <div className="mt-2">
+                            <Label className="text-[11px] text-muted-foreground">Days opened (term runtime)</Label>
+                            <Input
+                              type="number" min="0" max="400" className="h-8 mt-1" placeholder="e.g. 60"
+                              value={daysEdits[t.id] ?? (data.daysOpened?.[t.id] != null ? String(data.daysOpened[t.id]) : "")}
+                              onChange={(e) => setDaysEdits({ ...daysEdits, [t.id]: e.target.value })}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        <Button size="sm" variant="outline" className="gap-1.5" disabled={!daysDirty || busy} onClick={saveDays}>
+          <Save className="size-3.5" /> Save days opened{daysDirty ? ` (${Object.keys(daysChanged).length})` : ""}
+        </Button>
+        <p className="text-[11px] text-muted-foreground">Term runtime used for attendance-rate maths and lesson-note compliance (weeks elapsed ÷ days opened).</p>
+      </div>
+
+      {/* ── year dialog (new / edit) ── */}
+      <Dialog open={!!yearDlg} onOpenChange={(o) => { if (!o) setYearDlg(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><CalendarPlus className="size-4" /> {yearDlg?.mode === "edit" ? `Edit ${yearDlg.year.name}` : "New academic year"}</DialogTitle>
+            <DialogDescription>
+              {yearDlg?.mode === "edit"
+                ? "Rename the session or move its boundaries — terms keep their own dates."
+                : "Name it like 2027/2028. Three terms are laid out across the dates automatically; you can fine-tune each one afterwards."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="year-name">Year name</Label>
+              <Input id="year-name" value={yearForm.name} onChange={(e) => setYearForm({ ...yearForm, name: e.target.value })} placeholder="2027/2028" maxLength={60} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5"><Label>Starts</Label><DateField value={yearForm.startsAt} onChange={(v) => setYearForm({ ...yearForm, startsAt: v ?? "" })} aria-label="Year start date" /></div>
+              <div className="space-y-1.5"><Label>Ends</Label><DateField value={yearForm.endsAt} onChange={(v) => setYearForm({ ...yearForm, endsAt: v ?? "" })} aria-label="Year end date" /></div>
+            </div>
+            {yearDlg?.mode === "new" && (
+              <label className="flex items-start gap-2 rounded-lg border p-3 text-sm cursor-pointer hover:bg-secondary/40">
+                <Checkbox checked={yearForm.autoTerms} onCheckedChange={(c) => setYearForm({ ...yearForm, autoTerms: c === true })} className="mt-0.5" />
+                <span>
+                  <span className="font-medium">Create three terms</span>
+                  <span className="block text-xs text-muted-foreground">First, Second and Third Term spread evenly across the year.</span>
+                </span>
+              </label>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setYearDlg(null)} disabled={busy}>Cancel</Button>
+            <Button className="gap-1.5" disabled={busy || !yearForm.name.trim() || !yearForm.startsAt || !yearForm.endsAt} onClick={submitYear}>
+              {busy ? <span className="size-4 rounded-full border-2 border-current border-t-transparent animate-spin" /> : <CalendarPlus className="size-4" />}
+              {yearDlg?.mode === "edit" ? "Save changes" : "Create year"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── term dialog (new / edit) ── */}
+      <Dialog open={!!termDlg} onOpenChange={(o) => { if (!o) setTermDlg(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Plus className="size-4" /> {termDlg?.mode === "edit" ? `Edit ${termDlg.term.name}` : `Add term to ${termDlg?.year.name}`}</DialogTitle>
+            <DialogDescription>
+              {termDlg?.mode === "edit"
+                ? "Rename the term, renumber it or move its dates — existing data stays attached."
+                : "Dates default to the year's boundaries; leave the name blank for First/Second/Third Term naming."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="grid grid-cols-[1fr_5rem] gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="term-name">Term name</Label>
+                <Input id="term-name" value={termForm.name} onChange={(e) => setTermForm({ ...termForm, name: e.target.value })} placeholder="First Term" maxLength={80} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="term-seq">Order</Label>
+                <Input id="term-seq" type="number" min="1" max="12" value={termForm.sequence} onChange={(e) => setTermForm({ ...termForm, sequence: e.target.value })} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5"><Label>Starts</Label><DateField value={termForm.startsAt} onChange={(v) => setTermForm({ ...termForm, startsAt: v ?? "" })} aria-label="Term start date" /></div>
+              <div className="space-y-1.5"><Label>Ends</Label><DateField value={termForm.endsAt} onChange={(v) => setTermForm({ ...termForm, endsAt: v ?? "" })} aria-label="Term end date" /></div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTermDlg(null)} disabled={busy}>Cancel</Button>
+            <Button className="gap-1.5" disabled={busy || !Number.isInteger(Number(termForm.sequence)) || Number(termForm.sequence) < 1 || Number(termForm.sequence) > 12} onClick={submitTerm}>
+              {busy ? <span className="size-4 rounded-full border-2 border-current border-t-transparent animate-spin" /> : <CheckCircle2 className="size-4" />}
+              {termDlg?.mode === "edit" ? "Save changes" : "Add term"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── delete confirm ── */}
+      <AlertDialog open={!!del} onOpenChange={(o) => { if (!o) setDel(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {del?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {del?.kind === "year"
+                ? "The year and its empty terms will be removed. Years that hold results, invoices or attendance registers cannot be deleted."
+                : "The term will be removed. Terms that hold results, invoices or attendance registers cannot be deleted."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={busy}
+              onClick={(e) => {
+                e.preventDefault();
+                if (!del) return;
+                act(del.kind === "year" ? { action: "delete-year", yearId: del.id } : { action: "delete-term", termId: del.id }, "Deleted");
+              }}
+            >
+              Delete
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
