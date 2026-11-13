@@ -151,7 +151,13 @@ export async function sendAutomated(opts: {
   const msg = await sendSms({
     db: opts.db, schoolId: opts.schoolId, studentId: opts.studentId ?? null,
     recipientName: opts.recipientName, recipientPhone: opts.recipientPhone,
-    body, category: opts.trigger === "BILL_REMINDER" ? "FEES" : opts.trigger === "PAYMENT_RECEIVED" ? "PAYMENT" : opts.trigger === "ABSENCE_MARKED" ? "ATTENDANCE" : opts.trigger.startsWith("LESSON_NOTE_") ? "STAFF" : "ANNOUNCEMENT",
+    body,
+    category: opts.trigger === "BILL_REMINDER" ? "FEES"
+      : opts.trigger === "PAYMENT_RECEIVED" ? "PAYMENT"
+      : opts.trigger === "ABSENCE_MARKED" ? "ATTENDANCE"
+      : opts.trigger === "RESULTS_PUBLISHED" ? "RESULTS"
+      : opts.trigger.startsWith("LESSON_NOTE_") ? "STAFF"
+      : "ANNOUNCEMENT",
     sentByName: opts.sentByName ?? (rule ? `automation: ${rule.name}` : undefined),
   });
   if (rule && msg.status !== "FAILED") {

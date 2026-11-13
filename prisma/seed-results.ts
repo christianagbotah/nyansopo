@@ -204,6 +204,33 @@ async function main() {
     await db.resultApprovalAudit.create({ data: { approvalId: approval.id, action: "APPROVE", previousStatus: "SUBMITTED", newStatus: "APPROVED", performedBy: "Seed — Head teacher" } });
   }
 
+  /* wave 22 — results release notifications:
+     1. guardian emails for the demo cohort so the email leg of the
+        "Notify parents" blast is exercisable (phones already exist);
+     2. an active RESULTS_PUBLISHED automation rule that overrides the
+        default release message (idempotent — matched by name). */
+  for (const e of enrolled) {
+    if (!e.student.guardianEmail) {
+      const slug = `${e.student.firstName}.${e.student.lastName}`.toLowerCase().replace(/[^a-z.]/g, "");
+      await db.student.update({
+        where: { id: e.studentId },
+        data: { guardianEmail: `${slug}@example.gh` },
+      });
+    }
+  }
+
+  const RULE_NAME = "Results release — guardian summary";
+  const rule = await db.smsAutomation.findFirst({ where: { schoolId: school.id, name: RULE_NAME } });
+  if (!rule) {
+    await db.smsAutomation.create({
+      data: {
+        schoolId: school.id, name: RULE_NAME, trigger: "RESULTS_PUBLISHED", recipients: "GUARDIANS",
+        body: "{school}: {learner}'s {term} ({year}) results are live — average {average}%, position {position} of {size}, best-6 aggregate {aggregate}, attendance {attendance}%. {promotion}. Full report in your portal.",
+        active: true,
+      },
+    });
+  }
+
   console.log(`Results seed: ${enrolled.length} learners · ${subjectOrder.length} subjects · ${results} term results · ${cards} report cards (${aggregates} BECE aggregates) for ${cls.name} — ${term.name} (${year?.name}). Results control: APPROVED.`);
 }
 

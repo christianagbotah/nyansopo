@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { useStore } from "@/lib/store";
+import { useStore, type NavTarget } from "@/lib/store";
 import { apiGet, apiPost } from "@/lib/api";
 import { canAny } from "@/lib/rbac";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,6 +12,9 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Checkbox } from "@/components/ui/checkbox";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell } from "recharts";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ModuleHeader, LoadingBlock, EmptyState, StatCard, StatusBadge } from "@/components/ui-helpers";
@@ -19,7 +22,8 @@ import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
   Award, Calculator, Eye, GraduationCap, Printer, Users, BookOpen, TrendingUp, ClipboardCheck,
-  Percent, Layers, RefreshCcw, ScrollText, Send, Undo2,
+  Percent, Layers, RefreshCcw, ScrollText, Send, Undo2, Megaphone, BarChart3, Mail, Phone, PhoneOff,
+  MailWarning, Gauge, ChevronDown, ChevronUp, BadgeCheck, AlertTriangle,
 } from "lucide-react";
 
 /* ══════════════════════════════════════════════════════════════
@@ -115,6 +119,61 @@ type TranscriptPayload = {
   summary: { terms: number; bestAggregate: number | null; overallAverage: number | null };
 };
 
+/* ── wave 22 — term analytics payload (/api/results/analytics) ── */
+type GradeCount = { grade: string; count: number; tone: string };
+type SubjectAnalytics = {
+  subjectId: string; name: string; code: string;
+  entries: number;
+  average: number | null;
+  passRate: number | null;
+  grades: GradeCount[];
+  top: { name: string; total: number } | null;
+  weak: { name: string; total: number } | null;
+};
+type AnalyticsPayload = {
+  school: { id: string; name: string; code: string };
+  term: { id: string; name: string; yearName: string };
+  classroom: { id: string; name: string };
+  subjects: SubjectAnalytics[];
+  summary: {
+    learners: number; published: number; subjects: number; entries: number;
+    average: number | null; passRate: number | null;
+    distinctions: number; belowBar: number;
+    grades: GradeCount[];
+    top: { name: string; average: number | null; position: number | null }[];
+    bottom: { name: string; average: number | null; position: number | null }[];
+    boys: { count: number; average: number | null };
+    girls: { count: number; average: number | null };
+  };
+  weakSubjects: { name: string; passRate: number }[];
+};
+
+/* ── wave 22 — results release notifications (/api/results/notify) ── */
+type NotifyRow = {
+  studentId: string; studentName: string; indexNo: string;
+  guardianName: string; guardianPhone: string; guardianEmail: string | null;
+  average: number | null; classPosition: number | null; classSize: number | null;
+  aggregate: number | null; attendancePct: number | null; promoted: boolean | null;
+  message: string;
+};
+type NotifyPreview = {
+  preview: true;
+  rows: NotifyRow[];
+  draftCount: number;
+  rule: { id: string; name: string; body: string } | null;
+  withPhone: number; withoutPhone: number;
+  withEmail: number; withoutEmail: number;
+  channel: "SMS" | "EMAIL" | "BOTH";
+  sms: { provider: string; credits: number; senderId: string | null };
+  email: { enabled: boolean; host: string | null; fromName: string | null };
+};
+type NotifyResult = {
+  ok: true; channel: string; learners: number; draftCount: number;
+  sms: { sent: number; failed: number; noPhone: number };
+  email: { sent: number; failed: number; simulated: number; noAddress: number };
+  rule: { name: string } | null;
+};
+
 /* ── colour doctrine: green ≥65 · amber 50–64 · red <50 ── */
 const bandTone = (total: number | null | undefined) =>
   total === null || total === undefined
@@ -135,8 +194,9 @@ const fmt1 = (n: number | null | undefined) => (n === null || n === undefined ? 
 const initials = (name: string) => name.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
 
 export function Results() {
-  const { currentSchoolId, session } = useStore();
+  const { currentSchoolId, session, navTarget } = useStore();
   const canPublish = canAny(session?.permissions, ["reports.publish"]);
+  const canNotify = canAny(session?.permissions, ["reports.publish", "sms.send"]);
 
   const [meta, setMeta] = useState<{ school: SchoolInfo; terms: TermLite[]; classrooms: ClassLite[] } | null>(null);
   const [data, setData] = useState<ListPayload | null>(null);
@@ -155,6 +215,22 @@ export function Results() {
   const [transcript, setTranscript] = useState<TranscriptPayload | null>(null);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [transcriptLoading, setTranscriptLoading] = useState(false);
+  /* wave 22 — analytics tab + results release notifications */
+  const [tab, setTab] = useState("grid");
+  const [analytics, setAnalytics] = useState<AnalyticsPayload | null>(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [notifyOpen, setNotifyOpen] = useState(false);
+  const [notifyChannel, setNotifyChannel] = useState<"SMS" | "EMAIL" | "BOTH">("SMS");
+  const [notifyPrev, setNotifyPrev] = useState<NotifyPreview | null>(null);
+  const [notifyBusy, setNotifyBusy] = useState(false);
+  const [pubNotify, setPubNotify] = useState(false);
+
+  /* iEduPro nested-nav parity: deep-link the analytics tab */
+  const [appliedTarget, setAppliedTarget] = useState<NavTarget | null>(null);
+  if (navTarget !== appliedTarget) {
+    setAppliedTarget(navTarget);
+    if (navTarget?.tab === "analytics") setTab("analytics");
+  }
 
   /* bootstrap — resolve the school's terms/classes and default selectors
      (current term; the JHS 3 demo class when present, else the first) */
@@ -238,21 +314,68 @@ export function Results() {
     if (!currentSchoolId || !termId || !classId) { toast({ title: "Choose a term and a class first" }); return; }
     setPubBusy(true);
     try {
-      const res = await apiPost<PublishPayload>("/api/results/publish", {
+      const res = await apiPost<PublishPayload & { notified: { gate: "ON" | "OFF"; sent: number; failed: number; skipped: number } | null }>("/api/results/publish", {
         schoolId: currentSchoolId, termId, classId, publish: kind === "publish",
+        notify: kind === "publish" ? pubNotify : undefined,
       });
       toast({
         title: kind === "publish" ? "Results published" : "Results recalled to draft",
         description: kind === "publish"
           ? `${res.classroom.name} · ${res.term.name} (${res.term.yearName}): ${res.cards} report card${res.cards === 1 ? "" : "s"} and ${res.results} subject result${res.results === 1 ? "" : "s"} are now visible to learners and parents.`
+            + (res.notified
+              ? res.notified.gate === "OFF"
+                ? " Guardian SMS automation is switched off in Settings → Notifications — nothing was texted (use “Notify parents” for a manual blast)."
+                : ` Guardian SMS: ${res.notified.sent} sent${res.notified.failed ? `, ${res.notified.failed} failed` : ""}${res.notified.skipped ? `, ${res.notified.skipped} without a phone` : ""}.`
+              : "")
           : `${res.classroom.name} · ${res.term.name}: ${res.cards} report card${res.cards === 1 ? "" : "s"} pulled back to draft — learners and parents no longer see them.`,
       });
       setConfirmPub(null);
+      setPubNotify(false);
       setRefresh((r) => r + 1);
     } catch (e: any) {
       toast({ title: kind === "publish" ? "Publish failed" : "Recall failed", description: e.message, variant: "destructive" });
     } finally {
       setPubBusy(false);
+    }
+  }
+
+  /* wave 22 — results release notifications: preview the exact message
+     each guardian will receive, then blast through the school's channels. */
+  async function openNotify() {
+    if (!currentSchoolId || !termId || !classId) { toast({ title: "Choose a term and a class first" }); return; }
+    setNotifyOpen(true);
+    setNotifyPrev(null);
+    try {
+      const d = await apiPost<NotifyPreview>("/api/results/notify", {
+        schoolId: currentSchoolId, termId, classId, channel: notifyChannel, preview: true,
+      });
+      setNotifyPrev(d);
+    } catch (e: any) {
+      setNotifyOpen(false);
+      toast({ title: "Could not draft notifications", description: e.message, variant: "destructive" });
+    }
+  }
+
+  async function sendNotify() {
+    if (!currentSchoolId || !termId || !classId) return;
+    setNotifyBusy(true);
+    try {
+      const res = await apiPost<NotifyResult>("/api/results/notify", {
+        schoolId: currentSchoolId, termId, classId, channel: notifyChannel,
+      });
+      const bits: string[] = [];
+      if (res.channel !== "EMAIL") bits.push(`SMS: ${res.sms.sent} sent${res.sms.failed ? `, ${res.sms.failed} failed` : ""}${res.sms.noPhone ? `, ${res.sms.noPhone} without a phone` : ""}`);
+      if (res.channel !== "SMS") bits.push(`Email: ${res.email.sent ? `${res.email.sent} sent` : ""}${res.email.simulated ? `${res.email.sent ? ", " : ""}${res.email.simulated} simulated (SMTP off — logged)` : ""}${res.email.failed ? `, ${res.email.failed} failed` : ""}${res.email.noAddress ? `, ${res.email.noAddress} without an address` : ""}`.replace(/^Email: ,/, "Email: none sent"));
+      toast({
+        title: `Results release notifications — ${res.learners} learner${res.learners === 1 ? "" : "s"}`,
+        description: (bits.join(" · ") || "Nothing was sent — check guardian contacts.") + (res.rule ? ` Template: “${res.rule.name}”.` : ""),
+      });
+      setNotifyOpen(false);
+      setNotifyPrev(null);
+    } catch (e: any) {
+      toast({ title: "Notify failed", description: e.message, variant: "destructive" });
+    } finally {
+      setNotifyBusy(false);
     }
   }
 
@@ -272,6 +395,23 @@ export function Results() {
       setTranscriptLoading(false);
     }
   }
+
+  /* wave 22 — term analytics payload, fetched when the analytics tab is
+     open for the selected class-term (recomputed results refresh it) */
+  useEffect(() => {
+    if (!currentSchoolId || !termId || !classId || tab !== "analytics") return;
+    let alive = true;
+    setAnalyticsLoading(true);
+    apiGet<AnalyticsPayload>(`/api/results/analytics?schoolId=${currentSchoolId}&termId=${termId}&classId=${classId}`)
+      .then((d) => { if (alive) { setAnalytics(d); setAnalyticsLoading(false); } })
+      .catch((e) => {
+        if (alive) {
+          setAnalyticsLoading(false);
+          toast({ title: "Could not load analytics", description: e.message, variant: "destructive" });
+        }
+      });
+    return () => { alive = false; };
+  }, [currentSchoolId, termId, classId, tab, refresh]);
 
   /* ── derived grid data ── */
   const subjects = useMemo(() => {
@@ -347,6 +487,14 @@ export function Results() {
                 <Undo2 className="size-4" /> Recall to draft
               </Button>
             )}
+            {/* wave 22 — manual guardian notification blast (CI3 exam_marks_sms
+                modernised): preview first, then SMS/email the terminal summary */}
+            {canNotify && kpis.published > 0 && (
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={openNotify}
+                title={`Text/email the ${kpis.published} published learner${kpis.published === 1 ? "" : "s"}'s guardians with their terminal summary`}>
+                <Megaphone className="size-4" /> Notify parents
+              </Button>
+            )}
           </div>
         }
       />
@@ -390,6 +538,14 @@ export function Results() {
         <StatCard icon={<ClipboardCheck className="size-4" />} label="Published" value={kpis.published} sub={`${Math.max(0, kpis.compiled - kpis.published)} still draft`} tone="gold" />
       </div>
 
+      {/* wave 22 — broadsheet + analytics tabs around the same ledger */}
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList>
+          <TabsTrigger value="grid" className="gap-1.5"><Award className="size-4" /> Broadsheet</TabsTrigger>
+          <TabsTrigger value="analytics" className="gap-1.5"><BarChart3 className="size-4" /> Analytics</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="grid" className="mt-4">
       {/* results grid */}
       <Card>
         <CardHeader>
@@ -485,6 +641,17 @@ export function Results() {
           )}
         </CardContent>
       </Card>
+        </TabsContent>
+
+        <TabsContent value="analytics" className="mt-4">
+          <AnalyticsPanel
+            payload={analytics}
+            loading={analyticsLoading}
+            className={meta.classrooms.find((c) => c.id === classId)?.name ?? "class"}
+            termLabel={termLabel ? `${termLabel.name} · ${termLabel.yearName}` : ""}
+          />
+        </TabsContent>
+      </Tabs>
 
       {/* ── single printable report card ── */}
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
@@ -584,7 +751,8 @@ export function Results() {
         </DialogContent>
       </Dialog>
 
-      {/* ── wave 21 — publish / recall confirmation ── */}
+      {/* ── wave 21 — publish / recall confirmation (wave 22 adds the
+          notify-on-publish checkbox) ── */}
       <AlertDialog open={confirmPub !== null} onOpenChange={(o) => !o && setConfirmPub(null)}>
         <AlertDialogContent>
           {confirmPub === "publish" ? (
@@ -597,6 +765,18 @@ export function Results() {
                   You can pull everything back to draft at any time with “Recall to draft”.
                 </AlertDialogDescription>
               </AlertDialogHeader>
+              {/* wave 22 — fire the RESULTS_PUBLISHED guardian SMS automation with
+                  the publication (gated on the school's per-event toggle) */}
+              <label className="flex items-start gap-2.5 rounded-lg border bg-secondary/40 p-3 cursor-pointer select-none">
+                <Checkbox checked={pubNotify} onCheckedChange={(v) => setPubNotify(v === true)} className="mt-0.5" aria-label="Also notify guardians by SMS" />
+                <span className="text-sm leading-snug">
+                  <span className="font-medium flex items-center gap-1.5"><Megaphone className="size-4" /> Also text guardians</span>
+                  <span className="text-muted-foreground text-xs block mt-0.5">
+                    Fires the “Results published” SMS automation — average, position, best-6 aggregate — to every guardian with a
+                    phone on file (school's per-event toggle in Settings → Notifications decides; SIMULATED delivery costs 1 credit each).
+                  </span>
+                </span>
+              </label>
               <AlertDialogFooter>
                 <AlertDialogCancel disabled={pubBusy}>Cancel</AlertDialogCancel>
                 <AlertDialogAction
@@ -653,6 +833,314 @@ export function Results() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* ── wave 22 — results release notifications (CI3 exam_marks_sms
+          modernised): draft every guardian message, preview it, send ── */}
+      <Dialog open={notifyOpen} onOpenChange={(o) => { setNotifyOpen(o); if (!o) setNotifyPrev(null); }}>
+        <DialogContent className="max-w-2xl max-h-[92vh] overflow-y-auto nice-scroll">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Megaphone className="size-4" /> Notify guardians — results are live</DialogTitle>
+            <DialogDescription>
+              Every published learner&apos;s terminal summary (average, position, best-6 aggregate, attendance) — SMS through the
+              school gateway, email through the school SMTP channel. Draft cards are never messaged.
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* channel picker */}
+          <div className="grid sm:grid-cols-3 gap-2">
+            {([["SMS", "SMS only"], ["EMAIL", "Email only"], ["BOTH", "SMS + Email"]] as const).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setNotifyChannel(value)}
+                className={cn(
+                  "rounded-lg border p-3 text-left transition-colors",
+                  notifyChannel === value ? "border-primary bg-primary/10" : "hover:bg-secondary/60",
+                )}
+                aria-pressed={notifyChannel === value}
+              >
+                <span className="text-sm font-medium flex items-center gap-1.5">
+                  {value === "SMS" ? <Phone className="size-4" /> : value === "EMAIL" ? <Mail className="size-4" /> : <Send className="size-4" />} {label}
+                </span>
+                {notifyPrev && (
+                  <span className="block text-[11px] text-muted-foreground mt-0.5">
+                    {value === "SMS" ? `${notifyPrev.withPhone} sendable · ${notifyPrev.sms.provider} · ${notifyPrev.sms.credits} credits` : value === "EMAIL" ? `${notifyPrev.withEmail} with an address · ${notifyPrev.email.enabled ? "SMTP live" : "SIMULATED (SMTP off)"}` : `${notifyPrev.withPhone} SMS · ${notifyPrev.withEmail} email`}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          {notifyPrev ? (
+            <div className="space-y-3">
+              {/* channel state + counts */}
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs">
+                <span className="inline-flex items-center gap-1.5"><BadgeCheck className="size-3.5 text-emerald-600" /> {notifyPrev.rows.length} drafted</span>
+                <span className={cn("inline-flex items-center gap-1.5", notifyPrev.withoutPhone && notifyChannel !== "EMAIL" ? "text-amber-600" : "text-muted-foreground")}>
+                  {notifyPrev.withoutPhone && notifyChannel !== "EMAIL" ? <PhoneOff className="size-3.5" /> : <Phone className="size-3.5" />} {notifyPrev.withoutPhone} without a phone
+                </span>
+                {notifyChannel !== "SMS" && (
+                  <span className={cn("inline-flex items-center gap-1.5", notifyPrev.withoutEmail ? "text-amber-600" : "text-muted-foreground")}>
+                    {notifyPrev.withoutEmail ? <MailWarning className="size-3.5" /> : <Mail className="size-3.5" />} {notifyPrev.withoutEmail} without an email
+                  </span>
+                )}
+                {notifyPrev.draftCount > 0 && (
+                  <span className="text-muted-foreground">{notifyPrev.draftCount} draft card{notifyPrev.draftCount === 1 ? "" : "s"} skipped</span>
+                )}
+                {notifyPrev.rule && (
+                  <Badge variant="outline" className="text-[10.5px] gap-1" title={notifyPrev.rule.body}><Gauge className="size-3" /> template: {notifyPrev.rule.name}</Badge>
+                )}
+              </div>
+
+              {/* per-learner drafts */}
+              <div className="overflow-auto nice-scroll max-h-[46vh] border rounded-lg">
+                <Table>
+                  <TableHeader className="sticky top-0 bg-secondary/95 backdrop-blur">
+                    <TableRow>
+                      <TableHead className="min-w-[150px]">Guardian of</TableHead>
+                      <TableHead className="min-w-[130px]">Destination</TableHead>
+                      <TableHead className="min-w-[260px]">Message</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {notifyPrev.rows.map((r) => (
+                      <TableRow key={r.studentId} className="hover:bg-secondary/40">
+                        <TableCell>
+                          <div className="leading-tight font-medium">{r.studentName}</div>
+                          <div className="text-[10.5px] text-muted-foreground font-normal">{r.guardianName} · {r.indexNo}</div>
+                        </TableCell>
+                        <TableCell className="text-xs">
+                          <div className="flex flex-col gap-0.5">
+                            {notifyChannel !== "EMAIL" && (
+                              <span className={cn("inline-flex items-center gap-1", r.guardianPhone.trim() ? "" : "text-destructive")}>
+                                <Phone className="size-3" /> {r.guardianPhone.trim() || "no phone"}
+                              </span>
+                            )}
+                            {notifyChannel !== "SMS" && (
+                              <span className={cn("inline-flex items-center gap-1 truncate max-w-[180px]", (r.guardianEmail ?? "").trim() ? "" : "text-destructive")}>
+                                <Mail className="size-3 shrink-0" /> {(r.guardianEmail ?? "").trim() || "no email"}
+                              </span>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-[11.5px] leading-snug text-muted-foreground">{r.message}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+
+              <div className="flex items-center justify-between gap-3 border-t pt-3">
+                <p className="text-xs text-muted-foreground">
+                  {notifyChannel !== "EMAIL"
+                    ? `${notifyPrev.withPhone} credit${notifyPrev.withPhone === 1 ? "" : "s"} will be debited (${notifyPrev.sms.credits} on the wallet)${notifyPrev.sms.provider === "SIMULATED" ? " in SIMULATED delivery" : ` through ${notifyPrev.sms.provider}`}.`
+                    : notifyPrev.email.enabled
+                      ? `Delivery through ${notifyPrev.email.host}.`
+                      : "SMTP is not configured — every email is logged as SIMULATED (Settings → Notifications → Email channel)."}
+                </p>
+                <Button size="sm" className="gap-1.5" onClick={sendNotify} disabled={notifyBusy || (notifyChannel !== "EMAIL" ? notifyPrev.withPhone === 0 : false) || (notifyChannel === "EMAIL" ? notifyPrev.withEmail === 0 : false)}>
+                  <Send className={cn("size-4", notifyBusy && "animate-pulse")} /> {notifyBusy ? "Sending…" : `Send to ${notifyPrev.rows.length} guardian${notifyPrev.rows.length === 1 ? "" : "s"}`}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3 pb-4">
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-40 w-full" />
+              <Skeleton className="h-16 w-2/3" />
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════
+   Wave 22 — term analytics panel. The same ledger the broadsheet
+   grid prints, read as WAEC charts: class summary stats, the
+   A1..F9 grade distribution wall, per-subject pass rates with
+   top/weakest learners, and the gender split.
+   ══════════════════════════════════════════════════════════════ */
+function AnalyticsPanel({ payload, loading, className, termLabel }: {
+  payload: AnalyticsPayload | null;
+  loading: boolean;
+  className: string;
+  termLabel: string;
+}) {
+  if (loading && !payload) return <LoadingBlock label="Compiling term analytics…" />;
+  if (!payload) return null;
+
+  const { summary, subjects, weakSubjects } = payload;
+  if (!summary.entries && !subjects.length) {
+    return (
+      <Card><CardContent>
+        <EmptyState
+          icon={<BarChart3 className="size-8" />}
+          title="No results on the ledger yet"
+          hint="Analytics appear for the same class-term as the broadsheet — run “Compute term results” first."
+        />
+      </CardContent></Card>
+    );
+  }
+
+  const gradeChartData = summary.grades.map((g) => ({ grade: g.grade, count: g.count, tone: g.tone }));
+  const toneColor = (tone: string) => (tone === "emerald" ? "#059669" : tone === "amber" ? "#d97706" : "#dc2626");
+
+  return (
+    <div className="space-y-4">
+      {/* class summary */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatCard icon={<TrendingUp className="size-4" />} label="Term average" value={fmt1(summary.average)} sub={`${summary.entries} graded subject results`} tone="primary" />
+        <StatCard icon={<BadgeCheck className="size-4" />} label="Pass rate" value={summary.passRate !== null ? `${fmt1(summary.passRate)}%` : "—"} sub="entries scoring 50 or better" />
+        <StatCard icon={<Award className="size-4" />} label="Distinctions" value={summary.distinctions} sub={`averages ≥65 — of ${summary.learners} learners`} tone="gold" />
+        <StatCard icon={<AlertTriangle className="size-4" />} label="Below the bar" value={summary.belowBar} sub="averages under 50 — flag for support" />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* WAEC grade distribution */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <BarChart3 className="size-4" /> WAEC grade distribution — {className}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={gradeChartData} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="grade" tick={{ fontSize: 11 }} stroke="#888" interval={0} />
+                  <YAxis tick={{ fontSize: 11 }} stroke="#888" allowDecimals={false} />
+                  <Tooltip formatter={(v: any) => [`${v} result${v === 1 ? "" : "s"}`, "Count"]} contentStyle={{ borderRadius: 10 }} />
+                  <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                    {gradeChartData.map((g) => <Cell key={g.grade} fill={toneColor(g.tone)} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Every graded subject result of the term on the BECE scale — A1 excellent … F9 fail. {termLabel}
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* top & bottom performers + gender split */}
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><Users className="size-4" /> Standing</CardTitle></CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5 flex items-center gap-1"><ChevronUp className="size-3.5" /> Top of the class</div>
+                <ol className="space-y-1.5">
+                  {summary.top.map((t, i) => (
+                    <li key={`${t.name}-${i}`} className="flex items-center justify-between gap-2 text-sm">
+                      <span className="truncate">{i + 1}. {t.name}</span>
+                      <span className="font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">{fmt1(t.average)}</span>
+                    </li>
+                  ))}
+                  {!summary.top.length && <li className="text-sm text-muted-foreground">No averages compiled.</li>}
+                </ol>
+              </div>
+              <div>
+                <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5 flex items-center gap-1"><ChevronDown className="size-3.5" /> Needs support</div>
+                <ol className="space-y-1.5">
+                  {summary.bottom.map((t, i) => (
+                    <li key={`${t.name}-${i}`} className="flex items-center justify-between gap-2 text-sm">
+                      <span className="truncate">{i + 1}. {t.name}</span>
+                      <span className="font-semibold tabular-nums text-red-700 dark:text-red-400">{fmt1(t.average)}</span>
+                    </li>
+                  ))}
+                  {!summary.bottom.length && <li className="text-sm text-muted-foreground">Class too small for a tail.</li>}
+                </ol>
+              </div>
+            </div>
+            <div className="border-t pt-3 flex flex-wrap items-center gap-3 text-sm">
+              <span className="text-muted-foreground text-xs uppercase tracking-wide font-medium">Gender split</span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="size-2 rounded-full bg-sky-500" /> Boys ({summary.boys.count}) <b className="tabular-nums">{fmt1(summary.boys.average)}</b>
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="size-2 rounded-full bg-rose-500" /> Girls ({summary.girls.count}) <b className="tabular-nums">{fmt1(summary.girls.average)}</b>
+              </span>
+              <span className="ml-auto text-xs text-muted-foreground">{summary.learners} learners · {summary.published} published</span>
+            </div>
+            {weakSubjects.length > 0 && (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950 p-3 text-xs leading-relaxed">
+                <b className="flex items-center gap-1.5 text-amber-700 dark:text-amber-300"><AlertTriangle className="size-3.5" /> Weak subjects (pass rate under 50%)</b>
+                <span className="text-amber-700/90 dark:text-amber-300/90">
+                  {" "}{weakSubjects.map((w) => `${w.name} (${fmt1(w.passRate)}%)`).join(" · ")} — schedule remedials before the next terminal exams.
+                </span>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* per-subject performance */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2"><BookOpen className="size-4" /> Subject performance</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-auto nice-scroll max-h-[60vh] border rounded-lg">
+            <Table className="min-w-[640px]">
+              <TableHeader className="sticky top-0 z-10 bg-secondary/95 backdrop-blur">
+                <TableRow>
+                  <TableHead className="min-w-[150px]">Subject</TableHead>
+                  <TableHead className="text-center">Entries</TableHead>
+                  <TableHead className="text-center">Average</TableHead>
+                  <TableHead className="min-w-[140px]">Pass rate</TableHead>
+                  <TableHead className="min-w-[230px]">Grades (A1 → F9)</TableHead>
+                  <TableHead className="min-w-[170px]">Top / weakest</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {subjects.map((s) => (
+                  <TableRow key={s.subjectId} className="hover:bg-secondary/40">
+                    <TableCell>
+                      <div className="leading-tight font-medium">{s.name}</div>
+                      <div className="text-[10.5px] text-muted-foreground font-normal">{s.code}</div>
+                    </TableCell>
+                    <TableCell className="text-center tabular-nums">{s.entries}</TableCell>
+                    <TableCell className="text-center font-semibold tabular-nums">
+                      <span className={s.average !== null ? bandTone(s.average).cell : ""}>{fmt1(s.average)}</span>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <div className="h-1.5 flex-1 rounded-full bg-secondary overflow-hidden" role="img" aria-label={`Pass rate ${fmt1(s.passRate)}%`}>
+                          <div
+                            className={cn("h-full rounded-full", (s.passRate ?? 0) >= 65 ? "bg-emerald-500" : (s.passRate ?? 0) >= 50 ? "bg-amber-500" : "bg-red-500")}
+                            style={{ width: `${Math.max(2, Math.min(100, s.passRate ?? 0))}%` }}
+                          />
+                        </div>
+                        <span className="text-xs tabular-nums text-muted-foreground">{s.passRate !== null ? `${fmt1(s.passRate)}%` : "—"}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap gap-1">
+                        {s.grades.filter((g) => g.count > 0).map((g) => (
+                          <Badge key={g.grade} variant="outline" className={cn("text-[9.5px] px-1.5 h-4 tabular-nums", bandTone(g.grade === "A1" || g.grade === "B2" || g.grade === "B3" ? 70 : g.grade === "C4" || g.grade === "C5" || g.grade === "C6" ? 55 : 40).badge)}>
+                            {g.grade}·{g.count}
+                          </Badge>
+                        ))}
+                        {s.grades.every((g) => g.count === 0) && <span className="text-xs text-muted-foreground">no grades</span>}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-xs">
+                      {s.top && <div className="truncate"><b className="text-muted-foreground">↑</b> {s.top.name} · {fmt1(s.top.total)}</div>}
+                      {s.weak && s.weak.name !== s.top?.name && <div className="truncate"><b className="text-muted-foreground">↓</b> {s.weak.name} · {fmt1(s.weak.total)}</div>}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          <p className="mt-3 text-xs text-muted-foreground">
+            Pass rate counts subject results scoring 50 or better. Averages and distributions derive from the same compiled ledger the broadsheet prints — analytics can never disagree with the report cards.
+          </p>
+        </CardContent>
+      </Card>
     </div>
   );
 }

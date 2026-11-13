@@ -200,3 +200,81 @@ If you can read this in your inbox, SMTP delivery for the school's email channel
 </div>
 </body></html>`;
 }
+
+/* ── Results release email (wave 22 — CI3 exam_marks_sms email leg) ── */
+
+export type ResultsEmailInput = {
+  school: { name: string; town?: string | null; motto?: string | null };
+  term: string;
+  row: {
+    studentName: string;
+    indexNo: string;
+    classroomName: string;
+    guardianName: string;
+    average: number | null;
+    classPosition: number | null;
+    classSize: number | null;
+    aggregate: number | null;
+    attendancePct: number | null;
+    promoted: boolean | null;
+  };
+};
+
+/** Terminal-results release email — a clean one-screen summary card for
+ *  the guardian: header strip, particulars, average / position / best-6
+ *  aggregate / attendance stat grid, promotion line and a portal hint.
+ *  Same visual language as the invoice email, everything escaped. */
+export function resultsEmailHtml({ school, term, row }: ResultsEmailInput): string {
+  const pct = (n: number | null) => (n === null ? "—" : `${(Math.round(n * 10) / 10).toFixed(1).replace(/\.0$/, "")}%`);
+  const pos = row.classPosition === null ? "—" : `${row.classPosition}${row.classSize ? ` of ${row.classSize}` : ""}`;
+  const tone = row.average === null ? "#3d4a42" : row.average >= 65 ? "#0e5f3f" : row.average >= 50 ? "#b45309" : "#b91c1c";
+  return `<!doctype html>
+<html><body style="margin:0;padding:0;background-color:#f4f6f5;">
+<div style="font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;background-color:#f4f6f5;padding:20px 12px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:10px;overflow:hidden;border:1px solid #e3e8e5;">
+<tr><td style="background-color:#0e5f3f;padding:20px 24px;color:#ffffff;">
+<div style="font-size:19px;font-weight:700;letter-spacing:0.2px;">${esc(school.name)}</div>
+${school.motto ? `<div style="font-size:12px;opacity:0.85;margin-top:2px;font-style:italic;">${esc(school.motto)}</div>` : ""}
+<div style="font-size:12px;opacity:0.85;margin-top:4px;">${esc(school.town ?? "")}${school.town ? ", Ghana" : "Ghana"}</div>
+</td></tr>
+<tr><td style="padding:22px 24px 8px 24px;">
+<div style="font-size:15px;font-weight:600;color:#1a2b22;margin-bottom:10px;">${esc(term)} terminal results are live</div>
+<p style="margin:0 0 14px 0;font-size:13px;line-height:1.6;color:#3d4a42;">Dear ${esc(row.guardianName)}, ${esc(row.studentName)}'s end-of-term results have been released by the school. Here is the summary:</p>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:13px;color:#3d4a42;">
+<tr>
+<td style="padding:3px 0;width:130px;color:#7a857d;">Learner</td>
+<td style="padding:3px 0;font-weight:600;color:#1a2b22;">${esc(row.studentName)}</td>
+</tr>
+<tr><td style="padding:3px 0;color:#7a857d;">Index</td><td style="padding:3px 0;">${esc(row.indexNo)}</td></tr>
+<tr><td style="padding:3px 0;color:#7a857d;">Class</td><td style="padding:3px 0;">${esc(row.classroomName)}</td></tr>
+</table>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:16px;border-collapse:separate;border-spacing:6px 0;">
+<tr>
+<td align="center" style="width:25%;background:#f4faf6;border:1px solid #d7e8dc;border-radius:8px;padding:10px 4px;">
+<div style="font-size:18px;font-weight:700;color:${tone};">${pct(row.average)}</div>
+<div style="font-size:10px;color:#7a857d;text-transform:uppercase;letter-spacing:0.4px;margin-top:2px;">Average</div>
+</td>
+<td align="center" style="width:25%;background:#f4faf6;border:1px solid #d7e8dc;border-radius:8px;padding:10px 4px;">
+<div style="font-size:18px;font-weight:700;color:#1a2b22;">${esc(pos)}</div>
+<div style="font-size:10px;color:#7a857d;text-transform:uppercase;letter-spacing:0.4px;margin-top:2px;">Position</div>
+</td>
+<td align="center" style="width:25%;background:#f4faf6;border:1px solid #d7e8dc;border-radius:8px;padding:10px 4px;">
+<div style="font-size:18px;font-weight:700;color:#1a2b22;">${row.aggregate === null ? "—" : esc(String(Math.round(row.aggregate)))}</div>
+<div style="font-size:10px;color:#7a857d;text-transform:uppercase;letter-spacing:0.4px;margin-top:2px;">Best-6 aggregate</div>
+</td>
+<td align="center" style="width:25%;background:#f4faf6;border:1px solid #d7e8dc;border-radius:8px;padding:10px 4px;">
+<div style="font-size:18px;font-weight:700;color:#1a2b22;">${row.attendancePct === null ? "—" : esc(`${row.attendancePct}%`)}</div>
+<div style="font-size:10px;color:#7a857d;text-transform:uppercase;letter-spacing:0.4px;margin-top:2px;">Attendance</div>
+</td>
+</tr>
+</table>
+${row.promoted !== null ? `<p style="margin:14px 0 0 0;font-size:12.5px;line-height:1.55;color:#3d4a42;background:#f4faf6;border:1px solid #d7e8dc;border-radius:8px;padding:10px 12px;">${row.promoted ? "Promotion: the school recommends promotion to the next class." : "Promotion: performance is below the promotion bar — the school will be in touch about support and next steps."}</p>` : ""}
+<p style="margin:14px 0 0 0;font-size:12.5px;line-height:1.55;color:#3d4a42;">The full terminal report — every subject's class score, exam score and WAEC grade — is waiting in your Nyansapo parent portal.</p>
+</td></tr>
+<tr><td style="padding:14px 24px;background:#fafbfa;border-top:1px solid #edf1ee;font-size:11px;color:#8a948c;text-align:center;">
+These results were released by ${esc(school.name)}. Powered by Nyansapo.
+</td></tr>
+</table>
+</div>
+</body></html>`;
+}

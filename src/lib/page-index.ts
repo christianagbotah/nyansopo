@@ -15,7 +15,7 @@ import {
   Landmark, Building2, Route, Smartphone, MessageSquareText, FileSpreadsheet, BadgeCheck, Layers,
   Armchair, BookMarked, Network, UsersRound, HeartPulse, ScrollText, Wrench, Timer, Stethoscope,
   Flag, Trees, Sparkles, Scale, FileSearch, ShoppingBasket, GalleryHorizontal, Rows3, Banknote as Bank, Palette,
-  DatabaseBackup, PiggyBank,
+  DatabaseBackup, PiggyBank, Award,
 } from "lucide-react";
 
 export type PageEntry = {
@@ -106,6 +106,8 @@ export const PAGE_INDEX: PageEntry[] = [
   { id: "pg-sba", label: "SBA & Basal", section: S.academic, module: "gradebook", target: { tab: "sba" }, perm: ["gradebook.enter"], icon: Layers, keywords: ["basal", "creche", "continous"] },
   { id: "pg-creche", label: "Early Years Marks", section: S.academic, module: "gradebook", target: { tab: "creche" }, perm: ["gradebook.enter"], icon: HeartPulse, keywords: ["kindergarten", "kg", "nursery", "montessori"] },
   { id: "pg-gb-analytics", label: "Gradebook Analytics", section: S.academic, module: "gradebook", target: { tab: "analytics" }, perm: ["gradebook.view"], icon: BarChart3, keywords: ["subject performance", "class average"] },
+  { id: "pg-results", label: "Results Broadsheet", section: S.academic, module: "results", target: { tab: "grid" }, perm: ["reports.view"], icon: Award, keywords: ["term results", "report cards", "bece grades", "positions", "aggregate", "publish"] },
+  { id: "pg-results-analytics", label: "Term Analytics", section: S.academic, module: "results", target: { tab: "analytics" }, perm: ["reports.view"], icon: BarChart3, keywords: ["waec distribution", "pass rate", "weak subjects", "distinctions", "a1 f9", "term analytics"] },
   { id: "pg-notes", label: "Lesson Notes", section: S.academic, module: "curriculum", target: { tab: "notes" }, perm: ["curriculum.manage"], icon: NotebookPen, keywords: ["ges", "strand", "indicator", "scheme of learning", "weekly notes"] },
   { id: "pg-note-review", label: "Review Lesson Notes", section: S.academic, module: "curriculum", target: { tab: "review" }, perm: ["curriculum.review"], icon: BadgeCheck, keywords: ["endorse", "hod", "return"] },
   { id: "pg-templates", label: "Note Templates", section: S.academic, module: "curriculum", target: { tab: "templates" }, perm: ["curriculum.manage"], icon: FileSpreadsheet, keywords: ["reusable", "format"] },
