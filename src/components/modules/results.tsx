@@ -24,6 +24,7 @@ import {
   Award, Calculator, Eye, GraduationCap, Printer, Users, BookOpen, TrendingUp, ClipboardCheck,
   Percent, Layers, RefreshCcw, ScrollText, Send, Undo2, Megaphone, BarChart3, Mail, Phone, PhoneOff,
   MailWarning, Gauge, ChevronDown, ChevronUp, BadgeCheck, AlertTriangle,
+  UsersRound, MoveUpRight, ListChecks, Save,
 } from "lucide-react";
 
 /* ══════════════════════════════════════════════════════════════
@@ -174,6 +175,37 @@ type NotifyResult = {
   rule: { name: string } | null;
 };
 
+/* ── wave 23 — end-of-year promotion board (/api/results/promotion-board) ── */
+type PromotionRow = {
+  studentId: string; name: string; indexNo: string; gender: string;
+  cardId: string | null;
+  average: number | null; aggregate: number | null; attendancePct: number | null;
+  classPosition: number | null; classSize: number | null;
+  cardPromoted: boolean | null; savedDecision: string | null; cardPublished: boolean;
+  proposal: "PROMOTED" | "PROBATION" | "UNDECIDED";
+  autoDestinationId: string | null;
+  graduating: boolean;
+};
+type PromotionBoard = {
+  school: { id: string };
+  term: { id: string; name: string; yearName: string };
+  classroom: { id: string; name: string; gradeLevel: string };
+  nextGradeLevel: string | null;
+  destinationClassroom: { id: string; name: string; gradeLevel: string } | null;
+  classrooms: { id: string; name: string; gradeLevel: string }[];
+  rows: PromotionRow[];
+  summary: { onRoll: number; withCards: number; promoted: number; probation: number; undecided: number; graduating: number };
+};
+type RolloverResult = {
+  ok: true;
+  moved: { name: string; to: string }[];
+  graduated: { name: string }[];
+  stamped: { name: string; decision: string }[];
+  skipped: { name: string; reason: string }[];
+  onRoll: number;
+  classroom: { name: string };
+};
+
 /* ── colour doctrine: green ≥65 · amber 50–64 · red <50 ── */
 const bandTone = (total: number | null | undefined) =>
   total === null || total === undefined
@@ -224,12 +256,22 @@ export function Results() {
   const [notifyPrev, setNotifyPrev] = useState<NotifyPreview | null>(null);
   const [notifyBusy, setNotifyBusy] = useState(false);
   const [pubNotify, setPubNotify] = useState(false);
+  /* wave 23 — promotion board */
+  const [board, setBoard] = useState<PromotionBoard | null>(null);
+  const [boardLoading, setBoardLoading] = useState(false);
+  const [decisions, setDecisions] = useState<Record<string, string>>({});
+  const [destinations, setDestinations] = useState<Record<string, string>>({});
+  const [savingDecisions, setSavingDecisions] = useState(false);
+  const [confirmRoll, setConfirmRoll] = useState(false);
+  const [rollBusy, setRollBusy] = useState(false);
+  const [printRoll, setPrintRoll] = useState(false);
 
   /* iEduPro nested-nav parity: deep-link the analytics tab */
   const [appliedTarget, setAppliedTarget] = useState<NavTarget | null>(null);
   if (navTarget !== appliedTarget) {
     setAppliedTarget(navTarget);
     if (navTarget?.tab === "analytics") setTab("analytics");
+    if (navTarget?.tab === "promotion") setTab("promotion");
   }
 
   /* bootstrap — resolve the school's terms/classes and default selectors
@@ -413,6 +455,135 @@ export function Results() {
     return () => { alive = false; };
   }, [currentSchoolId, termId, classId, tab, refresh]);
 
+  /* wave 23 — promotion board, fetched while the Promotion tab is open;
+     seeded with the ledger's saved decision (or the auto proposal) and
+     the auto destination from the grade ladder, then fully editable. */
+  useEffect(() => {
+    if (!currentSchoolId || !termId || !classId || tab !== "promotion") return;
+    let alive = true;
+    setBoardLoading(true);
+    apiGet<PromotionBoard>(`/api/results/promotion-board?schoolId=${currentSchoolId}&termId=${termId}&classId=${classId}`)
+      .then((d) => {
+        if (!alive) return;
+        setBoard(d);
+        const dec: Record<string, string> = {};
+        const dst: Record<string, string> = {};
+        for (const r of d.rows) {
+          dec[r.studentId] = r.savedDecision ?? (r.proposal === "UNDECIDED" ? "UNDECIDED" : r.proposal);
+          dst[r.studentId] = r.autoDestinationId ?? (r.graduating ? "GRADUATE" : "");
+        }
+        setDecisions(dec);
+        setDestinations(dst);
+        setBoardLoading(false);
+      })
+      .catch((e) => {
+        if (alive) {
+          setBoardLoading(false);
+          toast({ title: "Could not load the promotion board", description: e.message, variant: "destructive" });
+        }
+      });
+    return () => { alive = false; };
+  }, [currentSchoolId, termId, classId, tab, refresh]);
+
+  /* wave 23 — effective (editable) decision & destination per learner */
+  const effDecision = (r: PromotionRow) =>
+    decisions[r.studentId] ?? (r.savedDecision ?? (r.proposal === "UNDECIDED" ? "UNDECIDED" : r.proposal));
+  const effDestination = (r: PromotionRow) =>
+    destinations[r.studentId] ?? (r.autoDestinationId ?? (r.graduating ? "GRADUATE" : ""));
+
+  /* counts + move plan, recomputed as the head teacher edits the board */
+  const rollPlan = useMemo(() => {
+    let promoted = 0, graduate = 0, stay = 0, undecided = 0;
+    const moves: { studentId: string; decision: string; toClassroomId?: string; name: string; to: string }[] = [];
+    for (const r of board?.rows ?? []) {
+      const d = decisions[r.studentId] ?? (r.savedDecision ?? (r.proposal === "UNDECIDED" ? "UNDECIDED" : r.proposal));
+      if (!r.cardId || d === "UNDECIDED") { undecided++; continue; }
+      if (d === "PROMOTED") {
+        const dest = destinations[r.studentId] ?? (r.autoDestinationId ?? (r.graduating ? "GRADUATE" : ""));
+        if (dest === "GRADUATE") { graduate++; moves.push({ studentId: r.studentId, decision: d, name: r.name, to: "Graduate" }); }
+        else {
+          promoted++;
+          moves.push({ studentId: r.studentId, decision: d, toClassroomId: dest || undefined, name: r.name, to: board?.classrooms.find((c) => c.id === dest)?.name ?? "No class picked" });
+        }
+      } else {
+        stay++;
+        moves.push({ studentId: r.studentId, decision: d, name: r.name, to: "Stays put" });
+      }
+    }
+    return { promoted, graduate, stay, undecided, decided: promoted + graduate + stay, moves };
+  }, [board, decisions, destinations]);
+
+  /* decision rows that differ from the ledger — powers the Save button */
+  const dirtyDecisions = useMemo(
+    () => (board?.rows ?? []).filter((r) => {
+      const eff = decisions[r.studentId] ?? (r.savedDecision ?? (r.proposal === "UNDECIDED" ? "UNDECIDED" : r.proposal));
+      return !!r.cardId && eff !== "UNDECIDED" && eff !== r.savedDecision;
+    }).length,
+    [board, decisions],
+  );
+
+  function acceptProposals() {
+    if (!board) return;
+    const dec: Record<string, string> = { ...decisions };
+    for (const r of board.rows) if (r.proposal !== "UNDECIDED") dec[r.studentId] = r.proposal;
+    setDecisions(dec);
+    toast({ title: "Proposals accepted", description: "Every learner now carries the ledger's proposal — overrule anyone, then save or execute." });
+  }
+
+  async function saveDecisions() {
+    if (!currentSchoolId || !termId || !classId || !board) return;
+    const groups = new Map<string, string[]>();
+    for (const r of board.rows) {
+      if (!r.cardId) continue;
+      const eff = effDecision(r);
+      if (eff !== "UNDECIDED" && eff !== r.savedDecision) {
+        const list = groups.get(eff) ?? [];
+        list.push(r.studentId);
+        groups.set(eff, list);
+      }
+    }
+    if (!groups.size) { toast({ title: "Nothing to save", description: "Every decision already matches the ledger." }); return; }
+    setSavingDecisions(true);
+    try {
+      let n = 0;
+      for (const [decision, studentIds] of groups) {
+        const res = await apiPost<{ decided: number }>("/api/results/promotion-board", {
+          schoolId: currentSchoolId, termId, classId, action: "decide", decision, studentIds,
+        });
+        n += res.decided;
+      }
+      toast({ title: "Decisions saved", description: `${n} report card${n === 1 ? "" : "s"} updated on the ledger.` });
+      setRefresh((r) => r + 1);
+    } catch (e: any) {
+      toast({ title: "Save failed", description: e.message, variant: "destructive" });
+    } finally {
+      setSavingDecisions(false);
+    }
+  }
+
+  async function executeRollover() {
+    if (!currentSchoolId || !termId || !classId || !rollPlan.moves.length) return;
+    setRollBusy(true);
+    try {
+      const res = await apiPost<RolloverResult>("/api/results/promotion-board", {
+        schoolId: currentSchoolId, termId, classId, action: "rollover",
+        moves: rollPlan.moves.map((m) => ({ studentId: m.studentId, decision: m.decision, toClassroomId: m.toClassroomId })),
+      });
+      const bits: string[] = [];
+      if (res.moved.length) bits.push(`${res.moved.length} moved to the next class`);
+      if (res.graduated.length) bits.push(`${res.graduated.length} graduated`);
+      if (res.stamped.length) bits.push(`${res.stamped.length} staying (card stamped)`);
+      if (res.skipped.length) bits.push(`${res.skipped.length} skipped`);
+      toast({ title: `Rollover complete — ${res.classroom.name}`, description: bits.join(" · ") || "Nothing to move." });
+      setConfirmRoll(false);
+      setRefresh((r) => r + 1);
+    } catch (e: any) {
+      toast({ title: "Rollover failed", description: e.message, variant: "destructive" });
+    } finally {
+      setRollBusy(false);
+    }
+  }
+
   /* ── derived grid data ── */
   const subjects = useMemo(() => {
     const map = new Map<string, { id: string; name: string; code: string }>();
@@ -543,6 +714,7 @@ export function Results() {
         <TabsList>
           <TabsTrigger value="grid" className="gap-1.5"><Award className="size-4" /> Broadsheet</TabsTrigger>
           <TabsTrigger value="analytics" className="gap-1.5"><BarChart3 className="size-4" /> Analytics</TabsTrigger>
+          <TabsTrigger value="promotion" className="gap-1.5"><UsersRound className="size-4" /> Promotion</TabsTrigger>
         </TabsList>
 
         <TabsContent value="grid" className="mt-4">
@@ -651,6 +823,137 @@ export function Results() {
             termLabel={termLabel ? `${termLabel.name} · ${termLabel.yearName}` : ""}
           />
         </TabsContent>
+
+        {/* wave 23 — end-of-year promotion board */}
+        <TabsContent value="promotion" className="mt-4">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="flex flex-wrap items-center gap-2 text-base">
+                <UsersRound className="size-4" /> Promotion board — {meta.classrooms.find((c) => c.id === classId)?.name ?? "class"}
+                {boardLoading && <RefreshCcw className="size-3.5 animate-spin text-muted-foreground" aria-label="Loading board" />}
+                {board && (
+                  <Badge variant="outline" className="text-[11px] gap-1">
+                    <MoveUpRight className="size-3" />
+                    {board.nextGradeLevel
+                      ? `Next: ${board.nextGradeLevel}${board.destinationClassroom ? ` · ${board.destinationClassroom.name}` : " · no class here"}`
+                      : "Exit grade — finalists graduate"}
+                  </Badge>
+                )}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {!board ? (
+                boardLoading ? <LoadingBlock label="Reading the promotion ledger…" /> : (
+                  <EmptyState icon={<UsersRound className="size-8" />} title="No board loaded" hint="Pick a term and a class to assemble the promotion board." />
+                )
+              ) : (
+                <div className="space-y-3">
+                  {/* summary chips */}
+                  <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                    <Badge variant="outline" className="gap-1"><Users className="size-3" /> {board.summary.onRoll} on roll</Badge>
+                    <Badge variant="outline" className="gap-1 bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-900"><MoveUpRight className="size-3" /> {rollPlan.promoted} moving up</Badge>
+                    <Badge variant="outline" className="gap-1 bg-violet-50 text-violet-800 border-violet-200 dark:bg-violet-950 dark:text-violet-300 dark:border-violet-900"><GraduationCap className="size-3" /> {rollPlan.graduate} graduating</Badge>
+                    <Badge variant="outline" className="gap-1 bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-900"><Gauge className="size-3" /> {rollPlan.stay} staying</Badge>
+                    {rollPlan.undecided > 0 && (
+                      <Badge variant="outline" className="gap-1"><AlertTriangle className="size-3" /> {rollPlan.undecided} without a card</Badge>
+                    )}
+                    <span className="ml-auto hidden md:block text-muted-foreground">{board.summary.withCards} of {board.summary.onRoll} compiled report card{board.summary.withCards === 1 ? "" : "s"} drive the proposals</span>
+                  </div>
+
+                  {/* actions */}
+                  {canPublish ? (
+                    <div className="flex flex-wrap gap-2">
+                      <Button size="sm" variant="outline" className="gap-1.5" onClick={acceptProposals} disabled={!board.summary.withCards}>
+                        <ListChecks className="size-4" /> Accept all proposals
+                      </Button>
+                      <Button size="sm" variant="outline" className="gap-1.5" onClick={saveDecisions} disabled={savingDecisions || dirtyDecisions === 0}>
+                        <Save className={cn("size-4", savingDecisions && "animate-pulse")} /> {savingDecisions ? "Saving…" : `Save decisions${dirtyDecisions ? ` (${dirtyDecisions})` : ""}`}
+                      </Button>
+                      <Button size="sm" className="gap-1.5" onClick={() => setConfirmRoll(true)} disabled={rollBusy || rollPlan.decided === 0}>
+                        <MoveUpRight className="size-4" /> Execute rollover
+                      </Button>
+                      <Button size="sm" variant="outline" className="gap-1.5 ml-auto" onClick={() => setPrintRoll(true)} disabled={!board.rows.length}>
+                        <Printer className="size-4" /> Print list
+                      </Button>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">View only — saving decisions and running the rollover needs the generate &amp; publish reports permission.</p>
+                  )}
+
+                  {/* the board */}
+                  <div className="rounded-xl border overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="min-w-[180px]">Learner</TableHead>
+                          <TableHead className="text-right">Avg</TableHead>
+                          <TableHead className="text-right">Agg</TableHead>
+                          <TableHead className="text-right">Attend</TableHead>
+                          <TableHead>Card</TableHead>
+                          <TableHead>Proposal</TableHead>
+                          <TableHead>Decision</TableHead>
+                          <TableHead>Placement</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {board.rows.map((r) => {
+                          const eff = effDecision(r);
+                          const dest = effDestination(r);
+                          return (
+                            <TableRow key={r.studentId}>
+                              <TableCell className="py-2">
+                                <div className="font-medium leading-tight">{r.name}</div>
+                                <div className="text-[11px] text-muted-foreground">{r.indexNo}{r.classPosition ? ` · ${ordinal(r.classPosition)} in class` : ""}</div>
+                              </TableCell>
+                              <TableCell className={cn("text-right tabular-nums font-semibold", bandTone(r.average).cell)}>{fmt1(r.average)}</TableCell>
+                              <TableCell className="text-right tabular-nums">{r.aggregate ?? "—"}</TableCell>
+                              <TableCell className="text-right tabular-nums">{r.attendancePct !== null ? `${r.attendancePct}%` : "—"}</TableCell>
+                              <TableCell>
+                                <Badge variant={r.cardPublished ? "default" : "outline"} className="text-[10px]">
+                                  {r.cardId ? (r.cardPublished ? "Published" : "Draft") : "No card"}
+                                </Badge>
+                              </TableCell>
+                              <TableCell><ProposalBadge proposal={r.proposal} /></TableCell>
+                              <TableCell>
+                                <Select value={eff} onValueChange={(v) => setDecisions((p) => ({ ...p, [r.studentId]: v }))} disabled={!canPublish || !r.cardId}>
+                                  <SelectTrigger className="h-8 w-[122px] text-xs" aria-label={`Decision for ${r.name}`}><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="UNDECIDED">Undecided</SelectItem>
+                                    <SelectItem value="PROMOTED">Promoted</SelectItem>
+                                    <SelectItem value="PROBATION">Probation</SelectItem>
+                                    <SelectItem value="REPEAT">Repeat</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </TableCell>
+                              <TableCell>
+                                <Select value={dest || "NONE"} onValueChange={(v) => setDestinations((p) => ({ ...p, [r.studentId]: v === "NONE" ? "" : v }))} disabled={!canPublish || eff !== "PROMOTED"}>
+                                  <SelectTrigger className="h-8 w-[150px] text-xs" aria-label={`Placement for ${r.name}`}><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="GRADUATE">Graduate</SelectItem>
+                                    <SelectItem value="NONE">Not set — stays put</SelectItem>
+                                    {board.classrooms.filter((c) => c.id !== classId).map((c) => (
+                                      <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                        {!board.rows.length && (
+                          <TableRow><TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">No learners on roll in this class.</TableCell></TableRow>
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Proposals come from the compiled report cards (average ≥ 40 → promoted, below → probation). Overrule freely — decisions are stamped on the cards, and "Execute rollover" actually moves placements (promoted-from trail) or graduates the finalists.
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
       </Tabs>
 
       {/* ── single printable report card ── */}
@@ -747,6 +1050,68 @@ export function Results() {
                 showGhanaColumns
               />
             ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── wave 23 — rollover confirmation: what actually happens to
+          each placement the moment the head teacher confirms ── */}
+      <AlertDialog open={confirmRoll} onOpenChange={setConfirmRoll}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2"><UsersRound className="size-4" /> Execute the rollover?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {rollPlan.promoted} learner{rollPlan.promoted === 1 ? "" : "s"} move into their destination class, {rollPlan.graduate} graduate{rollPlan.graduate === 1 ? "" : "s"} off the roll and {rollPlan.stay} stay{rollPlan.stay === 1 ? "" : ""} put with their card stamped. Placements carry the promoted-from trail.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="max-h-48 overflow-y-auto nice-scroll rounded-xl border divide-y text-sm">
+            {rollPlan.moves.map((m) => (
+              <div key={m.studentId} className="flex items-center gap-2 px-3 py-1.5">
+                <span className="flex-1 truncate">{m.name}</span>
+                <span className={cn(
+                  "text-[11px] font-medium",
+                  m.decision === "PROMOTED" ? "text-emerald-700 dark:text-emerald-300" : m.decision === "REPEAT" ? "text-red-700 dark:text-red-300" : "text-amber-700 dark:text-amber-300",
+                )}>
+                  {m.decision === "PROMOTED" ? (m.to === "Graduate" ? "graduates" : `→ ${m.to}`) : m.decision === "REPEAT" ? "repeats" : "probation"}
+                </span>
+              </div>
+            ))}
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={executeRollover} disabled={rollBusy}>
+              {rollBusy ? "Working…" : "Execute rollover"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* ── wave 23 — printable promotion list ── */}
+      <Dialog open={printRoll} onOpenChange={setPrintRoll}>
+        <DialogContent className="max-w-4xl max-h-[92vh] overflow-y-auto nice-scroll">
+          <DialogHeader className="no-print">
+            <DialogTitle className="flex items-center gap-2"><Printer className="size-4" /> Promotion list</DialogTitle>
+            <DialogDescription>Print on A4 — decisions, averages and placements with the headteacher&apos;s signature block.</DialogDescription>
+            <div className="flex gap-2 pt-1">
+              <Button size="sm" className="gap-1.5" onClick={() => window.print()} disabled={!board}><Printer className="size-4" /> Print</Button>
+            </div>
+          </DialogHeader>
+          <div className="print-area">
+            {board && meta && (
+              <PromotionSheet
+                school={meta.school}
+                termLabel={termLabel ? `${termLabel.name} · ${termLabel.yearName}` : ""}
+                className={meta.classrooms.find((c) => c.id === classId)?.name ?? ""}
+                rows={board.rows.map((r) => {
+                  const dest = effDestination(r);
+                  return {
+                    name: r.name, indexNo: r.indexNo, average: r.average, aggregate: r.aggregate,
+                    attendancePct: r.attendancePct, decision: effDecision(r),
+                    destination: dest === "GRADUATE" ? "Graduates" : (board.classrooms.find((c) => c.id === dest)?.name ?? "—"),
+                  };
+                })}
+              />
+            )}
           </div>
         </DialogContent>
       </Dialog>
@@ -1385,6 +1750,110 @@ function TranscriptSheet({ payload }: { payload: TranscriptPayload }) {
           <div className="mt-3 text-neutral-600">Date: ..............................</div>
         </div>
         <div className="text-right self-end text-[11px] text-neutral-500">— END OF TRANSCRIPT —</div>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════
+   Wave 23 — printable end-of-year promotion list: school header,
+   per-learner verdicts & placements, signature block.
+   ══════════════════════════════════════════════════════════════ */
+function ProposalBadge({ proposal }: { proposal: string }) {
+  const m: Record<string, { label: string; className: string }> = {
+    PROMOTED: { label: "Promoted", className: "bg-emerald-600 text-white" },
+    PROBATION: { label: "Probation", className: "bg-amber-500 text-white" },
+    UNDECIDED: { label: "No card", className: "bg-secondary text-secondary-foreground" },
+  };
+  const v = m[proposal] ?? { label: proposal, className: "" };
+  return <Badge className={cn("text-[10px] gap-1", v.className)}>{v.label}</Badge>;
+}
+
+function PromotionSheet(props: {
+  school: SchoolInfo;
+  termLabel: string;
+  className: string;
+  rows: { name: string; indexNo: string; average: number | null; aggregate: number | null; attendancePct: number | null; decision: string; destination: string }[];
+}) {
+  const p = props;
+  const label = (d: string) => (d === "PROMOTED" ? "Promoted" : d === "PROBATION" ? "Probation" : d === "REPEAT" ? "Repeat" : "Undecided");
+  const counts = p.rows.reduce<Record<string, number>>((acc, r) => { acc[r.decision] = (acc[r.decision] ?? 0) + 1; return acc; }, {});
+  return (
+    <div className="print-sheet bg-white text-neutral-900 font-serif text-[12px] leading-snug border border-neutral-300 shadow-sm rounded-md p-5 md:p-7 max-w-[820px] mx-auto">
+      {/* school header — same doctrine as the report card */}
+      <div className="flex items-center gap-4 border-b-2 border-neutral-800 pb-3">
+        <div className="grid place-items-center size-14 shrink-0 rounded-full text-white font-bold text-lg" style={{ background: p.school.logoColor }} aria-hidden>
+          {initials(p.school.name)}
+        </div>
+        <div className="min-w-0">
+          <div className="text-xl md:text-2xl font-bold tracking-wide uppercase">{p.school.name}</div>
+          <div className="text-[11.5px] text-neutral-600">
+            {[p.school.gpsAddress, p.school.town, p.school.region].filter(Boolean).join(" · ")}
+            {p.school.phone ? ` · Tel: ${p.school.phone}` : ""}
+            {p.school.email ? ` · ${p.school.email}` : ""}
+          </div>
+          {p.school.motto && <div className="text-[11.5px] italic text-neutral-700 mt-0.5">“{p.school.motto}”</div>}
+        </div>
+        <div className="ml-auto text-right text-[10.5px] text-neutral-500 hidden md:block">
+          <div>EMIS code</div>
+          <div className="font-semibold text-neutral-700">{p.school.code}</div>
+        </div>
+      </div>
+
+      <div className="text-center my-3">
+        <div className="text-base md:text-lg font-bold tracking-[0.2em] uppercase">End-of-Year Promotion List</div>
+        <div className="text-[12px] text-neutral-600">{p.termLabel} · {p.className}</div>
+      </div>
+
+      <table className="w-full border-collapse text-[11.5px]">
+        <thead>
+          <tr className="bg-neutral-100">
+            <th className="border border-neutral-400 px-2 py-1 text-center w-8">#</th>
+            <th className="border border-neutral-400 px-2 py-1 text-left">Learner</th>
+            <th className="border border-neutral-400 px-2 py-1 text-center">Index No.</th>
+            <th className="border border-neutral-400 px-2 py-1 text-center">Avg</th>
+            <th className="border border-neutral-400 px-2 py-1 text-center">Agg</th>
+            <th className="border border-neutral-400 px-2 py-1 text-center">Attend.</th>
+            <th className="border border-neutral-400 px-2 py-1 text-center">Decision</th>
+            <th className="border border-neutral-400 px-2 py-1 text-center">Placement</th>
+          </tr>
+        </thead>
+        <tbody>
+          {p.rows.map((r, i) => (
+            <tr key={r.indexNo}>
+              <td className="border border-neutral-400 px-2 py-0.5 text-center tabular-nums">{i + 1}</td>
+              <td className="border border-neutral-400 px-2 py-0.5">{r.name}</td>
+              <td className="border border-neutral-400 px-2 py-0.5 text-center tabular-nums">{r.indexNo}</td>
+              <td className="border border-neutral-400 px-2 py-0.5 text-center tabular-nums font-semibold">{r.average !== null ? fmt1(r.average) : "—"}</td>
+              <td className="border border-neutral-400 px-2 py-0.5 text-center tabular-nums">{r.aggregate ?? "—"}</td>
+              <td className="border border-neutral-400 px-2 py-0.5 text-center tabular-nums">{r.attendancePct !== null ? `${r.attendancePct}%` : "—"}</td>
+              <td className="border border-neutral-400 px-2 py-0.5 text-center font-semibold">{label(r.decision)}</td>
+              <td className="border border-neutral-400 px-2 py-0.5 text-center">{r.destination}</td>
+            </tr>
+          ))}
+          {!p.rows.length && (
+            <tr><td colSpan={8} className="border border-neutral-400 px-2 py-3 text-center text-neutral-500">No learners on roll.</td></tr>
+          )}
+        </tbody>
+      </table>
+
+      <div className="flex flex-wrap gap-x-5 gap-y-1 mt-2 text-[11px] text-neutral-600">
+        <span>Promoted: <b className="tabular-nums">{counts.PROMOTED ?? 0}</b></span>
+        <span>Probation: <b className="tabular-nums">{counts.PROBATION ?? 0}</b></span>
+        <span>Repeat: <b className="tabular-nums">{counts.REPEAT ?? 0}</b></span>
+        <span>Undecided: <b className="tabular-nums">{counts.UNDECIDED ?? 0}</b></span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-10 pt-8 text-[12px]">
+        <div>
+          <div className="border-t border-neutral-800 w-3/4" />
+          <div className="mt-1 text-neutral-600">Class Teacher</div>
+        </div>
+        <div>
+          <div className="border-t border-neutral-800 w-3/4" />
+          <div className="mt-1 text-neutral-600">Headteacher</div>
+          <div className="mt-3 text-neutral-600">Date: ..............................</div>
+        </div>
       </div>
     </div>
   );

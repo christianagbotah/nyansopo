@@ -218,7 +218,7 @@ export async function POST(req: NextRequest) {
             grade: r.grade, position: r.position, remarks: r.remark, classroomId: classId,
             // wave 21: the ledger changed — anything previously published
             // is recalled to draft so portals never show stale marks
-            published: false, publishedAt: null,
+            published: false,
           },
         });
         resultCount++;
