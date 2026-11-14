@@ -407,7 +407,7 @@ export function Health() {
         finding: mFinding.trim() || undefined,
         referred: mReferred,
       });
-      toast({ title: "Measurements saved", description: `${target.name}${mHeight && mWeight ? " — BMI computed on save" : ""}` });
+      toast({ title: "Measurements saved", description: `${"name" in target ? target.name : target.studentName}${mHeight && mWeight ? " — BMI computed on save" : ""}` });
       setMeasureRow(null); setMeasurePending(null);
       setMHeight(""); setMWeight(""); setMVision("PASS"); setMHearing("PASS"); setMFinding(""); setMReferred(false);
       loadScreenDetail(openScreenId); loadScreenings();
@@ -1413,7 +1413,7 @@ export function Health() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2"><Ruler className="size-5 text-primary" />Screening measurement</DialogTitle>
             <DialogDescription>
-              {(measureRow ?? measurePending)?.name}{(measureRow ?? measurePending)?.classroomName ? ` · ${(measureRow ?? measurePending)!.classroomName}` : ""}
+              {(measureRow?.studentName ?? measurePending?.name ?? "")}{(measureRow ?? measurePending)?.classroomName ? ` · ${(measureRow ?? measurePending)!.classroomName}` : ""}
               {measureRow ? " — editing the existing record" : ""}
             </DialogDescription>
           </DialogHeader>

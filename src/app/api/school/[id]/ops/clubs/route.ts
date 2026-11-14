@@ -561,7 +561,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       const nm = optStr(body.name);
       if (!nm) return bad("Club name cannot be empty");
       if (nm.length > 80) return bad("Club name is too long (max 80 characters)");
-      const dupe = await db.club.findFirst({ where: { schoolId, name: { equals: nm, mode: "insensitive" } }, NOT: { id: club.id } });
+      const dupe = await db.club.findFirst({ where: { schoolId, name: { equals: nm, mode: "insensitive" }, NOT: { id: club.id } } });
       if (dupe) return bad(`A club called "${nm}" already exists at this school`, 409);
       data.name = nm;
     }

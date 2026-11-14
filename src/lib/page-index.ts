@@ -16,7 +16,7 @@ import {
   Armchair, BookMarked, Network, UsersRound, HeartPulse, ScrollText, Wrench, Timer, Stethoscope,
   Flag, Trees, Sparkles, Scale, FileSearch, ShoppingBasket, GalleryHorizontal, Rows3, Banknote as Bank, Palette,
   DatabaseBackup, PiggyBank, Award, Gavel, Ruler, Activity, Home as HomeIcon, Hospital, Thermometer,
-  Trophy, Medal, BookUser,
+  Trophy, Medal, BookUser, Footprints,
 } from "lucide-react";
 
 export type PageEntry = {
@@ -60,6 +60,11 @@ export const PAGE_INDEX: PageEntry[] = [
   { id: "pg-adm-requests", label: "Admission Requests", section: S.people, module: "admissions", target: { tab: "requests" }, perm: ["admissions.manage"], icon: FileSearch, keywords: ["online", "applications"] },
   { id: "pg-adm-transfers", label: "Transfer Requests", section: S.people, module: "admissions", target: { tab: "transfers" }, perm: ["admissions.manage"], icon: Rows3, keywords: ["moving", "incoming", "leaving"] },
   { id: "pg-staffhub", label: "Staff Self-Service", section: S.people, module: "staffhub", perm: ["staffhub.self"], icon: BadgeCheck, keywords: ["my portal", "leave", "payslip"] },
+  { id: "pg-staff-att", label: "Staff Attendance", section: S.people, module: "staffduty", target: { tab: "register" }, perm: ["staffduty.view"], icon: CalendarCheck, keywords: ["staff register", "clock in", "clock out", "late", "punctuality", "movement book", "duty", "leave"] },
+  { id: "pg-staff-leave", label: "Staff Leave Ledger", section: S.people, module: "staffduty", target: { tab: "leave" }, perm: ["staffduty.view"], icon: CalendarDays, keywords: ["annual leave", "sick leave", "maternity", "paternity", "study leave", "compassionate", "approve"] },
+  { id: "pg-staff-duty", label: "Duty Roster", section: S.people, module: "staffduty", target: { tab: "roster" }, perm: ["staffduty.view"], icon: CalendarDays, keywords: ["duty roster", "assembly", "break supervision", "closing", "gate", "noticeboard", "weekly"] },
+  { id: "pg-staff-movement", label: "Staff Movement Book", section: S.people, module: "staffduty", target: { tab: "movement" }, perm: ["staffduty.view"], icon: Footprints, keywords: ["sign out", "sign in", "whereabouts", "destination", "movement book", "GES"] },
+  { id: "pg-staff-analytics", label: "Staff Ops Analytics", section: S.people, module: "staffduty", target: { tab: "analytics" }, perm: ["staffduty.view"], icon: BarChart3, keywords: ["attendance rate", "punctuality", "late arrivals", "leave usage", "substitutions", "cover"] },
   { id: "pg-rbac", label: "Users & Access", section: S.people, module: "rbac", target: { tab: "users" }, perm: ["rbac.manage"], icon: ShieldCheck, keywords: ["accounts", "logins", "passwords", "staff accounts"] },
   { id: "pg-roles", label: "Roles & Permissions", section: S.people, module: "rbac", target: { tab: "roles" }, perm: ["rbac.manage"], icon: ShieldCheck, keywords: ["access control", "custom role", "cashier permissions", "acl", "grant"] },
 
@@ -200,5 +205,5 @@ export const MODULE_LABELS: Record<string, string> = {
   inventory: "Store", finance: "Finance", sms: "SMS", ai: "AI", settings: "Settings", rbac: "Access",
   staffhub: "Staff Hub", portal: "Parent Portal", campus: "Learner Portal", branches: "Branches",
   association: "Association", accounts: "Accounts", messages: "Messages", budget: "Budgets",
-  discipline: "Discipline", health: "Health", clubs: "Clubs",
+  discipline: "Discipline", health: "Health", clubs: "Clubs", staffduty: "Staff Ops",
 };

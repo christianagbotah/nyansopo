@@ -74,6 +74,9 @@ export const PERMISSIONS: PermDef[] = [
   // Clubs & societies (wave 27 — the co-curricular register)
   { id: "clubs.view", label: "View club register, rosters & events", group: "Academic" },
   { id: "clubs.manage", label: "Manage clubs, memberships, meetings & events", group: "Academic" },
+  // Staff attendance & duty (wave 28 — the staff movement book)
+  { id: "staffduty.view", label: "View staff attendance, duty roster & movement book", group: "Staff Operations" },
+  { id: "staffduty.manage", label: "Mark staff register, assign duty, approve leave & record cover", group: "Staff Operations" },
   // Communication
   { id: "sms.view", label: "View SMS centre", group: "Communication" },
   { id: "sms.send", label: "Send SMS & manage automations", group: "Communication" },
@@ -147,6 +150,7 @@ export const ROLE_DEFAULTS: Record<string, string[] | "*"> = {
     "boarding.view",
     "sms.view", "sms.send", "email.send", "messages.use",
     "settings.manage", "ai.use", "staffhub.self",
+    "staffduty.view",
   ],
   CASHIER: [
     "students.view", "fees.view", "fees.collect", "payments.momo", "cashier.reports", "approvals.request",
@@ -168,6 +172,7 @@ export const ROLE_DEFAULTS: Record<string, string[] | "*"> = {
     "reports.view", "reports.publish", "exams.online",
     "sms.view", "sms.send", "messages.use",
     "daily.view", "daily.collect",
+    "staffduty.view",
     "ai.use", "staffhub.self",
   ],
   NON_TEACHING: ["staffhub.self", "messages.use"],
@@ -233,6 +238,7 @@ export const PERM_IMPLIES: Record<string, string[]> = {
   "discipline.manage": ["discipline.view"],
   "health.manage": ["health.view"],
   "clubs.manage": ["clubs.view"],
+  "staffduty.manage": ["staffduty.view"],
   "sms.send": ["sms.view"],
   "payments.momo": ["fees.view"],
   "library.issue": ["library.view"],
@@ -315,6 +321,7 @@ export const MODULE_PERMS: Record<string, string[]> = {
   discipline: ["discipline.view"],
   health: ["health.view"],
   clubs: ["clubs.view"],
+  staffduty: ["staffduty.view"],
   curriculum: ["curriculum.view"],
   reports: ["reports.view"],
   exams: ["exams.online"],

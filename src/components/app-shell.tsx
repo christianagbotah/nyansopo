@@ -58,6 +58,7 @@ import { Boarding } from "@/components/modules/boarding";
 import { Discipline } from "@/components/modules/discipline";
 import { Health } from "@/components/modules/health";
 import { Clubs } from "@/components/modules/clubs";
+import { StaffDaily } from "@/components/modules/staff-daily";
 import {
   LayoutDashboard, Users, Banknote, CalendarCheck, ClipboardList, GraduationCap, ArrowLeftRight, Building2,
   BrainCircuit, Settings as SettingsIcon, Landmark, Menu, CloudOff, Cloud, RefreshCcw, LogOut, Moon, Sun,
@@ -65,7 +66,7 @@ import {
   BookOpen, ShieldCheck, Receipt, Route, UserRound, Home, Backpack, Laptop, BedDouble, NotebookPen, Search, LayoutGrid, SmartphoneNfc,
   QrCode, UserPlus, Printer, Wallet, BarChart3, CalendarDays, HandCoins, FileWarning, ListChecks, ScanLine, ClipboardPen, Percent,
   PanelLeftClose, PanelLeftOpen, Palette, SlidersHorizontal, Archive, FileText, BookMarked, Target, PiggyBank, Award,
-  MessagesSquare, Landmark as LedgerIcon, DatabaseBackup, Gavel, HeartPulse, Stethoscope, Ruler, Trophy,
+  MessagesSquare, Landmark as LedgerIcon, DatabaseBackup, Gavel, HeartPulse, Stethoscope, Ruler, Trophy, Footprints,
 } from "lucide-react";
 
 type NavLeaf = { id: string; label: string; icon?: any; target?: NavTarget };
@@ -81,6 +82,7 @@ const SCHOOL_NAV: NavItem[] = [
   { id: "conductor", label: "Conductor Portal", icon: Route, section: "Overview" },
   { id: "students", label: "Students", icon: Users, section: "People" },
   { id: "admissions", label: "Admissions & Transfers", icon: ArrowLeftRight, section: "People" },
+  { id: "staffduty", label: "Staff Attendance & Duty", icon: Footprints, section: "People" },
   { id: "fees", label: "Fees & Billing", icon: Banknote, section: "Finance" },
   { id: "momo", label: "MoMo & Payment Links", icon: SmartphoneNfc, section: "Finance" },
   { id: "daily", label: "Daily Services & Tuck", icon: UtensilsCrossed, section: "Finance" },
@@ -404,6 +406,15 @@ export function AppShell() {
       { id: "clubs-profiles", label: "Co-curricular profiles", target: { tab: "profiles" } },
       { id: "clubs-analytics", label: "Participation analytics", target: { tab: "analytics" } },
     ];
+    /* staff attendance & duty sidebar (wave 28 — the staff movement book) */
+    const staffdutyChildren: NavChild[] = [
+      { id: "staffduty-register", label: "Daily staff register", target: { tab: "register" } },
+      { id: "staffduty-leave", label: "Leave ledger", target: { tab: "leave" } },
+      { id: "staffduty-roster", label: "Duty roster", target: { tab: "roster" } },
+      { id: "staffduty-movement", label: "Movement book", target: { tab: "movement" } },
+      { id: "staffduty-cover", label: "Substitution cover", target: { tab: "cover" } },
+      { id: "staffduty-analytics", label: "Staff ops analytics", target: { tab: "analytics" } },
+    ];
     /* CI3 settings sidebar: general / theme / sms / permissions / payment */
     const settingsChildren: NavChild[] = [
       { id: "set-system", label: "System settings", target: { tab: "system" } },
@@ -447,6 +458,7 @@ export function AppShell() {
       if (item.id === "discipline") enriched.children = disciplineChildren;
       if (item.id === "health") enriched.children = healthChildren;
       if (item.id === "clubs") enriched.children = clubsChildren;
+      if (item.id === "staffduty") enriched.children = staffdutyChildren;
       if (item.id === "settings") enriched.children = settingsChildren;
       if (item.id === "boarding") enriched.children = boardingChildren;
       if (item.id === "curriculum") enriched.children = curriculumChildren;
@@ -882,6 +894,7 @@ export function AppShell() {
              module === "discipline" && show("discipline") ? <Discipline /> :
              module === "health" && show("health") ? <Health /> :
              module === "clubs" && show("clubs") ? <Clubs /> :
+             module === "staffduty" && show("staffduty") ? <StaffDaily /> :
              module === "classes" && show("classes") ? <Classes /> :
              module === "gradebook" && show("gradebook") ? <Gradebook /> :
              module === "results" && show("results") ? <Results /> :

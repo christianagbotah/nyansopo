@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { UserRound, Receipt, Megaphone, Clock, BadgeCheck, CalendarDays, Wallet, TrendingDown, School, MessageSquareWarning } from "lucide-react";
+import { UserRound, Receipt, Megaphone, Clock, BadgeCheck, CalendarDays, CalendarCheck, Wallet, TrendingDown, School, MessageSquareWarning, Plane } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/hooks/use-toast";
 
@@ -22,6 +22,12 @@ type Payslip = {
 };
 type StaffData = {
   role: string; school: { name: string; motto: string | null; town: string; region: string; phone: string | null } | null;
+  staffduty?: {
+    recent: { date: string; weekday: string; status: string; clockIn: string | null; clockOut: string | null; note: string | null }[];
+    stats: { marked: number; present: number; late: number; absent: number; leave: number; rate: number | null };
+    duty: { weekday: string; duty: string; note: string | null }[];
+    balances: { type: string; entitlement: number | null; used: number; remaining: number | null }[];
+  };
   me: {
     fullName: string; title: string | null; position: string | null; category: string; department: string | null;
     staffCode: string | null; qualification: string | null; employmentType: string; hiredAt: string | null;
@@ -39,6 +45,13 @@ type MyClass = { classroomId: string; name: string; learners: number; presentTod
 const DAYS = ["", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 const fmtTime = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 const EMPLOYMENT_LABEL: Record<string, string> = { FULL_TIME: "Full-time", PART_TIME: "Part-time", CONTRACT: "Contract", CASUAL: "Casual" };
+const ATT_CHIP: Record<string, string> = {
+  PRESENT: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30",
+  LATE: "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30",
+  ABSENT: "bg-red-500/15 text-red-700 dark:text-red-300 border-red-500/30",
+  LEAVE: "bg-violet-500/15 text-violet-700 dark:text-violet-300 border-violet-500/30",
+  OFF: "bg-slate-500/15 text-slate-600 dark:text-slate-300 border-slate-500/30",
+};
 
 export function StaffPortal() {
   const { currentSchoolId, setModule } = useStore();
@@ -84,6 +97,7 @@ export function StaffPortal() {
           <TabsTrigger value="profile">My profile</TabsTrigger>
           <TabsTrigger value="payslips">Payslips ({me.payslips.length})</TabsTrigger>
           {me.timetable.length > 0 && <TabsTrigger value="routine">My routine</TabsTrigger>}
+          {data.staffduty && <TabsTrigger value="attendance">My attendance</TabsTrigger>}
           <TabsTrigger value="notices">Notices {data.announcements?.length ? <span className="ml-1 inline-flex items-center justify-center rounded-full bg-primary px-1.5 min-w-4 h-4 text-[10px] font-bold text-primary-foreground">{data.announcements.length}</span> : null}</TabsTrigger>
         </TabsList>
 
@@ -220,6 +234,59 @@ export function StaffPortal() {
                 })}
               </CardContent>
             </Card>
+          </TabsContent>
+        )}
+
+        {data.staffduty && (
+          <TabsContent value="attendance" className="mt-3 grid lg:grid-cols-3 gap-4">
+            <Card className="lg:col-span-2">
+              <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><CalendarCheck className="size-4" /> My attendance — last marked days</CardTitle></CardHeader>
+              <CardContent>
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {data.staffduty.recent.map((r) => (
+                    <div key={r.date} className="rounded-lg border p-2 min-w-36">
+                      <div className="text-[10px] text-muted-foreground">{r.weekday.slice(0, 3)} {fmtDate(r.date)}</div>
+                      <Badge variant="outline" className={`text-[10px] mt-1 ${ATT_CHIP[r.status] ?? ""}`}>{r.status.toLowerCase()}</Badge>
+                      <div className="text-[10px] text-muted-foreground mt-1">
+                        {r.clockIn ? new Date(r.clockIn).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}
+                        {" → "}
+                        {r.clockOut ? new Date(r.clockOut).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}
+                      </div>
+                    </div>
+                  ))}
+                  {!data.staffduty.recent.length && <span className="text-xs text-muted-foreground">No register rows yet — the office marks the staff register each day.</span>}
+                </div>
+                <div className="text-xs text-muted-foreground">Last 30 days: <span className="font-semibold text-foreground">{data.staffduty.stats.rate ?? "—"}% at post</span> · {data.staffduty.stats.present} present · {data.staffduty.stats.late} late · {data.staffduty.stats.absent} absent · {data.staffduty.stats.leave} on leave</div>
+              </CardContent>
+            </Card>
+            <div className="space-y-4">
+              <Card>
+                <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><CalendarDays className="size-4" /> My duty roster</CardTitle></CardHeader>
+                <CardContent className="space-y-1.5">
+                  {data.staffduty.duty.length ? data.staffduty.duty.map((d) => (
+                    <div key={`${d.weekday}-${d.duty}`} className="flex items-center justify-between rounded-md bg-secondary/60 px-2.5 py-1.5">
+                      <span className="text-xs font-medium">{d.weekday}</span>
+                      <span className="text-xs text-muted-foreground capitalize">{d.duty.toLowerCase().replace("_", " ")}</span>
+                    </div>
+                  )) : <span className="text-xs text-muted-foreground">No duty slots assigned this week.</span>}
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><Plane className="size-4" /> My leave</CardTitle></CardHeader>
+                <CardContent className="space-y-1.5">
+                  {data.staffduty.balances.filter((b) => b.used > 0 || b.entitlement != null).map((b) => (
+                    <div key={b.type} className="flex items-center justify-between text-xs">
+                      <span>{b.type.charAt(0) + b.type.slice(1).toLowerCase()}</span>
+                      <span className="text-muted-foreground">
+                        {b.entitlement == null ? `${b.used} day${b.used === 1 ? "" : "s"} used · no fixed cap` : `${b.remaining} of ${b.entitlement} left`}
+                      </span>
+                    </div>
+                  ))}
+                  {!data.staffduty.balances.some((b) => b.used > 0 || b.entitlement != null) && <span className="text-xs text-muted-foreground">No leave taken yet.</span>}
+                  <div className="text-[10px] text-muted-foreground pt-1">Leave requests go through the head teacher's office.</div>
+                </CardContent>
+              </Card>
+            </div>
           </TabsContent>
         )}
 

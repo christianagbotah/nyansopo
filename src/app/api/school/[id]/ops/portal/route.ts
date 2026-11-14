@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getUser } from "@/lib/session";
+import { attStats, leaveBalances } from "@/lib/staff-duty-core";
 
 // ── GET /api/school/[id]/ops/portal?view=parent|student|staff
 //    Self-service portal data — strictly scoped to the signed-in account:
@@ -211,11 +212,28 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       },
     });
     if (!st || st.schoolId !== schoolId) return NextResponse.json({ error: "Staff record not found" }, { status: 404 });
+    // wave 28 — the staff member's own attendance & duty record (read-only)
+    const dutySince = new Date();
+    dutySince.setUTCDate(dutySince.getUTCDate() - 30);
+    const [myAttRows, myDutySlots, myLeaves] = await Promise.all([
+      db.staffAttendance.findMany({ where: { staffId: st.id, date: { gte: dutySince } }, orderBy: { date: "desc" } }),
+      db.dutyAssignment.findMany({ where: { staffId: st.id }, orderBy: { weekday: "asc" } }),
+      db.leaveRequest.findMany({ where: { staffId: st.id } }),
+    ]);
     const announcements = await db.announcement.findMany({ where: { schoolId }, orderBy: { postedAt: "desc" }, take: 6 });
     const school = await db.school.findUnique({ where: { id: schoolId }, select: { name: true, motto: true, town: true, region: true, phone: true } });
     const mask = (v?: string | null) => (v && v.length > 5 ? `${v.slice(0, 3)}${"•".repeat(v.length - 5)}${v.slice(-2)}` : v ? "••••" : null);
     return NextResponse.json({
       role: "STAFF", school, announcements,
+      staffduty: {
+        recent: myAttRows.slice(0, 14).map((r) => ({
+          date: r.date.toISOString().slice(0, 10), weekday: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][r.date.getUTCDay()],
+          status: r.status, clockIn: r.clockIn?.toISOString() ?? null, clockOut: r.clockOut?.toISOString() ?? null, note: r.note,
+        })),
+        stats: attStats(myAttRows),
+        duty: myDutySlots.map((d) => ({ weekday: d.weekday, duty: d.duty, note: d.note })),
+        balances: leaveBalances(myLeaves.map((l) => ({ type: l.type, status: l.status, days: l.days }))),
+      },
       me: {
         fullName: st.fullName, title: st.title, position: st.position, category: st.category,
         department: st.department, staffCode: st.staffCode, qualification: st.qualification,

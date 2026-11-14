@@ -212,6 +212,11 @@ model School {
   clubMemberships      ClubMembership[]
   clubMeetings         ClubMeeting[]
   clubEvents           ClubEvent[]
+  staffAttendanceRows  StaffAttendance[]
+  staffLeaveRequests   LeaveRequest[]
+  dutyAssignments      DutyAssignment[]
+  staffMovements       StaffMovement[]
+  substitutionLogs     SubstitutionLog[]
   // ── backlog E/D/B/A ──
   dbBackups            DbBackup[]
   emailSetting         EmailSetting?
@@ -428,6 +433,12 @@ model Staff {
   housesMastered BoardingHouse[] @relation("HouseMaster")
   lessonNotes    LessonNote[]
   studyMaterials StudyMaterial[]
+  attendanceRows StaffAttendance[]
+  leaveRequests  LeaveRequest[]
+  dutySlots      DutyAssignment[]
+  movements      StaffMovement[]
+  coversMade     SubstitutionLog[] @relation("SubstituteStaff")
+  coversReceived SubstitutionLog[] @relation("AbsentStaff")
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -2631,4 +2642,108 @@ model BudgetLine {
   notes          String?
 
   @@unique([budgetId, chartAccountId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// STAFF ATTENDANCE & DUTY (wave 28 — the staff movement book)
+// The staff-side registers every Ghanaian school keeps beside the
+// learner ones: the daily Staff Attendance Book (clock-in/out with
+// GES 08:00 punctuality rule), the Staff Movement Book (sign-out /
+// sign-in with destination & purpose), the noticeboard duty roster
+// (one holder per duty slot per weekday), the leave ledger (annual /
+// sick / maternity / paternity / study / compassionate per the Ghana
+// Labour Act) and the substitution cover log for absent teachers.
+// ─────────────────────────────────────────────────────────────
+model StaffAttendance {
+  id            String    @id @default(cuid())
+  schoolId      String
+  school        School    @relation(fields: [schoolId], references: [id])
+  staffId       String
+  staff         Staff     @relation(fields: [staffId], references: [id])
+  date          DateTime  @db.Date
+  status        String    @default("PRESENT") // PRESENT | LATE | ABSENT | LEAVE | OFF
+  clockIn       DateTime?
+  clockOut      DateTime?
+  note          String?
+  markedByName  String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([staffId, date])
+  @@index([schoolId, date])
+}
+
+model LeaveRequest {
+  id             String    @id @default(cuid())
+  schoolId       String
+  school         School    @relation(fields: [schoolId], references: [id])
+  staffId        String
+  staff          Staff     @relation(fields: [staffId], references: [id])
+  type           String // ANNUAL | SICK | MATERNITY | PATERNITY | STUDY | COMPASSIONATE | OTHER
+  startsAt       DateTime  @db.Date
+  endsAt         DateTime  @db.Date
+  days           Int
+  status         String    @default("PENDING") // PENDING | APPROVED | DECLINED | CANCELLED
+  reason         String?
+  requestedByName String?
+  decidedByName  String?
+  decidedAt      DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([schoolId, status])
+  @@index([staffId, startsAt])
+}
+
+model DutyAssignment {
+  id        String   @id @default(cuid())
+  schoolId  String
+  school    School   @relation(fields: [schoolId], references: [id])
+  staffId   String
+  staff     Staff    @relation(fields: [staffId], references: [id])
+  weekday   String // Monday .. Friday
+  duty      String // ASSEMBLY | BREAK | CLOSING | GATE | LIBRARY | EXAMS | OTHER
+  note      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([schoolId, weekday, duty])
+  @@index([schoolId, staffId])
+}
+
+model StaffMovement {
+  id             String    @id @default(cuid())
+  schoolId       String
+  school         School    @relation(fields: [schoolId], references: [id])
+  staffId        String
+  staff          Staff     @relation(fields: [staffId], references: [id])
+  signedOutAt    DateTime  @default(now())
+  signedInAt     DateTime?
+  destination    String
+  purpose        String?
+  expectedReturn DateTime?
+  status         String    @default("OUT") // OUT | BACK
+  recordedByName String?
+
+  @@index([schoolId, status])
+  @@index([staffId, signedOutAt])
+}
+
+model SubstitutionLog {
+  id                String   @id @default(cuid())
+  schoolId          String
+  school            School   @relation(fields: [schoolId], references: [id])
+  absentStaffId     String
+  absentStaff       Staff    @relation("AbsentStaff", fields: [absentStaffId], references: [id])
+  substituteStaffId String
+  substituteStaff   Staff    @relation("SubstituteStaff", fields: [substituteStaffId], references: [id])
+  date              DateTime @db.Date
+  classRef          String? // "JHS 3 B9" / timetable slot label
+  periods           String? // "1-3" or "Maths, English"
+  note              String?
+  recordedByName    String?
+  createdAt         DateTime @default(now())
+
+  @@index([schoolId, date])
+  @@index([absentStaffId])
+  @@index([substituteStaffId])
 }
