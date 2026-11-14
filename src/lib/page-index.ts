@@ -17,6 +17,7 @@ import {
   Flag, Trees, Sparkles, Scale, FileSearch, ShoppingBasket, GalleryHorizontal, Rows3, Banknote as Bank, Palette,
   DatabaseBackup, PiggyBank, Award, Gavel, Ruler, Activity, Home as HomeIcon, Hospital, Thermometer,
   Trophy, Medal, BookUser, Footprints,
+  DoorOpen, CalendarClock, PhoneCall, Mailbox, CalendarRange, BellRing,
 } from "lucide-react";
 
 export type PageEntry = {
@@ -65,6 +66,12 @@ export const PAGE_INDEX: PageEntry[] = [
   { id: "pg-staff-duty", label: "Duty Roster", section: S.people, module: "staffduty", target: { tab: "roster" }, perm: ["staffduty.view"], icon: CalendarDays, keywords: ["duty roster", "assembly", "break supervision", "closing", "gate", "noticeboard", "weekly"] },
   { id: "pg-staff-movement", label: "Staff Movement Book", section: S.people, module: "staffduty", target: { tab: "movement" }, perm: ["staffduty.view"], icon: Footprints, keywords: ["sign out", "sign in", "whereabouts", "destination", "movement book", "GES"] },
   { id: "pg-staff-analytics", label: "Staff Ops Analytics", section: S.people, module: "staffduty", target: { tab: "analytics" }, perm: ["staffduty.view"], icon: BarChart3, keywords: ["attendance rate", "punctuality", "late arrivals", "leave usage", "substitutions", "cover"] },
+  { id: "pg-front-desk", label: "Front Desk Board", section: S.people, module: "frontoffice", target: { tab: "board" }, perm: ["frontoffice.view"], icon: BellRing, keywords: ["front desk", "reception", "gate", "today", "on site", "concierge"] },
+  { id: "pg-visitors", label: "Visitors Book", section: S.people, module: "frontoffice", target: { tab: "visitors" }, perm: ["frontoffice.view"], icon: DoorOpen, keywords: ["visitor", "guest", "pass", "check in", "check out", "gate book", "who is on site"] },
+  { id: "pg-appointments", label: "Appointments Book", section: S.people, module: "frontoffice", target: { tab: "appointments" }, perm: ["frontoffice.view"], icon: CalendarClock, keywords: ["meeting", "appointment", "schedule", "parent meeting", "book"] },
+  { id: "pg-calls", label: "Phone Call Log", section: S.people, module: "frontoffice", target: { tab: "calls" }, perm: ["frontoffice.view"], icon: PhoneCall, keywords: ["call", "phone", "caller", "follow up", "telephone"] },
+  { id: "pg-postal", label: "Postal Register", section: S.people, module: "frontoffice", target: { tab: "postal" }, perm: ["frontoffice.view"], icon: Mailbox, keywords: ["mail", "letter", "parcel", "courier", "dispatch", "registered"] },
+  { id: "pg-events", label: "School Events", section: S.people, module: "frontoffice", target: { tab: "events" }, perm: ["frontoffice.view"], icon: CalendarRange, keywords: ["pta meeting", "open day", "sports", "prize giving", "calendar", "vacation", "event"] },
   { id: "pg-rbac", label: "Users & Access", section: S.people, module: "rbac", target: { tab: "users" }, perm: ["rbac.manage"], icon: ShieldCheck, keywords: ["accounts", "logins", "passwords", "staff accounts"] },
   { id: "pg-roles", label: "Roles & Permissions", section: S.people, module: "rbac", target: { tab: "roles" }, perm: ["rbac.manage"], icon: ShieldCheck, keywords: ["access control", "custom role", "cashier permissions", "acl", "grant"] },
 

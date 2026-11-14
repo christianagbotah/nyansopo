@@ -27,6 +27,7 @@ SCRIPTS=(
   prisma/seed-health.ts
   prisma/seed-clubs.ts
   prisma/seed-staff-daily.ts
+  prisma/seed-frontoffice.ts
   scripts/seed-pos-sales.ts
   prisma/seed-momo.ts
   prisma/seed-bill-items.ts

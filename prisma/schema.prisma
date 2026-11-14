@@ -217,6 +217,11 @@ model School {
   dutyAssignments      DutyAssignment[]
   staffMovements       StaffMovement[]
   substitutionLogs     SubstitutionLog[]
+  frontOfficeVisitors  Visitor[]
+  appointments         Appointment[]
+  phoneCalls           PhoneCall[]
+  postalItems          PostalItem[]
+  schoolEvents         SchoolEvent[]
   // ── backlog E/D/B/A ──
   dbBackups            DbBackup[]
   emailSetting         EmailSetting?
@@ -320,6 +325,7 @@ model Term {
   syllabusTopics     SyllabusTopic[]
   resultApprovals    ResultApproval[]
   termResults        TermResult[]
+  schoolEvents       SchoolEvent[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -2746,4 +2752,121 @@ model SubstitutionLog {
   @@index([schoolId, date])
   @@index([absentStaffId])
   @@index([substituteStaffId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// FRONT OFFICE (wave 29 — the front desk books)
+// The desk beside the gate every Ghanaian school keeps: the Visitors
+// Book (who came, to see whom, pass number, time in/out), the
+// Appointments Book (scheduled meetings with parents, staff & vendors),
+// the Phone Call Log (incoming/outgoing with follow-up flags), the
+// Postal Register (incoming/outgoing letters, parcels & dispatch) and
+// the School Events Calendar (PTA meetings, open day, sports,
+// speech & prize-giving day, vacations).
+// ─────────────────────────────────────────────────────────────
+model Visitor {
+  id             String    @id @default(cuid())
+  schoolId       String
+  school         School    @relation(fields: [schoolId], references: [id])
+  name           String
+  phone          String?
+  organisation   String?
+  category       String    @default("OTHER") // PARENT | VENDOR | GOVT | ALUMNI | OTHER
+  purpose        String
+  personToSee    String?
+  passNo         String?
+  timeIn         DateTime  @default(now())
+  timeOut        DateTime?
+  status         String    @default("ON_SITE") // ON_SITE | DEPARTED
+  badgeIssued    Boolean   @default(true)
+  notes          String?
+  recordedByName String?
+  createdAt      DateTime  @default(now())
+
+  @@index([schoolId, status])
+  @@index([schoolId, timeIn])
+}
+
+model Appointment {
+  id             String    @id @default(cuid())
+  schoolId       String
+  school         School    @relation(fields: [schoolId], references: [id])
+  title          String
+  withName       String
+  withRole       String    @default("PARENT") // PARENT | STAFF | VENDOR | GOVT | OTHER
+  personToSee    String? // staff member the meeting is with
+  scheduledAt    DateTime
+  durationMin    Int?
+  location       String? // Head's office · Meeting room · Gate
+  purpose        String?
+  status         String    @default("SCHEDULED") // SCHEDULED | CONFIRMED | COMPLETED | CANCELLED | NO_SHOW
+  outcome        String?
+  notes          String?
+  createdByName  String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([schoolId, scheduledAt])
+  @@index([schoolId, status])
+}
+
+model PhoneCall {
+  id             String    @id @default(cuid())
+  schoolId       String
+  school         School    @relation(fields: [schoolId], references: [id])
+  direction      String // INCOMING | OUTGOING
+  contactName    String
+  phone          String?
+  regarding      String
+  handledByName  String?
+  followUp       Boolean   @default(false)
+  followUpDone   Boolean   @default(false)
+  calledAt       DateTime  @default(now())
+  notes          String?
+  createdAt      DateTime  @default(now())
+
+  @@index([schoolId, calledAt])
+  @@index([schoolId, followUp])
+}
+
+model PostalItem {
+  id             String    @id @default(cuid())
+  schoolId       String
+  school         School    @relation(fields: [schoolId], references: [id])
+  direction      String // INCOMING | OUTGOING
+  type           String    @default("LETTER") // LETTER | PARCEL | DOCUMENT | COURIER
+  refNo          String?
+  fromParty      String
+  toParty        String
+  receivedAt     DateTime
+  dispatchedAt   DateTime?
+  collectedBy    String?
+  status         String    @default("PENDING") // PENDING | DISPATCHED | COLLECTED
+  notes          String?
+  recordedByName String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([schoolId, status])
+  @@index([schoolId, receivedAt])
+}
+
+model SchoolEvent {
+  id             String    @id @default(cuid())
+  schoolId       String
+  school         School    @relation(fields: [schoolId], references: [id])
+  termId         String?
+  term           Term?     @relation(fields: [termId], references: [id])
+  title          String
+  category       String    @default("OTHER") // PTA_MEETING | OPEN_DAY | SPORTS | PRIZE_GIVING | EXAMINATION | HOLIDAY | OTHER
+  startsAt       DateTime  @db.Date
+  endsAt         DateTime? @db.Date
+  location       String?
+  description    String?
+  audience       String    @default("ALL") // ALL | STAFF | PARENTS | STUDENTS
+  createdByName  String?
+  createdAt      DateTime  @default(now())
+
+  @@index([schoolId, startsAt])
+  @@index([termId])
 }

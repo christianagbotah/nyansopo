@@ -77,6 +77,9 @@ export const PERMISSIONS: PermDef[] = [
   // Staff attendance & duty (wave 28 — the staff movement book)
   { id: "staffduty.view", label: "View staff attendance, duty roster & movement book", group: "Staff Operations" },
   { id: "staffduty.manage", label: "Mark staff register, assign duty, approve leave & record cover", group: "Staff Operations" },
+  // Front office (wave 29 — the front desk books)
+  { id: "frontoffice.view", label: "View visitors book, appointments, call log, postal register & events", group: "Front Office" },
+  { id: "frontoffice.manage", label: "Book visitors & appointments, log calls, register mail & publish events", group: "Front Office" },
   // Communication
   { id: "sms.view", label: "View SMS centre", group: "Communication" },
   { id: "sms.send", label: "Send SMS & manage automations", group: "Communication" },
@@ -151,6 +154,7 @@ export const ROLE_DEFAULTS: Record<string, string[] | "*"> = {
     "sms.view", "sms.send", "email.send", "messages.use",
     "settings.manage", "ai.use", "staffhub.self",
     "staffduty.view",
+    "frontoffice.view", "frontoffice.manage",
   ],
   CASHIER: [
     "students.view", "fees.view", "fees.collect", "payments.momo", "cashier.reports", "approvals.request",
@@ -175,7 +179,8 @@ export const ROLE_DEFAULTS: Record<string, string[] | "*"> = {
     "staffduty.view",
     "ai.use", "staffhub.self",
   ],
-  NON_TEACHING: ["staffhub.self", "messages.use"],
+  // non-teaching staff often man the front desk (secretary / receptionist)
+  NON_TEACHING: ["staffhub.self", "messages.use", "frontoffice.view", "frontoffice.manage"],
   LIBRARIAN: ["students.view", "library.view", "library.issue", "library.manage", "messages.use"],
   PARENT: ["portal.self"],
   STUDENT: ["campus.self"],
@@ -239,6 +244,7 @@ export const PERM_IMPLIES: Record<string, string[]> = {
   "health.manage": ["health.view"],
   "clubs.manage": ["clubs.view"],
   "staffduty.manage": ["staffduty.view"],
+  "frontoffice.manage": ["frontoffice.view"],
   "sms.send": ["sms.view"],
   "payments.momo": ["fees.view"],
   "library.issue": ["library.view"],
@@ -322,6 +328,7 @@ export const MODULE_PERMS: Record<string, string[]> = {
   health: ["health.view"],
   clubs: ["clubs.view"],
   staffduty: ["staffduty.view"],
+  frontoffice: ["frontoffice.view"],
   curriculum: ["curriculum.view"],
   reports: ["reports.view"],
   exams: ["exams.online"],

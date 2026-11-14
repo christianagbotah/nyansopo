@@ -59,6 +59,7 @@ import { Discipline } from "@/components/modules/discipline";
 import { Health } from "@/components/modules/health";
 import { Clubs } from "@/components/modules/clubs";
 import { StaffDaily } from "@/components/modules/staff-daily";
+import { FrontOffice } from "@/components/modules/front-office";
 import {
   LayoutDashboard, Users, Banknote, CalendarCheck, ClipboardList, GraduationCap, ArrowLeftRight, Building2,
   BrainCircuit, Settings as SettingsIcon, Landmark, Menu, CloudOff, Cloud, RefreshCcw, LogOut, Moon, Sun,
@@ -67,6 +68,7 @@ import {
   QrCode, UserPlus, Printer, Wallet, BarChart3, CalendarDays, HandCoins, FileWarning, ListChecks, ScanLine, ClipboardPen, Percent,
   PanelLeftClose, PanelLeftOpen, Palette, SlidersHorizontal, Archive, FileText, BookMarked, Target, PiggyBank, Award,
   MessagesSquare, Landmark as LedgerIcon, DatabaseBackup, Gavel, HeartPulse, Stethoscope, Ruler, Trophy, Footprints,
+  DoorOpen,
 } from "lucide-react";
 
 type NavLeaf = { id: string; label: string; icon?: any; target?: NavTarget };
@@ -83,6 +85,7 @@ const SCHOOL_NAV: NavItem[] = [
   { id: "students", label: "Students", icon: Users, section: "People" },
   { id: "admissions", label: "Admissions & Transfers", icon: ArrowLeftRight, section: "People" },
   { id: "staffduty", label: "Staff Attendance & Duty", icon: Footprints, section: "People" },
+  { id: "frontoffice", label: "Front Office", icon: DoorOpen, section: "People" },
   { id: "fees", label: "Fees & Billing", icon: Banknote, section: "Finance" },
   { id: "momo", label: "MoMo & Payment Links", icon: SmartphoneNfc, section: "Finance" },
   { id: "daily", label: "Daily Services & Tuck", icon: UtensilsCrossed, section: "Finance" },
@@ -415,6 +418,14 @@ export function AppShell() {
       { id: "staffduty-cover", label: "Substitution cover", target: { tab: "cover" } },
       { id: "staffduty-analytics", label: "Staff ops analytics", target: { tab: "analytics" } },
     ];
+    const frontofficeChildren: NavChild[] = [
+      { id: "frontoffice-board", label: "Front desk board", target: { tab: "board" } },
+      { id: "frontoffice-visitors", label: "Visitors book", target: { tab: "visitors" } },
+      { id: "frontoffice-appointments", label: "Appointments book", target: { tab: "appointments" } },
+      { id: "frontoffice-calls", label: "Phone call log", target: { tab: "calls" } },
+      { id: "frontoffice-postal", label: "Postal register", target: { tab: "postal" } },
+      { id: "frontoffice-events", label: "School events", target: { tab: "events" } },
+    ];
     /* CI3 settings sidebar: general / theme / sms / permissions / payment */
     const settingsChildren: NavChild[] = [
       { id: "set-system", label: "System settings", target: { tab: "system" } },
@@ -459,6 +470,7 @@ export function AppShell() {
       if (item.id === "health") enriched.children = healthChildren;
       if (item.id === "clubs") enriched.children = clubsChildren;
       if (item.id === "staffduty") enriched.children = staffdutyChildren;
+      if (item.id === "frontoffice") enriched.children = frontofficeChildren;
       if (item.id === "settings") enriched.children = settingsChildren;
       if (item.id === "boarding") enriched.children = boardingChildren;
       if (item.id === "curriculum") enriched.children = curriculumChildren;
@@ -895,6 +907,7 @@ export function AppShell() {
              module === "health" && show("health") ? <Health /> :
              module === "clubs" && show("clubs") ? <Clubs /> :
              module === "staffduty" && show("staffduty") ? <StaffDaily /> :
+             module === "frontoffice" && show("frontoffice") ? <FrontOffice /> :
              module === "classes" && show("classes") ? <Classes /> :
              module === "gradebook" && show("gradebook") ? <Gradebook /> :
              module === "results" && show("results") ? <Results /> :
