@@ -16,6 +16,7 @@ import {
   Armchair, BookMarked, Network, UsersRound, HeartPulse, ScrollText, Wrench, Timer, Stethoscope,
   Flag, Trees, Sparkles, Scale, FileSearch, ShoppingBasket, GalleryHorizontal, Rows3, Banknote as Bank, Palette,
   DatabaseBackup, PiggyBank, Award, Gavel, Ruler, Activity, Home as HomeIcon, Hospital, Thermometer,
+  Trophy, Medal, BookUser,
 } from "lucide-react";
 
 export type PageEntry = {
@@ -116,6 +117,11 @@ export const PAGE_INDEX: PageEntry[] = [
   { id: "pg-screenings", label: "Health Screenings", section: S.academic, module: "health", target: { tab: "screenings" }, perm: ["health.view"], icon: Ruler, keywords: ["shep", "screening", "height", "weight", "bmi", "vision", "hearing", "growth check"] },
   { id: "pg-health-profiles", label: "Learner Health Profiles", section: S.academic, module: "health", target: { tab: "profiles" }, perm: ["health.view"], icon: HeartPulse, keywords: ["medical history", "blood group", "allergies", "medical conditions", "health record", "emergency contact"] },
   { id: "pg-health-analytics", label: "Wellness Analytics", section: S.academic, module: "health", target: { tab: "analytics" }, perm: ["health.view"], icon: Activity, keywords: ["visit trends", "top complaints", "frequent visitors", "sick bay load", "wellness analytics"] },
+  { id: "pg-clubs", label: "Club Register", section: S.academic, module: "clubs", target: { tab: "register" }, perm: ["clubs.view"], icon: Trophy, keywords: ["clubs", "societies", "co-curricular", "club register", "patron", "membership", "cadet", "scripture union", "science club"] },
+  { id: "pg-club-meetings", label: "Club Meetings", section: S.academic, module: "clubs", target: { tab: "meetings" }, perm: ["clubs.view"], icon: ClipboardList, keywords: ["meeting register", "club attendance", "minutes", "present absent excused"] },
+  { id: "pg-club-events", label: "Competitions & Events", section: S.academic, module: "clubs", target: { tab: "events" }, perm: ["clubs.view"], icon: Medal, keywords: ["inter-schools", "quiz", "competition", "festival", "debate", "cultural", "placement", "zonal", "regional"] },
+  { id: "pg-club-profiles", label: "Co-curricular Profiles", section: S.academic, module: "clubs", target: { tab: "profiles" }, perm: ["clubs.view"], icon: BookUser, keywords: ["club membership history", "offices held", "represented school", "participation"] },
+  { id: "pg-club-analytics", label: "Participation Analytics", section: S.academic, module: "clubs", target: { tab: "analytics" }, perm: ["clubs.view"], icon: BarChart3, keywords: ["class participation", "club sizes", "attendance rate trend", "category mix"] },
   { id: "pg-notes", label: "Lesson Notes", section: S.academic, module: "curriculum", target: { tab: "notes" }, perm: ["curriculum.manage"], icon: NotebookPen, keywords: ["ges", "strand", "indicator", "scheme of learning", "weekly notes"] },
   { id: "pg-note-review", label: "Review Lesson Notes", section: S.academic, module: "curriculum", target: { tab: "review" }, perm: ["curriculum.review"], icon: BadgeCheck, keywords: ["endorse", "hod", "return"] },
   { id: "pg-templates", label: "Note Templates", section: S.academic, module: "curriculum", target: { tab: "templates" }, perm: ["curriculum.manage"], icon: FileSpreadsheet, keywords: ["reusable", "format"] },
@@ -194,5 +200,5 @@ export const MODULE_LABELS: Record<string, string> = {
   inventory: "Store", finance: "Finance", sms: "SMS", ai: "AI", settings: "Settings", rbac: "Access",
   staffhub: "Staff Hub", portal: "Parent Portal", campus: "Learner Portal", branches: "Branches",
   association: "Association", accounts: "Accounts", messages: "Messages", budget: "Budgets",
-  discipline: "Discipline", health: "Health",
+  discipline: "Discipline", health: "Health", clubs: "Clubs",
 };

@@ -57,6 +57,7 @@ import { StudentPortal } from "@/components/modules/student-portal";
 import { Boarding } from "@/components/modules/boarding";
 import { Discipline } from "@/components/modules/discipline";
 import { Health } from "@/components/modules/health";
+import { Clubs } from "@/components/modules/clubs";
 import {
   LayoutDashboard, Users, Banknote, CalendarCheck, ClipboardList, GraduationCap, ArrowLeftRight, Building2,
   BrainCircuit, Settings as SettingsIcon, Landmark, Menu, CloudOff, Cloud, RefreshCcw, LogOut, Moon, Sun,
@@ -64,7 +65,7 @@ import {
   BookOpen, ShieldCheck, Receipt, Route, UserRound, Home, Backpack, Laptop, BedDouble, NotebookPen, Search, LayoutGrid, SmartphoneNfc,
   QrCode, UserPlus, Printer, Wallet, BarChart3, CalendarDays, HandCoins, FileWarning, ListChecks, ScanLine, ClipboardPen, Percent,
   PanelLeftClose, PanelLeftOpen, Palette, SlidersHorizontal, Archive, FileText, BookMarked, Target, PiggyBank, Award,
-  MessagesSquare, Landmark as LedgerIcon, DatabaseBackup, Gavel, HeartPulse, Stethoscope, Ruler,
+  MessagesSquare, Landmark as LedgerIcon, DatabaseBackup, Gavel, HeartPulse, Stethoscope, Ruler, Trophy,
 } from "lucide-react";
 
 type NavLeaf = { id: string; label: string; icon?: any; target?: NavTarget };
@@ -93,6 +94,7 @@ const SCHOOL_NAV: NavItem[] = [
   { id: "attendance", label: "Attendance", icon: CalendarCheck, section: "Academic" },
   { id: "discipline", label: "Discipline & Conduct", icon: Gavel, section: "Academic" },
   { id: "health", label: "Health & Sick Bay", icon: HeartPulse, section: "Academic" },
+  { id: "clubs", label: "Clubs & Societies", icon: Trophy, section: "Academic" },
   { id: "classes", label: "Classes & Timetable", icon: LayoutList, section: "Academic" },
   { id: "gradebook", label: "Gradebook", icon: ClipboardList, section: "Academic" },
   { id: "results", label: "Results & Report Cards", icon: Award, section: "Academic" },
@@ -393,6 +395,15 @@ export function AppShell() {
       { id: "health-profiles", label: "Health profiles", target: { tab: "profiles" } },
       { id: "health-analytics", label: "Wellness analytics", target: { tab: "analytics" } },
     ];
+    /* clubs sidebar: the club register, meetings, events, learner
+       co-curricular profiles and participation analytics (wave 27) */
+    const clubsChildren: NavChild[] = [
+      { id: "clubs-register", label: "Club register", target: { tab: "register" } },
+      { id: "clubs-meetings", label: "Meeting register", target: { tab: "meetings" } },
+      { id: "clubs-events", label: "Competitions & events", target: { tab: "events" } },
+      { id: "clubs-profiles", label: "Co-curricular profiles", target: { tab: "profiles" } },
+      { id: "clubs-analytics", label: "Participation analytics", target: { tab: "analytics" } },
+    ];
     /* CI3 settings sidebar: general / theme / sms / permissions / payment */
     const settingsChildren: NavChild[] = [
       { id: "set-system", label: "System settings", target: { tab: "system" } },
@@ -435,6 +446,7 @@ export function AppShell() {
       if (item.id === "attendance") enriched.children = attendanceChildren;
       if (item.id === "discipline") enriched.children = disciplineChildren;
       if (item.id === "health") enriched.children = healthChildren;
+      if (item.id === "clubs") enriched.children = clubsChildren;
       if (item.id === "settings") enriched.children = settingsChildren;
       if (item.id === "boarding") enriched.children = boardingChildren;
       if (item.id === "curriculum") enriched.children = curriculumChildren;
@@ -869,6 +881,7 @@ export function AppShell() {
              module === "attendance" && show("attendance") ? <Attendance /> :
              module === "discipline" && show("discipline") ? <Discipline /> :
              module === "health" && show("health") ? <Health /> :
+             module === "clubs" && show("clubs") ? <Clubs /> :
              module === "classes" && show("classes") ? <Classes /> :
              module === "gradebook" && show("gradebook") ? <Gradebook /> :
              module === "results" && show("results") ? <Results /> :

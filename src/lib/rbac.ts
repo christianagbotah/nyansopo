@@ -71,6 +71,9 @@ export const PERMISSIONS: PermDef[] = [
   // Health & wellness clinic (wave 26 — sick bay & SHEP screenings)
   { id: "health.view", label: "View sick-bay register & screenings", group: "Health & Welfare" },
   { id: "health.manage", label: "Record clinic visits, screenings & guardian notices", group: "Health & Welfare" },
+  // Clubs & societies (wave 27 — the co-curricular register)
+  { id: "clubs.view", label: "View club register, rosters & events", group: "Academic" },
+  { id: "clubs.manage", label: "Manage clubs, memberships, meetings & events", group: "Academic" },
   // Communication
   { id: "sms.view", label: "View SMS centre", group: "Communication" },
   { id: "sms.send", label: "Send SMS & manage automations", group: "Communication" },
@@ -158,6 +161,7 @@ export const ROLE_DEFAULTS: Record<string, string[] | "*"> = {
     "attendance.view", "attendance.take",
     "discipline.view", "discipline.manage",
     "health.view", "health.manage",
+    "clubs.view", "clubs.manage",
     "classes.view", "classes.manage",
     "gradebook.view", "gradebook.enter",
     "curriculum.view", "curriculum.manage",
@@ -228,6 +232,7 @@ export const PERM_IMPLIES: Record<string, string[]> = {
   "reports.publish": ["reports.view"],
   "discipline.manage": ["discipline.view"],
   "health.manage": ["health.view"],
+  "clubs.manage": ["clubs.view"],
   "sms.send": ["sms.view"],
   "payments.momo": ["fees.view"],
   "library.issue": ["library.view"],
@@ -309,6 +314,7 @@ export const MODULE_PERMS: Record<string, string[]> = {
   results: ["reports.view"],
   discipline: ["discipline.view"],
   health: ["health.view"],
+  clubs: ["clubs.view"],
   curriculum: ["curriculum.view"],
   reports: ["reports.view"],
   exams: ["exams.online"],

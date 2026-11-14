@@ -208,6 +208,10 @@ model School {
   disciplineCases      DisciplineCase[]
   healthVisits         HealthVisit[]
   healthScreenings     HealthScreening[]
+  clubs                Club[]
+  clubMemberships      ClubMembership[]
+  clubMeetings         ClubMeeting[]
+  clubEvents           ClubEvent[]
   // ── backlog E/D/B/A ──
   dbBackups            DbBackup[]
   emailSetting         EmailSetting?
@@ -502,6 +506,7 @@ model Student {
   disciplineCases        DisciplineCase[]
   healthVisits           HealthVisit[]
   healthScreeningRecords HealthScreeningRecord[]
+  clubMemberships        ClubMembership[]
 }
 
 model Enrollment {
@@ -1036,6 +1041,112 @@ model HealthScreeningRecord {
 
   @@unique([screeningId, studentId])
   @@index([studentId])
+}
+
+// CLUBS & SOCIETIES (wave 27 — the co-curricular register):
+// the club ledger — club register with patron & meeting venue, membership
+// rosters with executive offices (President / Vice / Secretary / Treasurer /
+// Organiser — one holder per office), the meeting register with attendance
+// (present / absent / excused), inter-schools & competition events with
+// outcomes and placements, learner co-curricular profiles, analytics and
+// guardian meeting notices through the SMS centre.
+
+model Club {
+  id            String   @id @default(cuid())
+  schoolId      String
+  school        School   @relation(fields: [schoolId], references: [id])
+  name          String
+  category      String   @default("GENERAL") // ACADEMIC | SERVICE | FAITH | CULTURAL | SPORTS | GENERAL
+  description   String?
+  patronName    String?
+  meetingDay    String? // e.g. Wednesday
+  venue         String?
+  status        String   @default("ACTIVE") // ACTIVE | DORMANT | ARCHIVED
+  foundedOn     DateTime?
+  createdByName String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  memberships ClubMembership[]
+  meetings    ClubMeeting[]
+  events      ClubEvent[]
+
+  @@unique([schoolId, name])
+  @@index([schoolId, status])
+}
+
+model ClubMembership {
+  id         String   @id @default(cuid())
+  schoolId   String
+  school     School   @relation(fields: [schoolId], references: [id])
+  clubId     String
+  club       Club     @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  studentId  String
+  student    Student  @relation(fields: [studentId], references: [id])
+  office     String? // PRESIDENT | VICE_PRESIDENT | SECRETARY | TREASURER | ORGANISER
+  joinedOn   DateTime @default(now())
+  status     String   @default("ACTIVE") // ACTIVE | LEFT
+  leftOn     DateTime?
+  leftReason String?
+  createdByName String?
+
+  attendance ClubAttendance[]
+
+  @@unique([clubId, studentId])
+  @@index([schoolId, status])
+  @@index([studentId])
+}
+
+model ClubMeeting {
+  id                  String   @id @default(cuid())
+  schoolId            String
+  school              School   @relation(fields: [schoolId], references: [id])
+  clubId              String
+  club                Club     @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  date                DateTime
+  topic               String?
+  minutes             String?
+  takenByName         String?
+  guardiansNotifiedAt DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  attendance ClubAttendance[]
+
+  @@index([schoolId, date])
+  @@index([clubId, date])
+}
+
+model ClubAttendance {
+  id           String         @id @default(cuid())
+  meetingId    String
+  meeting      ClubMeeting    @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  membershipId String
+  membership   ClubMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  status       String         @default("ABSENT") // PRESENT | ABSENT | EXCUSED
+  note         String?
+
+  @@unique([meetingId, membershipId])
+}
+
+model ClubEvent {
+  id             String   @id @default(cuid())
+  schoolId       String
+  school         School   @relation(fields: [schoolId], references: [id])
+  clubId         String?
+  club           Club?    @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  title          String
+  date           DateTime
+  level          String   @default("SCHOOL") // SCHOOL | ZONAL | DISTRICT | REGIONAL | NATIONAL
+  outcome        String   @default("UPCOMING") // UPCOMING | COMPLETED
+  placement      String? // e.g. 1st / Runner-up / 3rd
+  participants   String? // learners who represented the school
+  note           String?
+  recordedByName String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([schoolId, date])
 }
 
 model FlagVerification {
