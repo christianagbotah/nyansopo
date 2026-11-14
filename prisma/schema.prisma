@@ -222,6 +222,7 @@ model School {
   phoneCalls           PhoneCall[]
   postalItems          PostalItem[]
   schoolEvents         SchoolEvent[]
+  issuedDocuments      IssuedDocument[]
   // ── backlog E/D/B/A ──
   dbBackups            DbBackup[]
   emailSetting         EmailSetting?
@@ -511,6 +512,7 @@ model Student {
   bookRequests           BookRequest[]
   portfolioEntries       PortfolioEntry[]
   dailyFeeAudits         DailyFeeAudit[]
+  issuedDocuments        IssuedDocument[]
   bedAssigned            Bed?                     @relation("BedOccupant")
   housePrefectOf         BoardingHouse[]          @relation("HousePrefect")
   dormPrefectOf          Dormitory[]              @relation("DormitoryPrefect")
@@ -2849,6 +2851,40 @@ model PostalItem {
 
   @@index([schoolId, status])
   @@index([schoolId, receivedAt])
+}
+
+// Certificates & documents (wave 30): serial-numbered official documents —
+// school leaving certificates, testimonials, admission & introductory letters.
+// Particulars are SNAPSHOTTED at issue time (name / index / class / session)
+// so a printed document stays historically accurate after rollover, transfer
+// or graduation. Serials are per school+type: SLC-2026-0001, TSM-…, ADL-…, INT-…
+model IssuedDocument {
+  id            String    @id @default(cuid())
+  schoolId      String
+  school        School    @relation(fields: [schoolId], references: [id])
+  studentId     String
+  student       Student   @relation(fields: [studentId], references: [id])
+  type          String    // LEAVING_CERT | TESTIMONIAL | ADMISSION_LETTER | INTRO_LETTER
+  serialNo      String
+  issueDate     DateTime  @db.Date
+  // snapshot particulars at issue time
+  studentName   String
+  studentIndex  String
+  className     String
+  sessionYear   String
+  dateOfBirth   DateTime? @db.Date
+  reason        String?   // reason for leaving / transfer (SLC & intro letters)
+  remarks       String?   // conduct / academic remarks woven into the prose
+  status        String    @default("ISSUED") // ISSUED | REVOKED
+  issuedByName  String?
+  revokedByName String?
+  revokedAt     DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@unique([schoolId, serialNo])
+  @@index([schoolId, type])
+  @@index([schoolId, issueDate])
+  @@index([studentId])
 }
 
 model SchoolEvent {

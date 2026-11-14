@@ -60,6 +60,7 @@ import { Health } from "@/components/modules/health";
 import { Clubs } from "@/components/modules/clubs";
 import { StaffDaily } from "@/components/modules/staff-daily";
 import { FrontOffice } from "@/components/modules/front-office";
+import { Certificates } from "@/components/modules/certificates";
 import {
   LayoutDashboard, Users, Banknote, CalendarCheck, ClipboardList, GraduationCap, ArrowLeftRight, Building2,
   BrainCircuit, Settings as SettingsIcon, Landmark, Menu, CloudOff, Cloud, RefreshCcw, LogOut, Moon, Sun,
@@ -68,7 +69,7 @@ import {
   QrCode, UserPlus, Printer, Wallet, BarChart3, CalendarDays, HandCoins, FileWarning, ListChecks, ScanLine, ClipboardPen, Percent,
   PanelLeftClose, PanelLeftOpen, Palette, SlidersHorizontal, Archive, FileText, BookMarked, Target, PiggyBank, Award,
   MessagesSquare, Landmark as LedgerIcon, DatabaseBackup, Gavel, HeartPulse, Stethoscope, Ruler, Trophy, Footprints,
-  DoorOpen,
+  DoorOpen, CalendarClock, FileBadge,
 } from "lucide-react";
 
 type NavLeaf = { id: string; label: string; icon?: any; target?: NavTarget };
@@ -103,6 +104,7 @@ const SCHOOL_NAV: NavItem[] = [
   { id: "classes", label: "Classes & Timetable", icon: LayoutList, section: "Academic" },
   { id: "gradebook", label: "Gradebook", icon: ClipboardList, section: "Academic" },
   { id: "results", label: "Results & Report Cards", icon: Award, section: "Academic" },
+  { id: "certificates", label: "Certificates & Documents", icon: FileBadge, section: "Academic" },
   { id: "curriculum", label: "Curriculum & Notes", icon: NotebookPen, section: "Academic" },
   { id: "reports", label: "Exams & Reports", icon: GraduationCap, section: "Academic" },
   { id: "exams", label: "Online Exams", icon: Laptop, section: "Academic" },
@@ -426,6 +428,13 @@ export function AppShell() {
       { id: "frontoffice-postal", label: "Postal register", target: { tab: "postal" } },
       { id: "frontoffice-events", label: "School events", target: { tab: "events" } },
     ];
+    /* certificates sidebar (wave 30): the issue register, the issue desk and
+       the A4 document formats (leaving certificate, testimonial, letters) */
+    const certificatesChildren: NavChild[] = [
+      { id: "cert-register", label: "Issue register", target: { tab: "register" } },
+      { id: "cert-issue", label: "Issue a document", target: { tab: "issue" } },
+      { id: "cert-formats", label: "Document formats", target: { tab: "formats" } },
+    ];
     /* CI3 settings sidebar: general / theme / sms / permissions / payment */
     const settingsChildren: NavChild[] = [
       { id: "set-system", label: "System settings", target: { tab: "system" } },
@@ -471,6 +480,7 @@ export function AppShell() {
       if (item.id === "clubs") enriched.children = clubsChildren;
       if (item.id === "staffduty") enriched.children = staffdutyChildren;
       if (item.id === "frontoffice") enriched.children = frontofficeChildren;
+      if (item.id === "certificates") enriched.children = certificatesChildren;
       if (item.id === "settings") enriched.children = settingsChildren;
       if (item.id === "boarding") enriched.children = boardingChildren;
       if (item.id === "curriculum") enriched.children = curriculumChildren;
@@ -908,6 +918,7 @@ export function AppShell() {
              module === "clubs" && show("clubs") ? <Clubs /> :
              module === "staffduty" && show("staffduty") ? <StaffDaily /> :
              module === "frontoffice" && show("frontoffice") ? <FrontOffice /> :
+             module === "certificates" && show("certificates") ? <Certificates /> :
              module === "classes" && show("classes") ? <Classes /> :
              module === "gradebook" && show("gradebook") ? <Gradebook /> :
              module === "results" && show("results") ? <Results /> :

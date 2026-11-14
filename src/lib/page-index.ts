@@ -17,7 +17,7 @@ import {
   Flag, Trees, Sparkles, Scale, FileSearch, ShoppingBasket, GalleryHorizontal, Rows3, Banknote as Bank, Palette,
   DatabaseBackup, PiggyBank, Award, Gavel, Ruler, Activity, Home as HomeIcon, Hospital, Thermometer,
   Trophy, Medal, BookUser, Footprints,
-  DoorOpen, CalendarClock, PhoneCall, Mailbox, CalendarRange, BellRing,
+  DoorOpen, CalendarClock, PhoneCall, Mailbox, CalendarRange, BellRing, FileBadge, Stamp,
 } from "lucide-react";
 
 export type PageEntry = {
@@ -72,6 +72,9 @@ export const PAGE_INDEX: PageEntry[] = [
   { id: "pg-calls", label: "Phone Call Log", section: S.people, module: "frontoffice", target: { tab: "calls" }, perm: ["frontoffice.view"], icon: PhoneCall, keywords: ["call", "phone", "caller", "follow up", "telephone"] },
   { id: "pg-postal", label: "Postal Register", section: S.people, module: "frontoffice", target: { tab: "postal" }, perm: ["frontoffice.view"], icon: Mailbox, keywords: ["mail", "letter", "parcel", "courier", "dispatch", "registered"] },
   { id: "pg-events", label: "School Events", section: S.people, module: "frontoffice", target: { tab: "events" }, perm: ["frontoffice.view"], icon: CalendarRange, keywords: ["pta meeting", "open day", "sports", "prize giving", "calendar", "vacation", "event"] },
+  { id: "pg-cert-register", label: "Document Issue Register", section: S.people, module: "certificates", target: { tab: "register" }, perm: ["certificates.view"], icon: FileBadge, keywords: ["certificate", "leaving", "testimonial", "admission letter", "serial", "issued", "revoke", "documents"] },
+  { id: "pg-cert-issue", label: "Issue a Document", section: S.people, module: "certificates", target: { tab: "issue" }, perm: ["certificates.manage"], icon: Stamp, keywords: ["issue", "print", "leaving certificate", "testimonial", "introductory letter", "offer"] },
+  { id: "pg-cert-formats", label: "Document Formats", section: S.people, module: "certificates", target: { tab: "formats" }, perm: ["certificates.view"], icon: ScrollText, keywords: ["sample", "format", "template", "layout", "a4", "print"] },
   { id: "pg-rbac", label: "Users & Access", section: S.people, module: "rbac", target: { tab: "users" }, perm: ["rbac.manage"], icon: ShieldCheck, keywords: ["accounts", "logins", "passwords", "staff accounts"] },
   { id: "pg-roles", label: "Roles & Permissions", section: S.people, module: "rbac", target: { tab: "roles" }, perm: ["rbac.manage"], icon: ShieldCheck, keywords: ["access control", "custom role", "cashier permissions", "acl", "grant"] },
 
@@ -213,4 +216,5 @@ export const MODULE_LABELS: Record<string, string> = {
   staffhub: "Staff Hub", portal: "Parent Portal", campus: "Learner Portal", branches: "Branches",
   association: "Association", accounts: "Accounts", messages: "Messages", budget: "Budgets",
   discipline: "Discipline", health: "Health", clubs: "Clubs", staffduty: "Staff Ops",
+  frontoffice: "Front Office", certificates: "Certificates",
 };
