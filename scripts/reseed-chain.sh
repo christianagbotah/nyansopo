@@ -4,6 +4,8 @@
 set -u
 cd "$(dirname "$0")/.."
 export DATABASE_URL='postgresql://nyansapo@127.0.0.1:5433/nyansapo?schema=public'
+echo "🧨 Force-resetting database (schema recreated clean)…"
+bunx prisma db push --force-reset --skip-generate 2>&1 | tail -2
 SCRIPTS=(
   prisma/seed.ts
   prisma/seed-rbac.ts
@@ -35,6 +37,7 @@ SCRIPTS=(
   prisma/seed-bill-items.ts
   prisma/seed-accounts.ts
   prisma/seed-budgets.ts
+  prisma/seed-marksheet.ts
 )
 fail=0
 for s in "${SCRIPTS[@]}"; do

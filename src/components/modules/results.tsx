@@ -14,6 +14,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell } from "recharts";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -24,7 +26,7 @@ import {
   Award, Calculator, Eye, GraduationCap, Printer, Users, BookOpen, TrendingUp, ClipboardCheck,
   Percent, Layers, RefreshCcw, ScrollText, Send, Undo2, Megaphone, BarChart3, Mail, Phone, PhoneOff,
   MailWarning, Gauge, ChevronDown, ChevronUp, BadgeCheck, AlertTriangle,
-  UsersRound, MoveUpRight, ListChecks, Save,
+  UsersRound, MoveUpRight, ListChecks, Save, ClipboardList, Sparkles, SquareCheck,
   Table2, Download, BookCopy,
 } from "lucide-react";
 
@@ -119,6 +121,40 @@ type TranscriptPayload = {
   student: { id: string; firstName: string; lastName: string; otherNames: string | null; nyansapoIndex: string; gender: string | null; dateOfBirth: string | null };
   terms: TranscriptTerm[];
   summary: { terms: number; bestAggregate: number | null; overallAverage: number | null };
+};
+
+/* ── wave 35 — interactive student marksheet (/api/results/marksheet) ──
+   Legacy student_marksheet.php parity: the per-learner terminal sheet
+   the class teacher annotates — subject marks with positions, the 15-slot
+   conduct grid, one interest pick, teacher + head-teacher remarks and
+   the days-opened / days-present attendance line (aggregation table). */
+type MarksheetRow = {
+  subjectId: string; subjectName: string; subjectCode: string | null;
+  classScore: number | null; examScore: number | null; total: number | null;
+  grade: string | null; remark: string | null; position: number | null;
+};
+type MarksheetPayload = {
+  school: SchoolInfo;
+  term: { id: string; name: string; sequence: number; yearName: string };
+  student: { id: string; firstName: string; lastName: string; otherNames: string | null; nyansapoIndex: string; gender: string; guardianName: string; guardianPhone: string };
+  classroom: { id: string; name: string } | null;
+  classTeacher: string | null;
+  rows: MarksheetRow[];
+  totals: { classScore: number; examScore: number; total: number; subjects: number };
+  card: {
+    id: string; totalScore: number | null; average: number | null; classPosition: number | null; classSize: number | null;
+    aggregate: number | null; promoted: boolean | null; published: boolean;
+    conductIds: string[] | null; interestId: string | null;
+    teacherRemark: string | null; headRemark: string | null;
+    remarkSource: string | null; headSource: string | null;
+    daysOpened: number | null; daysPresent: number | null;
+    attendance: string | null; attendancePct: number | null;
+  } | null;
+  attendance: { daysTaken: number; daysAttended: number };
+  conductItems: { id: string; name: string; kind: string }[];
+  teacherTemplates: { id: string; category: string; text: string }[];
+  headBands: { id: string; minPercent: number | null; maxPercent: number | null; text: string }[];
+  suggestedHead: string | null;
 };
 
 /* ── wave 22 — term analytics payload (/api/results/analytics) ── */
@@ -308,6 +344,12 @@ export function Results() {
   const [packBusy, setPackBusy] = useState(false);
   const [packProgress, setPackProgress] = useState(0);
   const [pack, setPack] = useState<TranscriptPayload[]>([]);
+  /* wave 35 — interactive student marksheet (legacy student_marksheet parity) */
+  const [sheetStudent, setSheetStudent] = useState("");
+  const [sheet, setSheet] = useState<MarksheetPayload | null>(null);
+  const [sheetLoading, setSheetLoading] = useState(false);
+  const [sheetSave, setSheetSave] = useState(false);
+  const [sheetPrint, setSheetPrint] = useState(false);
 
   /* iEduPro nested-nav parity: deep-link the analytics tab */
   const [appliedTarget, setAppliedTarget] = useState<NavTarget | null>(null);
@@ -316,6 +358,7 @@ export function Results() {
     if (navTarget?.tab === "analytics") setTab("analytics");
     if (navTarget?.tab === "promotion") setTab("promotion");
     if (navTarget?.tab === "tabulation") setTab("tabulation");
+    if (navTarget?.tab === "marksheet") setTab("marksheet");
   }
 
   /* bootstrap — resolve the school's terms/classes and default selectors
@@ -330,6 +373,9 @@ export function Results() {
       })
       .catch((e) => toast({ title: "Load failed", description: e.message, variant: "destructive" }));
   }, [currentSchoolId]);
+
+  /* wave 35 — the marksheet roster follows the class selector */
+  useEffect(() => { setSheetStudent(""); setSheet(null); }, [classId]);
 
   /* grid — refetches whenever the selectors change or a compile completes */
   useEffect(() => {
@@ -380,6 +426,60 @@ export function Results() {
     } catch (e: any) {
       toast({ title: "Could not open report card", description: e.message, variant: "destructive" });
       setDetailOpen(false);
+    }
+  }
+
+  /* wave 35 — load one learner's interactive marksheet. The roster the
+     picker reads from is the class-term grid already loaded above. */
+  useEffect(() => {
+    if (!currentSchoolId || !sheetStudent || !termId) return;
+    let alive = true;
+    setSheetLoading(true);
+    apiGet<MarksheetPayload>(`/api/results/marksheet?schoolId=${currentSchoolId}&studentId=${sheetStudent}&termId=${termId}`)
+      .then((d) => { if (alive) { setSheet(d); setSheetLoading(false); } })
+      .catch((e) => {
+        if (alive) {
+          setSheetLoading(false);
+          setSheet(null);
+          toast({ title: "Could not open the marksheet", description: e.message, variant: "destructive" });
+        }
+      });
+    return () => { alive = false; };
+  }, [currentSchoolId, sheetStudent, termId, refresh]);
+
+  /* wave 35 — conducts_update parity: persist the annotated sheet. */
+  async function saveSheet(draft: {
+    conductIds: string[]; interestId: string;
+    teacherRemark: string; remarkTemplateId: string;
+    headRemark: string; headTemplateId: string;
+    daysOpened: string; daysPresent: string;
+  }) {
+    if (!currentSchoolId || !sheet) return;
+    setSheetSave(true);
+    try {
+      const res = await apiPost<{
+        ok: true; cardId: string; studentName: string; termName: string;
+        saved: { conductCount: number; attendance: string; remarkSource: string | null; headSource: string | null };
+      }>("/api/results/marksheet", {
+        action: "save", schoolId: currentSchoolId,
+        studentId: sheet.student.id, termId: sheet.term.id,
+        conductIds: draft.conductIds, interestId: draft.interestId || undefined,
+        teacherRemark: draft.teacherRemark, remarkTemplateId: draft.remarkTemplateId || undefined,
+        headRemark: draft.headRemark, headTemplateId: draft.headTemplateId || undefined,
+        daysOpened: draft.daysOpened === "" ? undefined : Number(draft.daysOpened),
+        daysPresent: draft.daysPresent === "" ? undefined : Number(draft.daysPresent),
+      });
+      toast({
+        title: "Conducts & remarks saved",
+        description: `${res.studentName} · ${res.termName}: ${res.saved.conductCount} conduct trait${res.saved.conductCount === 1 ? "" : "s"}, attendance "${res.saved.attendance ?? ""}".`,
+      });
+      setRefresh((r) => r + 1);
+      const d = await apiGet<MarksheetPayload>(`/api/results/marksheet?schoolId=${currentSchoolId}&studentId=${sheet.student.id}&termId=${sheet.term.id}`);
+      setSheet(d);
+    } catch (e: any) {
+      toast({ title: "Save refused", description: e.message, variant: "destructive" });
+    } finally {
+      setSheetSave(false);
     }
   }
 
@@ -830,6 +930,7 @@ export function Results() {
         <TabsList>
           <TabsTrigger value="grid" className="gap-1.5"><Award className="size-4" /> Broadsheet</TabsTrigger>
           <TabsTrigger value="tabulation" className="gap-1.5"><Table2 className="size-4" /> Tabulation</TabsTrigger>
+          <TabsTrigger value="marksheet" className="gap-1.5"><ClipboardList className="size-4" /> Marksheets</TabsTrigger>
           <TabsTrigger value="analytics" className="gap-1.5"><BarChart3 className="size-4" /> Analytics</TabsTrigger>
           <TabsTrigger value="promotion" className="gap-1.5"><UsersRound className="size-4" /> Promotion</TabsTrigger>
         </TabsList>
@@ -930,6 +1031,55 @@ export function Results() {
           )}
         </CardContent>
       </Card>
+        </TabsContent>
+
+        {/* ── wave 35 — interactive student marksheet (legacy
+            student_marksheet / conducts_update parity): the per-learner
+            terminal sheet with the 15-slot conduct grid, interest pick,
+            teacher + head-teacher remarks and the attendance line ── */}
+        <TabsContent value="marksheet" className="mt-4">
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <Select value={sheetStudent} onValueChange={setSheetStudent}>
+              <SelectTrigger className="w-full sm:w-80" aria-label="Learner"><SelectValue placeholder="Pick a learner to open their marksheet" /></SelectTrigger>
+              <SelectContent className="max-h-96 overflow-y-auto nice-scroll">
+                {(data?.students ?? []).map((st) => (
+                  <SelectItem key={st.id} value={st.id}>
+                    {st.name} · {st.indexNo}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {sheetStudent && data?.students.length ? (
+              <Badge variant="outline" className="text-[11px]">
+                {(data.students.find((s) => s.id === sheetStudent)?.name ?? "").split(" ").slice(-2).join(" ")}
+              </Badge>
+            ) : null}
+            {sheet?.card?.published ? <Badge className="bg-emerald-100 text-emerald-800 border-transparent dark:bg-emerald-950 dark:text-emerald-300">Published</Badge> : null}
+            <span className="ml-auto text-[11px] text-muted-foreground">
+              {data?.students.length ?? 0} learner{(data?.students.length ?? 0) === 1 ? "" : "s"} on roll · {termLabel?.name ?? ""}
+            </span>
+          </div>
+          {sheetLoading ? (
+            <LoadingBlock label="Ruling the marksheet…" />
+          ) : !sheetStudent ? (
+            <Card>
+              <CardContent className="py-10">
+                <EmptyState
+                  icon={<ClipboardList className="size-8" />}
+                  title="Pick a learner above"
+                  hint="Their terminal marksheet opens here — subject marks with class positions, the conduct &amp; interest grid, teacher and head-teacher remarks, and the term's attendance line, exactly like the classic result sheet."
+                />
+              </CardContent>
+            </Card>
+          ) : sheet ? (
+            <MarksheetPanel
+              payload={sheet}
+              saving={sheetSave}
+              onSave={saveSheet}
+              onPrint={() => setSheetPrint(true)}
+              canPublish={canPublish}
+            />
+          ) : null}
         </TabsContent>
 
         <TabsContent value="analytics" className="mt-4">
@@ -1223,6 +1373,24 @@ export function Results() {
               />
             ))}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── wave 35 — printable marksheet (legacy student_marksheet_print_view) ── */}
+      <Dialog open={sheetPrint} onOpenChange={setSheetPrint}>
+        <DialogContent className="max-w-3xl max-h-[92vh] overflow-y-auto nice-scroll">
+          <DialogHeader className="no-print">
+            <DialogTitle className="flex items-center gap-2"><Printer className="size-4" /> Terminal marksheet</DialogTitle>
+            <DialogDescription>Print on A4 — school header, marks with positions, conduct &amp; interest, remarks, attendance and the signature lines.</DialogDescription>
+            <div className="flex gap-2 pt-1">
+              <Button size="sm" className="gap-1.5" onClick={() => window.print()}><Printer className="size-4" /> Print</Button>
+            </div>
+          </DialogHeader>
+          {sheet ? (
+            <div className="print-area">
+              <MarksheetSheet payload={sheet} />
+            </div>
+          ) : null}
         </DialogContent>
       </Dialog>
 
@@ -1723,6 +1891,518 @@ function AnalyticsPanel({ payload, loading, className, termLabel }: {
           </p>
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════
+   Wave 35 — interactive student marksheet (legacy student_marksheet
+   .php parity, modernised). The class teacher's working sheet:
+   subject marks with positions, the 15-slot conduct grid, one
+   interest pick, teacher + head-teacher remarks (template-first,
+   custom text allowed — legacy select2-with-tags parity) and the
+   days-opened / days-present attendance line.
+   ══════════════════════════════════════════════════════════════ */
+type MarksheetDraft = {
+  conductIds: string[]; interestId: string;
+  teacherRemark: string; remarkTemplateId: string; teacherCustom: boolean;
+  headRemark: string; headTemplateId: string; headCustom: boolean;
+  daysOpened: string; daysPresent: string;
+};
+
+/** Seed the annotation draft from the saved aggregation — the saved
+ *  templates are matched by text so a template remark keeps its
+ *  provenance, custom remarks open the free-text box, and the head
+ *  remark falls back to the percentage-band auto-suggestion. */
+function computeMarksheetDraft(p: MarksheetPayload): MarksheetDraft {
+  const savedTeacherTpl = p.teacherTemplates.find((t) => t.text === p.card?.teacherRemark);
+  const savedHeadTpl = p.headBands.find((b) => b.text === p.card?.headRemark);
+  return {
+    conductIds: p.card?.conductIds ?? [],
+    interestId: p.card?.interestId ?? "",
+    teacherRemark: p.card?.teacherRemark ?? "",
+    remarkTemplateId: savedTeacherTpl?.id ?? "",
+    teacherCustom: !savedTeacherTpl && !!p.card?.teacherRemark,
+    headRemark: p.card?.headRemark ?? p.suggestedHead ?? "",
+    headTemplateId: savedHeadTpl?.id ?? (p.card?.headRemark ? "" : p.headBands.find((b) => b.text === p.suggestedHead)?.id ?? ""),
+    headCustom: !savedHeadTpl && !!p.card?.headRemark,
+    daysOpened: p.card?.daysOpened !== null && p.card?.daysOpened !== undefined ? String(p.card.daysOpened) : p.attendance.daysTaken ? String(p.attendance.daysTaken) : "",
+    daysPresent: p.card?.daysPresent !== null && p.card?.daysPresent !== undefined ? String(p.card.daysPresent) : p.attendance.daysAttended ? String(p.attendance.daysAttended) : "",
+  };
+}
+
+function MarksheetPanel(props: {
+  payload: MarksheetPayload;
+  saving: boolean;
+  onSave: (draft: {
+    conductIds: string[]; interestId: string;
+    teacherRemark: string; remarkTemplateId: string;
+    headRemark: string; headTemplateId: string;
+    daysOpened: string; daysPresent: string;
+  }) => void;
+  onPrint: () => void;
+  canPublish: boolean;
+}) {
+  const { payload: p } = props;
+  const studentName = [p.student.lastName, p.student.firstName, p.student.otherNames].filter(Boolean).join(" ");
+  const conducts = p.conductItems.filter((c) => c.kind === "CONDUCT");
+  const interests = p.conductItems.filter((c) => c.kind === "INTEREST");
+  const cardKey = `${p.student.id}:${p.card?.id ?? "no-card"}`;
+
+  /* draft state — reset when the underlying card changes (render-time
+     derived-state reset, the sanctioned React pattern for prop-driven
+     re-initialisation without an effect) */
+  const [draft, setDraft] = useState(() => computeMarksheetDraft(p));
+  const [draftKey, setDraftKey] = useState(cardKey);
+  if (cardKey !== draftKey) {
+    setDraftKey(cardKey);
+    setDraft(computeMarksheetDraft(p));
+  }
+
+  const toggleConduct = (id: string, checked: boolean) => {
+    setDraft((d) => {
+      const next = checked ? [...d.conductIds, id] : d.conductIds.filter((x) => x !== id);
+      if (next.length > 15) return d; // legacy c1..c15 cap
+      return { ...d, conductIds: next };
+    });
+  };
+  const pickTeacherTemplate = (id: string) => {
+    if (id === "custom") { setDraft((d) => ({ ...d, remarkTemplateId: "", teacherCustom: true })); return; }
+    const t = p.teacherTemplates.find((x) => x.id === id);
+    setDraft((d) => ({ ...d, remarkTemplateId: id, teacherCustom: false, teacherRemark: t?.text ?? d.teacherRemark }));
+  };
+  const pickHeadTemplate = (id: string) => {
+    if (id === "custom") { setDraft((d) => ({ ...d, headTemplateId: "", headCustom: true })); return; }
+    const b = p.headBands.find((x) => x.id === id);
+    setDraft((d) => ({ ...d, headTemplateId: id, headCustom: false, headRemark: b?.text ?? d.headRemark }));
+  };
+  const attendanceLine = draft.daysOpened !== "" && draft.daysPresent !== ""
+    ? `Present ${draft.daysPresent} of ${draft.daysOpened} day${draft.daysOpened === "1" ? "" : "s"}`
+    : null;
+  const attendancePct = attendanceLine && Number(draft.daysOpened) > 0
+    ? Math.round((Number(draft.daysPresent) / Number(draft.daysOpened)) * 100)
+    : null;
+
+  return (
+    <div className="space-y-4">
+      {/* learner identity — the purple header band of the classic sheet */}
+      <Card className="overflow-hidden">
+        <div className="bg-gradient-to-r from-violet-600 to-purple-700 dark:from-violet-700 dark:to-purple-900 px-5 py-4 text-white">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+            <div>
+              <p className="text-[11px] uppercase tracking-widest opacity-80">Terminal marksheet · {p.term.name} ({p.term.yearName})</p>
+              <h3 className="text-lg font-semibold leading-tight">{studentName}</h3>
+              <p className="text-xs opacity-90">
+                {p.classroom?.name ?? "—"} · Index {p.student.nyansapoIndex || "—"} · {p.student.gender === "M" ? "Male" : p.student.gender === "F" ? "Female" : p.student.gender || "—"}
+              </p>
+            </div>
+            <div className="ml-auto flex flex-wrap gap-2 text-[11px]">
+              {p.card?.classPosition ? <Badge className="bg-white/15 text-white border-white/25">Class position {ordinal(p.card.classPosition)} of {p.card.classSize ?? "—"}</Badge> : null}
+              {p.card?.aggregate !== null && p.card?.aggregate !== undefined ? <Badge className="bg-white/15 text-white border-white/25">BECE aggregate {fmt1(p.card.aggregate)}</Badge> : null}
+              {p.card?.published ? <Badge className="bg-emerald-400/90 text-emerald-950 border-transparent">Published</Badge> : <Badge className="bg-white/15 text-white border-white/25">Draft</Badge>}
+            </div>
+          </div>
+        </div>
+        <CardContent className="pt-4">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <StatCard icon={<Gauge className="size-4" />} label="Term average" value={fmt1(p.card?.average)} sub="mean of the 30/70 subject totals" tone="primary" />
+            <StatCard icon={<BookOpen className="size-4" />} label="Total marks" value={fmt1(p.totals.total)} sub={`${p.totals.subjects} subjects · class 30% + exam 70%`} />
+            <StatCard icon={<ClipboardCheck className="size-4" />} label="Attendance" value={attendancePct !== null ? `${attendancePct}%` : p.card?.attendancePct !== null && p.card?.attendancePct !== undefined ? `${fmt1(p.card.attendancePct)}%` : "—"} sub={attendanceLine ?? p.card?.attendance ?? "compiled from the register"} />
+            <StatCard icon={<SquareCheck className="size-4" />} label="Conduct traits" value={draft.conductIds.length} sub={`${conducts.length} on the school's grid · cap 15`} tone="gold" />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* marks table — S/N | subject | class 30 | exam 70 | total | grade | remark | position */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <ClipboardList className="size-4" /> Marks — {p.term.name}
+            {p.classTeacher ? <span className="ml-2 text-xs font-normal text-muted-foreground">class teacher: {p.classTeacher}</span> : null}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="px-0 sm:px-6">
+          <div className="rounded-xl border overflow-x-auto nice-scroll">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-10 text-center">S/N</TableHead>
+                  <TableHead>Subject</TableHead>
+                  <TableHead className="text-center">Class score (30%)</TableHead>
+                  <TableHead className="text-center">Exam score (70%)</TableHead>
+                  <TableHead className="text-center">Total</TableHead>
+                  <TableHead className="text-center">Grade</TableHead>
+                  <TableHead className="hidden sm:table-cell">Remark</TableHead>
+                  <TableHead className="text-center">Position</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {p.rows.map((r, i) => {
+                  const tone = bandTone(r.total);
+                  return (
+                    <TableRow key={r.subjectId}>
+                      <TableCell className="text-center text-xs text-muted-foreground">{i + 1}</TableCell>
+                      <TableCell className="font-medium">
+                        {r.subjectName}
+                        {r.subjectCode ? <span className="block text-[10px] text-muted-foreground">{r.subjectCode}</span> : null}
+                      </TableCell>
+                      <TableCell className="text-center tabular-nums">{r.classScore ?? "—"}</TableCell>
+                      <TableCell className="text-center tabular-nums">{r.examScore ?? "—"}</TableCell>
+                      <TableCell className={cn("text-center tabular-nums font-semibold", tone.cell)}>{r.total ?? "—"}</TableCell>
+                      <TableCell className="text-center">
+                        {r.grade ? <span className={cn("inline-flex min-w-8 justify-center rounded-md border px-1.5 py-0.5 text-xs font-semibold", tone.badge)}>{r.grade}</span> : "—"}
+                      </TableCell>
+                      <TableCell className="hidden sm:table-cell text-xs text-muted-foreground">{r.remark ?? "—"}</TableCell>
+                      <TableCell className="text-center text-xs">{r.position ? ordinal(r.position) : "—"}</TableCell>
+                    </TableRow>
+                  );
+                })}
+                {!p.rows.length && (
+                  <TableRow>
+                    <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
+                      No subject marks on the ledger for this learner yet — compute this class&apos;s term results first.
+                    </TableCell>
+                  </TableRow>
+                )}
+                {p.rows.length > 0 && (
+                  <TableRow className="bg-muted/50 font-semibold">
+                    <TableCell colSpan={2} className="text-right uppercase text-xs tracking-wide">Total</TableCell>
+                    <TableCell className="text-center tabular-nums">{fmt1(p.totals.classScore)}</TableCell>
+                    <TableCell className="text-center tabular-nums">{fmt1(p.totals.examScore)}</TableCell>
+                    <TableCell className="text-center tabular-nums">{fmt1(p.totals.total)}</TableCell>
+                    <TableCell colSpan={3} />
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* conduct · interest · remarks · attendance — the aggregation block */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <SquareCheck className="size-4" /> Conduct &amp; interest
+              <span className="ml-auto text-xs font-normal text-muted-foreground">{draft.conductIds.length}/15 selected</span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {conducts.length ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2">
+                {conducts.map((c) => (
+                  <label key={c.id} className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm cursor-pointer transition-colors hover:bg-accent/60 has-[button[data-state=checked]]:bg-accent">
+                    <Checkbox
+                      checked={draft.conductIds.includes(c.id)}
+                      onCheckedChange={(v) => toggleConduct(c.id, v === true)}
+                      aria-label={c.name}
+                    />
+                    <span className="select-none">{c.name}</span>
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No conduct traits configured — add them in Settings → Report library.</p>
+            )}
+            {draft.conductIds.length >= 15 && (
+              <p className="text-xs text-amber-600 dark:text-amber-400">The classic sheet holds fifteen conduct slots — picks beyond fifteen are ignored.</p>
+            )}
+            <div>
+              <p className="mb-1.5 text-sm font-medium">Interest</p>
+              <Select value={draft.interestId || "none"} onValueChange={(v) => setDraft((d) => ({ ...d, interestId: v === "none" ? "" : v }))}>
+                <SelectTrigger className="w-full" aria-label="Interest"><SelectValue placeholder="One interest" /></SelectTrigger>
+                <SelectContent className="max-h-60 overflow-y-auto nice-scroll">
+                  <SelectItem value="none">— none —</SelectItem>
+                  {interests.map((it) => <SelectItem key={it.id} value={it.id}>{it.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Sparkles className="size-4" /> Remarks &amp; attendance
+              {p.card?.remarkSource ? <Badge variant="outline" className="text-[10px] font-normal ml-1">teacher: {p.card.remarkSource}</Badge> : null}
+              {p.card?.headSource ? <Badge variant="outline" className="text-[10px] font-normal">head: {p.card.headSource}</Badge> : null}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <p className="mb-1.5 text-sm font-medium">Days school opened</p>
+                <Input
+                  type="number" min={0} inputMode="numeric"
+                  value={draft.daysOpened}
+                  onChange={(e) => setDraft((d) => ({ ...d, daysOpened: e.target.value.replace(/[^0-9]/g, "") }))}
+                  placeholder={p.attendance.daysTaken ? String(p.attendance.daysTaken) : "e.g. 42"}
+                  aria-label="Days school opened"
+                />
+              </div>
+              <div>
+                <p className="mb-1.5 text-sm font-medium">Days present</p>
+                <Input
+                  type="number" min={0} inputMode="numeric"
+                  value={draft.daysPresent}
+                  onChange={(e) => setDraft((d) => ({ ...d, daysPresent: e.target.value.replace(/[^0-9]/g, "") }))}
+                  placeholder={p.attendance.daysAttended ? String(p.attendance.daysAttended) : "e.g. 38"}
+                  aria-label="Days present"
+                />
+              </div>
+            </div>
+            {attendanceLine && (
+              <p className="text-xs text-muted-foreground">
+                Attendance line on the printed sheet: “{attendanceLine}”{attendancePct !== null ? ` (${attendancePct}%)` : ""}
+                {p.attendance.daysTaken ? ` · register says ${p.attendance.daysAttended} of ${p.attendance.daysTaken} sessions` : ""}
+              </p>
+            )}
+            <div>
+              <p className="mb-1.5 text-sm font-medium">Class teacher&apos;s remarks</p>
+              <Select value={draft.teacherCustom ? "custom" : draft.remarkTemplateId || "none"} onValueChange={pickTeacherTemplate}>
+                <SelectTrigger className="w-full" aria-label="Class teacher remark"><SelectValue placeholder="Pick a remark template" /></SelectTrigger>
+                <SelectContent className="max-h-60 overflow-y-auto nice-scroll">
+                  <SelectItem value="none">— none —</SelectItem>
+                  {[["TEACHER_POSITIVE", "Positive"], ["TEACHER_NEUTRAL", "Neutral"], ["TEACHER_NEGATIVE", "Needs work"]].map(([cat, label]) => {
+                    const group = p.teacherTemplates.filter((t) => t.category === cat);
+                    return group.length ? (
+                      <Fragment key={cat}>
+                        <p className="px-2 pt-1.5 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+                        {group.map((t) => <SelectItem key={t.id} value={t.id}>{t.text}</SelectItem>)}
+                      </Fragment>
+                    ) : null;
+                  })}
+                  <SelectItem value="custom">Custom remark…</SelectItem>
+                </SelectContent>
+              </Select>
+              {(draft.teacherCustom || !draft.remarkTemplateId) && (
+                <Textarea
+                  className="mt-2 min-h-16 text-sm"
+                  value={draft.teacherRemark}
+                  onChange={(e) => setDraft((d) => ({ ...d, teacherRemark: e.target.value.slice(0, 600) }))}
+                  placeholder="Or type the class teacher's own words (600 characters)…"
+                  aria-label="Class teacher custom remark"
+                />
+              )}
+            </div>
+            <div>
+              <p className="mb-1.5 flex items-center gap-1.5 text-sm font-medium">
+                Head teacher&apos;s remarks
+                {p.suggestedHead && draft.headRemark === p.suggestedHead && (
+                  <Badge variant="outline" className="text-[10px] font-normal">auto by {fmt1(p.card?.average)}%</Badge>
+                )}
+              </p>
+              <Select value={draft.headCustom ? "custom" : draft.headTemplateId || "none"} onValueChange={pickHeadTemplate}>
+                <SelectTrigger className="w-full" aria-label="Head teacher remark"><SelectValue placeholder="Pick a remark band" /></SelectTrigger>
+                <SelectContent className="max-h-60 overflow-y-auto nice-scroll">
+                  <SelectItem value="none">— none —</SelectItem>
+                  {p.headBands.map((b) => (
+                    <SelectItem key={b.id} value={b.id}>
+                      {b.minPercent}–{b.maxPercent}% · {b.text}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value="custom">Custom remark…</SelectItem>
+                </SelectContent>
+              </Select>
+              {(draft.headCustom || !draft.headTemplateId) && (
+                <Textarea
+                  className="mt-2 min-h-16 text-sm"
+                  value={draft.headRemark}
+                  onChange={(e) => setDraft((d) => ({ ...d, headRemark: e.target.value.slice(0, 600) }))}
+                  placeholder="Or type the head teacher's own words (600 characters)…"
+                  aria-label="Head teacher custom remark"
+                />
+              )}
+              {draft.headRemark === p.suggestedHead && p.suggestedHead ? (
+                <p className="mt-1 text-xs text-muted-foreground">Auto-selected from the school&apos;s percentage bands — override freely.</p>
+              ) : null}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* save bar — conducts_update parity */}
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-card p-3">
+        {p.card ? (
+          <>
+            <Button
+              className="gap-1.5"
+              disabled={props.saving || !props.canPublish}
+              onClick={() => props.onSave({
+                conductIds: draft.conductIds,
+                interestId: draft.interestId,
+                teacherRemark: draft.teacherRemark.trim(),
+                remarkTemplateId: draft.remarkTemplateId,
+                headRemark: draft.headRemark.trim(),
+                headTemplateId: draft.headTemplateId,
+                daysOpened: draft.daysOpened,
+                daysPresent: draft.daysPresent,
+              })}
+            >
+              <Save className="size-4" /> {props.saving ? "Saving…" : "Save conducts & remarks"}
+            </Button>
+            <Button variant="outline" className="gap-1.5" onClick={props.onPrint}>
+              <Printer className="size-4" /> Print marksheet
+            </Button>
+            {!props.canPublish && <span className="text-xs text-muted-foreground">Saving needs the generate &amp; publish permission.</span>}
+            <span className="ml-auto text-[11px] text-muted-foreground">
+              Saving stamps the learner&apos;s report card — the printed terminal report picks it up immediately.
+            </span>
+          </>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            No compiled report card for this learner in {p.term.name} — enter marks in the Gradebook and compute the class&apos;s term results first
+            (<strong className="font-medium text-foreground">no mark</strong>, as the classic sheet put it).
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════
+   Wave 35 — printable terminal marksheet (legacy
+   student_marksheet_print_view parity). Serif face, boxed
+   particulars, marks table with positions, conduct & interest
+   grid, remarks, attendance and three signature lines.
+   ══════════════════════════════════════════════════════════════ */
+function MarksheetSheet({ payload: p }: { payload: MarksheetPayload }) {
+  const studentName = [p.student.lastName, p.student.firstName, p.student.otherNames].filter(Boolean).join(" ");
+  const conducts = p.conductItems.filter((c) => c.kind === "CONDUCT");
+  const interests = p.conductItems.filter((c) => c.kind === "INTEREST");
+  const conductNames = (p.card?.conductIds ?? []).map((id) => p.conductItems.find((c) => c.id === id)?.name).filter(Boolean) as string[];
+  const interestName = interests.find((i) => i.id === p.card?.interestId)?.name ?? null;
+  const daysOpened = p.card?.daysOpened ?? (p.attendance.daysTaken || null);
+  const daysPresent = p.card?.daysPresent ?? (p.attendance.daysAttended || null);
+
+  return (
+    <div className="print-sheet break-inside-avoid bg-white text-black mx-auto max-w-[820px] p-3" style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}>
+      {/* school header */}
+      <div className="flex items-center gap-3 border-b-2 border-black pb-2">
+        <div className="flex size-14 items-center justify-center rounded-full border-2 text-lg font-bold" style={{ borderColor: p.school.logoColor ?? "#7c3aed" }}>
+          {p.school.name.split(/\s+/).slice(0, 2).map((w) => w[0]).join("")}
+        </div>
+        <div className="flex-1 text-center">
+          <h1 className="text-xl font-bold uppercase tracking-wide">{p.school.name}</h1>
+          <p className="text-[11px]">
+            {p.school.town ? `${p.school.town}, ` : ""}{p.school.region}{p.school.district ? ` · ${p.school.district}` : ""}
+            {p.school.phone ? ` · ${p.school.phone}` : ""}
+          </p>
+          {p.school.motto ? <p className="text-[10px] italic">“{p.school.motto}”</p> : null}
+        </div>
+        <div className="w-14" />
+      </div>
+      <h2 className="mt-3 text-center text-base font-bold uppercase tracking-[0.2em]">Terminal Marksheet</h2>
+      <p className="text-center text-[11px]">{p.term.name} · {p.term.yearName} · {p.classroom?.name}</p>
+
+      {/* particulars */}
+      <table className="mt-3 w-full border-collapse text-[11.5px]">
+        <tbody>
+          <tr>
+            <td className="border border-neutral-700 px-2 py-1 w-24 font-semibold">Name</td>
+            <td className="border border-neutral-700 px-2 py-1">{studentName}</td>
+            <td className="border border-neutral-700 px-2 py-1 w-20 font-semibold">Index</td>
+            <td className="border border-neutral-700 px-2 py-1">{p.student.nyansapoIndex || "—"}</td>
+          </tr>
+          <tr>
+            <td className="border border-neutral-700 px-2 py-1 font-semibold">Class</td>
+            <td className="border border-neutral-700 px-2 py-1">{p.classroom?.name ?? "—"}</td>
+            <td className="border border-neutral-700 px-2 py-1 font-semibold">Position</td>
+            <td className="border border-neutral-700 px-2 py-1">{p.card?.classPosition ? `${ordinal(p.card.classPosition)} of ${p.card.classSize ?? "—"}` : "—"}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      {/* marks table */}
+      <table className="mt-3 w-full border-collapse text-[11px]">
+        <thead>
+          <tr className="bg-neutral-200">
+            <th className="border border-neutral-700 px-1.5 py-1 w-8">S/N</th>
+            <th className="border border-neutral-700 px-2 py-1 text-left">Subject</th>
+            <th className="border border-neutral-700 px-1.5 py-1">Class (30)</th>
+            <th className="border border-neutral-700 px-1.5 py-1">Exam (70)</th>
+            <th className="border border-neutral-700 px-1.5 py-1">Total</th>
+            <th className="border border-neutral-700 px-1.5 py-1">Grade</th>
+            <th className="border border-neutral-700 px-1.5 py-1">Remark</th>
+            <th className="border border-neutral-700 px-1.5 py-1">Position</th>
+          </tr>
+        </thead>
+        <tbody>
+          {p.rows.map((r, i) => (
+            <tr key={r.subjectId}>
+              <td className="border border-neutral-700 px-1.5 py-0.5 text-center">{i + 1}</td>
+              <td className="border border-neutral-700 px-2 py-0.5">{r.subjectName}</td>
+              <td className="border border-neutral-700 px-1.5 py-0.5 text-center tabular-nums">{r.classScore ?? "—"}</td>
+              <td className="border border-neutral-700 px-1.5 py-0.5 text-center tabular-nums">{r.examScore ?? "—"}</td>
+              <td className="border border-neutral-700 px-1.5 py-0.5 text-center tabular-nums font-semibold">{r.total ?? "—"}</td>
+              <td className="border border-neutral-700 px-1.5 py-0.5 text-center">{r.grade ?? "—"}</td>
+              <td className="border border-neutral-700 px-1.5 py-0.5 text-[10px]">{r.remark ?? "—"}</td>
+              <td className="border border-neutral-700 px-1.5 py-0.5 text-center">{r.position ? ordinal(r.position) : "—"}</td>
+            </tr>
+          ))}
+          <tr className="font-bold">
+            <td className="border border-neutral-700 px-1.5 py-1 text-center" colSpan={2}>TOTAL</td>
+            <td className="border border-neutral-700 px-1.5 py-1 text-center tabular-nums">{fmt1(p.totals.classScore)}</td>
+            <td className="border border-neutral-700 px-1.5 py-1 text-center tabular-nums">{fmt1(p.totals.examScore)}</td>
+            <td className="border border-neutral-700 px-1.5 py-1 text-center tabular-nums">{fmt1(p.totals.total)}</td>
+            <td className="border border-neutral-700 px-1.5 py-1 text-center" colSpan={3}>
+              Avg {fmt1(p.card?.average)}%{p.card?.aggregate !== null && p.card?.aggregate !== undefined ? ` · Aggregate ${fmt1(p.card.aggregate)}` : ""}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      {/* conduct & interest & attendance */}
+      <div className="mt-3 grid grid-cols-3 gap-3 text-[10.5px]">
+        <div className="border border-neutral-700 p-2">
+          <p className="mb-1 font-bold uppercase tracking-wide">Conduct</p>
+          {conductNames.length ? (
+            <ul className="grid gap-0.5" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(90px, 1fr))" }}>
+              {conductNames.map((n) => <li key={n}>✓ {n}</li>)}
+            </ul>
+          ) : <p>—</p>}
+        </div>
+        <div className="border border-neutral-700 p-2">
+          <p className="mb-1 font-bold uppercase tracking-wide">Interest</p>
+          <p>{interestName ?? "—"}</p>
+          <p className="mt-2 font-bold uppercase tracking-wide">Attendance</p>
+          <p>{daysOpened !== null ? `Present ${daysPresent ?? 0} of ${daysOpened} days` : p.card?.attendance ?? "—"}</p>
+        </div>
+        <div className="border border-neutral-700 p-2">
+          <p className="mb-1 font-bold uppercase tracking-wide">Traits not marked</p>
+          {conducts.length - conductNames.length > 0 ? (
+            <p className="text-neutral-600">{conducts.length - conductNames.length} of {conducts.length} school traits not ticked for this learner.</p>
+          ) : <p>All school traits considered.</p>}
+          <p className="mt-2 font-bold uppercase tracking-wide">Promotion</p>
+          <p>{p.card?.promoted === true ? "Promoted" : p.card?.promoted === false ? "To be repeated" : "—"}</p>
+        </div>
+      </div>
+
+      {/* remarks */}
+      <table className="mt-3 w-full border-collapse text-[11px]">
+        <tbody>
+          <tr>
+            <td className="w-44 border border-neutral-700 bg-neutral-200 px-2 py-1 font-semibold">CLASS TEACHER&apos;S REMARKS</td>
+            <td className="border border-neutral-700 px-2 py-1">{p.card?.teacherRemark ?? "—"}</td>
+          </tr>
+          <tr>
+            <td className="border border-neutral-700 bg-neutral-200 px-2 py-1 font-semibold">HEAD TEACHER&apos;S REMARKS</td>
+            <td className="border border-neutral-700 px-2 py-1">{p.card?.headRemark ?? "—"}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      {/* signatures */}
+      <div className="mt-5 grid grid-cols-3 gap-4 text-[10px] text-neutral-700">
+        <div className="border-t border-neutral-700 pt-1 text-center">Class Teacher{p.classTeacher ? ` (${p.classTeacher})` : ""}</div>
+        <div className="border-t border-neutral-700 pt-1 text-center">Head Teacher</div>
+        <div className="border-t border-neutral-700 pt-1 text-center">Parent / Guardian</div>
+      </div>
+      <p className="mt-3 text-center text-[9px] text-neutral-500">
+        Generated {new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })} · {p.school.name}
+        {p.school.code ? ` (${p.school.code})` : ""}
+      </p>
     </div>
   );
 }

@@ -851,6 +851,13 @@ model ReportCard {
   aggregate     Float? // best-6 BECE aggregate (lower is better; 6 = all A1)
   attendancePct Float? // days attended / days taken, for the term
   promoted      Boolean? // promoted to the next class (avg ≥ 40)
+  // wave 35 — legacy marksheet aggregation parity (student_marksheet.php / conducts_update)
+  conductIds   Json? // up to 15 ConductItem ids (legacy aggregation.c1..c15)
+  interestId    String? // single ConductItem id (kind INTEREST)
+  daysOpened    Int? // marksheet attendance line — school days this term
+  daysPresent   Int? // marksheet attendance line — days the learner attended
+  remarkSource  String? // TEMPLATE | CUSTOM — provenance of teacherRemark
+  headSource    String? // TEMPLATE | CUSTOM — provenance of headRemark
 
   @@unique([studentId, termId])
 }
