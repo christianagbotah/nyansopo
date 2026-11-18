@@ -17,7 +17,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "@/hooks/use-toast";
 import { avatarColor } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { Backpack, CalendarDays, BookOpen, GraduationCap, Wallet, Megaphone, Clock, AlertTriangle, CheckCircle2, UserRound, Laptop, Send, BookPlus, Hourglass, XCircle } from "lucide-react";
+import { Backpack, CalendarDays, BookOpen, GraduationCap, Wallet, Megaphone, Clock, AlertTriangle, CheckCircle2, UserRound, Laptop, Send, BookPlus, Hourglass, XCircle, MessageSquare } from "lucide-react";
+import { PortalMessenger } from "@/components/portal-messenger";
 
 type Slot = { day: number; start: number; end: number; subject: string; teacher: string | null };
 type Mark = { subject: string; assessment: string; type: string; score: number; max: number };
@@ -114,6 +115,7 @@ export function StudentPortal() {
           <TabsTrigger value="library">Library</TabsTrigger>
           <TabsTrigger value="attendance">Attendance</TabsTrigger>
           <TabsTrigger value="exams">Online exams</TabsTrigger>
+          <TabsTrigger value="messages" className="gap-1.5"><MessageSquare className="size-4" /> Messages</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="mt-3 grid lg:grid-cols-3 gap-4">
@@ -346,6 +348,11 @@ export function StudentPortal() {
         {/* ── ONLINE EXAMS (iEduPro parity — learners sit published MCQ papers) ── */}
         <TabsContent value="exams" className="mt-3">
           <StudentExams studentId={me.id} classroomId={me.classroomId ?? null} />
+        </TabsContent>
+        <TabsContent value="messages" className="mt-3">
+          {/* wave 40 — two-way conversations with the class teacher & the head
+              (same threads the staff Messages module replies from) */}
+          <PortalMessenger />
         </TabsContent>
       </Tabs>
 

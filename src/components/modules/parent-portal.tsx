@@ -19,6 +19,7 @@ import { toast } from "@/hooks/use-toast";
 import { initials, avatarColor } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Home, Wallet, CalendarCheck, GraduationCap, Bus, MessageSquareText, Megaphone, Phone, ArrowUpRight, CheckCircle2, AlertTriangle, Receipt, BookOpen, BookPlus, Hourglass, XCircle, Send, UtensilsCrossed, Clock } from "lucide-react";
+import { PortalMessenger } from "@/components/portal-messenger";
 
 type Invoice = {
   id: string; invoiceNo: string; status: string; dueDate: string | null; createdAt: string;
@@ -538,7 +539,10 @@ export function ParentPortal() {
           </TabsContent>
         )}
 
-        <TabsContent value="messages" className="mt-3">
+        <TabsContent value="messages" className="mt-3 space-y-4">
+          {/* wave 40 — two-way conversations with the school office (the staff
+              Messages module replies from its own two-pane inbox) */}
+          <PortalMessenger />
           <Card>
             <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><MessageSquareText className="size-4" /> Messages from the school</CardTitle></CardHeader>
             <CardContent>
