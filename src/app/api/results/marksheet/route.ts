@@ -171,8 +171,8 @@ export async function POST(req: NextRequest) {
   }
 
   /* conduct picks: legacy c1..c15 slots, numeric ids only, deduped */
-  const rawConducts = Array.isArray(body.conductIds) ? body.conductIds : [];
-  const conductIds = [...new Set(rawConducts.map((v: unknown) => (typeof v === "string" ? v : String(v ?? ""))).filter(Boolean))].slice(0, 15);
+  const rawConducts: unknown[] = Array.isArray(body.conductIds) ? body.conductIds : [];
+  const conductIds: string[] = [...new Set(rawConducts.map((v) => (typeof v === "string" ? v : String(v ?? ""))).filter(Boolean))].slice(0, 15);
   if (conductIds.length) {
     const valid = await db.conductItem.findMany({ where: { schoolId, id: { in: conductIds }, kind: "CONDUCT" }, select: { id: true } });
     if (valid.length !== conductIds.length) {

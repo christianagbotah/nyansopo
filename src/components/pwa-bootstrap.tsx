@@ -19,6 +19,7 @@ export function PwaBootstrap() {
       if (st.session && st.queue.length) {
         const res = await flushQueue();
         if (res.synced) toast({ title: `⟳ Synced ${res.synced} offline action${res.synced > 1 ? "s" : ""}`, description: "Network restored — your queue has been uploaded to the cloud." });
+        if (res.conflicts) toast({ title: `${res.conflicts} conflict(s) held for review`, description: "Newer server data exists — an administrator resolves them in the Sync Center." });
         if (res.failed) toast({ title: `${res.failed} action(s) could not sync`, description: res.messages.join(" · "), variant: "destructive" });
       } else {
         toast({ title: "Back online", description: "Nyansapo is connected again." });

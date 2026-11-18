@@ -519,7 +519,7 @@ export function FrontOffice() {
           <div className="flex flex-wrap items-end gap-2">
             <div className="w-40">
               <Label className="mb-1 text-xs text-muted-foreground">Day</Label>
-              <DateField mode="date" value={visDate} onChange={setVisDate} placeholder="All days" />
+              <DateField mode="date" value={visDate} onChange={(v) => setVisDate(v ?? "")} placeholder="All days" />
             </div>
             <Button size="sm" variant={visOpenOnly ? "default" : "outline"} onClick={() => setVisOpenOnly(!visOpenOnly)}>
               <DoorOpen /> On site only
@@ -926,7 +926,7 @@ export function FrontOffice() {
               </Select>
             </FormField>
             <FormField label="Date" required>
-              <DateField mode="date" value={apptForm.date} onChange={(v) => setApptForm({ ...apptForm, date: v })} />
+              <DateField mode="date" value={apptForm.date} onChange={(v) => setApptForm({ ...apptForm, date: v ?? "" })} />
             </FormField>
             <FormField label="Time">
               <Input type="time" value={apptForm.time} onChange={(e) => setApptForm({ ...apptForm, time: e.target.value })} />
@@ -980,7 +980,7 @@ export function FrontOffice() {
             <FormField label="Notes" span={2}>
               <Textarea rows={2} value={callForm.notes} onChange={(e) => setCallForm({ ...callForm, notes: e.target.value })} />
             </FormField>
-            <FormField span={2}>
+            <FormField label="Follow up" span={2}>
               <label className="flex items-center gap-2 text-sm">
                 <input type="checkbox" className="size-4 accent-amber-600" checked={callForm.followUp} onChange={(e) => setCallForm({ ...callForm, followUp: e.target.checked })} />
                 Needs a follow-up
@@ -1027,7 +1027,7 @@ export function FrontOffice() {
               <Input value={postalForm.refNo} onChange={(e) => setPostalForm({ ...postalForm, refNo: e.target.value })} placeholder="Courier / registered no." />
             </FormField>
             <FormField label="Received / logged on">
-              <DateField mode="date" value={postalForm.receivedAt} onChange={(v) => setPostalForm({ ...postalForm, receivedAt: v })} placeholder="Today" />
+              <DateField mode="date" value={postalForm.receivedAt} onChange={(v) => setPostalForm({ ...postalForm, receivedAt: v ?? "" })} placeholder="Today" />
             </FormField>
             <FormField label="Notes" span={2}>
               <Textarea rows={2} value={postalForm.notes} onChange={(e) => setPostalForm({ ...postalForm, notes: e.target.value })} />
@@ -1098,10 +1098,10 @@ export function FrontOffice() {
               </Select>
             </FormField>
             <FormField label="Starts" required>
-              <DateField mode="date" value={eventForm.startsAt} onChange={(v) => setEventForm({ ...eventForm, startsAt: v })} />
+              <DateField mode="date" value={eventForm.startsAt} onChange={(v) => setEventForm({ ...eventForm, startsAt: v ?? "" })} />
             </FormField>
             <FormField label="Ends (optional)">
-              <DateField mode="date" value={eventForm.endsAt} onChange={(v) => setEventForm({ ...eventForm, endsAt: v })} placeholder="Same day" />
+              <DateField mode="date" value={eventForm.endsAt} onChange={(v) => setEventForm({ ...eventForm, endsAt: v ?? "" })} placeholder="Same day" />
             </FormField>
             <FormField label="Term">
               <Select value={eventForm.termId} onValueChange={(v) => setEventForm({ ...eventForm, termId: v })}>

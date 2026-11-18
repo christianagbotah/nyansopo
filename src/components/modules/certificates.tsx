@@ -59,6 +59,7 @@ type StudentRow = {
 type SchoolLite = {
   name: string; code: string; motto: string | null; region: string; district: string;
   town: string; logoColor: string; establishedYear: number | null; gnacopsStatus: string; nasiaRegNo: string | null;
+  phone: string | null;
 };
 type Data = {
   school: SchoolLite | null;

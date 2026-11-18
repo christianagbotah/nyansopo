@@ -58,11 +58,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       }),
       db.enrollment.findMany({
         where: { schoolId, status: "ACTIVE" },
-        select: { studentId: true, classroom: { select: { id: true, name: true } } },
+        select: { studentId: true, classroom: { select: { id: true, name: true, gradeLevel: true } } },
         orderBy: { rollNo: "asc" },
       }),
     ]);
-    const clsByStudent = new Map<string, { id: string; name: string }>();
+    const clsByStudent = new Map<string, { id: string; name: string; gradeLevel: string }>();
     for (const e of enrollments) if (!clsByStudent.has(e.studentId)) clsByStudent.set(e.studentId, e.classroom);
 
     const byStudent = new Map<string, { owingCents: number; oldest: Date }>();

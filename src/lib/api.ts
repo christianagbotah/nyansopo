@@ -46,14 +46,32 @@ export async function apiPost<T = any>(path: string, bodyData?: any): Promise<T>
 }
 
 /** Flush queued offline ops to /api/sync. */
-export async function flushQueue(): Promise<{ synced: number; failed: number; messages: string[] }> {
+export async function flushQueue(): Promise<{ synced: number; failed: number; conflicts: number; messages: string[] }> {
   const store = useStore.getState();
   const ops = store.queue;
-  if (!ops.length || !store.online) return { synced: 0, failed: 0, messages: [] };
+  if (!ops.length || !store.online) return { synced: 0, failed: 0, conflicts: 0, messages: [] };
   store.setSyncing(true);
   try {
-    const res = await fetch("/api/sync", { method: "POST", headers: getHeaders(), body: JSON.stringify({ ops }) });
+    // wave 39: identify this browser as a sync device — the server mints a
+    // DEV-0001-style code on the first flush (CI3 register_device parity) and
+    // we remember it so the Sync Center can revoke this device later.
+    let deviceCode: string | undefined;
+    try { deviceCode = JSON.parse(localStorage.getItem("nyansapo.device") ?? "{}").code || undefined; } catch { /* ignore */ }
+    const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+    const browser = /Android/i.test(ua) ? "Android browser" : /iPhone|iPad/i.test(ua) ? "iOS browser" : /Firefox/i.test(ua) ? "Firefox" : /Edg\//i.test(ua) ? "Edge" : /Chrome\//i.test(ua) ? "Chrome" : "Browser";
+    const res = await fetch("/api/sync", {
+      method: "POST",
+      headers: getHeaders(),
+      body: JSON.stringify({ ops, device: { code: deviceCode, name: `${browser} — this workstation`, kind: "BROWSER" } }),
+    });
+    if (res.status === 403) {
+      const body = await res.json().catch(() => ({}));
+      return { synced: 0, failed: ops.length, conflicts: 0, messages: [body.error ?? "Flush rejected — this device is revoked"] };
+    }
     const body = await res.json();
+    if (body.deviceCode && body.deviceCode !== deviceCode) {
+      try { localStorage.setItem("nyansapo.device", JSON.stringify({ code: body.deviceCode })); } catch { /* ignore */ }
+    }
     const okIds = (body.results ?? []).filter((r: any) => r.ok).map((r: any) => r.clientId);
     const failed = (body.results ?? []).filter((r: any) => !r.ok);
     okIds.forEach((id: string) => store.removeFromQueue(id));
@@ -61,6 +79,7 @@ export async function flushQueue(): Promise<{ synced: number; failed: number; me
     return {
       synced: okIds.length,
       failed: failed.length,
+      conflicts: body.conflicts ?? 0,
       messages: failed.map((f: any) => `${f.clientId}: ${f.detail}`),
     };
   } finally {

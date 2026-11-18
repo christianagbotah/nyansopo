@@ -100,7 +100,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     }),
     db.school.findUnique({
       where: { id: schoolId },
-      select: { name: true, code: true, motto: true, region: true, district: true, town: true, logoColor: true, establishedYear: true, gnacopsStatus: true, nasiaRegNo: true },
+      select: { name: true, code: true, motto: true, region: true, district: true, town: true, logoColor: true, establishedYear: true, gnacopsStatus: true, nasiaRegNo: true, phone: true },
     }),
     db.student.findMany({
       where: { status: "ACTIVE", enrollments: { some: { schoolId, status: "ACTIVE" } } },

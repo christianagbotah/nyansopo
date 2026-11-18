@@ -36,7 +36,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   // classroom label per student (ACTIVE placement wins)
   const enrollments = await db.enrollment.findMany({
     where: { schoolId, status: "ACTIVE" },
-    include: { classroom: { select: { id: true, name: true } } },
+    include: { classroom: { select: { id: true, name: true, gradeLevel: true } } },
   });
   const clsByStudent = new Map<string, { id: string; name: string }>();
   for (const e of enrollments) if (!clsByStudent.has(e.studentId)) clsByStudent.set(e.studentId, { id: e.classroomId, name: e.classroom.name });
@@ -63,7 +63,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         select: { studentId: true, totalCents: true, discountCents: true, paidCents: true },
       }),
       db.dailyService.findMany({ where: { schoolId }, select: { id: true, name: true, category: true, active: true }, orderBy: { name: "asc" } }),
-      db.classroom.findMany({ where: { schoolId }, select: { id: true, name: true } }),
+      db.classroom.findMany({ where: { schoolId }, select: { id: true, name: true, gradeLevel: true } }),
     ]);
 
     const svcOwed = new Map<string, { cents: number; count: number }>();

@@ -77,6 +77,7 @@ const StaffDaily = dynamic(() => import("@/components/modules/staff-daily").then
 const FrontOffice = dynamic(() => import("@/components/modules/front-office").then((m: any) => m.FrontOffice), { loading: () => <ModuleSkeleton /> });
 const Certificates = dynamic(() => import("@/components/modules/certificates").then((m: any) => m.Certificates), { loading: () => <ModuleSkeleton /> });
 const AuditTrail = dynamic(() => import("@/components/modules/audit").then((m: any) => m.AuditTrail), { loading: () => <ModuleSkeleton /> });
+const SyncCenter = dynamic(() => import("@/components/modules/sync-center").then((m: any) => m.SyncCenter), { loading: () => <ModuleSkeleton /> });
 import { applyThemeToDOM, type SchoolTheme } from "@/lib/theme";
 import { sortClassrooms } from "@/lib/classes";
 import {
@@ -134,6 +135,7 @@ const SCHOOL_NAV: NavItem[] = [
   { id: "settings", label: "Settings", icon: SettingsIcon, section: "Support" },
   { id: "rbac", label: "Users & Access", icon: ShieldCheck, section: "Support" },
   { id: "audit", label: "Audit Trail", icon: History, section: "Support" },
+  { id: "sync", label: "Sync Center", icon: RefreshCcw, section: "Support" },
 ];
 
 const PORTAL_NAV: NavItem[] = [
@@ -467,6 +469,15 @@ export function AppShell() {
       { id: "set-statutory", label: "Statutory (SSNIT) rates", target: { tab: "statutory" } },
     ];
 
+    /* sync center sidebar (wave 39): dashboard / devices / conflicts / journal / policy */
+    const syncChildren: NavChild[] = [
+      { id: "sync-dash", label: "Dashboard", target: { tab: "dashboard" } },
+      { id: "sync-devices", label: "Devices", target: { tab: "devices" } },
+      { id: "sync-conflicts", label: "Conflicts", target: { tab: "conflicts" } },
+      { id: "sync-journal", label: "Sync journal", target: { tab: "journal" } },
+      { id: "sync-policy", label: "Sync policy", target: { tab: "policy" } },
+    ];
+
     // boarding (iEduPro navigation.php FACILITIES): houses → dorms → beds + reports
     const boardingChildren: NavChild[] = [
       { id: "boarding-houses", label: "Boarding houses", target: { tab: "houses" } },
@@ -503,6 +514,7 @@ export function AppShell() {
       if (item.id === "frontoffice") enriched.children = frontofficeChildren;
       if (item.id === "certificates") enriched.children = certificatesChildren;
       if (item.id === "settings") enriched.children = settingsChildren;
+      if (item.id === "sync") enriched.children = syncChildren;
       if (item.id === "boarding") enriched.children = boardingChildren;
       if (item.id === "curriculum") enriched.children = curriculumChildren;
       items.push(enriched);
@@ -692,6 +704,7 @@ export function AppShell() {
     if (!queue.length) { toast({ title: "Nothing to sync", description: "Your queue is empty." }); return; }
     const res = await flushQueue();
     if (res.synced) toast({ title: `Synced ${res.synced} action${res.synced > 1 ? "s" : ""}` });
+    if (res.conflicts) toast({ title: `${res.conflicts} conflict${res.conflicts > 1 ? "s" : ""} held for review`, description: "The server already had newer data for these records. An administrator can resolve them in the Sync Center." });
     if (res.failed) toast({ title: `${res.failed} failed`, description: res.messages.join(" · "), variant: "destructive" });
   }
 
@@ -943,6 +956,7 @@ export function AppShell() {
              module === "frontoffice" && show("frontoffice") ? <FrontOffice /> :
              module === "certificates" && show("certificates") ? <Certificates /> :
              module === "audit" && show("audit") ? <AuditTrail /> :
+             module === "sync" && show("sync") ? <SyncCenter /> :
              module === "classes" && show("classes") ? <Classes /> :
              module === "gradebook" && show("gradebook") ? <Gradebook /> :
              module === "results" && show("results") ? <Results /> :

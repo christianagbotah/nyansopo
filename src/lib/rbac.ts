@@ -106,6 +106,9 @@ export const PERMISSIONS: PermDef[] = [
   // Audit trail (wave 31 — the compliance book)
   { id: "audit.view", label: "View the audit trail of consequential school-record actions", group: "System" },
   { id: "ai.use", label: "AI assistant", group: "System" },
+  // Sync Center (wave 39 — offline devices, conflicts, sync journal)
+  { id: "sync.view", label: "View sync devices, conflicts & journal", group: "System" },
+  { id: "sync.manage", label: "Register/revoke sync devices and resolve conflicts", group: "System" },
   // Self-service portals
   { id: "staffhub.self", label: "Staff self-service portal", group: "Self-service" },
   { id: "portal.self", label: "Parent portal (own children)", group: "Self-service" },
@@ -162,6 +165,7 @@ export const ROLE_DEFAULTS: Record<string, string[] | "*"> = {
     "staffduty.view",
     "frontoffice.view", "frontoffice.manage",
     "certificates.view", "certificates.manage",
+    "sync.view", // view-only — the flush health of offline collections matters to the bursar
   ],
   CASHIER: [
     "students.view", "fees.view", "fees.collect", "payments.momo", "cashier.reports", "approvals.request",
@@ -352,6 +356,7 @@ export const MODULE_PERMS: Record<string, string[]> = {
   boarding: ["boarding.view"],
   rbac: ["rbac.manage"],
   audit: ["audit.view"],
+  sync: ["sync.view"],
   cashier: ["cashier.reports", "fees.collect", "daily.collect"],
   conductor: ["transport.conduct"],
   staffhub: ["staffhub.self"],

@@ -17,7 +17,7 @@ import {
   Flag, Trees, Sparkles, Scale, FileSearch, ShoppingBasket, GalleryHorizontal, Rows3, Banknote as Bank, Palette,
   DatabaseBackup, PiggyBank, Award, Gavel, Ruler, Activity, Home as HomeIcon, Hospital, Thermometer,
   Trophy, Medal, BookUser, Footprints, Truck, AlarmClock,
-  DoorOpen, CalendarClock, PhoneCall, Mailbox, CalendarRange, BellRing, FileBadge, Stamp, Gauge,
+  DoorOpen, CalendarClock, PhoneCall, Mailbox, CalendarRange, BellRing, FileBadge, Stamp, Gauge, GitMerge, History,
   Table2,
 } from "lucide-react";
 
@@ -79,6 +79,13 @@ export const PAGE_INDEX: PageEntry[] = [
   { id: "pg-rbac", label: "Users & Access", section: S.people, module: "rbac", target: { tab: "users" }, perm: ["rbac.manage"], icon: ShieldCheck, keywords: ["accounts", "logins", "passwords", "staff accounts"] },
   { id: "pg-roles", label: "Roles & Permissions", section: S.people, module: "rbac", target: { tab: "roles" }, perm: ["rbac.manage"], icon: ShieldCheck, keywords: ["access control", "custom role", "cashier permissions", "acl", "grant"] },
   { id: "pg-audit", label: "Audit Trail", section: S.system, module: "audit", perm: ["audit.view"], icon: ScrollText, keywords: ["audit", "compliance", "who changed", "before after", "audit log viewer", "audit trail", "activity log", "governance", "forensics"] },
+
+  // ── Sync Center (wave 39 — offline devices, conflicts, journal) ──
+  { id: "pg-sync-dash", label: "Sync Dashboard", section: S.system, module: "sync", target: { tab: "dashboard" }, perm: ["sync.view"], icon: Gauge, keywords: ["sync", "offline", "health score", "flush", "timeline", "sync dashboard", "devices at a glance"] },
+  { id: "pg-sync-devices", label: "Sync Devices", section: S.system, module: "sync", target: { tab: "devices" }, perm: ["sync.view"], icon: Laptop, keywords: ["pos tablet", "scanner", "register device", "revoke device", "workstation", "device registry", "sync devices"] },
+  { id: "pg-sync-conflicts", label: "Sync Conflicts", section: S.system, module: "sync", target: { tab: "conflicts" }, perm: ["sync.view"], icon: GitMerge, keywords: ["conflict", "collision", "local wins", "remote wins", "merge", "replay", "sync conflicts"] },
+  { id: "pg-sync-journal", label: "Sync Journal", section: S.system, module: "sync", target: { tab: "journal" }, perm: ["sync.view"], icon: History, keywords: ["journal", "sync log", "audit", "flush history", "duration"] },
+  { id: "pg-sync-policy", label: "Sync Policy", section: S.system, module: "sync", target: { tab: "policy" }, perm: ["sync.view"], icon: ShieldCheck, keywords: ["policy", "disable sync", "table management", "queueable", "offline kinds"] },
 
   // ── Student Billing (invoices / termly) ──
   { id: "pg-bill-items", label: "Bill Items", section: S.billing, module: "fees", target: { tab: "bill-items" }, perm: ["fees.view"], icon: ListChecks, keywords: ["fee items", "catalogue", "tuition"] },

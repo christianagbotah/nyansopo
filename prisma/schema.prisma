@@ -213,6 +213,9 @@ model School {
   clubMeetings         ClubMeeting[]
   clubEvents           ClubEvent[]
   staffAttendanceRows  StaffAttendance[]
+  syncDevices         SyncDevice[]
+  syncConflicts       SyncConflict[]
+  syncEvents          SyncEvent[]
   staffLeaveRequests   LeaveRequest[]
   dutyAssignments      DutyAssignment[]
   staffMovements       StaffMovement[]
@@ -3013,6 +3016,83 @@ model Beneficiary {
 
   @@unique([studentId, termId])
   @@index([schoolId, termId])
+}
+
+// ── wave 39 — Sync Center (CI3 sync_devices / sync_conflicts / sync_audit_log /
+//    sync_metrics / location_registry parity, adapted to the PWA offline queue)
+//
+//    The legacy system synced WAMP servers ↔ cloud with per-table metadata and a
+//    conflict queue. Nyansapo's truth is the browser offline queue: devices are
+//    the browsers/scanners that hold queued ops, conflicts are replay-vs-server
+//    collisions detected at flush time, and SyncEvent journals every flush.
+
+// a registered device (browser / POS tablet / attendance scanner) that can hold
+// a queued offline ops. Auto-registers itself on its first flush — CI3
+// register_device() parity — and can be revoked to reject future flushes.
+model SyncDevice {
+  id         String    @id @default(cuid())
+  schoolId   String
+  school     School    @relation(fields: [schoolId], references: [id])
+  code       String    @unique // DEV-0001 style, minted at registration
+  name       String
+  kind       String // POS_TABLET | SCANNER | FRONT_DESK | BROWSER | OTHER
+  status     String    @default("ACTIVE") // ACTIVE | REVOKED
+  lastSyncAt DateTime? // last successful flush
+  lastSeenAt DateTime? // last flush attempt (incl. failed)
+  lastIP     String?
+  lastUser   String? // name of the user who last flushed from it
+  opsSynced  Int       @default(0) // lifetime ops applied from this device
+  opsFailed  Int       @default(0)
+  notes      String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([schoolId, status])
+}
+
+// a replay-vs-server collision detected at flush time (CI3 sync_conflicts parity:
+// both sides frozen as JSON, resolved by local-wins / remote-wins / ignore).
+//   marks      — queued score ≠ the server's current score for that assessment
+//   attendance — a session for the same class + date was taken online after queue
+model SyncConflict {
+  id          String    @id @default(cuid())
+  schoolId    String
+  school      School    @relation(fields: [schoolId], references: [id])
+  deviceCode  String? // originating device (the "local" side)
+  localUser   String // name of the user whose queued op collided
+  table       String // attendance | marks
+  recordKey   String // human description of the colliding record
+  localState  String // JSON — the queued op's payload
+  remoteState String // JSON — the server state at flush time
+  localAt     DateTime // when the op was queued
+  remoteAt    DateTime // when the server row was last touched
+  status      String    @default("PENDING") // PENDING | RESOLVED | IGNORED
+  resolution  String? // LOCAL_WINS | REMOTE_WINS | IGNORED
+  resolvedBy  String?
+  resolvedAt  DateTime?
+  resolveNote String?
+  createdAt   DateTime  @default(now())
+
+  @@index([schoolId, status])
+}
+
+// the sync journal (CI3 sync_audit_log + sync_metrics parity): one row per flush
+// with ops synced/failed/conflicts and duration — the dashboard's raw material.
+model SyncEvent {
+  id         String    @id @default(cuid())
+  schoolId   String
+  school     School    @relation(fields: [schoolId], references: [id])
+  deviceCode String?
+  userName   String
+  kind       String // FLUSH | REGISTER | REVOKE | RESOLVE
+  opsSynced  Int       @default(0)
+  opsFailed  Int       @default(0)
+  conflicts  Int       @default(0)
+  durationMs Int?
+  detail     String?
+  createdAt  DateTime  @default(now())
+
+  @@index([schoolId, createdAt])
 }
 
 // ── wave 38 — receivables intelligence (CI3 aging_report / drivelist_reminder_templates parity)

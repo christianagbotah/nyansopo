@@ -24,6 +24,20 @@ export const fmtDateTime = (d: string | Date | null | undefined) => {
   return new Date(d).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 };
 
+/** relative time — "3 min ago" / "2 days ago" (sync & activity surfaces) */
+export const fmtAgo = (d: string | Date | null | undefined) => {
+  if (!d) return "—";
+  const ms = Date.now() - new Date(d).getTime();
+  const mins = Math.floor(ms / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} hr${hours > 1 ? "s" : ""} ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days} day${days > 1 ? "s" : ""} ago`;
+  return fmtDate(d);
+};
+
 export const PAYMENT_LABELS: Record<string, string> = {
   CASH: "Cash",
   MOMO_MTN: "MTN MoMo",

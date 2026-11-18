@@ -159,9 +159,16 @@ Legend: ✅ done & verified · 🟡 partial (notes) · ⬜ not yet
 - ✅ RBAC boarding.view/manage; nav under Facilities (CI3 parity)
 
 ## 10. Cloud sync
-- 🟡 PWA offline queue + sync exists (queueable payments/attendance/marks).
-      CI3's multi-device table-level sync dashboard is an architecture of its
-      own (WAMP ↔ cloud) — represented here by the offline queue & sync badge
+- ✅ PWA offline queue + sync exists (queueable payments/attendance/marks).
+- ✅ Sync Center (wave 39 — CI3 sync_dashboard / sync_devices / sync_conflicts /
+      sync_conflict_merge / sync_audit_trail / sync_metrics /
+      sync_table_management parity): device registry (browsers self-register on
+      first flush, POS tablets/scanners pre-registrable, REVOKED = flushes
+      rejected 403), replay-vs-server conflict queue with both sides frozen and
+      local-wins/remote-wins/ignore adjudication (local-wins genuinely replays
+      the payload), per-flush journal (counts, duration, device, user),
+      14-day timeline + health score, and per-kind sync policy enforced at
+      flush time
 
 ## Verification harness (all green at time of writing)
 - scripts/test-fare-engine.sh — 14 checks (one-way fare model)

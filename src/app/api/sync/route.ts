@@ -6,16 +6,75 @@ import { nextInvoiceNo, nextReceiptNo, nextStudentIndex } from "@/lib/codes";
 import { sanitizeCollectItems, collectDailyItems, markPresentForDate, applyTransportUsage, TRANSPORT_USAGES, type TransportUsage } from "@/lib/daily-billing";
 import { sendAutomated, smsEventEnabled } from "@/lib/sms";
 
-// POST /api/sync — flush the offline action queue (idempotent per clientId)
+// POST /api/sync — flush the offline action queue (idempotent per clientId).
+//
+// wave 39: the flush is now a supervised first-class citizen of the Sync Center
+// (CI3 sync push endpoint parity):
+//   · the client identifies its device ({ code?, name, kind }); unknown codes
+//     auto-register (register_device parity) and the minted code is returned
+//   · a REVOKED device is refused outright (403) — the Sync Center kill switch
+//   · per-kind sync policy (SchoolSetting sync.policy) gates each op — a
+//     disabled kind is refused and journaled FAILED (sync_table_management parity)
+//   · marks/attendance replays that collide with newer server state file a
+//     SyncConflict (both sides frozen) instead of silently clobbering
+//   · every flush lands in the sync journal (SyncEvent) with counts + duration
+type FlushOp = { clientId: string; kind: string; payload: any; label?: string; queuedAt?: number };
+
+async function syncPolicy(schoolId: string): Promise<Record<string, boolean>> {
+  const row = await db.schoolSetting.findUnique({ where: { schoolId_key: { schoolId, key: "sync.policy" } } });
+  if (!row) return { payment: true, attendance: true, marks: true, student: true };
+  const parsed = JSON.parse(row.value) as Record<string, boolean>;
+  return { payment: true, attendance: true, marks: true, student: true, ...parsed };
+}
+
 export async function POST(req: NextRequest) {
+  const started = Date.now();
   const user = await getUser(req);
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-  const { ops } = (await req.json()) as { ops: { clientId: string; kind: string; payload: any }[] };
+  const { ops, device } = (await req.json()) as { ops: FlushOp[]; device?: { code?: string; name?: string; kind?: string } };
   if (!Array.isArray(ops)) return NextResponse.json({ error: "ops[] required" }, { status: 400 });
+  if (!ops.length) return NextResponse.json({ results: [], syncedAt: new Date().toISOString() });
+
+  // ── device identity: auto-register, or refuse when revoked ──
+  const firstSchoolId = ops[0].payload?.schoolId ?? user.schoolIds[0];
+  let deviceCode: string | null = null;
+  let deviceRow: { id: string; code: string; status: string; schoolId: string } | null = null;
+  if (firstSchoolId && user.schoolIds.includes(firstSchoolId)) {
+    if (device?.code) {
+      const found = await db.syncDevice.findFirst({ where: { code: device.code, schoolId: firstSchoolId } });
+      if (found && found.status === "REVOKED") {
+        return NextResponse.json({ error: `Device ${found.code} is revoked — flush rejected. Contact the administrator.`, deviceCode: found.code }, { status: 403 });
+      }
+      deviceRow = found;
+    }
+    if (!deviceRow) {
+      // first flush from this browser: register it (CI3 register_device parity)
+      const count = await db.syncDevice.count({ where: { schoolId: firstSchoolId } });
+      const code = `DEV-${String(count + 1).padStart(4, "0")}`;
+      const kind = ["POS_TABLET", "SCANNER", "FRONT_DESK", "BROWSER", "OTHER"].includes(device?.kind ?? "") ? device!.kind! : "BROWSER";
+      const created = await db.syncDevice.create({ data: { schoolId: firstSchoolId, code, name: device?.name ?? "Unnamed device", kind } });
+      await db.syncEvent.create({ data: { schoolId: firstSchoolId, deviceCode: code, userName: user.fullName, kind: "REGISTER", detail: `${created.name} (${kind}) self-registered on first flush` } });
+      deviceRow = { id: created.id, code, status: created.status, schoolId: firstSchoolId };
+    }
+    deviceCode = deviceRow.code;
+  }
+
+  // policies per school (a flush may span schools under one operator)
+  const policies = new Map<string, Record<string, boolean>>();
+  for (const sid of new Set(ops.map((o) => o.payload?.schoolId).filter(Boolean) as string[])) {
+    if (user.schoolIds.includes(sid)) policies.set(sid, await syncPolicy(sid));
+  }
 
   const results: { clientId: string; ok: boolean; detail?: string }[] = [];
+  let conflictsFiled = 0;
+
   for (const op of ops) {
     try {
+      const policy = policies.get(op.payload?.schoolId);
+      if (policy && !policy[op.kind]) {
+        results.push({ clientId: op.clientId, ok: false, detail: `sync disabled for ${op.kind} ops` });
+        continue;
+      }
       if (op.kind === "payment") {
         const { schoolId, invoiceId, amountCents, method, reference, paidAt, category, studentId } = op.payload;
         if (!user.schoolIds.includes(schoolId)) throw new Error("forbidden");
@@ -102,6 +161,30 @@ export async function POST(req: NextRequest) {
         if (!user.schoolIds.includes(schoolId)) throw new Error("forbidden");
         const dup = await db.attendanceSession.findFirst({ where: { classroomId, date: new Date(date), takenByName: { contains: `SYNC:${op.clientId}` } } });
         if (dup) { results.push({ clientId: op.clientId, ok: true, detail: "already synced" }); continue; }
+        // wave 39 conflict gate: a session for this class + date was already
+        // taken online (or by another flush) after this op was queued — replaying
+        // would mint a SECOND session for the same register. File it instead.
+        const clash = await db.attendanceSession.findFirst({
+          where: { classroomId, date: new Date(date) },
+          include: { records: { select: { studentId: true, status: true, excusedReason: true } } },
+        });
+        if (clash) {
+          const classroom = await db.classroom.findUnique({ where: { id: classroomId }, select: { name: true } });
+          await db.syncConflict.create({ data: {
+            schoolId,
+            deviceCode,
+            localUser: user.fullName,
+            table: "attendance",
+            recordKey: `${classroom?.name ?? "Class"} · ${new Date(date).toDateString()}`,
+            localState: JSON.stringify({ classroomId, date, records }),
+            remoteState: JSON.stringify({ sessionId: clash.id, takenByName: clash.takenByName, records: clash.records }),
+            localAt: new Date(op.queuedAt ?? Date.now()),
+            remoteAt: clash.date ?? new Date(),
+          } });
+          conflictsFiled++;
+          results.push({ clientId: op.clientId, ok: true, detail: `conflict filed — register already taken online (${clash.records.length} on server)` });
+          continue;
+        }
         const term = await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId } } });
         const session = await db.attendanceSession.create({ data: { classroomId, schoolId, termId: term!.id, date: new Date(date), takenByName: `${user.fullName} (SYNC:${op.clientId})` } });
         for (const r of records) await db.attendanceRecord.create({ data: { sessionId: session.id, studentId: r.studentId, status: r.status, excusedReason: r.excusedReason ?? null, markedOffline: true } });
@@ -109,6 +192,28 @@ export async function POST(req: NextRequest) {
       } else if (op.kind === "marks") {
         const { schoolId, assessmentId, marks } = op.payload;
         if (!user.schoolIds.includes(schoolId)) throw new Error("forbidden");
+        // wave 39 conflict gate: the server's marks for this assessment were
+        // re-entered after this op was queued (another teacher / an online
+        // correction). Replaying would silently clobber them — file instead.
+        const existing = await db.mark.findMany({ where: { assessmentId }, select: { studentId: true, score: true, enteredOffline: true } });
+        const queued = new Map((marks as { studentId: string; score: number | null | string }[]).map((m) => [m.studentId, (m.score === "" || m.score === undefined ? null : m.score) as number | null]));
+        const differs = (existing.some((e) => (queued.get(e.studentId) ?? null) !== (e.score ?? null)) || [...queued.keys()].some((sid) => !existing.some((e) => e.studentId === sid)));
+        if (existing.length && differs) {
+          await db.syncConflict.create({ data: {
+            schoolId,
+            deviceCode,
+            localUser: user.fullName,
+            table: "marks",
+            recordKey: op.label ?? `Assessment ${assessmentId.slice(-6).toUpperCase()}`,
+            localState: JSON.stringify({ schoolId, assessmentId, marks }),
+            remoteState: JSON.stringify({ marks: existing }),
+            localAt: new Date(op.queuedAt ?? Date.now()),
+            remoteAt: new Date(),
+          } });
+          conflictsFiled++;
+          results.push({ clientId: op.clientId, ok: true, detail: `conflict filed — marks re-entered online (${existing.length} server rows)` });
+          continue;
+        }
         await db.mark.deleteMany({ where: { assessmentId } });
         for (const m of marks) if (m.score !== null && m.score !== "") await db.mark.create({ data: { assessmentId, studentId: m.studentId, score: Number(m.score), enteredOffline: true } });
         results.push({ clientId: op.clientId, ok: true, detail: "marks saved" });
@@ -153,5 +258,35 @@ export async function POST(req: NextRequest) {
       results.push({ clientId: op.clientId, ok: false, detail: e?.message ?? "failed" });
     }
   }
-  return NextResponse.json({ results, syncedAt: new Date().toISOString() });
+
+  // ── journal the flush (CI3 sync_audit_log + sync_metrics parity): one
+  // SyncEvent per school involved, device counters stamped, duration recorded.
+  // Journaling must never break the flush itself — swallow its failures.
+  const ip = (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || null;
+  try {
+    const okCount = results.filter((r) => r.ok).length;
+    const failCount = results.length - okCount;
+    const bySchool = new Map<string, { ok: number; failed: number }>();
+    const detail = results.map((r) => r.detail ?? "").filter(Boolean).slice(0, 5).join(" · ");
+    for (const r of results) {
+      const op = ops.find((o) => o.clientId === r.clientId);
+      const sid = op?.payload?.schoolId;
+      if (!sid) continue;
+      const cur = bySchool.get(sid) ?? { ok: 0, failed: 0 };
+      if (r.ok) cur.ok++; else cur.failed++;
+      bySchool.set(sid, cur);
+    }
+    for (const [sid, counts] of bySchool) {
+      await db.syncEvent.create({ data: { schoolId: sid, deviceCode, userName: user.fullName, kind: "FLUSH", opsSynced: counts.ok, opsFailed: counts.failed, conflicts: conflictsFiled, durationMs: Date.now() - started, detail: detail || null } });
+    }
+    if (deviceRow) {
+      await db.syncDevice.update({ where: { id: deviceRow.id }, data: {
+        lastSyncAt: okCount ? new Date() : undefined,
+        lastSeenAt: new Date(), lastIP: ip, lastUser: user.fullName,
+        opsSynced: { increment: okCount }, opsFailed: { increment: failCount },
+      } });
+    }
+  } catch { /* journaling is best-effort */ }
+
+  return NextResponse.json({ results, syncedAt: new Date().toISOString(), deviceCode, conflicts: conflictsFiled });
 }

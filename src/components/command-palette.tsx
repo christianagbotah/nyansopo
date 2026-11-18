@@ -89,6 +89,7 @@ export function CommandPalette({
               <CommandItem value="sync offline queue" onSelect={() => run(async () => {
                 const res = await flushQueue();
                 if (res.synced) toast({ title: `Synced ${res.synced} action${res.synced > 1 ? "s" : ""}` });
+                if (res.conflicts) toast({ title: `${res.conflicts} conflict(s) held for review`, description: "Newer server data exists — an administrator resolves them in the Sync Center." });
                 if (res.failed) toast({ title: `${res.failed} failed`, description: res.messages.join(" · "), variant: "destructive" });
               })}>
                 <RefreshCcw className="size-4 text-muted-foreground" />

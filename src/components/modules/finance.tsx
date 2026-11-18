@@ -175,7 +175,7 @@ export function Finance() {
           <TabsTrigger value="ledger">Student ledger</TabsTrigger>
           <TabsTrigger value="aging">Receivables ageing</TabsTrigger>
           <TabsTrigger value="bills">Terminal bills</TabsTrigger>
-          <TabsTrigger value="alerts" className="gap-1.5">Alerts{(alerts?.stats.live ?? 0) > 0 ? <Badge className="ml-1 h-4 min-w-4 px-1 text-[10px] bg-red-100 text-red-800 border-transparent dark:bg-red-950 dark:text-red-300">{alerts.stats.live}</Badge> : null}</TabsTrigger>
+          <TabsTrigger value="alerts" className="gap-1.5">Alerts{(alerts?.stats.live ?? 0) > 0 ? <Badge className="ml-1 h-4 min-w-4 px-1 text-[10px] bg-red-100 text-red-800 border-transparent dark:bg-red-950 dark:text-red-300">{alerts?.stats.live ?? 0}</Badge> : null}</TabsTrigger>
           <TabsTrigger value="expenditure">Expenditure</TabsTrigger>
           <TabsTrigger value="advanced">Advanced reports</TabsTrigger>
           <TabsTrigger value="statements">CI3 statements</TabsTrigger>

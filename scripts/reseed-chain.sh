@@ -39,6 +39,7 @@ SCRIPTS=(
   prisma/seed-budgets.ts
   prisma/seed-marksheet.ts
   prisma/seed-beneficiaries.ts
+  prisma/seed-sync.ts
 )
 fail=0
 for s in "${SCRIPTS[@]}"; do
