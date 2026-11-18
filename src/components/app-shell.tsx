@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import { useStore, hasSchoolScope, isAssociationRole, ROLE_LABELS, ModuleId, NavTarget } from "@/lib/store";
 import { canModule, canAny, gateRole, ROLE_LEVELS, ROLE_LEVEL_LABELS } from "@/lib/rbac";
 import { apiGet } from "@/lib/api";
@@ -20,48 +21,64 @@ import { NotificationBell } from "@/components/notification-bell";
 import { CommandPalette } from "@/components/command-palette";
 import { MetroMenu, MetroEdgeTrigger } from "@/components/metro-menu";
 import { PAGE_INDEX, type PageEntry } from "@/lib/page-index";
+
+/* Wave 33 — modules lazy-load (next/dynamic): only the active module's chunk
+   compiles in dev (the 4 GB sandbox OOM-killed next-server when the whole
+   graph built on first paint) and each module splits into its own production
+   chunk. Render sites are untouched — every usage is still <Dashboard />. */
+function ModuleSkeleton() {
+  return (
+    <div className="space-y-4 py-8">
+      <div className="h-8 w-64 animate-pulse rounded-md bg-muted" />
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {[0, 1, 2, 3].map((i) => <div key={i} className="h-24 animate-pulse rounded-lg bg-muted" />)}
+      </div>
+      <div className="h-64 animate-pulse rounded-lg bg-muted" />
+    </div>
+  );
+}
+const Dashboard = dynamic(() => import("@/components/modules/dashboard").then((m: any) => m.Dashboard), { loading: () => <ModuleSkeleton /> });
+const Students = dynamic(() => import("@/components/modules/students").then((m: any) => m.Students), { loading: () => <ModuleSkeleton /> });
+const Admissions = dynamic(() => import("@/components/modules/admissions").then((m: any) => m.Admissions), { loading: () => <ModuleSkeleton /> });
+const Fees = dynamic(() => import("@/components/modules/fees").then((m: any) => m.Fees), { loading: () => <ModuleSkeleton /> });
+const Attendance = dynamic(() => import("@/components/modules/attendance").then((m: any) => m.Attendance), { loading: () => <ModuleSkeleton /> });
+const Gradebook = dynamic(() => import("@/components/modules/gradebook").then((m: any) => m.Gradebook), { loading: () => <ModuleSkeleton /> });
+const Curriculum = dynamic(() => import("@/components/modules/curriculum").then((m: any) => m.Curriculum), { loading: () => <ModuleSkeleton /> });
+const Classes = dynamic(() => import("@/components/modules/classes").then((m: any) => m.Classes), { loading: () => <ModuleSkeleton /> });
+const Reports = dynamic(() => import("@/components/modules/reports").then((m: any) => m.Reports), { loading: () => <ModuleSkeleton /> });
+const BranchConsole = dynamic(() => import("@/components/modules/branch-console").then((m: any) => m.BranchConsole), { loading: () => <ModuleSkeleton /> });
+const AiCenter = dynamic(() => import("@/components/modules/ai-center").then((m: any) => m.AiCenter), { loading: () => <ModuleSkeleton /> });
+const AssociationPortal = dynamic(() => import("@/components/modules/association-portal").then((m: any) => m.AssociationPortal), { loading: () => <ModuleSkeleton /> });
+const Settings = dynamic(() => import("@/components/modules/settings").then((m: any) => m.Settings), { loading: () => <ModuleSkeleton /> });
+const DailyServices = dynamic(() => import("@/components/modules/daily-services").then((m: any) => m.DailyServices), { loading: () => <ModuleSkeleton /> });
+const MomoPayments = dynamic(() => import("@/components/modules/momo-payments").then((m: any) => m.MomoPayments), { loading: () => <ModuleSkeleton /> });
+const Transportation = dynamic(() => import("@/components/modules/transport").then((m: any) => m.Transportation), { loading: () => <ModuleSkeleton /> });
+const SmsCenter = dynamic(() => import("@/components/modules/sms-center").then((m: any) => m.SmsCenter), { loading: () => <ModuleSkeleton /> });
+const Accounts = dynamic(() => import("@/components/modules/accounts").then((m: any) => m.Accounts), { loading: () => <ModuleSkeleton /> });
+const Budgets = dynamic(() => import("@/components/modules/budgets").then((m: any) => m.Budgets), { loading: () => <ModuleSkeleton /> });
+const Results = dynamic(() => import("@/components/modules/results").then((m: any) => m.Results), { loading: () => <ModuleSkeleton /> });
+const Messages = dynamic(() => import("@/components/modules/messages").then((m: any) => m.Messages), { loading: () => <ModuleSkeleton /> });
+const Payroll = dynamic(() => import("@/components/modules/payroll").then((m: any) => m.Payroll), { loading: () => <ModuleSkeleton /> });
+const Inventory = dynamic(() => import("@/components/modules/inventory").then((m: any) => m.Inventory), { loading: () => <ModuleSkeleton /> });
+const Finance = dynamic(() => import("@/components/modules/finance").then((m: any) => m.Finance), { loading: () => <ModuleSkeleton /> });
+const LibraryPortal = dynamic(() => import("@/components/modules/library-portal").then((m: any) => m.LibraryPortal), { loading: () => <ModuleSkeleton /> });
+const OnlineExams = dynamic(() => import("@/components/modules/online-exams").then((m: any) => m.OnlineExams), { loading: () => <ModuleSkeleton /> });
+const RbacConsole = dynamic(() => import("@/components/modules/rbac-console").then((m: any) => m.RbacConsole), { loading: () => <ModuleSkeleton /> });
+const CashierConsole = dynamic(() => import("@/components/modules/cashier-console").then((m: any) => m.CashierConsole), { loading: () => <ModuleSkeleton /> });
+const ConductorPortal = dynamic(() => import("@/components/modules/conductor-portal").then((m: any) => m.ConductorPortal), { loading: () => <ModuleSkeleton /> });
+const StaffPortal = dynamic(() => import("@/components/modules/staff-portal").then((m: any) => m.StaffPortal), { loading: () => <ModuleSkeleton /> });
+const ParentPortal = dynamic(() => import("@/components/modules/parent-portal").then((m: any) => m.ParentPortal), { loading: () => <ModuleSkeleton /> });
+const StudentPortal = dynamic(() => import("@/components/modules/student-portal").then((m: any) => m.StudentPortal), { loading: () => <ModuleSkeleton /> });
+const Boarding = dynamic(() => import("@/components/modules/boarding").then((m: any) => m.Boarding), { loading: () => <ModuleSkeleton /> });
+const Discipline = dynamic(() => import("@/components/modules/discipline").then((m: any) => m.Discipline), { loading: () => <ModuleSkeleton /> });
+const Health = dynamic(() => import("@/components/modules/health").then((m: any) => m.Health), { loading: () => <ModuleSkeleton /> });
+const Clubs = dynamic(() => import("@/components/modules/clubs").then((m: any) => m.Clubs), { loading: () => <ModuleSkeleton /> });
+const StaffDaily = dynamic(() => import("@/components/modules/staff-daily").then((m: any) => m.StaffDaily), { loading: () => <ModuleSkeleton /> });
+const FrontOffice = dynamic(() => import("@/components/modules/front-office").then((m: any) => m.FrontOffice), { loading: () => <ModuleSkeleton /> });
+const Certificates = dynamic(() => import("@/components/modules/certificates").then((m: any) => m.Certificates), { loading: () => <ModuleSkeleton /> });
+const AuditTrail = dynamic(() => import("@/components/modules/audit").then((m: any) => m.AuditTrail), { loading: () => <ModuleSkeleton /> });
 import { applyThemeToDOM, type SchoolTheme } from "@/lib/theme";
 import { sortClassrooms } from "@/lib/classes";
-import { Dashboard } from "@/components/modules/dashboard";
-import { Students } from "@/components/modules/students";
-import { Admissions } from "@/components/modules/admissions";
-import { Fees } from "@/components/modules/fees";
-import { Attendance } from "@/components/modules/attendance";
-import { Gradebook } from "@/components/modules/gradebook";
-import { Curriculum } from "@/components/modules/curriculum";
-import { Classes } from "@/components/modules/classes";
-import { Reports } from "@/components/modules/reports";
-import { BranchConsole } from "@/components/modules/branch-console";
-import { AiCenter } from "@/components/modules/ai-center";
-import { AssociationPortal } from "@/components/modules/association-portal";
-import { Settings } from "@/components/modules/settings";
-import { DailyServices } from "@/components/modules/daily-services";
-import { MomoPayments } from "@/components/modules/momo-payments";
-import { Transportation } from "@/components/modules/transport";
-import { SmsCenter } from "@/components/modules/sms-center";
-import { Accounts } from "@/components/modules/accounts";
-import { Budgets } from "@/components/modules/budgets";
-import { Results } from "@/components/modules/results";
-import { Messages } from "@/components/modules/messages";
-import { Payroll } from "@/components/modules/payroll";
-import { Inventory } from "@/components/modules/inventory";
-import { Finance } from "@/components/modules/finance";
-import { LibraryPortal } from "@/components/modules/library-portal";
-import { OnlineExams } from "@/components/modules/online-exams";
-import { RbacConsole } from "@/components/modules/rbac-console";
-import { CashierConsole } from "@/components/modules/cashier-console";
-import { ConductorPortal } from "@/components/modules/conductor-portal";
-import { StaffPortal } from "@/components/modules/staff-portal";
-import { ParentPortal } from "@/components/modules/parent-portal";
-import { StudentPortal } from "@/components/modules/student-portal";
-import { Boarding } from "@/components/modules/boarding";
-import { Discipline } from "@/components/modules/discipline";
-import { Health } from "@/components/modules/health";
-import { Clubs } from "@/components/modules/clubs";
-import { StaffDaily } from "@/components/modules/staff-daily";
-import { FrontOffice } from "@/components/modules/front-office";
-import { Certificates } from "@/components/modules/certificates";
-import { AuditTrail } from "@/components/modules/audit";
 import {
   LayoutDashboard, Users, Banknote, CalendarCheck, ClipboardList, GraduationCap, ArrowLeftRight, Building2,
   BrainCircuit, Settings as SettingsIcon, Landmark, Menu, CloudOff, Cloud, RefreshCcw, LogOut, Moon, Sun,

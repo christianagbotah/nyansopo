@@ -18,6 +18,7 @@ import {
   DatabaseBackup, PiggyBank, Award, Gavel, Ruler, Activity, Home as HomeIcon, Hospital, Thermometer,
   Trophy, Medal, BookUser, Footprints,
   DoorOpen, CalendarClock, PhoneCall, Mailbox, CalendarRange, BellRing, FileBadge, Stamp, Gauge,
+  Table2,
 } from "lucide-react";
 
 export type PageEntry = {
@@ -125,6 +126,7 @@ export const PAGE_INDEX: PageEntry[] = [
   { id: "pg-creche", label: "Early Years Marks", section: S.academic, module: "gradebook", target: { tab: "creche" }, perm: ["gradebook.enter"], icon: HeartPulse, keywords: ["kindergarten", "kg", "nursery", "montessori"] },
   { id: "pg-gb-analytics", label: "Gradebook Analytics", section: S.academic, module: "gradebook", target: { tab: "analytics" }, perm: ["gradebook.view"], icon: BarChart3, keywords: ["subject performance", "class average"] },
   { id: "pg-results", label: "Results Broadsheet", section: S.academic, module: "results", target: { tab: "grid" }, perm: ["reports.view"], icon: Award, keywords: ["term results", "report cards", "bece grades", "positions", "aggregate", "publish"] },
+  { id: "pg-results-tabulation", label: "Exam Tabulation Sheet", section: S.academic, module: "results", target: { tab: "tabulation" }, perm: ["reports.view"], icon: Table2, keywords: ["tabulation", "master sheet", "exams officer", "raw scores", "class exam total", "ca 30 exam 70", "cummulative pack", "print tabulation"] },
   { id: "pg-results-analytics", label: "Term Analytics", section: S.academic, module: "results", target: { tab: "analytics" }, perm: ["reports.view"], icon: BarChart3, keywords: ["waec distribution", "pass rate", "weak subjects", "distinctions", "a1 f9", "term analytics"] },
   { id: "pg-discipline", label: "Conduct Register", section: S.academic, module: "discipline", target: { tab: "register" }, perm: ["discipline.view"], icon: Gavel, keywords: ["discipline", "incident", "offence", "suspension", "warning", "conduct register"] },
   { id: "pg-commendations", label: "Commendations", section: S.academic, module: "discipline", target: { tab: "commendations" }, perm: ["discipline.view"], icon: Award, keywords: ["awards", "good deed", "merit", "praise", "positive conduct"] },

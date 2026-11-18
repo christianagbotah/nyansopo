@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useStore, type NavTarget } from "@/lib/store";
 import { apiGet, apiPost } from "@/lib/api";
 import { canAny } from "@/lib/rbac";
@@ -25,6 +25,7 @@ import {
   Percent, Layers, RefreshCcw, ScrollText, Send, Undo2, Megaphone, BarChart3, Mail, Phone, PhoneOff,
   MailWarning, Gauge, ChevronDown, ChevronUp, BadgeCheck, AlertTriangle,
   UsersRound, MoveUpRight, ListChecks, Save,
+  Table2, Download, BookCopy,
 } from "lucide-react";
 
 /* ══════════════════════════════════════════════════════════════
@@ -149,6 +150,40 @@ type AnalyticsPayload = {
   weakSubjects: { name: string; passRate: number }[];
 };
 
+/* ── wave 33 — exam tabulation sheet (/api/results/tabulation) ──
+   The exams officer's master sheet: one row per learner, one
+   CLASS / EXAM / TOTAL column group per subject, sub-totals, the
+   grand total and a competition-ranked position, plus the
+   pencilled-margin stats (high / low / mean / pass / distinctions)
+   for every subject. */
+type TabCell = {
+  classScore: number | null; examScore: number | null; total: number | null;
+  grade: string | null; position: number | null; published: boolean;
+};
+type TabRow = {
+  studentId: string; name: string; indexNo: string; gender: string;
+  cells: Record<string, TabCell>;
+  classTotal: number | null; examTotal: number | null; grandTotal: number | null;
+  position: number | null; compiled: boolean; published: boolean;
+};
+type TabSubjectStat = {
+  subjectId: string; entries: number;
+  highest: number | null; lowest: number | null; average: number | null;
+  passRate: number | null; distinctions: number;
+};
+type TabulationPayload = {
+  school: { id: string; name: string; code: string; logoColor: string };
+  term: { id: string; name: string; yearName: string };
+  classroom: { id: string; name: string };
+  subjects: { id: string; name: string; code: string }[];
+  rows: TabRow[];
+  subjectStats: TabSubjectStat[];
+  summary: {
+    onRoll: number; compiled: number; published: number; subjects: number;
+    entries: number; grandAvg: number | null; passRate: number | null;
+  };
+};
+
 /* ── wave 22 — results release notifications (/api/results/notify) ── */
 type NotifyRow = {
   studentId: string; studentName: string; indexNo: string;
@@ -265,6 +300,14 @@ export function Results() {
   const [confirmRoll, setConfirmRoll] = useState(false);
   const [rollBusy, setRollBusy] = useState(false);
   const [printRoll, setPrintRoll] = useState(false);
+  /* wave 33 — exam tabulation sheet + bulk cumulative pack */
+  const [tabDensity, setTabDensity] = useState<"summary" | "raw">("summary");
+  const [tabData, setTabData] = useState<TabulationPayload | null>(null);
+  const [tabLoading, setTabLoading] = useState(false);
+  const [packOpen, setPackOpen] = useState(false);
+  const [packBusy, setPackBusy] = useState(false);
+  const [packProgress, setPackProgress] = useState(0);
+  const [pack, setPack] = useState<TranscriptPayload[]>([]);
 
   /* iEduPro nested-nav parity: deep-link the analytics tab */
   const [appliedTarget, setAppliedTarget] = useState<NavTarget | null>(null);
@@ -272,6 +315,7 @@ export function Results() {
     setAppliedTarget(navTarget);
     if (navTarget?.tab === "analytics") setTab("analytics");
     if (navTarget?.tab === "promotion") setTab("promotion");
+    if (navTarget?.tab === "tabulation") setTab("tabulation");
   }
 
   /* bootstrap — resolve the school's terms/classes and default selectors
@@ -454,6 +498,78 @@ export function Results() {
       });
     return () => { alive = false; };
   }, [currentSchoolId, termId, classId, tab, refresh]);
+
+  /* wave 33 — tabulation sheet, fetched while the Tabulation tab is open;
+     recomputed compiles refresh it like the rest of the module. */
+  useEffect(() => {
+    if (!currentSchoolId || !termId || !classId || tab !== "tabulation") return;
+    let alive = true;
+    setTabLoading(true);
+    apiGet<TabulationPayload>(`/api/results/tabulation?schoolId=${currentSchoolId}&termId=${termId}&classId=${classId}`)
+      .then((d) => { if (alive) { setTabData(d); setTabLoading(false); } })
+      .catch((e) => {
+        if (alive) {
+          setTabLoading(false);
+          toast({ title: "Could not load the tabulation sheet", description: e.message, variant: "destructive" });
+        }
+      });
+    return () => { alive = false; };
+  }, [currentSchoolId, termId, classId, tab, refresh]);
+
+  /** Export the tabulation matrix as CSV (exams-office hand-off). */
+  function exportTabulation() {
+    if (!tabData) return;
+    const esc = (v: string | number | null | undefined) => {
+      const s = v === null || v === undefined ? "" : String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const head = ["#", "Learner", "Index No."];
+    for (const s of tabData.subjects) head.push(`${s.name} CA`, `${s.name} Exam`, `${s.name} Total`, `${s.name} Grade`);
+    head.push("CA 30 Total", "Exam 70 Total", "Grand Total", "Position");
+    const lines = [head.map(esc).join(",")];
+    tabData.rows.forEach((r, i) => {
+      const cells: (string | number | null)[] = [i + 1, r.name, r.indexNo];
+      for (const s of tabData.subjects) {
+        const c = r.cells[s.id];
+        cells.push(c?.classScore ?? "", c?.examScore ?? "", c?.total ?? "", c?.grade ?? "");
+      }
+      cells.push(r.classTotal ?? "", r.examTotal ?? "", r.grandTotal ?? "", r.position ?? "");
+      lines.push(cells.map(esc).join(","));
+    });
+    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `tabulation-${tabData.classroom.name.replace(/\s+/g, "-")}-${tabData.term.name.replace(/\s+/g, "-")}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast({ title: "CSV exported", description: `${tabData.rows.length} learners × ${tabData.subjects.length} subjects — opens in Excel or Google Sheets.` });
+  }
+
+  /** Bulk cumulative pack — every learner's full academic transcript,
+   *  fetched one by one and printed as a single class set (CI3
+   *  cummulative_reports_bulk parity). */
+  async function openPack() {
+    if (!currentSchoolId || !data?.students.length) return;
+    setPackOpen(true);
+    setPackBusy(true);
+    setPack([]);
+    setPackProgress(0);
+    try {
+      const sheets: TranscriptPayload[] = [];
+      for (const st of data.students) {
+        const d = await apiGet<TranscriptPayload>(`/api/results/transcript?schoolId=${currentSchoolId}&studentId=${st.id}`);
+        sheets.push(d);
+        setPackProgress((p) => p + 1);
+      }
+      setPack(sheets);
+      toast({ title: "Cumulative pack ready", description: `${sheets.length} learner transcript${sheets.length === 1 ? "" : "s"} assembled — print the whole set.` });
+    } catch (e: any) {
+      toast({ title: "Pack failed", description: e.message, variant: "destructive" });
+      setPackOpen(false);
+    } finally {
+      setPackBusy(false);
+    }
+  }
 
   /* wave 23 — promotion board, fetched while the Promotion tab is open;
      seeded with the ledger's saved decision (or the auto proposal) and
@@ -713,6 +829,7 @@ export function Results() {
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="grid" className="gap-1.5"><Award className="size-4" /> Broadsheet</TabsTrigger>
+          <TabsTrigger value="tabulation" className="gap-1.5"><Table2 className="size-4" /> Tabulation</TabsTrigger>
           <TabsTrigger value="analytics" className="gap-1.5"><BarChart3 className="size-4" /> Analytics</TabsTrigger>
           <TabsTrigger value="promotion" className="gap-1.5"><UsersRound className="size-4" /> Promotion</TabsTrigger>
         </TabsList>
@@ -822,6 +939,61 @@ export function Results() {
             className={meta.classrooms.find((c) => c.id === classId)?.name ?? "class"}
             termLabel={termLabel ? `${termLabel.name} · ${termLabel.yearName}` : ""}
           />
+        </TabsContent>
+
+        {/* ── wave 33 — exam tabulation sheet (CI3 tabulation_sheet parity) ── */}
+        <TabsContent value="tabulation" className="mt-4">
+          {!tabData ? (
+            tabLoading ? <LoadingBlock label="Ruling the tabulation sheet…" /> : (
+              <Card>
+                <CardContent className="py-8">
+                  <EmptyState
+                    icon={<Table2 className="size-8" />}
+                    title="No tabulation sheet for this term yet"
+                    hint="Run “Compute term results” on the Broadsheet tab first — the sheet reads the same ledger the report cards print from."
+                  />
+                </CardContent>
+              </Card>
+            )
+          ) : (
+            <div className="space-y-3">
+              {/* summary chips + actions */}
+              <div className="flex flex-wrap items-center gap-2 no-print">
+                <Badge variant="outline" className="gap-1"><Users className="size-3" /> {tabData.summary.onRoll} on roll</Badge>
+                <Badge variant="outline" className="gap-1"><BookOpen className="size-3" /> {tabData.summary.subjects} subjects · {tabData.summary.entries} entries</Badge>
+                <Badge variant="outline" className="gap-1"><TrendingUp className="size-3" /> Class grand average {tabData.summary.grandAvg !== null ? `${fmt1(tabData.summary.grandAvg)}%` : "—"}</Badge>
+                <Badge variant="outline" className="gap-1"><Percent className="size-3" /> Pass rate {tabData.summary.passRate !== null ? `${tabData.summary.passRate}%` : "—"}</Badge>
+                <div className="ml-auto flex flex-wrap gap-2">
+                  <div className="flex items-center rounded-md border p-0.5 text-[11px]">
+                    <Button size="sm" variant={tabDensity === "summary" ? "secondary" : "ghost"} className="h-6 px-2" onClick={() => setTabDensity("summary")}>Summary</Button>
+                    <Button size="sm" variant={tabDensity === "raw" ? "secondary" : "ghost"} className="h-6 px-2" onClick={() => setTabDensity("raw")}>Raw CA/Exam</Button>
+                  </div>
+                  <Button size="sm" variant="outline" className="gap-1.5" onClick={exportTabulation}>
+                    <Download className="size-4" /> Export CSV
+                  </Button>
+                  <Button size="sm" variant="outline" className="gap-1.5" onClick={() => openPack()} disabled={packBusy || !data?.students.length}>
+                    <BookCopy className="size-4" /> {packBusy ? `Assembling ${packProgress}/${data?.students.length ?? 0}…` : "Cumulative pack"}
+                  </Button>
+                  <Button size="sm" className="gap-1.5" onClick={() => window.print()}>
+                    <Printer className="size-4" /> Print sheet
+                  </Button>
+                </div>
+              </div>
+              {!tabData.rows.some((r) => r.grandTotal !== null) && (
+                <div className="no-print">
+                  <EmptyState
+                    icon={<Calculator className="size-8" />}
+                    title="Nothing compiled for this class-term"
+                    hint="The sheet prints empty until marks are computed — run “Compute term results” on the Broadsheet tab."
+                  />
+                </div>
+              )}
+              <div className="print-area">
+                {tabDensity === "raw" && <style>{"@media print { @page { size: A4 landscape; margin: 8mm } }"}</style>}
+                <TabulationSheet payload={tabData} density={tabDensity} />
+              </div>
+            </div>
+          )}
         </TabsContent>
 
         {/* wave 23 — end-of-year promotion board */}
@@ -1194,6 +1366,51 @@ export function Results() {
               <Skeleton className="h-16 w-full" />
               <Skeleton className="h-48 w-full" />
               <Skeleton className="h-24 w-2/3" />
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── wave 33 — bulk cumulative pack (CI3 cummulative_reports_bulk
+          parity): every learner on roll, their whole academic history,
+          one print job. Sheets use the standard transcript layout with
+          a page break between learners. ── */}
+      <Dialog open={packOpen} onOpenChange={(o) => { if (!packBusy) setPackOpen(o); }}>
+        <DialogContent className="max-w-4xl max-h-[92vh] overflow-y-auto nice-scroll">
+          <DialogHeader className="no-print">
+            <DialogTitle className="flex items-center gap-2"><BookCopy className="size-4" /> Class cumulative pack</DialogTitle>
+            <DialogDescription>
+              {packBusy
+                ? "Fetching every learner's transcript…"
+                : `${pack.length} transcript${pack.length === 1 ? "" : "s"} — one A4 page set per learner. Print on A4 portrait.`}
+            </DialogDescription>
+            {packBusy && (
+              <div className="pt-1">
+                <div className="h-1.5 w-full rounded-full bg-secondary overflow-hidden">
+                  <div className="h-full bg-primary transition-all" style={{ width: `${data?.students.length ? Math.round((packProgress / data.students.length) * 100) : 0}%` }} />
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-1">{packProgress} of {data?.students.length ?? 0} learners fetched</p>
+              </div>
+            )}
+            {!packBusy && pack.length > 0 && (
+              <div className="flex gap-2 pt-1">
+                <Button size="sm" className="gap-1.5" onClick={() => window.print()}><Printer className="size-4" /> Print all {pack.length}</Button>
+              </div>
+            )}
+          </DialogHeader>
+          {!packBusy && pack.length > 0 && (
+            <div className="print-area">
+              {pack.map((t) => (
+                <div key={t.student.id} className="print-sheet mb-6">
+                  <TranscriptSheet payload={t} />
+                </div>
+              ))}
+            </div>
+          )}
+          {packBusy && (
+            <div className="space-y-3 pb-4">
+              <Skeleton className="h-16 w-full" />
+              <Skeleton className="h-48 w-full" />
             </div>
           )}
         </DialogContent>
@@ -1848,6 +2065,174 @@ function PromotionSheet(props: {
         <div>
           <div className="border-t border-neutral-800 w-3/4" />
           <div className="mt-1 text-neutral-600">Class Teacher</div>
+        </div>
+        <div>
+          <div className="border-t border-neutral-800 w-3/4" />
+          <div className="mt-1 text-neutral-600">Headteacher</div>
+          <div className="mt-3 text-neutral-600">Date: ..............................</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════
+   Wave 33 — printable exam tabulation sheet: the exams officer's
+   master sheet in landscape. Learner rows, one CA / Exam / Total
+   column group per subject, sub-totals, grand total and position,
+   then the pencilled-margin stats (high / low / mean / pass /
+   distinctions) as footer rows under every subject group.
+   ══════════════════════════════════════════════════════════════ */
+function TabulationSheet({ payload, density = "summary" }: { payload: TabulationPayload; density?: "summary" | "raw" }) {
+  const p = payload;
+  const raw = density === "raw";
+  /* summary prints portrait (one Tot column per subject); raw prints
+     landscape (the CA / Exam / Tot trio per subject) — the matching
+     @page rule is injected by the tab, never globally. */
+  return (
+    <div className="print-sheet bg-white text-neutral-900 font-serif text-[11px] leading-snug border border-neutral-300 shadow-sm rounded-md p-4 md:p-6">
+      {/* school header — same doctrine as the report card */}
+      <div className="flex items-center gap-4 border-b-2 border-neutral-800 pb-3">
+        <div className="grid place-items-center size-12 shrink-0 rounded-full text-white font-bold text-base" style={{ background: p.school.logoColor || "#7c3aed" }} aria-hidden>
+          {initials(p.school.name)}
+        </div>
+        <div className="min-w-0">
+          <div className="text-lg md:text-xl font-bold tracking-wide uppercase">{p.school.name}</div>
+          <div className="text-[10.5px] text-neutral-600">
+            Examination tabulation sheet{raw ? " — raw scores" : ""} · {p.term.name} ({p.term.yearName}) · {p.classroom.name}
+          </div>
+        </div>
+        <div className="ml-auto text-right text-[10px] text-neutral-500 hidden md:block">
+          <div>EMIS code</div>
+          <div className="font-semibold text-neutral-700">{p.school.code}</div>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto nice-scroll print:overflow-visible">
+        <table className={cn("w-full border-collapse mt-3 text-[10.5px]", raw ? "min-w-[1100px]" : "min-w-[640px]")}>
+          <thead>
+            <tr>
+              <th rowSpan={2} className="border border-neutral-400 bg-neutral-100 px-2 py-1 text-left align-bottom min-w-[120px]">Learner</th>
+              {p.subjects.map((s) => (
+                raw ? (
+                  <th key={s.id} colSpan={3} className="border border-neutral-400 bg-neutral-100 px-1.5 py-1 text-center" title={s.name}>
+                    {s.code || s.name.slice(0, 3).toUpperCase()}
+                    <span className="block font-normal text-[8.5px] text-neutral-500">{s.name}</span>
+                  </th>
+                ) : (
+                  <th key={s.id} className="border border-neutral-400 bg-neutral-100 px-1 py-1 text-center min-w-[44px]" title={s.name}>
+                    {s.code || s.name.slice(0, 3).toUpperCase()}
+                    <span className="block font-normal text-[8px] text-neutral-500">/100</span>
+                  </th>
+                )
+              ))}
+              {raw && <th colSpan={2} className="border border-neutral-400 bg-neutral-200 px-1.5 py-1 text-center">Sub-totals</th>}
+              <th rowSpan={2} className="border border-neutral-400 bg-neutral-200 px-1.5 py-1 text-center align-bottom">Total</th>
+              {raw && <th rowSpan={2} className="border border-neutral-400 bg-neutral-200 px-1.5 py-1 text-center align-bottom">Pos</th>}
+            </tr>
+            {raw && (
+              <tr>
+                {p.subjects.map((s) => (
+                  <Fragment key={s.id}>
+                    <th className="border border-neutral-400 bg-neutral-50 px-1 py-0.5 text-center text-[8.5px] font-semibold" title="Class assessment (30)">CA</th>
+                    <th className="border border-neutral-400 bg-neutral-50 px-1 py-0.5 text-center text-[8.5px] font-semibold" title="End-of-term exam (70)">Exam</th>
+                    <th className="border border-neutral-400 bg-neutral-50 px-1 py-0.5 text-center text-[8.5px] font-semibold">Tot</th>
+                  </Fragment>
+                ))}
+                <th className="border border-neutral-400 bg-neutral-50 px-1 py-0.5 text-center text-[8.5px] font-semibold">CA /30</th>
+                <th className="border border-neutral-400 bg-neutral-50 px-1 py-0.5 text-center text-[8.5px] font-semibold">Exam /70</th>
+              </tr>
+            )}
+          </thead>
+          <tbody>
+            {p.rows.map((r, i) => (
+              <tr key={r.studentId} className={i % 2 ? "bg-neutral-50/60" : ""}>
+                <td className="border border-neutral-400 px-2 py-0.5 sticky left-0 bg-inherit">
+                  <span className="font-medium">{r.name}</span>
+                  {r.indexNo ? <span className="block text-[8.5px] text-neutral-500 tabular-nums">{r.indexNo}</span> : null}
+                </td>
+                {p.subjects.map((s) => {
+                  const c = r.cells[s.id];
+                  const tone = (c?.total ?? null) === null ? "text-neutral-400"
+                    : (c.total as number) >= 65 ? "text-emerald-700 font-semibold"
+                    : (c.total as number) >= 50 ? "text-amber-700 font-semibold"
+                    : "text-red-700 font-semibold";
+                  return raw ? (
+                    <Fragment key={s.id}>
+                      <td className="border border-neutral-400 px-1 py-0.5 text-center tabular-nums">{c?.classScore ?? "—"}</td>
+                      <td className="border border-neutral-400 px-1 py-0.5 text-center tabular-nums">{c?.examScore ?? "—"}</td>
+                      <td className={cn("border border-neutral-400 px-1 py-0.5 text-center tabular-nums", tone)}>{c?.total ?? "—"}</td>
+                    </Fragment>
+                  ) : (
+                    <td key={s.id} className={cn("border border-neutral-400 px-1 py-0.5 text-center tabular-nums", tone)}>{c?.total ?? "—"}</td>
+                  );
+                })}
+                {raw && (
+                  <>
+                    <td className="border border-neutral-400 px-1 py-0.5 text-center tabular-nums font-medium">{r.classTotal ?? "—"}</td>
+                    <td className="border border-neutral-400 px-1 py-0.5 text-center tabular-nums font-medium">{r.examTotal ?? "—"}</td>
+                  </>
+                )}
+                <td className="border border-neutral-400 px-1 py-0.5 text-center tabular-nums font-bold">{r.grandTotal ?? "—"}</td>
+                {raw && <td className="border border-neutral-400 px-1 py-0.5 text-center tabular-nums font-bold">{r.position ? ordinal(r.position) : "—"}</td>}
+              </tr>
+            ))}
+            {!p.rows.length && (
+              <tr><td colSpan={p.subjects.length * (raw ? 3 : 1) + (raw ? 4 : 1)} className="border border-neutral-400 px-2 py-3 text-center text-neutral-500">No learners on roll.</td></tr>
+            )}
+          </tbody>
+          <tfoot>
+            {([
+              ["Highest", "highest"], ["Lowest", "lowest"], ["Mean", "average"],
+            ] as const).map(([label, key]) => (
+              <tr key={key}>
+                <td className="border border-neutral-400 bg-neutral-100 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide">{label}</td>
+                {p.subjects.map((s) => {
+                  const st = p.subjectStats.find((x) => x.subjectId === s.id);
+                  return (
+                    <Fragment key={s.id}>
+                      {raw && <td colSpan={2} className="border border-neutral-400 bg-neutral-50 px-1 py-0.5 text-center text-[9px]"></td>}
+                      <td className="border border-neutral-400 bg-neutral-50 px-1 py-0.5 text-center text-[9px] tabular-nums">{st ? fmt1(st[key]) : "—"}</td>
+                    </Fragment>
+                  );
+                })}
+                <td colSpan={raw ? 3 : 1} className="border border-neutral-400 bg-neutral-50"></td>
+              </tr>
+            ))}
+            <tr>
+              <td className="border border-neutral-400 bg-neutral-100 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide">Pass ≥50</td>
+              {p.subjects.map((s) => {
+                const st = p.subjectStats.find((x) => x.subjectId === s.id);
+                return (
+                  <Fragment key={s.id}>
+                    {raw && <td colSpan={2} className="border border-neutral-400 bg-neutral-50 px-1 py-0.5 text-center text-[9px]"></td>}
+                    <td className="border border-neutral-400 bg-neutral-50 px-1 py-0.5 text-center text-[9px] tabular-nums">{st?.passRate !== null && st?.passRate !== undefined ? `${st.passRate}%` : "—"}</td>
+                  </Fragment>
+                );
+              })}
+              <td colSpan={raw ? 3 : 1} className="border border-neutral-400 bg-neutral-50"></td>
+            </tr>
+            <tr>
+              <td className="border border-neutral-400 bg-neutral-100 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide">B3+ (65↑)</td>
+              {p.subjects.map((s) => {
+                const st = p.subjectStats.find((x) => x.subjectId === s.id);
+                return (
+                  <Fragment key={s.id}>
+                    {raw && <td colSpan={2} className="border border-neutral-400 bg-neutral-50 px-1 py-0.5 text-center text-[9px]"></td>}
+                    <td className="border border-neutral-400 bg-neutral-50 px-1 py-0.5 text-center text-[9px] tabular-nums">{st?.distinctions ?? 0}</td>
+                  </Fragment>
+                );
+              })}
+              <td colSpan={raw ? 3 : 1} className="border border-neutral-400 bg-neutral-50"></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <div className="grid grid-cols-2 gap-10 pt-6 text-[11px]">
+        <div>
+          <div className="border-t border-neutral-800 w-3/4" />
+          <div className="mt-1 text-neutral-600">Exams Officer</div>
         </div>
         <div>
           <div className="border-t border-neutral-800 w-3/4" />
