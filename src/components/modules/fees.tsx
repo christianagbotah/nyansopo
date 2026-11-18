@@ -15,11 +15,12 @@ import { fmtCedi, fmtDate, PAYMENT_LABELS } from "@/lib/format";
 import { canAny } from "@/lib/rbac";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { Banknote, Receipt, AlertTriangle, CheckCircle2, Plus, Flag, Printer, Wallet, Ticket, Percent, UserPlus, XCircle, ListChecks, Copy as CopyIcon, Eye, Link2, ClipboardList, ShieldCheck, Undo2, PencilLine, Trash2, FileWarning, Ban, Download, History, ArrowRightLeft, PiggyBank, HandCoins, CopyPlus, FileUp, Smartphone, Search, UserRound, GraduationCap, Mail } from "lucide-react";
+import { Banknote, Receipt, AlertTriangle, CheckCircle2, Plus, Flag, Printer, Wallet, Ticket, Percent, UserPlus, XCircle, ListChecks, Copy as CopyIcon, Eye, Link2, ClipboardList, ShieldCheck, Undo2, PencilLine, Trash2, FileWarning, Ban, Download, History, ArrowRightLeft, PiggyBank, HandCoins, CopyPlus, FileUp, Smartphone, Search, UserRound, GraduationCap, Mail, HeartHandshake } from "lucide-react";
 import { ReceiptDocument, BulkReceiptsDocument, RECEIPT_STYLES, type ReceiptStyle } from "@/components/receipts";
 import { BillItemsTab, CreateInvoicesTab, type BillItemRow, type RosterRow } from "@/components/modules/fees-billing";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 import { DiscountProfilesTab, DiscountApprovalsTab, type DiscountData } from "@/components/modules/discounts-workspace";
 
@@ -64,6 +65,28 @@ const CREDIT_KIND_LABELS: Record<string, string> = {
   DAILY_WALLET: "To daily wallet", ADJUST: "Adjustment",
 };
 
+/* ── wave 37 — beneficiary register (legacy benefit_categories parity) ── */
+type BenefitRule = { feedingCents: number; classesCents: number; tuitionCents: number };
+type BenefitDetails = { discountType: "percentage" | "amount"; classes: Record<string, BenefitRule> };
+type BenefitCategory = {
+  id: string; name: string; code: string | null; details: BenefitDetails | null;
+  active: boolean; applied: number; createdByName: string; updatedAt: string;
+};
+type BenefitStamp = { categoryId: string; name: string; feedingCents: number; classesCents: number; tuitionCents: number };
+type BeneficiaryRow = {
+  id: string; studentId: string; name: string; indexNo: string; classroom: string | null;
+  guardianPhone: string; categories: BenefitStamp[]; note: string | null;
+  createdByName: string; createdAt: string;
+};
+type BenefitData = {
+  categories: BenefitCategory[];
+  beneficiaries: BeneficiaryRow[];
+  roster: { id: string; name: string; indexNo: string; classroom: string }[];
+  terms: { id: string; name: string; sequence: number; yearName: string; isCurrent: boolean }[];
+  termId: string | null;
+  stats: { categories: number; activeCategories: number; beneficiaries: number; perCategory: { id: string; count: number }[] };
+};
+
 export function Fees() {
   const { currentSchoolId, online, navTarget, session } = useStore();
   const [data, setData] = useState<FeeData | null>(null);
@@ -84,12 +107,32 @@ export function Fees() {
   const [arrearsCsv, setArrearsCsv] = useState("");
   const [arrearsResult, setArrearsResult] = useState<any | null>(null);
   const [arrearsBusy, setArrearsBusy] = useState(false);
+  /* wave 37 — beneficiary register (legacy benefit_categories parity) */
+  const [benefits, setBenefits] = useState<BenefitData | null>(null);
+  const [benefitTerm, setBenefitTerm] = useState<string | null>(null);
+
+  const loadBenefits = (t?: string | null) => {
+    if (!currentSchoolId) return;
+    apiGet<BenefitData>(`/api/school/${currentSchoolId}/ops/discounts?action=beneficiaries${t ? `&termId=${t}` : ""}`)
+      .then((d) => { setBenefits(d); setBenefitTerm(d.termId); })
+      .catch((e) => toast({ title: "Could not load the beneficiary register", description: e.message, variant: "destructive" }));
+  };
+  useEffect(() => {
+    if (tab === "beneficiaries" && !benefits) loadBenefits(benefitTerm ?? termId ?? undefined);
+  }, [tab, benefits, currentSchoolId, termId]);
+  /* school switch resets the register (render-time derived-state reset) */
+  const [benefitSchool, setBenefitSchool] = useState<string | null>(null);
+  if (currentSchoolId !== benefitSchool) {
+    setBenefitSchool(currentSchoolId);
+    setBenefits(null);
+    setBenefitTerm(null);
+  }
 
   /* iEduPro nested nav: open on the deep-linked tab (bill-items / create / invoices / receipts / credits / discounts…) */
   const [appliedTarget, setAppliedTarget] = useState<any>(null);
   if (navTarget !== appliedTarget) {
     setAppliedTarget(navTarget);
-    if (navTarget?.tab && ["bill-items", "create", "invoices", "receipts", "structures", "discounts", "arrears", "credits", "approvals"].includes(navTarget.tab)) setTab(navTarget.tab);
+    if (navTarget?.tab && ["bill-items", "create", "invoices", "receipts", "structures", "discounts", "arrears", "credits", "approvals", "beneficiaries"].includes(navTarget.tab)) setTab(navTarget.tab);
   }
   const canManageApprovals = canAny(session?.permissions, ["approvals.manage"]);
   const canRequestMods = canAny(session?.permissions, ["approvals.request", "approvals.manage"]);
@@ -192,6 +235,7 @@ export function Fees() {
       .catch((e) => toast({ title: "Load failed", description: e.message, variant: "destructive" }));
     apiGet<DiscountData>(`/api/school/${currentSchoolId}/ops/discounts`).then(setDiscounts).catch(() => null);
     apiGet<ApprovalsData>(`/api/school/${currentSchoolId}/ops/reports?tab=approvals`).then(setApprovals).catch(() => null);
+    setBenefitTerm(t ?? null);
   };
   const loadApprovals = () => {
     if (!currentSchoolId) return;
@@ -274,6 +318,7 @@ export function Fees() {
           <TabsTrigger value="receipts">Receipts ({allPayments.length})</TabsTrigger>
           <TabsTrigger value="structures">Fee structures</TabsTrigger>
           <TabsTrigger value="discounts">Discounts ({discounts?.discounts.length ?? 0})</TabsTrigger>
+          <TabsTrigger value="beneficiaries" className="gap-1.5"><HeartHandshake className="size-4" /> Beneficiaries{benefits ? ` (${benefits.stats.beneficiaries})` : ""}</TabsTrigger>
           <TabsTrigger value="arrears">Arrears chase-list ({overdue.length})</TabsTrigger>
           <TabsTrigger value="credits">Credits</TabsTrigger>
           <TabsTrigger value="approvals" className="gap-1.5">
@@ -492,6 +537,17 @@ export function Fees() {
             onEdit={(d) => setDiscDialog(d)}
             onApply={(d) => setApplyDialog(d)}
             onRefresh={() => load(termId ?? undefined)}
+          />
+        </TabsContent>
+
+        {/* ── wave 37 — beneficiary register (legacy benefit_categories parity) ── */}
+        <TabsContent value="beneficiaries">
+          <BeneficiariesTab
+            data={benefits}
+            termId={benefitTerm ?? termId ?? null}
+            onTermChange={(t) => { setBenefitTerm(t); setBenefits(null); loadBenefits(t); }}
+            onReload={() => loadBenefits(benefitTerm ?? termId ?? undefined)}
+            canManage={canAny(session?.permissions, ["discounts.manage", "fees.manage"])}
           />
         </TabsContent>
 
@@ -2323,6 +2379,475 @@ function ToDailyWalletDialog({ row, onOpenChange, onDone }: { row: CreditRow | n
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button onClick={submit} disabled={busy || !cents || cents <= 0 || cents > (row?.balanceCents ?? 0)}>{busy ? "Converting…" : "Send to daily wallet"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════
+   Wave 37 — BENEFICIARIES (legacy benefit_categories.php /
+   beneficiary_list parity, modernised). The welfare register:
+   benefit categories (School Feeding, Capitation Grant, LEAP,
+   scholarships) with per-class charge matrices, and the learners
+   stamped onto them per term — exactly the legacy details JSON +
+   beneficiary_list doctrine, but with live search, category chips
+   and inline stats.
+   ══════════════════════════════════════════════════════════════ */
+function BeneficiariesTab({ data, termId, onTermChange, onReload, canManage }: {
+  data: BenefitData | null;
+  termId: string | null;
+  onTermChange: (t: string) => void;
+  onReload: () => void;
+  canManage: boolean;
+}) {
+  const { currentSchoolId } = useStore();
+  const [q, setQ] = useState("");
+  const [catOpen, setCatOpen] = useState(false);
+  const [catEdit, setCatEdit] = useState<BenefitCategory | null>(null);
+  const [benOpen, setBenOpen] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState<BeneficiaryRow | null>(null);
+
+  if (!data) return <LoadingBlock label="Loading the beneficiary register…" />;
+  const termLabel = data.terms.find((t) => t.id === termId);
+  const filtered = data.beneficiaries.filter((b) =>
+    !q || `${b.name} ${b.indexNo} ${b.classroom ?? ""} ${b.categories.map((c) => c.name).join(" ")}`.toLowerCase().includes(q.toLowerCase())
+  );
+
+  async function act(payload: Record<string, unknown>, key: string, okMsg: string, after?: () => void) {
+    if (!currentSchoolId) return;
+    setBusy(key);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/discounts`, payload);
+      toast({ title: okMsg });
+      setBusy(null);
+      after?.();
+      onReload();
+    } catch (e: any) {
+      setBusy(null);
+      toast({ title: "Action refused", description: e.message, variant: "destructive" });
+    }
+  }
+
+  const fmtRule = (c: BenefitCategory) => {
+    const d = c.details;
+    if (!d) return "—";
+    const keys = Object.keys(d.classes);
+    const row = d.classes[keys[0]];
+    const scope = keys.includes("a") ? "every class" : `${keys.length} class${keys.length === 1 ? "" : "es"}`;
+    const amounts = [
+      row?.feedingCents ? `feeding ${fmtCedi(row.feedingCents, { compact: true })}` : null,
+      row?.classesCents ? `classes ${fmtCedi(row.classesCents, { compact: true })}` : null,
+      row?.tuitionCents ? `tuition ${fmtCedi(row.tuitionCents, { compact: true })}` : null,
+    ].filter(Boolean).join(" · ") || "no charge";
+    return `${scope} — ${amounts}`;
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* term selector + search */}
+      <div className="flex flex-wrap items-center gap-2">
+        <Select value={termId ?? ""} onValueChange={onTermChange}>
+          <SelectTrigger className="w-60" aria-label="Term"><SelectValue placeholder="Term" /></SelectTrigger>
+          <SelectContent>
+            {data.terms.map((t) => (
+              <SelectItem key={t.id} value={t.id}>{t.name} · {t.yearName}{t.isCurrent ? " (current)" : ""}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <div className="relative flex-1 min-w-48">
+          <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search learners, index numbers, programmes…" className="pl-8" aria-label="Search beneficiaries" />
+        </div>
+        {canManage && (
+          <div className="flex gap-2 ml-auto">
+            <Button size="sm" variant="outline" className="gap-1.5" onClick={() => { setCatEdit(null); setCatOpen(true); }}>
+              <Plus className="size-4" /> Category
+            </Button>
+            <Button size="sm" className="gap-1.5" onClick={() => setBenOpen(true)}>
+              <UserPlus className="size-4" /> Add beneficiary
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {/* stats */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatCard icon={<HeartHandshake className="size-4" />} label="Beneficiaries" value={data.stats.beneficiaries} sub={`${termLabel?.name ?? ""} · ${termLabel?.yearName ?? ""}`} tone="primary" />
+        <StatCard icon={<ShieldCheck className="size-4" />} label="Programmes" value={data.stats.categories} sub={`${data.stats.activeCategories} active`} />
+        <StatCard icon={<GraduationCap className="size-4" />} label="Classes reached" value={new Set(data.beneficiaries.map((b) => b.classroom).filter(Boolean)).size} sub="distinct classes on the register" />
+        <StatCard icon={<PiggyBank className="size-4" />} label="Subsidy exposure" value={fmtCedi(data.beneficiaries.reduce((s, b) => s + b.categories.reduce((x, c) => x + c.feedingCents + c.classesCents + c.tuitionCents, 0), 0), { compact: true })} sub="frozen amounts this term" tone="gold" />
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-5 gap-4">
+        {/* programme library */}
+        <Card className="xl:col-span-2">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2"><ShieldCheck className="size-4" /> Programmes ({data.categories.length})</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 max-h-[28rem] overflow-y-auto nice-scroll pr-1">
+            {data.categories.map((c) => (
+              <div key={c.id} className={cn("rounded-xl border p-3", !c.active && "opacity-55")}>
+                <div className="flex items-start gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm font-semibold leading-tight">{c.name}</p>
+                      {c.code ? <Badge variant="outline" className="text-[10px] font-normal">{c.code}</Badge> : null}
+                      {!c.active && <Badge variant="outline" className="text-[10px]">inactive</Badge>}
+                    </div>
+                    <p className="mt-1 text-[11px] text-muted-foreground">{fmtRule(c)}</p>
+                    <p className="mt-0.5 text-[11px] text-muted-foreground">{c.applied} learner{c.applied === 1 ? "" : "s"} this term</p>
+                  </div>
+                  {canManage && (
+                    <div className="flex flex-col gap-1 shrink-0">
+                      <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-[11px]" disabled={busy === `cat-${c.id}`} onClick={() => { setCatEdit(c); setCatOpen(true); }}>
+                        <PencilLine className="size-3.5" /> Edit
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-[11px]" disabled={busy === `cat-${c.id}`} onClick={() => act({ action: "benefit-cat-toggle", id: c.id }, `cat-${c.id}`, c.active ? "Programme switched off" : "Programme switched back on")}>
+                        {c.active ? <><Ban className="size-3.5" /> Disable</> : <><Undo2 className="size-3.5" /> Enable</>}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+            {!data.categories.length && (
+              <EmptyState icon={<ShieldCheck className="size-8" />} title="No programmes yet" hint="Create the welfare programmes your learners ride on — School Feeding, Capitation Grant, LEAP, scholarships — with how much of each service line is charged per class." />
+            )}
+          </CardContent>
+        </Card>
+
+        {/* the register */}
+        <Card className="xl:col-span-3">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2"><HeartHandshake className="size-4" /> Register ({filtered.length})</CardTitle>
+          </CardHeader>
+          <CardContent className="px-0 sm:px-6">
+            <div className="rounded-xl border overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Learner</TableHead>
+                    <TableHead className="hidden md:table-cell">Class</TableHead>
+                    <TableHead>Programmes (frozen amounts)</TableHead>
+                    {canManage && <TableHead className="w-10" />}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filtered.map((b) => (
+                    <TableRow key={b.id}>
+                      <TableCell>
+                        <p className="text-sm font-medium">{b.name}</p>
+                        <p className="text-[11px] text-muted-foreground">{b.indexNo}</p>
+                      </TableCell>
+                      <TableCell className="hidden md:table-cell text-xs">{b.classroom ?? "—"}</TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1">
+                          {b.categories.map((c) => (
+                            <Badge key={c.categoryId} variant="outline" className="max-w-[16rem] truncate text-[10px] font-normal">
+                              {c.name}
+                              {c.feedingCents + c.classesCents + c.tuitionCents > 0 ? ` · ${fmtCedi(c.feedingCents + c.classesCents + c.tuitionCents, { compact: true })}` : " · free"}
+                            </Badge>
+                          ))}
+                        </div>
+                        {b.note ? <p className="mt-1 text-[11px] italic text-muted-foreground truncate max-w-[22rem]">“{b.note}”</p> : null}
+                      </TableCell>
+                      {canManage && (
+                        <TableCell>
+                          <Button size="sm" variant="ghost" className="h-7 w-7 p-0" disabled={busy === `ben-${b.id}`} title="Remove from the register" onClick={() => setConfirmRemove(b)}>
+                            <XCircle className="size-4 text-destructive" />
+                          </Button>
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  ))}
+                  {!filtered.length && (
+                    <TableRow>
+                      <TableCell colSpan={canManage ? 4 : 3} className="py-8 text-center text-sm text-muted-foreground">
+                        {data.beneficiaries.length ? "No match for that search." : `No beneficiaries on ${termLabel?.name ?? "this term"} yet — add learners riding on the welfare programmes.`}
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* new / edit category dialog */}
+      <BenefitCategoryDialog
+        open={catOpen}
+        editing={catEdit}
+        onOpenChange={(o) => { setCatOpen(o); if (!o) setCatEdit(null); }}
+        onDone={onReload}
+      />
+
+      {/* add beneficiary dialog */}
+      <AddBeneficiaryDialog
+        open={benOpen}
+        onOpenChange={setBenOpen}
+        categories={data.categories.filter((c) => c.active)}
+        roster={data.roster}
+        termId={termId}
+        termLabel={termLabel ? `${termLabel.name} · ${termLabel.yearName}` : ""}
+        onDone={onReload}
+      />
+
+      {/* remove confirmation */}
+      <Dialog open={!!confirmRemove} onOpenChange={(o) => { if (!o) setConfirmRemove(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><XCircle className="size-4 text-destructive" /> Remove from the register?</DialogTitle>
+            <DialogDescription>
+              {confirmRemove ? `${confirmRemove.name} (${confirmRemove.classroom ?? "—"}) leaves the ${termLabel?.name ?? "term"} beneficiary register. The frozen programme amounts stay on the invoices already issued.` : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmRemove(null)}>Cancel</Button>
+            <Button
+              variant="destructive" disabled={busy === `ben-${confirmRemove?.id}`}
+              onClick={() => confirmRemove && act({ action: "beneficiary-remove", id: confirmRemove.id }, `ben-${confirmRemove.id}`, "Removed from the register", () => setConfirmRemove(null))}
+            >
+              {busy === `ben-${confirmRemove?.id}` ? "Removing…" : "Remove"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+/** Category editor — the legacy details JSON as a per-class charge matrix. */
+function BenefitCategoryDialog({ open, editing, onOpenChange, onDone }: {
+  open: boolean;
+  editing: BenefitCategory | null;
+  onOpenChange: (o: boolean) => void;
+  onDone: () => void;
+}) {
+  const { currentSchoolId } = useStore();
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState({ name: "", code: "", discountType: "amount" as "amount" | "percentage" });
+  const [rows, setRows] = useState<{ classId: string; feeding: string; classes: string; tuition: string }[]>([{ classId: "a", feeding: "", classes: "", tuition: "" }]);
+  const [classrooms, setClassrooms] = useState<{ id: string; name: string }[]>([]);
+  const [key, setKey] = useState("");
+
+  /* reset the draft whenever the dialog opens for a different target */
+  useEffect(() => {
+    if (!open) return;
+    const k = `${editing?.id ?? "new"}:${open}`;
+    if (k === key) return;
+    setKey(k);
+    const d = editing?.details;
+    const first = d ? Object.entries(d.classes)[0] : null;
+    setForm({
+      name: editing?.name ?? "",
+      code: editing?.code ?? "",
+      discountType: d?.discountType === "percentage" ? "percentage" : "amount",
+    });
+    setRows(
+      d && Object.keys(d.classes).length
+        ? Object.entries(d.classes).map(([classId, r]) => ({ classId, feeding: String(r.feedingCents / 100), classes: String(r.classesCents / 100), tuition: String(r.tuitionCents / 100) }))
+        : [{ classId: "a", feeding: "", classes: "", tuition: "" }],
+    );
+  }, [open, editing, key]);
+  useEffect(() => {
+    if (!open || !currentSchoolId) return;
+    if (classrooms.length) return;
+    apiGet<{ classrooms: { id: string; name: string }[] }>(`/api/school/${currentSchoolId}/fees`)
+      .then((d) => setClassrooms(d.classrooms))
+      .catch(() => null);
+  }, [open, currentSchoolId, classrooms.length]);
+
+  async function save() {
+    if (!currentSchoolId) return;
+    if (!form.name.trim()) { toast({ title: "The programme needs a name" }); return; }
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/discounts`, {
+        action: "benefit-cat-save",
+        id: editing?.id,
+        name: form.name,
+        code: form.code,
+        discountType: form.discountType,
+        charges: rows.map((r) => ({
+          classId: r.classId,
+          feedingCents: Math.max(0, Math.round(Number(r.feeding) * 100) || 0),
+          classesCents: Math.max(0, Math.round(Number(r.classes) * 100) || 0),
+          tuitionCents: Math.max(0, Math.round(Number(r.tuition) * 100) || 0),
+        })),
+      });
+      toast({ title: editing ? "Programme updated" : "Programme created", description: editing ? "Frozen amounts on this term's beneficiaries were refreshed." : "Ready for learners to be stamped onto it." });
+      onOpenChange(false);
+      onDone();
+    } catch (e: any) {
+      toast({ title: "Save refused", description: e.message, variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const classLabel = (id: string) => (id === "a" ? "Every class" : classrooms.find((c) => c.id === id)?.name ?? id);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-xl max-h-[88vh] overflow-y-auto nice-scroll">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><ShieldCheck className="size-4" /> {editing ? "Edit programme" : "New welfare programme"}</DialogTitle>
+          <DialogDescription>How much of each service line is charged to beneficiaries — per class (“Every class” = school-wide).</DialogDescription>
+        </DialogHeader>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label>Name</Label>
+            <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. School Feeding Programme" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Short code</Label>
+            <Input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase().slice(0, 12) })} placeholder="SFP" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Type</Label>
+            <Select value={form.discountType} onValueChange={(v) => setForm({ ...form, discountType: v as "amount" | "percentage" })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="amount">Amount charged (₵)</SelectItem>
+                <SelectItem value="percentage">Percentage</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="sm:col-span-2 space-y-2">
+            <div className="flex items-center justify-between">
+              <Label>Class charge matrix</Label>
+              <Button size="sm" variant="outline" className="h-7 gap-1 text-[11px]" onClick={() => setRows([...rows, { classId: "a", feeding: "", classes: "", tuition: "" }])}>
+                <Plus className="size-3.5" /> Add row
+              </Button>
+            </div>
+            <div className="space-y-2">
+              {rows.map((r, i) => (
+                <div key={i} className="grid grid-cols-[1.4fr_repeat(3,1fr)_auto] gap-1.5 items-center">
+                  <Select value={r.classId} onValueChange={(v) => setRows(rows.map((x, j) => (j === i ? { ...x, classId: v } : x)))}>
+                    <SelectTrigger className="w-full" aria-label="Class"><SelectValue /></SelectTrigger>
+                    <SelectContent className="max-h-60 overflow-y-auto nice-scroll">
+                      <SelectItem value="a">Every class</SelectItem>
+                      {classrooms.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <Input type="number" min={0} placeholder="feeding" value={r.feeding} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, feeding: e.target.value } : x)))} aria-label="Feeding charge" />
+                  <Input type="number" min={0} placeholder="classes" value={r.classes} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, classes: e.target.value } : x)))} aria-label="Classes charge" />
+                  <Input type="number" min={0} placeholder="tuition" value={r.tuition} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, tuition: e.target.value } : x)))} aria-label="Tuition charge" />
+                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" disabled={rows.length <= 1} onClick={() => setRows(rows.filter((_, j) => j !== i))} title="Remove row">
+                    <XCircle className="size-4 text-destructive" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              {form.discountType === "amount" ? "Amounts in Ghana Cedis charged to the beneficiary on each line (blank = 0)." : "Rows hold the percentage value on the tuition line — amounts stay in cedis."}
+            </p>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button disabled={busy} onClick={save}>{busy ? "Saving…" : editing ? "Save programme" : "Create programme"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Add / update a beneficiary — learner picker + programme checkboxes. */
+function AddBeneficiaryDialog({ open, onOpenChange, categories, roster, termId, termLabel, onDone }: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  categories: BenefitCategory[];
+  roster: { id: string; name: string; indexNo: string; classroom: string }[];
+  termId: string | null;
+  termLabel: string;
+  onDone: () => void;
+}) {
+  const { currentSchoolId } = useStore();
+  const [busy, setBusy] = useState(false);
+  const [studentId, setStudentId] = useState("");
+  const [picked, setPicked] = useState<string[]>([]);
+  const [note, setNote] = useState("");
+  const [q, setQ] = useState("");
+
+  useEffect(() => { if (open) { setStudentId(""); setPicked([]); setNote(""); setQ(""); } }, [open]);
+  const filteredRoster = roster.filter((r) => !q || `${r.name} ${r.indexNo} ${r.classroom}`.toLowerCase().includes(q.toLowerCase()));
+  const learner = roster.find((r) => r.id === studentId);
+
+  async function save() {
+    if (!currentSchoolId || !termId) return;
+    if (!studentId) { toast({ title: "Pick a learner first" }); return; }
+    if (!picked.length) { toast({ title: "Tick at least one programme" }); return; }
+    setBusy(true);
+    try {
+      const res = await apiPost<{ ok: true; updated?: boolean; categories: number }>(`/api/school/${currentSchoolId}/ops/discounts`, {
+        action: "beneficiary-save", studentId, termId, categoryIds: picked, note,
+      });
+      toast({
+        title: res.updated ? "Beneficiary updated" : "Learner added to the register",
+        description: `${learner?.name ?? "The learner"} now rides ${res.categories} programme${res.categories === 1 ? "" : "s"} for ${termLabel}.`,
+      });
+      onOpenChange(false);
+      onDone();
+    } catch (e: any) {
+      toast({ title: "Save refused", description: e.message, variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-xl max-h-[88vh] overflow-y-auto nice-scroll">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><HeartHandshake className="size-4" /> Add beneficiary · {termLabel}</DialogTitle>
+          <DialogDescription>Stamp a learner onto the welfare programmes for this term — the per-class charge amounts freeze onto the register.</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <Label>Learner</Label>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input value={studentId ? learner ? `${learner.name} · ${learner.indexNo} · ${learner.classroom}` : "" : q} onChange={(e) => { setStudentId(""); setQ(e.target.value); }} placeholder="Search the school roll…" className="pl-8" aria-label="Search learners" />
+            </div>
+            {!studentId && (
+              <div className="max-h-40 overflow-y-auto nice-scroll rounded-xl border">
+                {filteredRoster.slice(0, 30).map((r) => (
+                  <button key={r.id} type="button" className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent" onClick={() => setStudentId(r.id)}>
+                    <UserRound className="size-3.5 text-muted-foreground" />
+                    <span className="flex-1 truncate">{r.name}</span>
+                    <span className="text-[10px] text-muted-foreground">{r.indexNo} · {r.classroom}</span>
+                  </button>
+                ))}
+                {!filteredRoster.length && <p className="px-3 py-4 text-center text-xs text-muted-foreground">No learner matches.</p>}
+              </div>
+            )}
+          </div>
+          <div className="space-y-2">
+            <Label>Programmes</Label>
+            {categories.map((c) => (
+              <label key={c.id} className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm cursor-pointer transition-colors hover:bg-accent/60 has-[button[data-state=checked]]:bg-accent">
+                <Checkbox
+                  checked={picked.includes(c.id)}
+                  onCheckedChange={(v) => setPicked(v === true ? [...picked, c.id] : picked.filter((x) => x !== c.id))}
+                  aria-label={c.name}
+                />
+                <span className="select-none">{c.name}</span>
+              </label>
+            ))}
+            {!categories.length && <p className="text-sm text-muted-foreground">No active programmes — create one first.</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label>Note (optional)</Label>
+            <Input value={note} onChange={(e) => setNote(e.target.value.slice(0, 400))} placeholder="e.g. Verified against the district welfare register" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button disabled={busy} onClick={save}>{busy ? "Saving…" : "Add to register"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

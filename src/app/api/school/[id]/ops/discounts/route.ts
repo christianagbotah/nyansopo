@@ -7,6 +7,70 @@ import { recalcDailySubsidies, recalcProfileApplications } from "@/lib/discounts
 // ── GET /api/school/[id]/ops/discounts — catalog + profiles + applications ──
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: schoolId } = await params;
+
+  /* ── wave 37 — beneficiaries (legacy benefit_category / beneficiary_list
+     parity): the welfare register — categories with per-class charge
+     matrices + the term's beneficiary roster. ── */
+  const url = new URL(req.url);
+  if (url.searchParams.get("action") === "beneficiaries") {
+    const auth = await opsAuth(req, schoolId, "GET", { perms: ["discounts.manage", "fees.view"] });
+    if (!auth.ok) return auth.res;
+
+    const [years, categories] = await Promise.all([
+      db.academicYear.findMany({ where: { schoolId }, orderBy: { startsAt: "desc" }, include: { terms: { orderBy: { sequence: "asc" } } } }),
+      db.benefitCategory.findMany({ where: { schoolId }, orderBy: { name: "asc" } }),
+    ]);
+    const terms = years.flatMap((y) => y.terms.map((t) => ({ id: t.id, name: t.name, sequence: t.sequence, yearName: y.name, isCurrent: t.isCurrent })));
+    const termId = url.searchParams.get("termId") || terms.find((t) => t.isCurrent)?.id || terms[0]?.id || null;
+
+    const [rows, roster] = await Promise.all([
+      termId
+        ? db.beneficiary.findMany({
+            where: { schoolId, termId },
+            include: { student: { select: { firstName: true, lastName: true, otherNames: true, nyansapoIndex: true, guardianName: true, guardianPhone: true } } },
+            orderBy: { createdAt: "asc" },
+          })
+        : Promise.resolve([]),
+      db.enrollment.findMany({
+        where: { status: "ACTIVE", classroom: { schoolId } },
+        include: { student: { select: { id: true, firstName: true, lastName: true, nyansapoIndex: true } }, classroom: { select: { id: true, name: true } } },
+        orderBy: { rollNo: "asc" },
+      }),
+    ]);
+
+    return NextResponse.json({
+      categories: categories.map((c) => ({
+        id: c.id, name: c.name, code: c.code, details: c.detailsJson ?? null, active: c.active,
+        applied: rows.filter((r) => Array.isArray(r.categoriesJson) && (r.categoriesJson as { categoryId: string }[]).some((k) => k.categoryId === c.id)).length,
+        createdByName: c.createdByName, updatedAt: c.updatedAt.toISOString(),
+      })),
+      beneficiaries: rows.map((r) => ({
+        id: r.id,
+        studentId: r.studentId,
+        name: [r.student.lastName, r.student.firstName, r.student.otherNames].filter(Boolean).join(" "),
+        indexNo: r.student.nyansapoIndex,
+        classroom: r.classroomName,
+        guardianPhone: r.student.guardianPhone,
+        categories: r.categoriesJson ?? [],
+        note: r.note,
+        createdByName: r.createdByName,
+        createdAt: r.createdAt.toISOString(),
+      })),
+      roster: roster.map((e) => ({ id: e.student.id, name: `${e.student.firstName} ${e.student.lastName}`, indexNo: e.student.nyansapoIndex, classroom: e.classroom.name })),
+      terms,
+      termId,
+      stats: {
+        categories: categories.length,
+        activeCategories: categories.filter((c) => c.active).length,
+        beneficiaries: rows.length,
+        perCategory: categories.map((c) => ({
+          id: c.id,
+          count: rows.filter((r) => Array.isArray(r.categoriesJson) && (r.categoriesJson as { categoryId: string }[]).some((k) => k.categoryId === c.id)).length,
+        })),
+      },
+    });
+  }
+
   const auth = await opsAuth(req, schoolId, "GET", { perms: ["discounts.manage"] });
   if (!auth.ok) return auth.res;
 
@@ -71,6 +135,98 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const auth = await opsAuth(req, schoolId, "POST", { perms: ["discounts.manage"] });
   if (!auth.ok) return auth.res;
   const user = auth.user;
+
+  // ── wave 37 — benefit categories & beneficiaries (legacy parity) ──
+  if (action === "benefit-cat-save") {
+    const name = String(body.name ?? "").trim().toUpperCase();
+    if (!name) return NextResponse.json({ error: "The category needs a name" }, { status: 400 });
+    const discountType = body.discountType === "percentage" ? "percentage" : "amount";
+    const charges = Array.isArray(body.charges) ? body.charges : [];
+    /* per-class charge matrix; classId "a" means every class (legacy 'all') */
+    const classes: Record<string, { feedingCents: number; classesCents: number; tuitionCents: number }> = {};
+    for (const row of charges) {
+      const key = String(row.classId ?? "a");
+      const C = (v: unknown) => Math.max(0, Math.round(Number(v) || 0));
+      classes[key] = { feedingCents: C(row.feedingCents), classesCents: C(row.classesCents), tuitionCents: C(row.tuitionCents) };
+    }
+    if (!Object.keys(classes).length) return NextResponse.json({ error: "Add at least one class charge row (use “Every class” for school-wide)" }, { status: 400 });
+    const code = String(body.code ?? "").trim() || null;
+    const id = String(body.id ?? "") || null;
+    if (id) {
+      const clash = await db.benefitCategory.findFirst({ where: { schoolId, name, NOT: { id } } });
+      if (clash) return NextResponse.json({ error: "Another category already uses that name" }, { status: 400 });
+      await db.benefitCategory.update({ where: { id }, data: { name, code, detailsJson: { discountType, classes } } });
+      /* legacy do_update parity: refresh frozen amounts on this term's
+         beneficiaries whose learner-class has a matching rule (fallback 'a') */
+      const year = await db.academicYear.findFirst({ where: { schoolId, isCurrent: true }, include: { terms: { where: { isCurrent: true }, take: 1 } } });
+      const termId = year?.terms[0]?.id;
+      if (termId) {
+        const rows = await db.beneficiary.findMany({ where: { schoolId, termId }, include: { student: { select: { id: true } } } });
+        for (const row of rows) {
+          const cats = Array.isArray(row.categoriesJson) ? [...(row.categoriesJson as { categoryId: string; name: string; feedingCents: number; classesCents: number; tuitionCents: number }[])] : null;
+          if (!cats?.some((k) => k.categoryId === id)) continue;
+          const enroll = await db.enrollment.findFirst({ where: { studentId: row.studentId, status: "ACTIVE", classroom: { schoolId } }, include: { classroom: { select: { id: true } } } });
+          const rule = classes[enroll?.classroomId ?? ""] ?? classes.a;
+          if (!rule) continue;
+          for (const k of cats) if (k.categoryId === id) { k.feedingCents = rule.feedingCents; k.classesCents = rule.classesCents; k.tuitionCents = rule.tuitionCents; }
+          await db.beneficiary.update({ where: { id: row.id }, data: { categoriesJson: cats } });
+        }
+      }
+      return NextResponse.json({ ok: true, updated: true });
+    }
+    const clash = await db.benefitCategory.findFirst({ where: { schoolId, name } });
+    if (clash) return NextResponse.json({ error: "Another category already uses that name" }, { status: 400 });
+    const created = await db.benefitCategory.create({ data: { schoolId, name, code, detailsJson: { discountType, classes }, active: true, createdByName: user.fullName } });
+    return NextResponse.json({ ok: true, id: created.id });
+  }
+
+  if (action === "benefit-cat-toggle") {
+    const id = String(body.id ?? "");
+    const cat = await db.benefitCategory.findFirst({ where: { id, schoolId } });
+    if (!cat) return NextResponse.json({ error: "Category not found" }, { status: 404 });
+    await db.benefitCategory.update({ where: { id }, data: { active: !cat.active } });
+    return NextResponse.json({ ok: true, active: !cat.active });
+  }
+
+  if (action === "beneficiary-save") {
+    const studentId = String(body.studentId ?? "");
+    const termId = String(body.termId ?? "");
+    const ids: string[] = Array.isArray(body.categoryIds) ? body.categoryIds.map(String) : [];
+    if (!studentId || !termId) return NextResponse.json({ error: "Pick a learner and a term first" }, { status: 400 });
+    if (!ids.length) return NextResponse.json({ error: "Tick at least one benefit category" }, { status: 400 });
+    const enroll = await db.enrollment.findFirst({
+      where: { studentId, status: "ACTIVE", classroom: { schoolId } },
+      include: { classroom: { select: { id: true, name: true } } },
+    });
+    if (!enroll) return NextResponse.json({ error: "The learner is not actively enrolled in this school" }, { status: 404 });
+    const term = await db.term.findFirst({ where: { id: termId, academicYear: { schoolId } } });
+    if (!term) return NextResponse.json({ error: "Term not found in this school" }, { status: 404 });
+    const cats = await db.benefitCategory.findMany({ where: { schoolId, id: { in: ids }, active: true } });
+    if (cats.length !== ids.length) return NextResponse.json({ error: "One of the ticked categories is not active" }, { status: 400 });
+    /* freeze the per-class amounts like the legacy beneficiary_list (the
+       learner's own class rule, falling back to the school-wide 'a' row) */
+    const frozen = cats.map((c) => {
+      const details = (c.detailsJson as { classes?: Record<string, { feedingCents: number; classesCents: number; tuitionCents: number }> } | null);
+      const rule = details?.classes?.[enroll.classroomId] ?? details?.classes?.a ?? { feedingCents: 0, classesCents: 0, tuitionCents: 0 };
+      return { categoryId: c.id, name: c.name, feedingCents: rule.feedingCents, classesCents: rule.classesCents, tuitionCents: rule.tuitionCents };
+    });
+    const note = String(body.note ?? "").trim().slice(0, 400) || null;
+    const existing = await db.beneficiary.findUnique({ where: { studentId_termId: { studentId, termId } } });
+    if (existing) {
+      await db.beneficiary.update({ where: { id: existing.id }, data: { classroomName: enroll.classroom.name, categoriesJson: frozen, note } });
+      return NextResponse.json({ ok: true, updated: true, categories: frozen.length });
+    }
+    await db.beneficiary.create({ data: { schoolId, studentId, termId, classroomName: enroll.classroom.name, categoriesJson: frozen, note, createdByName: user.fullName } });
+    return NextResponse.json({ ok: true, categories: frozen.length });
+  }
+
+  if (action === "beneficiary-remove") {
+    const id = String(body.id ?? "");
+    const row = await db.beneficiary.findFirst({ where: { id, schoolId } });
+    if (!row) return NextResponse.json({ error: "Beneficiary not found" }, { status: 404 });
+    await db.beneficiary.delete({ where: { id } });
+    return NextResponse.json({ ok: true });
+  }
 
   // ── profile CRUD (iedupro "Discount Profiles") ──────────────
   if (action === "save-profile") {

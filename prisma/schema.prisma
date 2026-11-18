@@ -237,6 +237,8 @@ model School {
   budgets              Budget[]
   auditLogs            AuditLog[]
   financialAlertResolutions FinancialAlertResolution[]
+  benefitCategories     BenefitCategory[]
+  beneficiaries         Beneficiary[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -324,6 +326,7 @@ model Term {
   assessments        Assessment[]
   attendanceSessions AttendanceSession[]
   reportCards        ReportCard[]
+  beneficiaries     Beneficiary[]
   lessonNotes        LessonNote[]
   syllabusTopics     SyllabusTopic[]
   resultApprovals    ResultApproval[]
@@ -525,6 +528,7 @@ model Student {
   credits                StudentCredit[]
   crecheRatings          CrecheRating[]
   disciplineCases        DisciplineCase[]
+  beneficiaries          Beneficiary[]
   healthVisits           HealthVisit[]
   healthScreeningRecords HealthScreeningRecord[]
   clubMemberships        ClubMembership[]
@@ -2968,4 +2972,44 @@ model FinancialAlertResolution {
 
   @@index([schoolId, alertKey, resolvedAt])
   @@index([schoolId, resolvedAt])
+}
+
+// ── Wave 37 · Benefit categories & beneficiaries (legacy benefit_category /
+// beneficiary_list / benefit_categories.php parity) ──
+// Learners on government or social-support programs (School Feeding,
+// Capitation Grant, LEAP, scholarships). A category defines how much of each
+// service line is charged to beneficiaries, per class ('a' = all classes);
+// the beneficiary row stamps the learner onto categories for one term.
+model BenefitCategory {
+  id            String   @id @default(cuid())
+  schoolId      String
+  school        School   @relation(fields: [schoolId], references: [id])
+  name          String // legacy stores uppercase
+  code          String?
+  detailsJson   Json? // { discountType: "percentage"|"amount", classes: { [classId|"a"]: { feedingCents, classesCents, tuitionCents } } }
+  active        Boolean  @default(true)
+  createdByName String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([schoolId, name])
+}
+
+model Beneficiary {
+  id            String   @id @default(cuid())
+  schoolId      String
+  school        School   @relation(fields: [schoolId], references: [id])
+  studentId     String
+  student       Student  @relation(fields: [studentId], references: [id])
+  termId        String
+  term          Term     @relation(fields: [termId], references: [id])
+  classroomName String? // enrollment snapshot for the register
+  categoriesJson Json? // [{ categoryId, name, feedingCents, classesCents, tuitionCents }] — frozen amounts
+  note          String?
+  createdByName String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([studentId, termId])
+  @@index([schoolId, termId])
 }
