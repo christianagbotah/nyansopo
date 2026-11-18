@@ -1,9 +1,9 @@
 "use client";
 // Registers the service worker, tracks online/offline, flushes the sync queue,
-// and surfaces install/offline UI globally.
+// refreshes the offline data pack, and surfaces install/offline UI globally.
 import { useEffect } from "react";
 import { useStore } from "@/lib/store";
-import { flushQueue } from "@/lib/api";
+import { flushQueue, warmPack } from "@/lib/api";
 import { toast } from "@/hooks/use-toast";
 
 export function PwaBootstrap() {
@@ -24,10 +24,15 @@ export function PwaBootstrap() {
       } else {
         toast({ title: "Back online", description: "Nyansapo is connected again." });
       }
+      // read-side sync (wave 40): writes went up — now bring the data back
+      // down. Warming refreshes every packed section (attendance registers,
+      // POS rosters, gradebook sheets) and journals a PULL entry, so the
+      // device's offline pack is fresh for the next blackout. Silent: no toast.
+      if (useStore.getState().session) warmPack().catch(() => {});
     };
     const onOffline = () => {
       setOnline(false);
-      toast({ title: "You are offline", description: "Keep working — attendance, payments, marks and enrolments will queue and sync automatically." });
+      toast({ title: "You are offline", description: "Keep working — attendance, payments, marks and enrolments queue, and the last-loaded rosters and sheets stay readable from the data pack." });
     };
     window.addEventListener("online", onOnline);
     window.addEventListener("offline", onOffline);

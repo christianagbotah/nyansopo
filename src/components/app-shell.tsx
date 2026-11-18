@@ -14,7 +14,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { LogoMark, KenteStrip } from "@/components/brand";
 import { cn } from "@/lib/utils";
-import { initials } from "@/lib/format";
+import { initials, fmtAgo } from "@/lib/format";
+import { packPurge } from "@/lib/offline-pack";
 import { toast } from "@/hooks/use-toast";
 import { flushQueue } from "@/lib/api";
 import { NotificationBell } from "@/components/notification-bell";
@@ -280,7 +281,7 @@ function NavNode({ item, current, target, onSelect }: { item: NavItem; current: 
 }
 
 export function AppShell() {
-  const { session, schools, currentSchoolId, setCurrentSchool, module, navTarget, cashierTab, setModule, online, queue, syncing, logout, setAiOpen } = useStore();
+  const { session, schools, currentSchoolId, setCurrentSchool, module, navTarget, cashierTab, setModule, online, queue, syncing, packAt, logout, setAiOpen } = useStore();
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     if (typeof window === "undefined") return "light";
     return ((localStorage.getItem("theme") as "light" | "dark") ?? "light");
@@ -469,13 +470,14 @@ export function AppShell() {
       { id: "set-statutory", label: "Statutory (SSNIT) rates", target: { tab: "statutory" } },
     ];
 
-    /* sync center sidebar (wave 39): dashboard / devices / conflicts / journal / policy */
+    /* sync center sidebar (wave 39): dashboard / devices / conflicts / journal / policy (+ wave 40 data pack) */
     const syncChildren: NavChild[] = [
       { id: "sync-dash", label: "Dashboard", target: { tab: "dashboard" } },
       { id: "sync-devices", label: "Devices", target: { tab: "devices" } },
       { id: "sync-conflicts", label: "Conflicts", target: { tab: "conflicts" } },
       { id: "sync-journal", label: "Sync journal", target: { tab: "journal" } },
       { id: "sync-policy", label: "Sync policy", target: { tab: "policy" } },
+      { id: "sync-pack", label: "Data pack", target: { tab: "pack" } },
     ];
 
     // boarding (iEduPro navigation.php FACILITIES): houses → dorms → beds + reports
@@ -731,7 +733,7 @@ export function AppShell() {
               </div>
               <NavList items={navItems} current={module} target={navTarget} onSelect={(m, t) => { setModule(m, t); setNavOpen(false); }} />
               <div className="p-3 border-t border-sidebar-border text-xs text-sidebar-foreground/60">
-                {online ? <span className="flex items-center gap-1.5"><Cloud className="size-3.5 text-emerald-400" /> Online</span> : <span className="flex items-center gap-1.5"><CloudOff className="size-3.5 text-amber-400" /> Offline — {queue.length} queued</span>}
+                {online ? <span className="flex items-center gap-1.5"><Cloud className="size-3.5 text-emerald-400" /> Online</span> : <span className="flex items-center gap-1.5"><CloudOff className="size-3.5 text-amber-400" /> Offline — {queue.length} queued{packAt ? ` · data ${fmtAgo(new Date(packAt))}` : ""}</span>}
               </div>
             </SheetContent>
           </Sheet>
@@ -796,7 +798,7 @@ export function AppShell() {
               )
             ) : (
               <Badge className="gap-1.5 bg-amber-500 hover:bg-amber-500 text-white">
-                <CloudOff className="size-3.5" /> Offline{queue.length ? ` · ${queue.length} queued` : ""}
+                <CloudOff className="size-3.5" /> Offline{queue.length ? ` · ${queue.length} queued` : ""}{packAt ? ` · data ${fmtAgo(new Date(packAt))}` : ""}
               </Badge>
             )}
 
@@ -862,7 +864,7 @@ export function AppShell() {
                   <div className="text-xs text-muted-foreground font-normal">{session?.email}</div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => { logout(); toast({ title: "Signed out", description: "Medaase — see you soon." }); }}>
+                <DropdownMenuItem onClick={() => { packPurge(); logout(); toast({ title: "Signed out", description: "Medaase — see you soon." }); }}>
                   <LogOut className="size-4" /> Sign out
                 </DropdownMenuItem>
               </DropdownMenuContent>

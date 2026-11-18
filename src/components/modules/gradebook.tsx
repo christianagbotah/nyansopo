@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
-import { apiGet, apiPost, apiPostQueueable } from "@/lib/api";
+import { apiGet, apiGetCacheable, apiPost, apiPostQueueable } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -62,7 +62,7 @@ export function Gradebook() {
 
   const load = () => {
     if (!currentSchoolId) return;
-    apiGet<GBData>(`/api/school/${currentSchoolId}/gradebook${classId ? `?classId=${classId}` : ""}`)
+    apiGetCacheable<GBData>(`/api/school/${currentSchoolId}/gradebook${classId ? `?classId=${classId}` : ""}`)
       .then((d) => {
         setData(d);
         if (classId) {

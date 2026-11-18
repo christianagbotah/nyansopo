@@ -48,6 +48,7 @@ type Store = {
   online: boolean;
   syncing: boolean;
   lastSyncAt: number | null;
+  packAt: number | null; // newest offline data-pack section served/stored (wave 40)
   aiOpen: boolean;
   // actions
   setSession: (u: SessionUser | null) => void;
@@ -59,6 +60,7 @@ type Store = {
   setOnline: (v: boolean) => void;
   setSyncing: (v: boolean) => void;
   setLastSync: (t: number | null) => void;
+  setPackAt: (t: number | null) => void;
   enqueue: (op: QueuedOp) => void;
   clearQueue: () => void;
   removeFromQueue: (clientId: string) => void;
@@ -80,6 +82,7 @@ export const useStore = create<Store>()(
       online: true,
       syncing: false,
       lastSyncAt: null,
+      packAt: null,
       aiOpen: false,
       setSession: (u) => set({ session: u, screen: u ? "app" : "landing" }),
       setSchools: (s) => {
@@ -98,11 +101,12 @@ export const useStore = create<Store>()(
       setOnline: (online) => set({ online }),
       setSyncing: (syncing) => set({ syncing }),
       setLastSync: (lastSyncAt) => set({ lastSyncAt }),
+      setPackAt: (packAt) => set({ packAt }),
       enqueue: (op) => set((st) => ({ queue: [...st.queue, op] })),
       clearQueue: () => set({ queue: [] }),
       removeFromQueue: (clientId) => set((st) => ({ queue: st.queue.filter((q) => q.clientId !== clientId) })),
       setAiOpen: (aiOpen) => set({ aiOpen }),
-      logout: () => set({ session: null, schools: [], currentSchoolId: null, screen: "landing", module: "dashboard", navTarget: null, cashierTab: "collect", queue: [] }),
+      logout: () => set({ session: null, schools: [], currentSchoolId: null, screen: "landing", module: "dashboard", navTarget: null, cashierTab: "collect", queue: [], packAt: null }),
     }),
     {
       name: "nyansapo-store",

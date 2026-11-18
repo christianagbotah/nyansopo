@@ -1,6 +1,7 @@
 "use client";
 // ── Offline-aware API client ──────────────────────────────────
 import { useStore } from "@/lib/store";
+import { packRead, packWrite, packPaths } from "@/lib/offline-pack";
 
 export function getHeaders(): Record<string, string> {
   const uid = useStore.getState().session?.id;
@@ -14,6 +15,67 @@ export async function apiGet<T>(path: string): Promise<T> {
     throw new Error(body.error ?? `Request failed (${res.status})`);
   }
   return res.json();
+}
+
+/** GET whose response feeds the offline data pack (wave 40 — read-side sync).
+ *  Online: fetch + store the response for the offline screens. Offline: serve
+ *  the newest packed section (same screen, newest date when today was never
+ *  fetched). The swap is transparent — call sites treat it as apiGet. */
+export async function apiGetCacheable<T>(path: string): Promise<T> {
+  const { online } = useStore.getState();
+  if (!online) {
+    const hit = packRead(path);
+    if (hit) {
+      useStore.getState().setPackAt(hit.at);
+      return hit.data as T;
+    }
+    throw new Error("offline — this screen has no cached data yet (open it once while online)");
+  }
+  const data = await apiGet<T>(path);
+  const at = packWrite(path, data);
+  if (at) useStore.getState().setPackAt(at);
+  return data;
+}
+
+/** Refresh every packed section while online (reconnect / Sync Center warm).
+ *  The read-side twin of flushQueue: writes go up (flush) then data comes
+ *  down (warm). Journals a PULL SyncEvent with the device identity so the
+ *  Sync Center journal shows both directions of the pipeline. */
+export async function warmPack(): Promise<{ warmed: number; durationMs: number } | null> {
+  const store = useStore.getState();
+  if (!store.online) return null;
+  const paths = packPaths();
+  if (!paths.length) return null;
+  const started = Date.now();
+  const settled = await Promise.allSettled(
+    paths.map((p) => apiGet(p).then((data) => { packWrite(p, data); }))
+  );
+  const warmed = settled.filter((r) => r.status === "fulfilled").length;
+  const durationMs = Date.now() - started;
+  useStore.getState().setPackAt(Date.now());
+  // journal the pull (best-effort — a journaling failure never fails the warm)
+  try {
+    let deviceCode: string | undefined;
+    try { deviceCode = JSON.parse(localStorage.getItem("nyansapo.device") ?? "{}").code || undefined; } catch { /* ignore */ }
+    await fetch("/api/sync", {
+      method: "POST",
+      headers: getHeaders(),
+      body: JSON.stringify({
+        action: "pull",
+        schoolId: store.currentSchoolId ?? store.session?.schoolId ?? undefined,
+        device: { code: deviceCode, name: deviceName(), kind: "BROWSER" },
+        sections: warmed,
+        durationMs,
+      }),
+    });
+  } catch { /* ignore */ }
+  return { warmed, durationMs };
+}
+
+function deviceName(): string {
+  if (typeof navigator === "undefined") return "Browser";
+  const ua = navigator.userAgent;
+  return /Android/i.test(ua) ? "Android browser" : /iPhone|iPad/i.test(ua) ? "iOS browser" : /Firefox/i.test(ua) ? "Firefox" : /Edg\//i.test(ua) ? "Edge" : /Chrome\//i.test(ua) ? "Chrome" : "Browser";
 }
 
 export type QueueableKind = "payment" | "attendance" | "marks" | "student";
@@ -57,12 +119,10 @@ export async function flushQueue(): Promise<{ synced: number; failed: number; co
     // we remember it so the Sync Center can revoke this device later.
     let deviceCode: string | undefined;
     try { deviceCode = JSON.parse(localStorage.getItem("nyansapo.device") ?? "{}").code || undefined; } catch { /* ignore */ }
-    const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
-    const browser = /Android/i.test(ua) ? "Android browser" : /iPhone|iPad/i.test(ua) ? "iOS browser" : /Firefox/i.test(ua) ? "Firefox" : /Edg\//i.test(ua) ? "Edge" : /Chrome\//i.test(ua) ? "Chrome" : "Browser";
     const res = await fetch("/api/sync", {
       method: "POST",
       headers: getHeaders(),
-      body: JSON.stringify({ ops, device: { code: deviceCode, name: `${browser} — this workstation`, kind: "BROWSER" } }),
+      body: JSON.stringify({ ops, device: { code: deviceCode, name: `${deviceName()} — this workstation`, kind: "BROWSER" } }),
     });
     if (res.status === 403) {
       const body = await res.json().catch(() => ({}));

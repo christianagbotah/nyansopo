@@ -27,13 +27,75 @@ async function syncPolicy(schoolId: string): Promise<Record<string, boolean>> {
   return { payment: true, attendance: true, marks: true, student: true, ...parsed };
 }
 
+/** Journal a data-pack pull (read-side sync). Looks the device up, minting it on
+ *  its first pull — a read-mostly tablet registers here rather than at flush.
+ *  Best-effort: failures return null, never breaking the caller. */
+async function journalPull(
+  req: NextRequest,
+  user: { id: string; fullName: string; schoolIds: string[] },
+  schoolId: string,
+  device: { code?: string; name?: string; kind?: string } | undefined,
+  stats: { sections: number; durationMs: number }
+): Promise<string | null> {
+  try {
+    let row = device?.code ? await db.syncDevice.findFirst({ where: { code: device.code, schoolId } }) : null;
+    if (!row) {
+      const count = await db.syncDevice.count({ where: { schoolId } });
+      const code = `DEV-${String(count + 1).padStart(4, "0")}`;
+      const kind = ["POS_TABLET", "SCANNER", "FRONT_DESK", "BROWSER", "OTHER"].includes(device?.kind ?? "") ? device!.kind! : "BROWSER";
+      row = await db.syncDevice.create({ data: { schoolId, code, name: device?.name ?? "Unnamed device", kind } });
+    }
+    const ip = (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || null;
+    await db.syncEvent.create({
+      data: {
+        schoolId, deviceCode: row.code, userName: user.fullName, kind: "PULL",
+        detail: stats.sections
+          ? `${stats.sections} data-pack section(s) refreshed`
+          : "data pack warmed (no sections yet)",
+        durationMs: stats.durationMs || null,
+      },
+    });
+    await db.syncDevice.update({
+      where: { id: row.id },
+      data: { lastSeenAt: new Date(), lastIP: ip, lastUser: user.fullName, ...(stats.sections ? { lastSyncAt: new Date() } : {}) },
+    });
+    return row.code;
+  } catch {
+    return null;
+  }
+}
+
 export async function POST(req: NextRequest) {
   const started = Date.now();
   const user = await getUser(req);
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-  const { ops, device } = (await req.json()) as { ops: FlushOp[]; device?: { code?: string; name?: string; kind?: string } };
+  const body = (await req.json()) as {
+    ops?: FlushOp[];
+    device?: { code?: string; name?: string; kind?: string };
+    action?: string;
+    schoolId?: string;
+    sections?: number;
+    durationMs?: number;
+  };
+
+  // ── read-side sync (wave 40): a device warmed its offline data pack — the
+  // pull twin of the flush journal (CI3 sync_metrics logged both directions).
+  // A pull never carries ops; it just refreshes server→device data freshness.
+  if (body.action === "pull") {
+    const schoolId = body.schoolId && user.schoolIds.includes(body.schoolId) ? body.schoolId : user.schoolIds[0];
+    if (!schoolId) return NextResponse.json({ error: "No school scope" }, { status: 400 });
+    const deviceCode = await journalPull(req, user, schoolId, body.device, {
+      sections: Number(body.sections ?? 0) || 0,
+      durationMs: Number(body.durationMs ?? 0) || 0,
+    });
+    return NextResponse.json({ ok: true, deviceCode });
+  }
+
+  const ops = body.ops;
   if (!Array.isArray(ops)) return NextResponse.json({ error: "ops[] required" }, { status: 400 });
   if (!ops.length) return NextResponse.json({ results: [], syncedAt: new Date().toISOString() });
+
+  const device = body.device;
 
   // ── device identity: auto-register, or refuse when revoked ──
   const firstSchoolId = ops[0].payload?.schoolId ?? user.schoolIds[0];

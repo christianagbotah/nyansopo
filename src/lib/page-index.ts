@@ -18,7 +18,7 @@ import {
   DatabaseBackup, PiggyBank, Award, Gavel, Ruler, Activity, Home as HomeIcon, Hospital, Thermometer,
   Trophy, Medal, BookUser, Footprints, Truck, AlarmClock,
   DoorOpen, CalendarClock, PhoneCall, Mailbox, CalendarRange, BellRing, FileBadge, Stamp, Gauge, GitMerge, History,
-  Table2,
+  Table2, Database,
 } from "lucide-react";
 
 export type PageEntry = {
@@ -86,6 +86,7 @@ export const PAGE_INDEX: PageEntry[] = [
   { id: "pg-sync-conflicts", label: "Sync Conflicts", section: S.system, module: "sync", target: { tab: "conflicts" }, perm: ["sync.view"], icon: GitMerge, keywords: ["conflict", "collision", "local wins", "remote wins", "merge", "replay", "sync conflicts"] },
   { id: "pg-sync-journal", label: "Sync Journal", section: S.system, module: "sync", target: { tab: "journal" }, perm: ["sync.view"], icon: History, keywords: ["journal", "sync log", "audit", "flush history", "duration"] },
   { id: "pg-sync-policy", label: "Sync Policy", section: S.system, module: "sync", target: { tab: "policy" }, perm: ["sync.view"], icon: ShieldCheck, keywords: ["policy", "disable sync", "table management", "queueable", "offline kinds"] },
+  { id: "pg-sync-pack", label: "Sync Data Pack", section: S.system, module: "sync", target: { tab: "pack" }, perm: ["sync.view"], icon: Database, keywords: ["offline data", "data pack", "cache", "read sync", "warm pack", "pull", "offline screens"] },
 
   // ── Student Billing (invoices / termly) ──
   { id: "pg-bill-items", label: "Bill Items", section: S.billing, module: "fees", target: { tab: "bill-items" }, perm: ["fees.view"], icon: ListChecks, keywords: ["fee items", "catalogue", "tuition"] },

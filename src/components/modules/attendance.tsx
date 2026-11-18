@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
-import { apiGet, apiPost, apiPostQueueable } from "@/lib/api";
+import { apiGet, apiGetCacheable, apiPost, apiPostQueueable } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -88,7 +88,7 @@ export function Attendance() {
 
   const load = () => {
     if (!currentSchoolId) return;
-    apiGet<AttData>(`${OPS_BASE(currentSchoolId)}?action=register&${classId ? `classId=${classId}&` : ""}date=${date}`)
+    apiGetCacheable<AttData>(`${OPS_BASE(currentSchoolId)}?action=register&${classId ? `classId=${classId}&` : ""}date=${date}`)
       .then((d) => {
         setData(d);
         if (!classId && d.classrooms.length) return; // first load: wait for class pick
@@ -841,7 +841,7 @@ function ScannerPanel({ schoolId }: { schoolId: string }) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const load = () => {
-    apiGet<ScanData>(`/api/school/${schoolId}/ops/scanner?date=${date}`)
+    apiGetCacheable<ScanData>(`/api/school/${schoolId}/ops/scanner?date=${date}`)
       .then(setData)
       .catch((e) => toast({ title: "Scanner state failed to load", description: e.message, variant: "destructive" }));
   };

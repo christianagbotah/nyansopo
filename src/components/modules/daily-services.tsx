@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
-import { apiGet, apiPost, apiPostQueueable } from "@/lib/api";
+import { apiGet, apiGetCacheable, apiPost, apiPostQueueable } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -139,7 +139,7 @@ export function DailyServices() {
 
   const load = (d?: string) => {
     if (!currentSchoolId) return;
-    apiGet<DailyData>(`/api/school/${currentSchoolId}/ops/daily?date=${d ?? date}${auditStudentId ? `&auditStudentId=${auditStudentId}` : ""}`)
+    apiGetCacheable<DailyData>(`/api/school/${currentSchoolId}/ops/daily?date=${d ?? date}${auditStudentId ? `&auditStudentId=${auditStudentId}` : ""}`)
       .then(setData)
       .catch((e) => toast({ title: "Load failed", description: e.message, variant: "destructive" }));
   };

@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
-import { apiGet, apiPost, apiPostQueueable } from "@/lib/api";
+import { apiGet, apiGetCacheable, apiPost, apiPostQueueable } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { DateField } from "@/components/date-field";
 import { Button } from "@/components/ui/button";
@@ -59,10 +59,10 @@ export function Students() {
 
   const load = () => {
     if (!currentSchoolId) return;
-    apiGet<any>(`/api/school/${currentSchoolId}/students?status=${statusView}`)
+    apiGetCacheable<any>(`/api/school/${currentSchoolId}/students?status=${statusView}`)
       .then((d) => { setRows(d.students); })
       .catch((e) => toast({ title: "Could not load students", description: e.message, variant: "destructive" }));
-    apiGet<any>(`/api/school/${currentSchoolId}/settings`).then((d) => setClassrooms(d.classrooms)).catch(() => {});
+    apiGetCacheable<any>(`/api/school/${currentSchoolId}/settings`).then((d) => setClassrooms(d.classrooms)).catch(() => {});
   };
   useEffect(load, [currentSchoolId, statusView]);
 

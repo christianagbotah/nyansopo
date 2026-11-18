@@ -21,11 +21,14 @@
  *               resolutions
  *   Policy    — per-kind sync policy: disable a queueable op kind school-wide
  *               and its flushes are refused (CI3 sync_table_management parity)
+ *   Data pack — read-side sync (wave 40, own architecture): the offline pack
+ *               of THIS workstation — sections cached, freshness, warm/purge
  * ──────────────────────────────────────────────────────────────────────── */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
-import { apiGet, apiPost } from "@/lib/api";
+import { apiGet, apiPost, warmPack } from "@/lib/api";
+import { packInfo, packPurge, type PackInfo } from "@/lib/offline-pack";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -48,7 +51,7 @@ import {
 import {
   RefreshCcw, Laptop, ScanLine, TabletSmartphone, MonitorCheck, Users, ShieldCheck,
   ShieldOff, Plus, TriangleAlert, GitMerge, History, Activity, Smartphone, PencilLine,
-  CheckCircle2, XCircle, CloudOff, Gauge,
+  CheckCircle2, XCircle, CloudOff, Gauge, Database, Trash2,
 } from "lucide-react";
 
 const OPS = "/ops/sync";
@@ -98,6 +101,7 @@ const EVENT_TONE: Record<string, string> = {
   REGISTER: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
   REVOKE: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300",
   RESOLVE: "bg-violet-100 text-violet-800 dark:bg-violet-950 dark:text-violet-300",
+  PULL: "bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-300",
 };
 
 function healthTone(score: number) {
@@ -105,6 +109,8 @@ function healthTone(score: number) {
   if (score >= 70) return "text-amber-600 dark:text-amber-400";
   return "text-red-600 dark:text-red-400";
 }
+
+const fmtKb = (b: number) => (b >= 1024 ? `${(b / 1024).toFixed(1)} KB` : `${b} B`);
 
 export function SyncCenter() {
   const { currentSchoolId, session, navTarget, online, queue } = useStore();
@@ -135,9 +141,19 @@ export function SyncCenter() {
   // policy (local editable copy)
   const [policy, setPolicy] = useState<Record<string, boolean> | null>(null);
 
+  // data pack (wave 40 — read-side sync): local browser state, never the server's
+  const [pack, setPack] = useState<PackInfo | null>(null);
+  const [packBusy, setPackBusy] = useState(false);
+  const [purgeOpen, setPurgeOpen] = useState(false);
+
   useEffect(() => {
-    if (navTarget?.tab && ["dashboard", "devices", "conflicts", "journal", "policy"].includes(navTarget.tab)) setTab(navTarget.tab);
+    if (navTarget?.tab && ["dashboard", "devices", "conflicts", "journal", "policy", "pack"].includes(navTarget.tab)) setTab(navTarget.tab);
   }, [navTarget]);
+
+  // the pack lives in localStorage — introspection is a synchronous local read
+  useEffect(() => {
+    if (tab === "pack") setPack(packInfo());
+  }, [tab, online]);
 
   const loadDashboard = useCallback(async () => {
     if (!schoolId) return;
@@ -214,6 +230,32 @@ export function SyncCenter() {
     } finally { setBusy(false); }
   }
 
+  async function warmNow() {
+    if (!online) return;
+    setPackBusy(true);
+    try {
+      const res = await warmPack();
+      if (!res) {
+        toast({ title: "Nothing to warm", description: "Open the offline screens (attendance, POS, students, gradebook) once while online — their responses pack automatically." });
+      } else {
+        toast({ title: `⟳ Data pack refreshed — ${res.warmed} section${res.warmed > 1 ? "s" : ""}`, description: `Server data pulled in ${res.durationMs} ms — the pull is in the journal below.` });
+        await loadEvents("all");
+      }
+    } catch (e: any) {
+      toast({ title: "Warm failed", description: e.message, variant: "destructive" });
+    } finally {
+      setPackBusy(false);
+      setPack(packInfo());
+    }
+  }
+
+  function purgePack() {
+    packPurge();
+    setPack(packInfo());
+    setPurgeOpen(false);
+    toast({ title: "Data pack cleared", description: "Offline screens re-pack the next time they load while online — until then they need the network." });
+  }
+
   async function savePolicy() {
     if (!policy || !schoolId) return;
     setBusy(true);
@@ -235,7 +277,7 @@ export function SyncCenter() {
     <div className="space-y-4">
       <ModuleHeader
         title="Sync Center"
-        description="The offline empire's control room — registered devices, flush health, replay conflicts and the sync journal. The offline queue's supervisor (iEduPro sync console parity)."
+        description="The offline empire's control room — devices, flush health, replay conflicts, the sync journal and this workstation's offline data pack. The supervisor of both sync directions: writes go up (flush), data comes down (pull)."
         actions={
           <div className="flex items-center gap-2">
             <Badge variant={online ? "secondary" : "destructive"} className={cn("gap-1", online ? "" : "animate-pulse")}>
@@ -266,6 +308,7 @@ export function SyncCenter() {
           </TabsTrigger>
           <TabsTrigger value="journal" className="gap-1.5"><History className="size-4" /> Journal</TabsTrigger>
           <TabsTrigger value="policy" className="gap-1.5"><ShieldCheck className="size-4" /> Policy</TabsTrigger>
+          <TabsTrigger value="pack" className="gap-1.5"><Database className="size-4" /> Data pack</TabsTrigger>
         </TabsList>
 
         {/* ── Dashboard ── */}
@@ -533,6 +576,7 @@ export function SyncCenter() {
               <SelectContent>
                 <SelectItem value="all">All entries</SelectItem>
                 <SelectItem value="FLUSH">Flushes</SelectItem>
+                <SelectItem value="PULL">Data pulls</SelectItem>
                 <SelectItem value="REGISTER">Registrations</SelectItem>
                 <SelectItem value="REVOKE">Revocations</SelectItem>
                 <SelectItem value="RESOLVE">Resolutions</SelectItem>
@@ -565,7 +609,7 @@ export function SyncCenter() {
                           <TableCell className="text-sm font-mono text-xs">{e.deviceCode ?? "—"}</TableCell>
                           <TableCell className="text-sm">{e.userName}</TableCell>
                           <TableCell className="text-sm">
-                            <span className="text-emerald-700 dark:text-emerald-400">{e.opsSynced}</span>
+                            {e.kind === "PULL" ? <span className="text-muted-foreground">—</span> : <span className="text-emerald-700 dark:text-emerald-400">{e.opsSynced}</span>}
                             {e.opsFailed > 0 && <span className="text-red-600 dark:text-red-400"> / {e.opsFailed} failed</span>}
                           </TableCell>
                           <TableCell className="text-sm">{e.conflicts || "—"}</TableCell>
@@ -613,6 +657,63 @@ export function SyncCenter() {
                   </Button>
                 </div>
               )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ── Data pack (wave 40 — read-side sync, this browser only) ── */}
+        <TabsContent value="pack" className="space-y-4">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2"><Database className="size-4 text-muted-foreground" /> Offline data pack — this workstation</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Read-side sync, Nyansapo's own architecture: cacheable screens (attendance register, gate scanner, POS daily services, learner roster, gradebook) store their last server response on this device — per user, per school — so the screens stay readable through a blackout. Reconnecting refreshes every section and journals a <span className="font-medium">PULL</span> (the read twin of a flush — see the Journal tab). An offline day that was never fetched falls back to the newest cached day of the same screen.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <StatCard icon={<Database className="size-4" />} label="Sections cached" value={pack?.sections.length ?? 0} sub={pack?.sections.length ? `oldest ${fmtAgo(new Date(pack.oldestAt!))}` : "nothing packed yet"} />
+                <StatCard icon={<Activity className="size-4" />} label="Pack size" value={fmtKb(pack?.bytes ?? 0)} sub="LRU-capped at 60 sections" />
+                <StatCard icon={<CheckCircle2 className="size-4" />} label="Freshest section" value={pack?.freshestAt ? fmtAgo(new Date(pack.freshestAt)) : "—"} sub="the data offline screens serve" />
+                <StatCard icon={<Laptop className="size-4" />} label="Scope" value={online ? "online" : "offline"} sub="per user · per school · this browser" />
+              </div>
+
+              {pack?.sections.length ? (
+                <div className="rounded-lg border max-h-96 overflow-y-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Screen</TableHead>
+                        <TableHead className="hidden md:table-cell">Cached path</TableHead>
+                        <TableHead className="text-right">Size</TableHead>
+                        <TableHead className="text-right">Fetched</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {pack.sections.map((s) => (
+                        <TableRow key={s.path}>
+                          <TableCell className="text-sm font-medium">{s.label}</TableCell>
+                          <TableCell className="hidden md:table-cell text-xs font-mono text-muted-foreground max-w-[380px] truncate" title={s.path}>{s.path}</TableCell>
+                          <TableCell className="text-sm text-right tabular-nums">{fmtKb(s.bytes)}</TableCell>
+                          <TableCell className="text-sm text-right text-muted-foreground whitespace-nowrap">{fmtAgo(new Date(s.at))}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              ) : (
+                <EmptyState icon={<Database className="size-6" />} title="No packed data on this workstation yet" hint="Open a cacheable screen while online — its response lands here automatically and stays servable offline." />
+              )}
+
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" className="gap-1.5" onClick={warmNow} disabled={!online || packBusy || !pack?.sections.length}>
+                  <RefreshCcw className={cn("size-4", packBusy && "animate-spin")} /> Warm now
+                </Button>
+                <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setPurgeOpen(true)} disabled={!pack?.sections.length}>
+                  <Trash2 className="size-4" /> Purge pack
+                </Button>
+                {!online && <p className="text-xs text-muted-foreground self-center">Warming needs the network — reconnect and it happens automatically.</p>}
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
@@ -696,6 +797,22 @@ export function SyncCenter() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setResDlg(null)}>Cancel</Button>
             <Button disabled={busy} onClick={resolveConflict}>Resolve conflict</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* purge data pack confirm (local browser state only) */}
+      <Dialog open={purgeOpen} onOpenChange={setPurgeOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Trash2 className="size-4" /> Clear the offline data pack?</DialogTitle>
+            <DialogDescription>
+              Offline screens on this workstation will need the network until they load once while online. Other devices' packs and the school's server data are untouched.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPurgeOpen(false)}>Keep pack</Button>
+            <Button variant="destructive" onClick={purgePack}>Clear pack</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -169,6 +169,14 @@ Legend: ✅ done & verified · 🟡 partial (notes) · ⬜ not yet
       the payload), per-flush journal (counts, duration, device, user),
       14-day timeline + health score, and per-kind sync policy enforced at
       flush time
+- ✅ Offline Data Pack (wave 40 — read-side sync, own architecture per user
+      direction, NOT the CI3 WAMP↔cloud row-dump model): cacheable screens
+      (attendance register, gate scanner, POS daily, learner roster, gradebook)
+      pack their last server response per user/school in localStorage;
+      offline the pack serves the newest section (sibling-date fallback for
+      date screens), reconnecting warms every section and journals a PULL
+      (the read twin of a flush) — Sync Center gains a Data pack tab
+      (sections, size, freshness, warm/purge) and the journal a pulls filter
 
 ## Verification harness (all green at time of writing)
 - scripts/test-fare-engine.sh — 14 checks (one-way fare model)
