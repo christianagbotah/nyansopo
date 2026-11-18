@@ -289,6 +289,170 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     });
   }
 
+  /* ── wave 36 — financial alerts center (legacy financial_alerts.php +
+     alert_settings.php + alert_history.php parity). Five live rules:
+     1. critical outstanding balances (receivables older than N days above
+        the threshold — top 3),
+     2. collection efficiency below the daily target,
+     3. bank reconciliation overdue (> N days without a completed
+        reconciliation — or never reconciled),
+     4. rapid collector transaction pattern (possible entry anomaly),
+     5. daily collection target achieved (the good-news alert).
+     Resolutions mute one alert key for 7 days exactly like the legacy
+     is_alert_resolved window. ── */
+  if (action === "alerts") {
+    const auth = await opsAuth(req, schoolId, "GET", { perms: ["finance.view"] });
+    if (!auth.ok) return auth.res;
+
+    const cfg = await loadAlertSettings(schoolId);
+    const now = new Date();
+    const dayKey = now.toISOString().slice(0, 10);
+    const hourKey = dayKey.replace(/-/g, "") + String(now.getUTCHours()).padStart(2, "0");
+
+    /* resolutions active in the suppression window (7 days) */
+    const since = new Date(now.getTime() - 7 * 86400 * 1000);
+    const resolutions = await db.financialAlertResolution.findMany({
+      where: { schoolId, resolvedAt: { gt: since } },
+      select: { alertKey: true },
+    });
+    const muted = new Set(resolutions.map((r) => r.alertKey));
+
+    /* rule 1 — critical outstanding balances */
+    const debtFloor = new Date(now.getTime() - cfg.outstandingDays * 86400 * 1000);
+    const overdue = await db.invoice.findMany({
+      where: {
+        schoolId, writtenOff: false, createdAt: { lt: debtFloor },
+        OR: [{ status: "UNPAID" }, { status: "PARTIAL" }, { status: "OVERDUE" }],
+      },
+      select: { studentId: true, totalCents: true, paidCents: true, createdAt: true },
+    });
+    const debtByStudent = new Map<string, { dueCents: number; oldest: Date }>();
+    for (const inv of overdue) {
+      const dueCents = inv.totalCents - inv.paidCents;
+      if (dueCents <= cfg.outstandingThresholdCents) continue;
+      const bucket = debtByStudent.get(inv.studentId);
+      if (bucket) {
+        bucket.dueCents += dueCents;
+        if (inv.createdAt < bucket.oldest) bucket.oldest = inv.createdAt;
+      } else {
+        debtByStudent.set(inv.studentId, { dueCents, oldest: inv.createdAt });
+      }
+    }
+    const debtIds = [...debtByStudent.keys()];
+    const debtStudents = debtIds.length
+      ? await db.student.findMany({ where: { id: { in: debtIds } }, select: { id: true, firstName: true, lastName: true, nyansapoIndex: true } })
+      : [];
+    const fmtC = (c: number) => `GH₵ ${(c / 100).toLocaleString("en-GH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const alerts: { key: string; severity: string; title: string; description: string; category: string; icon: string }[] = [];
+    for (const s of [...debtStudents].sort((a, b) => (debtByStudent.get(b.id)!.dueCents - debtByStudent.get(a.id)!.dueCents)).slice(0, 3)) {
+      const b = debtByStudent.get(s.id)!;
+      const days = Math.floor((now.getTime() - b.oldest.getTime()) / 86400000);
+      const key = `debt_${s.id}`;
+      if (muted.has(key)) continue;
+      alerts.push({
+        key, severity: "CRITICAL",
+        title: "Critical outstanding balance detected",
+        description: `Learner ${s.firstName} ${s.lastName} (index ${s.nyansapoIndex}) has an outstanding balance of ${fmtC(b.dueCents)} with the oldest invoice ${days} days old — above the ${fmtC(cfg.outstandingThresholdCents)} / ${cfg.outstandingDays}-day threshold.`,
+        category: "Receivables", icon: "exclamation-triangle",
+      });
+    }
+
+    /* rules 2 + 5 — collection efficiency vs the daily target */
+    const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const dayEnd = new Date(dayStart.getTime() + 86400 * 1000 - 1);
+    const todayAgg = await db.payment.aggregate({
+      where: { schoolId, voided: false, paymentType: "PAYMENT", paidAt: { gte: dayStart, lte: dayEnd } },
+      _sum: { amountCents: true },
+    });
+    const todayCents = todayAgg._sum.amountCents ?? 0;
+    const targetCents = cfg.collectionTargetCents;
+    const rate = targetCents > 0 ? (todayCents / targetCents) * 100 : 0;
+    const fmtPct = (p: number) => `${p.toLocaleString("en-GB", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
+    if (rate < cfg.collectionThresholdPct && !muted.has(`efficiency_${dayKey}`)) {
+      alerts.push({
+        key: `efficiency_${dayKey}`, severity: "HIGH",
+        title: "Collection rate below target",
+        description: `Today's collections stand at ${fmtC(todayCents)} against the ${fmtC(targetCents)} daily target — ${fmtPct(rate)} efficiency, below the ${cfg.collectionThresholdPct}% threshold.`,
+        category: "Performance", icon: "chart-line",
+      });
+    }
+    if (rate >= 100 && !muted.has(`success_${dayKey}`)) {
+      alerts.push({
+        key: `success_${dayKey}`, severity: "LOW",
+        title: "Daily collection target achieved",
+        description: `Congratulations — the daily collection target was achieved with ${fmtPct(rate)} efficiency (${fmtC(todayCents)} of ${fmtC(targetCents)}).`,
+        category: "Success", icon: "check-circle",
+      });
+    }
+
+    /* rule 3 — bank reconciliation overdue */
+    const accounts = await db.bankAccount.findMany({
+      where: { schoolId, isActive: true },
+      select: { id: true, name: true, accountNumber: true, reconciliations: { where: { status: "COMPLETED" }, orderBy: { completedAt: "desc" }, take: 1, select: { completedAt: true } } },
+    });
+    const reconFloor = new Date(now.getTime() - cfg.reconciliationDays * 86400 * 1000);
+    for (const acct of accounts) {
+      const last = acct.reconciliations[0]?.completedAt ?? null;
+      if (last && last > reconFloor) continue;
+      const days = last ? Math.floor((now.getTime() - last.getTime()) / 86400000) : 30;
+      const key = `recon_${acct.id}`;
+      if (muted.has(key)) continue;
+      alerts.push({
+        key, severity: "HIGH",
+        title: "Bank reconciliation overdue",
+        description: `Account ${acct.name}${acct.accountNumber ? ` (${acct.accountNumber})` : ""} has not been reconciled for ${days} day${days === 1 ? "" : "s"}${last ? "" : " — no completed reconciliation on record"}.`,
+        category: "Reconciliation", icon: "university",
+      });
+    }
+
+    /* rule 4 — rapid collector transaction pattern */
+    const rapidFloor = new Date(now.getTime() - cfg.rapidTxnMinutes * 60 * 1000);
+    const rapidRows = await db.payment.findMany({
+      where: { schoolId, voided: false, paidAt: { gte: rapidFloor } },
+      select: { receivedByName: true, paidAt: true },
+    });
+    const byCollector = new Map<string, number>();
+    for (const p of rapidRows) byCollector.set(p.receivedByName ?? "Unattributed", (byCollector.get(p.receivedByName ?? "Unattributed") ?? 0) + 1);
+    for (const [collector, count] of byCollector) {
+      if (count <= cfg.rapidTxnCount) continue;
+      const key = `rapid_${collector}_${hourKey}`;
+      if (muted.has(key)) continue;
+      alerts.push({
+        key, severity: "MEDIUM",
+        title: "Unusual transaction pattern detected",
+        description: `Collector ${collector} recorded ${count} transactions within ${cfg.rapidTxnMinutes} minutes. Possible data entry anomaly — verify the receipts.`,
+        category: "Anomaly Detection", icon: "flag",
+      });
+    }
+
+    const severityRank: Record<string, number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+    alerts.sort((a, b) => severityRank[a.severity] - severityRank[b.severity]);
+
+    /* resolution history — the compliance book */
+    const history = await db.financialAlertResolution.findMany({
+      where: { schoolId },
+      orderBy: { resolvedAt: "desc" },
+      take: 50,
+      select: { id: true, alertKey: true, title: true, severity: true, category: true, resolvedByName: true, notes: true, resolvedAt: true },
+    });
+
+    return NextResponse.json({
+      settings: cfg,
+      collection: { todayCents, targetCents, rate: Math.round(rate * 10) / 10 },
+      alerts,
+      history: history.map((h) => ({
+        id: h.id, alertKey: h.alertKey, title: h.title, severity: h.severity, category: h.category,
+        resolvedByName: h.resolvedByName, notes: h.notes, resolvedAt: h.resolvedAt.toISOString(),
+      })),
+      stats: {
+        live: alerts.length,
+        critical: alerts.filter((a) => a.severity === "CRITICAL").length,
+        muted: muted.size,
+        resolvedTotal: history.length,
+      },
+    });
+  }
+
   // ── income & expenditure account (CI3 income_expenditure.php layout) ──
   // INCOME: billed-invoice receipts (method sub-totals) · daily services
   // collection per service (CI3's feeding/breakfast/classes/water/transport
@@ -502,9 +666,63 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const { id: schoolId } = await params;
   const body = await req.json().catch(() => ({}));
   const action: string = body.action;
-  const auth = await opsAuth(req, schoolId, "POST", { perms: action === "save-expense" || action === "delete-expense" ? ["finance.manage"] : action === "cashier-report" ? ["cashier.reports"] : action === "terminal-bills" ? ["fees.view", "cashier.reports", "daily.view"] : action.startsWith("credit-") ? ["fees.manage", "fees.collect"] : ["fees.view"] });
+  const auth = await opsAuth(req, schoolId, "POST", { perms: action === "save-expense" || action === "delete-expense" || action === "alerts-settings" ? ["finance.manage"] : action === "alert-resolve" ? ["finance.manage", "finance.view"] : action === "cashier-report" ? ["cashier.reports"] : action === "terminal-bills" ? ["fees.view", "cashier.reports", "daily.view"] : action.startsWith("credit-") ? ["fees.manage", "fees.collect"] : ["fees.view"] });
   if (!auth.ok) return auth.res;
   const user = auth.user;
+
+  // ── wave 36 — financial alert settings + resolutions (legacy parity) ──
+  if (action === "alerts-settings") {
+    const cfg = await loadAlertSettings(schoolId);
+    const N = (k: string, d: number, min: number, max: number) => {
+      const v = Number(body[k]);
+      return Number.isFinite(v) && v >= min && v <= max ? Math.round(v) : (d as number);
+    };
+    const next = {
+      outstandingThresholdCents: Math.round(N("outstandingThresholdCents", cfg.outstandingThresholdCents / 100, 0, 1_000_000) * 100),
+      outstandingDays: N("outstandingDays", cfg.outstandingDays, 1, 720),
+      collectionTargetCents: Math.round(N("collectionTargetCents", cfg.collectionTargetCents / 100, 0, 1_000_000) * 100),
+      collectionThresholdPct: N("collectionThresholdPct", cfg.collectionThresholdPct, 1, 100),
+      reconciliationDays: N("reconciliationDays", cfg.reconciliationDays, 1, 365),
+      rapidTxnCount: N("rapidTxnCount", cfg.rapidTxnCount, 2, 500),
+      rapidTxnMinutes: N("rapidTxnMinutes", cfg.rapidTxnMinutes, 1, 1440),
+      emailNotifications: typeof body.emailNotifications === "boolean" ? body.emailNotifications : cfg.emailNotifications,
+      notificationEmails: typeof body.notificationEmails === "string"
+        ? body.notificationEmails.split(",").map((s: string) => s.trim()).filter((s: string) => /.+@.+\..+/.test(s)).slice(0, 10).join(", ")
+        : cfg.notificationEmails,
+    };
+    await db.schoolSetting.upsert({
+      where: { schoolId_key: { schoolId, key: "alerts.finance" } },
+      update: { value: JSON.stringify(next) },
+      create: { schoolId, key: "alerts.finance", value: JSON.stringify(next) },
+    });
+    return NextResponse.json({ ok: true, settings: next });
+  }
+
+  if (action === "alert-resolve") {
+    const { alertKey, title, severity, category, description } = body;
+    if (typeof alertKey !== "string" || !alertKey) return NextResponse.json({ error: "alertKey is required" }, { status: 400 });
+    if (typeof title !== "string" || !title) return NextResponse.json({ error: "The alert title snapshot is required" }, { status: 400 });
+    const sev = ["CRITICAL", "HIGH", "MEDIUM", "LOW"].includes(severity) ? severity : "MEDIUM";
+    const rec = await db.financialAlertResolution.create({
+      data: {
+        schoolId, alertKey,
+        title: String(title).slice(0, 200),
+        severity: sev,
+        category: typeof category === "string" ? String(category).slice(0, 60) : "General",
+        description: typeof description === "string" ? String(description).slice(0, 600) : null,
+        resolvedByName: user.fullName,
+        notes: typeof body.notes === "string" && body.notes.trim() ? body.notes.trim().slice(0, 400) : null,
+      },
+    });
+    return NextResponse.json({
+      ok: true,
+      resolution: {
+        id: rec.id, alertKey: rec.alertKey, title: rec.title, severity: rec.severity, category: rec.category,
+        resolvedByName: rec.resolvedByName, notes: rec.notes, resolvedAt: rec.resolvedAt.toISOString(),
+      },
+      note: "This alert stays muted for 7 days, then re-evaluates on the live data.",
+    });
+  }
 
   // ── student credit wallets: manual credit / adjustment (CI3 parity) ──
   if (action === "credit-create" || action === "credit-adjust") {
@@ -805,4 +1023,43 @@ function dayRange(from?: string, to?: string): { gte?: Date; lte?: Date } | unde
     ...(from ? { gte: new Date(`${from}T00:00:00.000Z`) } : {}),
     ...(to ? { lte: new Date(`${to}T23:59:59.999Z`) } : {}),
   };
+}
+
+/* ── wave 36 — financial alert thresholds (legacy alert_settings.php parity) ──
+ * Stored as one SchoolSetting JSON blob (key "alerts.finance"); defaults mirror
+ * the legacy settings: outstanding 1000 over 90 days, daily target 15000 with
+ * a 70% threshold, reconciliation overdue after 7 days, rapid pattern at more
+ * than 10 transactions in 10 minutes, optional email notifications. */
+export type FinanceAlertSettings = {
+  outstandingThresholdCents: number;
+  outstandingDays: number;
+  collectionTargetCents: number;
+  collectionThresholdPct: number;
+  reconciliationDays: number;
+  rapidTxnCount: number;
+  rapidTxnMinutes: number;
+  emailNotifications: boolean;
+  notificationEmails: string;
+};
+
+async function loadAlertSettings(schoolId: string): Promise<FinanceAlertSettings> {
+  const row = await db.schoolSetting.findUnique({ where: { schoolId_key: { schoolId, key: "alerts.finance" } } });
+  const defaults: FinanceAlertSettings = {
+    outstandingThresholdCents: 100000, // legacy 1000 currency units
+    outstandingDays: 90,
+    collectionTargetCents: 1500000, // legacy 15000 daily target
+    collectionThresholdPct: 70,
+    reconciliationDays: 7,
+    rapidTxnCount: 10,
+    rapidTxnMinutes: 10,
+    emailNotifications: false,
+    notificationEmails: "",
+  };
+  if (!row) return defaults;
+  try {
+    const parsed = JSON.parse(row.value) as Partial<FinanceAlertSettings>;
+    return { ...defaults, ...parsed };
+  } catch {
+    return defaults;
+  }
 }

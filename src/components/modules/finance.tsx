@@ -4,7 +4,7 @@
    CI3 statements (receivables · payables · income & expenditure). */
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
-import { canModule } from "@/lib/rbac";
+import { canModule, canAny } from "@/lib/rbac";
 import { apiGet, apiPost } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -26,7 +26,7 @@ import { cn } from "@/lib/utils";
 import {
   TrendingUp, Wallet, AlertTriangle, Receipt, PieChart, BookOpenText, Timer, FileText, Plus,
   ArrowUpRight, ArrowDownLeft, Printer, Banknote, Trash2, Search, Users, ReceiptText, Download,
-  HandCoins, Scale,
+  HandCoins, Scale, Bell, History, RefreshCw, SlidersHorizontal, BadgeCheck, Gauge,
 } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
@@ -84,11 +84,29 @@ const EXPENSE_CATEGORIES: { key: string; label: string }[] = [
 ];
 const catLabel = (k: string) => EXPENSE_CATEGORIES.find((c) => c.key === k)?.label ?? k;
 
+/* ── wave 36 — financial alerts center (legacy financial_alerts parity) ── */
+type AlertItem = { key: string; severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW"; title: string; description: string; category: string; icon: string };
+type AlertSettings = {
+  outstandingThresholdCents: number; outstandingDays: number;
+  collectionTargetCents: number; collectionThresholdPct: number;
+  reconciliationDays: number; rapidTxnCount: number; rapidTxnMinutes: number;
+  emailNotifications: boolean; notificationEmails: string;
+};
+type AlertsPayload = {
+  settings: AlertSettings;
+  collection: { todayCents: number; targetCents: number; rate: number };
+  alerts: AlertItem[];
+  history: { id: string; alertKey: string; title: string; severity: string; category: string; resolvedByName: string; notes: string | null; resolvedAt: string }[];
+  stats: { live: number; critical: number; muted: number; resolvedTotal: number };
+};
+
 export function Finance() {
-  const { currentSchoolId, navTarget } = useStore();
+  const { currentSchoolId, navTarget, session } = useStore();
   const [data, setData] = useState<FinanceData | null>(null);
   const [yearId, setYearId] = useState<string | null>(null);
   const [tab, setTab] = useState("income");
+  /* wave 36 — financial alerts center */
+  const [alerts, setAlerts] = useState<AlertsPayload | null>(null);
 
   /* CI3-statements deep links (Reports module quick cards, iedupro nested nav):
      ?tab=statements | receivables | payables | income-expenditure → open the tab. */
@@ -97,7 +115,24 @@ export function Finance() {
     setAppliedTarget(navTarget);
     const t = navTarget?.tab;
     if (t && ["statements", "receivables", "payables", "income-expenditure"].includes(t)) setTab("statements");
+    if (t === "alerts") setTab("alerts");
   }
+
+  /* wave 36 — alerts re-evaluate live every visit to the tab (loading is
+     derived from alerts === null — the fetch itself only sets state async) */
+  const loadAlerts = useCallback(() => {
+    if (!currentSchoolId) return;
+    apiGet<AlertsPayload>(`/api/school/${currentSchoolId}/ops/finance?action=alerts`)
+      .then((d) => setAlerts(d))
+      .catch((e) => toast({ title: "Could not evaluate alerts", description: e.message, variant: "destructive" }));
+  }, [currentSchoolId]);
+  useEffect(() => { if (tab === "alerts" && !alerts) loadAlerts(); }, [tab, alerts, loadAlerts]);
+  const [alertsSchool, setAlertsSchool] = useState<string | null>(null);
+  if (currentSchoolId !== alertsSchool) {
+    setAlertsSchool(currentSchoolId);
+    setAlerts(null);
+  }
+  const alertsLoading = tab === "alerts" && !alerts;
 
   const load = (y?: string) => {
     if (!currentSchoolId) return;
@@ -140,6 +175,7 @@ export function Finance() {
           <TabsTrigger value="ledger">Student ledger</TabsTrigger>
           <TabsTrigger value="aging">Receivables ageing</TabsTrigger>
           <TabsTrigger value="bills">Terminal bills</TabsTrigger>
+          <TabsTrigger value="alerts" className="gap-1.5">Alerts{(alerts?.stats.live ?? 0) > 0 ? <Badge className="ml-1 h-4 min-w-4 px-1 text-[10px] bg-red-100 text-red-800 border-transparent dark:bg-red-950 dark:text-red-300">{alerts.stats.live}</Badge> : null}</TabsTrigger>
           <TabsTrigger value="expenditure">Expenditure</TabsTrigger>
           <TabsTrigger value="advanced">Advanced reports</TabsTrigger>
           <TabsTrigger value="statements">CI3 statements</TabsTrigger>
@@ -213,6 +249,17 @@ export function Finance() {
         {/* ── TERMINAL BILLS ── */}
         <TabsContent value="bills">
           <TerminalBillsTab data={data} />
+        </TabsContent>
+
+        {/* ── wave 36 — FINANCIAL ALERTS CENTER (legacy financial_alerts.php +
+            alert_settings.php + alert_history.php parity) ── */}
+        <TabsContent value="alerts">
+          <AlertsCenter
+            payload={alerts}
+            loading={alertsLoading}
+            onReload={loadAlerts}
+            canManage={canAny(session?.permissions, ["finance.manage"])}
+          />
         </TabsContent>
 
         {/* ── EXPENDITURE ── */}
@@ -1106,6 +1153,295 @@ type AdvData = {
     monthly: { month: string; totalCents: number }[];
   };
 };
+
+/* ── WAVE 36 — FINANCIAL ALERTS CENTER (legacy financial_alerts.php +
+   alert_settings.php + alert_history.php parity) ──
+   Five live rules re-evaluated against the school's books on every visit:
+   1. critical outstanding balances, 2. collection efficiency below the daily
+   target, 3. overdue bank reconciliation, 4. rapid collector transaction
+   patterns, 5. the daily-target success note. Resolving an alert mutes its
+   key for 7 days (legacy is_alert_resolved) and leaves a compliance line in
+   the history book. */
+const ALERT_TONE: Record<string, { label: string; badge: string; ring: string }> = {
+  CRITICAL: { label: "Critical", badge: "bg-red-100 text-red-800 border-transparent dark:bg-red-950 dark:text-red-300", ring: "border-red-300 dark:border-red-900" },
+  HIGH: { label: "High", badge: "bg-amber-100 text-amber-800 border-transparent dark:bg-amber-950 dark:text-amber-300", ring: "border-amber-300 dark:border-amber-900" },
+  MEDIUM: { label: "Medium", badge: "bg-sky-100 text-sky-800 border-transparent dark:bg-sky-950 dark:text-sky-300", ring: "border-sky-300 dark:border-sky-900" },
+  LOW: { label: "Success", badge: "bg-emerald-100 text-emerald-800 border-transparent dark:bg-emerald-950 dark:text-emerald-300", ring: "border-emerald-300 dark:border-emerald-900" },
+};
+
+function AlertsCenter({ payload, loading, onReload, canManage }: {
+  payload: AlertsPayload | null;
+  loading: boolean;
+  onReload: () => void;
+  canManage: boolean;
+}) {
+  const { currentSchoolId } = useStore();
+  const [resolve, setResolve] = useState<AlertItem | null>(null);
+  const [resolveNotes, setResolveNotes] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [cfgOpen, setCfgOpen] = useState(false);
+  const [cfg, setCfg] = useState<AlertSettings | null>(null);
+  const [cfgBusy, setCfgBusy] = useState(false);
+
+  /* settings draft — reset to the saved thresholds on open */
+  const [cfgKey, setCfgKey] = useState("");
+  useEffect(() => {
+    if (!payload || !cfgOpen) return;
+    const key = `${payload.settings.outstandingThresholdCents}:${payload.settings.collectionTargetCents}:${payload.settings.notificationEmails}`;
+    if (key !== cfgKey) { setCfgKey(key); setCfg(payload.settings); }
+  }, [payload, cfgOpen, cfgKey]);
+
+  async function saveResolve() {
+    if (!currentSchoolId || !resolve) return;
+    setBusy(true);
+    try {
+      const res = await apiPost<{ ok: true; resolution: { resolvedByName: string }; note: string }>(`/api/school/${currentSchoolId}/ops/finance`, {
+        action: "alert-resolve",
+        alertKey: resolve.key, title: resolve.title, severity: resolve.severity,
+        category: resolve.category, description: resolve.description,
+        notes: resolveNotes,
+      });
+      toast({ title: "Alert resolved", description: `${resolve.title} — closed by ${res.resolution.resolvedByName}. ${res.note}` });
+      setResolve(null);
+      setResolveNotes("");
+      onReload();
+    } catch (e: any) {
+      toast({ title: "Could not resolve", description: e.message, variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveSettings() {
+    if (!currentSchoolId || !cfg) return;
+    setCfgBusy(true);
+    try {
+      const res = await apiPost<{ ok: true; settings: AlertSettings }>(`/api/school/${currentSchoolId}/ops/finance`, {
+        action: "alerts-settings",
+        outstandingThresholdCents: cfg.outstandingThresholdCents / 100,
+        outstandingDays: cfg.outstandingDays,
+        collectionTargetCents: cfg.collectionTargetCents / 100,
+        collectionThresholdPct: cfg.collectionThresholdPct,
+        reconciliationDays: cfg.reconciliationDays,
+        rapidTxnCount: cfg.rapidTxnCount,
+        rapidTxnMinutes: cfg.rapidTxnMinutes,
+        emailNotifications: cfg.emailNotifications,
+        notificationEmails: cfg.notificationEmails,
+      });
+      toast({ title: "Alert thresholds saved", description: "The rules re-evaluate immediately against the new limits." });
+      setCfgOpen(false);
+      onReload();
+    } catch (e: any) {
+      toast({ title: "Could not save thresholds", description: e.message, variant: "destructive" });
+    } finally {
+      setCfgBusy(false);
+    }
+  }
+
+  if (loading || !payload) return <LoadingBlock label="Evaluating the school's financial alerts…" />;
+
+  const rate = payload.collection.rate;
+  const rateTone = rate >= 100 ? "text-emerald-600 dark:text-emerald-400" : rate >= payload.settings.collectionThresholdPct ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
+
+  return (
+    <div className="space-y-4">
+      {/* header strip — today's collection vs target */}
+      <Card className="overflow-hidden">
+        <div className="bg-gradient-to-r from-violet-600 to-purple-700 dark:from-violet-700 dark:to-purple-900 px-5 py-4 text-white">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+            <div>
+              <p className="text-[11px] uppercase tracking-widest opacity-80">Financial alerts</p>
+              <h3 className="text-lg font-semibold leading-tight">{payload.stats.live} live · {payload.stats.critical} critical · {payload.stats.muted} muted (7 days)</h3>
+              <p className="text-xs opacity-90">Receivables · collection efficiency · reconciliation · anomaly detection — evaluated against today&apos;s books.</p>
+            </div>
+            <div className="ml-auto flex flex-wrap gap-2">
+              <Button size="sm" variant="secondary" className="gap-1.5" onClick={onReload}><RefreshCw className="size-4" /> Re-evaluate</Button>
+              {canManage && <Button size="sm" variant="secondary" className="gap-1.5" onClick={() => setCfgOpen(true)}><SlidersHorizontal className="size-4" /> Thresholds</Button>}
+            </div>
+          </div>
+        </div>
+        <CardContent className="pt-4">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <StatCard icon={<Banknote className="size-4" />} label="Collected today" value={fmtCedi(payload.collection.todayCents, { compact: true })} sub="all receipt channels" />
+            <StatCard icon={<TrendingUp className="size-4" />} label="Daily target" value={fmtCedi(payload.collection.targetCents, { compact: true })} sub={`${payload.settings.collectionThresholdPct}% trip line`} />
+            <StatCard icon={<Gauge className="size-4" />} label="Efficiency" value={`${rate.toFixed(1)}%`} tone={rate >= 100 ? "gold" : rate >= payload.settings.collectionThresholdPct ? "primary" : "danger"} sub="collections ÷ target today" />
+            <StatCard icon={<Scale className="size-4" />} label="Resolved (all time)" value={payload.stats.resolvedTotal} sub={`${payload.stats.muted} muted this week`} />
+          </div>
+          <div className="mt-3 h-2.5 w-full overflow-hidden rounded-full bg-muted">
+            <div
+              className={cn("h-full rounded-full transition-all", rate >= 100 ? "bg-emerald-500" : rate >= payload.settings.collectionThresholdPct ? "bg-amber-500" : "bg-red-500")}
+              style={{ width: `${Math.min(100, Math.max(0, rate))}%` }}
+              role="progressbar" aria-label="Collection efficiency today" aria-valuenow={Math.round(rate)}
+            />
+          </div>
+          <p className={cn("mt-1 text-xs", rateTone)}>
+            {rate >= 100 ? "Daily target achieved — the good-news alert fires." : `Below the ${payload.settings.collectionThresholdPct}% line, the collection-rate alert fires.`}
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* live alerts */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2"><Bell className="size-4" /> Live alerts ({payload.alerts.length})</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {payload.alerts.length === 0 && (
+              <EmptyState icon={<BadgeCheck className="size-8" />} title="No live alerts" hint="Every rule evaluated cleanly — receivables, efficiency, reconciliation and anomaly patterns are all within the school's thresholds." />
+            )}
+            <div className="space-y-3 max-h-[26rem] overflow-y-auto nice-scroll pr-1">
+              {payload.alerts.map((a) => {
+                const tone = ALERT_TONE[a.severity] ?? ALERT_TONE.MEDIUM;
+                return (
+                  <div key={a.key} className={cn("rounded-xl border p-3", tone.ring)}>
+                    <div className="flex items-start gap-2">
+                      {a.severity === "CRITICAL" ? <AlertTriangle className="mt-0.5 size-4 shrink-0 text-red-600 dark:text-red-400" />
+                        : a.severity === "LOW" ? <BadgeCheck className="mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                        : <Bell className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-sm font-semibold leading-tight">{a.title}</p>
+                          <Badge className={cn("text-[10px] uppercase tracking-wide", tone.badge)}>{tone.label}</Badge>
+                          <Badge variant="outline" className="text-[10px] font-normal">{a.category}</Badge>
+                        </div>
+                        <p className="mt-1 text-xs text-muted-foreground">{a.description}</p>
+                      </div>
+                      <Button size="sm" variant="outline" className="gap-1 shrink-0" onClick={() => { setResolve(a); setResolveNotes(""); }}>
+                        Resolve
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* resolution history — the compliance book */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2"><History className="size-4" /> Resolution history ({payload.history.length})</CardTitle>
+          </CardHeader>
+          <CardContent className="px-0 sm:px-6">
+            <div className="rounded-xl border overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Alert</TableHead>
+                    <TableHead className="hidden sm:table-cell">Closed by</TableHead>
+                    <TableHead>When</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {payload.history.map((h) => (
+                    <TableRow key={h.id}>
+                      <TableCell className="max-w-[16rem]">
+                        <p className="truncate text-sm font-medium">{h.title}</p>
+                        <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                          <Badge variant="outline" className="h-4 px-1 text-[9px] uppercase">{h.severity}</Badge>
+                          {h.notes ? <span className="truncate">“{h.notes}”</span> : <span className="italic">no note</span>}
+                        </p>
+                      </TableCell>
+                      <TableCell className="hidden sm:table-cell text-xs">{h.resolvedByName}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{fmtDate(h.resolvedAt)}</TableCell>
+                    </TableRow>
+                  ))}
+                  {!payload.history.length && (
+                    <TableRow>
+                      <TableCell colSpan={3} className="py-8 text-center text-sm text-muted-foreground">
+                        Nothing resolved yet — resolving an alert mutes it for 7 days and files a line here.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+            <p className="mt-3 text-[11px] text-muted-foreground">
+              A resolution mutes the alert key for 7 days (legacy is_alert_resolved window); the rule then re-evaluates against live data. History keeps the frozen alert wording for audit.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* resolve dialog */}
+      <Dialog open={!!resolve} onOpenChange={(o) => { if (!o) { setResolve(null); setResolveNotes(""); } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><BadgeCheck className="size-4" /> Resolve this alert?</DialogTitle>
+            <DialogDescription>
+              {resolve ? `${resolve.title} — ${resolve.category}. Resolution mutes this alert for 7 days, then it re-evaluates on the live books.` : ""}
+            </DialogDescription>
+          </DialogHeader>
+          {resolve && (
+            <div className="space-y-3">
+              <div className="rounded-lg border bg-muted/40 p-3 text-sm">{resolve.description}</div>
+              <div className="space-y-1.5">
+                <Label htmlFor="resolve-notes">Notes (what was done about it)</Label>
+                <Input id="resolve-notes" value={resolveNotes} onChange={(e) => setResolveNotes(e.target.value.slice(0, 400))} placeholder="e.g. Guardian paid ₵400 on the oldest invoice; arrears plan agreed…" />
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setResolve(null); setResolveNotes(""); }}>Cancel</Button>
+            <Button className="gap-1.5" disabled={busy} onClick={saveResolve}>{busy ? "Filing…" : "Resolve for 7 days"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* thresholds dialog — legacy alert_settings parity */}
+      <Dialog open={cfgOpen} onOpenChange={setCfgOpen}>
+        <DialogContent className="max-w-xl max-h-[88vh] overflow-y-auto nice-scroll">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><SlidersHorizontal className="size-4" /> Alert thresholds</DialogTitle>
+            <DialogDescription>Legacy alert-settings parity — the five rules evaluate against these limits.</DialogDescription>
+          </DialogHeader>
+          {cfg && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Outstanding threshold (₵)</Label>
+                <Input type="number" min={0} value={cfg.outstandingThresholdCents / 100} onChange={(e) => setCfg({ ...cfg, outstandingThresholdCents: Math.max(0, Number(e.target.value) || 0) * 100 })} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Outstanding age (days)</Label>
+                <Input type="number" min={1} value={cfg.outstandingDays} onChange={(e) => setCfg({ ...cfg, outstandingDays: Math.max(1, Math.round(Number(e.target.value) || 0)) })} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Daily collection target (₵)</Label>
+                <Input type="number" min={0} value={cfg.collectionTargetCents / 100} onChange={(e) => setCfg({ ...cfg, collectionTargetCents: Math.max(0, Number(e.target.value) || 0) * 100 })} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Efficiency trip line (%)</Label>
+                <Input type="number" min={1} max={100} value={cfg.collectionThresholdPct} onChange={(e) => setCfg({ ...cfg, collectionThresholdPct: Math.min(100, Math.max(1, Math.round(Number(e.target.value) || 0))) })} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Reconciliation overdue (days)</Label>
+                <Input type="number" min={1} value={cfg.reconciliationDays} onChange={(e) => setCfg({ ...cfg, reconciliationDays: Math.max(1, Math.round(Number(e.target.value) || 0)) })} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Rapid pattern — txns (count)</Label>
+                <Input type="number" min={2} value={cfg.rapidTxnCount} onChange={(e) => setCfg({ ...cfg, rapidTxnCount: Math.max(2, Math.round(Number(e.target.value) || 0)) })} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Rapid pattern — window (minutes)</Label>
+                <Input type="number" min={1} value={cfg.rapidTxnMinutes} onChange={(e) => setCfg({ ...cfg, rapidTxnMinutes: Math.max(1, Math.round(Number(e.target.value) || 0)) })} />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label>Notification emails (comma-separated)</Label>
+                <Input value={cfg.notificationEmails} onChange={(e) => setCfg({ ...cfg, notificationEmails: e.target.value.slice(0, 200) })} placeholder="bursar@school.edu.gh, head@school.edu.gh" />
+                <p className="text-[11px] text-muted-foreground">Email notifications are {cfg.emailNotifications ? "ON" : "OFF"} in this build — the addresses are kept ready for the email channel.</p>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCfgOpen(false)}>Cancel</Button>
+            <Button disabled={cfgBusy} onClick={saveSettings}>{cfgBusy ? "Saving…" : "Save thresholds"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
 
 function csvDownload(filename: string, header: string[], rows: (string | number)[][]) {
   const esc = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;

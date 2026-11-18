@@ -236,6 +236,7 @@ model School {
   fiscalYears          FiscalYear[]
   budgets              Budget[]
   auditLogs            AuditLog[]
+  financialAlertResolutions FinancialAlertResolution[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -2942,4 +2943,29 @@ model AuditLog {
   @@index([schoolId, createdAt])
   @@index([schoolId, entityType, entityId])
   @@index([schoolId, actorId])
+}
+
+// ── Wave 36 · Financial alert resolutions (legacy financial_alerts parity) ──
+// The alert engine evaluates five live rules (critical receivables, collection
+// efficiency vs target, overdue bank reconciliation, rapid collector
+// transaction patterns, daily-target success) against school ops data.
+// A resolution mutes ONE alert key for 7 days (legacy
+// is_alert_resolved: resolved_at > now − 7d); the resolution history is the
+// compliance trail of who closed which alert, with a note.
+model FinancialAlertResolution {
+  id             String   @id @default(cuid())
+  schoolId       String
+  school         School   @relation(fields: [schoolId], references: [id])
+  alertKey       String // debt_<studentId> | efficiency_<yyyy-mm-dd> | recon_<accountId> | rapid_<collector>_<yyyymmddhh> | success_<yyyy-mm-dd>
+  title          String // frozen snapshot — the history keeps the wording that was shown
+  severity       String // CRITICAL | HIGH | MEDIUM | LOW
+  category       String // Receivables | Performance | Reconciliation | Anomaly Detection | Success
+  description    String? // frozen snapshot of the alert body
+  resolvedByName String
+  notes          String? // what the bursar actually did about it
+  resolvedAt     DateTime @default(now())
+  createdAt      DateTime @default(now())
+
+  @@index([schoolId, alertKey, resolvedAt])
+  @@index([schoolId, resolvedAt])
 }
