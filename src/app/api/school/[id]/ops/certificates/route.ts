@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
+import { audit, auditSnapshot } from "@/lib/audit";
 
 // ── Certificates & Documents (wave 30 — the headteacher's signature drawer) ──
 // Serial-numbered official documents: School Leaving Certificate (SLC),
@@ -208,6 +209,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           issuedByName: actorName,
         },
       });
+      await audit({
+        schoolId, actor: auth.user, action: "ISSUE", entityType: "CERTIFICATE",
+        entityId: row.id, entityLabel: `${row.serialNo} · ${row.studentName}`,
+        summary: `Issued ${row.type.replace("_", " ").toLowerCase()} ${row.serialNo} to ${row.studentName} (${row.className}, ${row.sessionYear})`,
+        after: auditSnapshot(row), req,
+      });
       return NextResponse.json({ ok: true, doc: toDoc(row) });
     } catch (e: any) {
       if (e?.code === "P2002") return bad(`Serial ${serialNo} already exists — retry to draw the next number`, 409);
@@ -227,6 +234,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       where: { id: docId },
       data: { status: "REVOKED", revokedByName: actorName, revokedAt: new Date() },
     });
+    await audit({
+      schoolId, actor: auth.user, action: "REVOKE", entityType: "CERTIFICATE",
+      entityId: doc.id, entityLabel: `${doc.serialNo} · ${doc.studentName}`,
+      summary: `Revoked ${doc.type.replace("_", " ").toLowerCase()} ${doc.serialNo} (${doc.studentName})`,
+      before: auditSnapshot(doc), after: auditSnapshot(row), req,
+    });
     return NextResponse.json({ ok: true, doc: toDoc(row) });
   }
 
@@ -236,11 +249,23 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       where: { id: docId },
       data: { status: "ISSUED", revokedByName: null, revokedAt: null },
     });
+    await audit({
+      schoolId, actor: auth.user, action: "REINSTATE", entityType: "CERTIFICATE",
+      entityId: doc.id, entityLabel: `${doc.serialNo} · ${doc.studentName}`,
+      summary: `Reinstated ${doc.type.replace("_", " ").toLowerCase()} ${doc.serialNo} (${doc.studentName}) — printable again`,
+      before: auditSnapshot(doc), after: auditSnapshot(row), req,
+    });
     return NextResponse.json({ ok: true, doc: toDoc(row) });
   }
 
   if (action === "DELETE") {
     await db.issuedDocument.delete({ where: { id: docId } });
+    await audit({
+      schoolId, actor: auth.user, action: "DELETE", entityType: "CERTIFICATE",
+      entityId: doc.id, entityLabel: `${doc.serialNo} · ${doc.studentName}`,
+      summary: `Deleted ${doc.type.replace("_", " ").toLowerCase()} ${doc.serialNo} (${doc.studentName}) from the register`,
+      before: auditSnapshot(doc), req,
+    });
     return NextResponse.json({ ok: true });
   }
 

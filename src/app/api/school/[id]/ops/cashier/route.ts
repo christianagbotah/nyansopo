@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { sortClassrooms } from "@/lib/classes";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
+import { audit } from "@/lib/audit";
 import { paymentMethodLabel, resolveTransportFare, effectivePrice, voidPaymentCore, type CollectMethodPart } from "@/lib/daily-billing";
 import { dailyServicesReceipt, invoicePaymentReceipt } from "@/lib/receipt-payload";
 
@@ -206,6 +207,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       const out = await voidPaymentCore(db, p, {
         byName: user.fullName, byRole: user.role,
         reason: body.reason ? String(body.reason).slice(0, 200) : null,
+      });
+      await audit({
+        schoolId, actor: user, action: "VOID", entityType: "PAYMENT",
+        entityId: p.id, entityLabel: `${p.receiptNo} · ₵${(p.amountCents / 100).toFixed(2)}`,
+        summary: `Voided receipt ${p.receiptNo} (₵${(p.amountCents / 100).toFixed(2)}, ${p.method})${body.reason ? ` — ${String(body.reason).slice(0, 120)}` : ""}`,
+        before: { receiptNo: p.receiptNo, amountCents: p.amountCents, method: p.method, voided: false },
+        after: { receiptNo: p.receiptNo, amountCents: p.amountCents, method: p.method, voided: true, reason: body.reason ?? null },
+        req,
       });
       return NextResponse.json({ ok: true, receiptNo: p.receiptNo, ...out });
     } catch (e: any) {

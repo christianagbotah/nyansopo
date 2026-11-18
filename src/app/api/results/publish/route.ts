@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
+import { audit } from "@/lib/audit";
 import { smsEventEnabled, sendAutomated } from "@/lib/sms";
 import { buildResultsNotify, resultsNotifyVars, RESULTS_NOTIFY_DEFAULT_BODY } from "@/lib/results-notify";
 
@@ -127,6 +128,14 @@ export async function POST(req: NextRequest) {
       notified = { gate: "ON", sent, failed, skipped };
     }
   }
+
+  await audit({
+    schoolId, actor: user, action: publish ? "PUBLISH" : "UNPUBLISH", entityType: "RESULT",
+    entityId: `${termId}:${classId}`, entityLabel: `${classroom.name} · ${term.name} ${term.academicYear.name}`,
+    summary: `${publish ? "Published" : "Withdrew"} ${results.count} term results and ${cards.count} report cards for ${classroom.name} (${term.name} ${term.academicYear.name})`,
+    after: { termId: termId, classroomId: classId, results: results.count, cards: cards.count, published: publish, publishedAt: publishedAt?.toISOString() ?? null, notified },
+    req,
+  });
 
   return NextResponse.json({
     ok: true,

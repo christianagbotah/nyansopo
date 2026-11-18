@@ -103,6 +103,8 @@ export const PERMISSIONS: PermDef[] = [
   { id: "settings.theme", label: "Set the school colour scheme (Theme tab)", group: "System" },
   { id: "backup.manage", label: "Database backup & restore", group: "System" },
   { id: "rbac.manage", label: "Manage users, roles & permissions", group: "System" },
+  // Audit trail (wave 31 — the compliance book)
+  { id: "audit.view", label: "View the audit trail of consequential school-record actions", group: "System" },
   { id: "ai.use", label: "AI assistant", group: "System" },
   // Self-service portals
   { id: "staffhub.self", label: "Staff self-service portal", group: "Self-service" },
@@ -153,6 +155,7 @@ export const ROLE_DEFAULTS: Record<string, string[] | "*"> = {
     "finance.view", "finance.manage",
     "accounts.view", "accounts.manage",
     "budget.view", "budget.manage",
+    "audit.view",
     "boarding.view",
     "sms.view", "sms.send", "email.send", "messages.use",
     "settings.manage", "ai.use", "staffhub.self",
@@ -348,6 +351,7 @@ export const MODULE_PERMS: Record<string, string[]> = {
   library: ["library.view"],
   boarding: ["boarding.view"],
   rbac: ["rbac.manage"],
+  audit: ["audit.view"],
   cashier: ["cashier.reports", "fees.collect", "daily.collect"],
   conductor: ["transport.conduct"],
   staffhub: ["staffhub.self"],

@@ -61,6 +61,7 @@ import { Clubs } from "@/components/modules/clubs";
 import { StaffDaily } from "@/components/modules/staff-daily";
 import { FrontOffice } from "@/components/modules/front-office";
 import { Certificates } from "@/components/modules/certificates";
+import { AuditTrail } from "@/components/modules/audit";
 import {
   LayoutDashboard, Users, Banknote, CalendarCheck, ClipboardList, GraduationCap, ArrowLeftRight, Building2,
   BrainCircuit, Settings as SettingsIcon, Landmark, Menu, CloudOff, Cloud, RefreshCcw, LogOut, Moon, Sun,
@@ -69,7 +70,7 @@ import {
   QrCode, UserPlus, Printer, Wallet, BarChart3, CalendarDays, HandCoins, FileWarning, ListChecks, ScanLine, ClipboardPen, Percent,
   PanelLeftClose, PanelLeftOpen, Palette, SlidersHorizontal, Archive, FileText, BookMarked, Target, PiggyBank, Award,
   MessagesSquare, Landmark as LedgerIcon, DatabaseBackup, Gavel, HeartPulse, Stethoscope, Ruler, Trophy, Footprints,
-  DoorOpen, CalendarClock, FileBadge,
+  DoorOpen, CalendarClock, FileBadge, History,
 } from "lucide-react";
 
 type NavLeaf = { id: string; label: string; icon?: any; target?: NavTarget };
@@ -115,6 +116,7 @@ const SCHOOL_NAV: NavItem[] = [
   { id: "staffhub", label: "My Staff Portal", icon: UserRound, section: "Support" },
   { id: "settings", label: "Settings", icon: SettingsIcon, section: "Support" },
   { id: "rbac", label: "Users & Access", icon: ShieldCheck, section: "Support" },
+  { id: "audit", label: "Audit Trail", icon: History, section: "Support" },
 ];
 
 const PORTAL_NAV: NavItem[] = [
@@ -919,6 +921,7 @@ export function AppShell() {
              module === "staffduty" && show("staffduty") ? <StaffDaily /> :
              module === "frontoffice" && show("frontoffice") ? <FrontOffice /> :
              module === "certificates" && show("certificates") ? <Certificates /> :
+             module === "audit" && show("audit") ? <AuditTrail /> :
              module === "classes" && show("classes") ? <Classes /> :
              module === "gradebook" && show("gradebook") ? <Gradebook /> :
              module === "results" && show("results") ? <Results /> :

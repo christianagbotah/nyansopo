@@ -29,6 +29,7 @@ SCRIPTS=(
   prisma/seed-staff-daily.ts
   prisma/seed-frontoffice.ts
   prisma/seed-certificates.ts
+  prisma/seed-audit.ts
   scripts/seed-pos-sales.ts
   prisma/seed-momo.ts
   prisma/seed-bill-items.ts

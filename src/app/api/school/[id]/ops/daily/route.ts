@@ -6,6 +6,7 @@ import { generateDayCharges, settleDailyCharges, effectivePrice, applyTransportU
 import { sendAutomated, smsEventEnabled } from "@/lib/sms";
 import { dailyServicesReceipt } from "@/lib/receipt-payload";
 import { nextReceiptNo } from "@/lib/codes";
+import { audit, auditSnapshot } from "@/lib/audit";
 import { PAYMENT_LABELS } from "@/lib/format";
 
 const fmtMoney = (cents: number) => `₵${(cents / 100).toFixed(2)}`;
@@ -815,6 +816,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       });
     }
     const receipt = await dailyServicesReceipt(db, payment.id);
+    await audit({
+      schoolId, actor: user, action: "CREATE", entityType: "PAYMENT",
+      entityId: payment.id, entityLabel: `${payment.receiptNo} · ${student.firstName} ${student.lastName}`,
+      summary: `Collected ₵${(amt / 100).toFixed(2)} (${PAYMENT_LABELS[payMethod] ?? payMethod}) for daily services${settledServices.length ? ` — ${settledServices.join(", ")}` : ""}`,
+      after: auditSnapshot({ receiptNo: payment.receiptNo, amountCents: amt, method: payMethod, category: "DAILY", receivedByName: user.fullName, applied }),
+      req,
+    });
     return NextResponse.json({ payment: { ...payment, applied }, student: `${student.firstName} ${student.lastName}`, receipt, walletTxnId, present });
   }
 

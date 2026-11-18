@@ -77,6 +77,7 @@ export const PAGE_INDEX: PageEntry[] = [
   { id: "pg-cert-formats", label: "Document Formats", section: S.people, module: "certificates", target: { tab: "formats" }, perm: ["certificates.view"], icon: ScrollText, keywords: ["sample", "format", "template", "layout", "a4", "print"] },
   { id: "pg-rbac", label: "Users & Access", section: S.people, module: "rbac", target: { tab: "users" }, perm: ["rbac.manage"], icon: ShieldCheck, keywords: ["accounts", "logins", "passwords", "staff accounts"] },
   { id: "pg-roles", label: "Roles & Permissions", section: S.people, module: "rbac", target: { tab: "roles" }, perm: ["rbac.manage"], icon: ShieldCheck, keywords: ["access control", "custom role", "cashier permissions", "acl", "grant"] },
+  { id: "pg-audit", label: "Audit Trail", section: S.system, module: "audit", perm: ["audit.view"], icon: ScrollText, keywords: ["audit", "compliance", "who changed", "before after", "audit log viewer", "audit trail", "activity log", "governance", "forensics"] },
 
   // ── Student Billing (invoices / termly) ──
   { id: "pg-bill-items", label: "Bill Items", section: S.billing, module: "fees", target: { tab: "bill-items" }, perm: ["fees.view"], icon: ListChecks, keywords: ["fee items", "catalogue", "tuition"] },
@@ -216,5 +217,5 @@ export const MODULE_LABELS: Record<string, string> = {
   staffhub: "Staff Hub", portal: "Parent Portal", campus: "Learner Portal", branches: "Branches",
   association: "Association", accounts: "Accounts", messages: "Messages", budget: "Budgets",
   discipline: "Discipline", health: "Health", clubs: "Clubs", staffduty: "Staff Ops",
-  frontoffice: "Front Office", certificates: "Certificates",
+  frontoffice: "Front Office", certificates: "Certificates", audit: "Audit",
 };

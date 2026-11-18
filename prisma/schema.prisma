@@ -235,6 +235,7 @@ model School {
   reconciliations      Reconciliation[]
   fiscalYears          FiscalYear[]
   budgets              Budget[]
+  auditLogs            AuditLog[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -398,9 +399,9 @@ model Subject {
 }
 
 model Staff {
-  id             String          @id @default(cuid())
+  id             String            @id @default(cuid())
   schoolId       String
-  school         School          @relation(fields: [schoolId], references: [id])
+  school         School            @relation(fields: [schoolId], references: [id])
   fullName       String
   role           String // HEADTEACHER | TEACHER | ACCOUNTANT | ASSISTANT | BURSAR
   title          String?
@@ -408,14 +409,14 @@ model Staff {
   phone          String?
   subjects       String? // comma-separated
   // staff category & position (iedupro parity: teacher / non-teaching / administrator)
-  category       String          @default("TEACHING") // TEACHING | NON_TEACHING | ADMINISTRATION
+  category       String            @default("TEACHING") // TEACHING | NON_TEACHING | ADMINISTRATION
   position       String? // e.g. Driver, Cook, Librarian, Security Guard, IT Technician
   qualification  String? // highest qualification / designation
   department     String? // Maintenance / Kitchen / Security / Transport ...
   staffCode      String? // TCR-00001 / NTS-00001 style identifier
   // payroll
-  salaryCents    Int             @default(0) // basic monthly salary
-  employmentType String          @default("FULL_TIME") // FULL_TIME | PART_TIME | CONTRACT | CASUAL
+  salaryCents    Int               @default(0) // basic monthly salary
+  employmentType String            @default("FULL_TIME") // FULL_TIME | PART_TIME | CONTRACT | CASUAL
   ssnitNumber    String?
   tin            String?
   tier2Provider  String? // licensed Tier 2 pension manager (e.g. Petra Trust)
@@ -431,13 +432,13 @@ model Staff {
   // SMS notification preference (iedupro user_notification_preferences parity):
   // per-teacher opt-out for lesson-note return/endorse alerts; school-level kill
   // switch lives on SmsSetting.autoLessonNoteAlerts
-  smsNotify      Boolean         @default(true)
-  active         Boolean         @default(true)
+  smsNotify      Boolean           @default(true)
+  active         Boolean           @default(true)
   classrooms     Classroom[]
   payslips       Payslip[]
   timetableSlots TimetableSlot[]
-  users          User[]          @relation("UserStaff")
-  housesMastered BoardingHouse[] @relation("HouseMaster")
+  users          User[]            @relation("UserStaff")
+  housesMastered BoardingHouse[]   @relation("HouseMaster")
   lessonNotes    LessonNote[]
   studyMaterials StudyMaterial[]
   attendanceRows StaffAttendance[]
@@ -1071,20 +1072,20 @@ model HealthScreeningRecord {
 // guardian meeting notices through the SMS centre.
 
 model Club {
-  id            String   @id @default(cuid())
+  id            String    @id @default(cuid())
   schoolId      String
-  school        School   @relation(fields: [schoolId], references: [id])
+  school        School    @relation(fields: [schoolId], references: [id])
   name          String
-  category      String   @default("GENERAL") // ACADEMIC | SERVICE | FAITH | CULTURAL | SPORTS | GENERAL
+  category      String    @default("GENERAL") // ACADEMIC | SERVICE | FAITH | CULTURAL | SPORTS | GENERAL
   description   String?
   patronName    String?
   meetingDay    String? // e.g. Wednesday
   venue         String?
-  status        String   @default("ACTIVE") // ACTIVE | DORMANT | ARCHIVED
+  status        String    @default("ACTIVE") // ACTIVE | DORMANT | ARCHIVED
   foundedOn     DateTime?
   createdByName String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   memberships ClubMembership[]
   meetings    ClubMeeting[]
@@ -1095,18 +1096,18 @@ model Club {
 }
 
 model ClubMembership {
-  id         String   @id @default(cuid())
-  schoolId   String
-  school     School   @relation(fields: [schoolId], references: [id])
-  clubId     String
-  club       Club     @relation(fields: [clubId], references: [id], onDelete: Cascade)
-  studentId  String
-  student    Student  @relation(fields: [studentId], references: [id])
-  office     String? // PRESIDENT | VICE_PRESIDENT | SECRETARY | TREASURER | ORGANISER
-  joinedOn   DateTime @default(now())
-  status     String   @default("ACTIVE") // ACTIVE | LEFT
-  leftOn     DateTime?
-  leftReason String?
+  id            String    @id @default(cuid())
+  schoolId      String
+  school        School    @relation(fields: [schoolId], references: [id])
+  clubId        String
+  club          Club      @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  studentId     String
+  student       Student   @relation(fields: [studentId], references: [id])
+  office        String? // PRESIDENT | VICE_PRESIDENT | SECRETARY | TREASURER | ORGANISER
+  joinedOn      DateTime  @default(now())
+  status        String    @default("ACTIVE") // ACTIVE | LEFT
+  leftOn        DateTime?
+  leftReason    String?
   createdByName String?
 
   attendance ClubAttendance[]
@@ -1117,18 +1118,18 @@ model ClubMembership {
 }
 
 model ClubMeeting {
-  id                  String   @id @default(cuid())
+  id                  String    @id @default(cuid())
   schoolId            String
-  school              School   @relation(fields: [schoolId], references: [id])
+  school              School    @relation(fields: [schoolId], references: [id])
   clubId              String
-  club                Club     @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  club                Club      @relation(fields: [clubId], references: [id], onDelete: Cascade)
   date                DateTime
   topic               String?
   minutes             String?
   takenByName         String?
   guardiansNotifiedAt DateTime?
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   attendance ClubAttendance[]
 
@@ -2663,40 +2664,40 @@ model BudgetLine {
 // Labour Act) and the substitution cover log for absent teachers.
 // ─────────────────────────────────────────────────────────────
 model StaffAttendance {
-  id            String    @id @default(cuid())
-  schoolId      String
-  school        School    @relation(fields: [schoolId], references: [id])
-  staffId       String
-  staff         Staff     @relation(fields: [staffId], references: [id])
-  date          DateTime  @db.Date
-  status        String    @default("PRESENT") // PRESENT | LATE | ABSENT | LEAVE | OFF
-  clockIn       DateTime?
-  clockOut      DateTime?
-  note          String?
-  markedByName  String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id           String    @id @default(cuid())
+  schoolId     String
+  school       School    @relation(fields: [schoolId], references: [id])
+  staffId      String
+  staff        Staff     @relation(fields: [staffId], references: [id])
+  date         DateTime  @db.Date
+  status       String    @default("PRESENT") // PRESENT | LATE | ABSENT | LEAVE | OFF
+  clockIn      DateTime?
+  clockOut     DateTime?
+  note         String?
+  markedByName String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   @@unique([staffId, date])
   @@index([schoolId, date])
 }
 
 model LeaveRequest {
-  id             String    @id @default(cuid())
-  schoolId       String
-  school         School    @relation(fields: [schoolId], references: [id])
-  staffId        String
-  staff          Staff     @relation(fields: [staffId], references: [id])
-  type           String // ANNUAL | SICK | MATERNITY | PATERNITY | STUDY | COMPASSIONATE | OTHER
-  startsAt       DateTime  @db.Date
-  endsAt         DateTime  @db.Date
-  days           Int
-  status         String    @default("PENDING") // PENDING | APPROVED | DECLINED | CANCELLED
-  reason         String?
+  id              String    @id @default(cuid())
+  schoolId        String
+  school          School    @relation(fields: [schoolId], references: [id])
+  staffId         String
+  staff           Staff     @relation(fields: [staffId], references: [id])
+  type            String // ANNUAL | SICK | MATERNITY | PATERNITY | STUDY | COMPASSIONATE | OTHER
+  startsAt        DateTime  @db.Date
+  endsAt          DateTime  @db.Date
+  days            Int
+  status          String    @default("PENDING") // PENDING | APPROVED | DECLINED | CANCELLED
+  reason          String?
   requestedByName String?
-  decidedByName  String?
-  decidedAt      DateTime?
-  createdAt      DateTime  @default(now())
+  decidedByName   String?
+  decidedAt       DateTime?
+  createdAt       DateTime  @default(now())
 
   @@index([schoolId, status])
   @@index([staffId, startsAt])
@@ -2790,42 +2791,42 @@ model Visitor {
 }
 
 model Appointment {
-  id             String    @id @default(cuid())
-  schoolId       String
-  school         School    @relation(fields: [schoolId], references: [id])
-  title          String
-  withName       String
-  withRole       String    @default("PARENT") // PARENT | STAFF | VENDOR | GOVT | OTHER
-  personToSee    String? // staff member the meeting is with
-  scheduledAt    DateTime
-  durationMin    Int?
-  location       String? // Head's office · Meeting room · Gate
-  purpose        String?
-  status         String    @default("SCHEDULED") // SCHEDULED | CONFIRMED | COMPLETED | CANCELLED | NO_SHOW
-  outcome        String?
-  notes          String?
-  createdByName  String?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  id            String   @id @default(cuid())
+  schoolId      String
+  school        School   @relation(fields: [schoolId], references: [id])
+  title         String
+  withName      String
+  withRole      String   @default("PARENT") // PARENT | STAFF | VENDOR | GOVT | OTHER
+  personToSee   String? // staff member the meeting is with
+  scheduledAt   DateTime
+  durationMin   Int?
+  location      String? // Head's office · Meeting room · Gate
+  purpose       String?
+  status        String   @default("SCHEDULED") // SCHEDULED | CONFIRMED | COMPLETED | CANCELLED | NO_SHOW
+  outcome       String?
+  notes         String?
+  createdByName String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   @@index([schoolId, scheduledAt])
   @@index([schoolId, status])
 }
 
 model PhoneCall {
-  id             String    @id @default(cuid())
-  schoolId       String
-  school         School    @relation(fields: [schoolId], references: [id])
-  direction      String // INCOMING | OUTGOING
-  contactName    String
-  phone          String?
-  regarding      String
-  handledByName  String?
-  followUp       Boolean   @default(false)
-  followUpDone   Boolean   @default(false)
-  calledAt       DateTime  @default(now())
-  notes          String?
-  createdAt      DateTime  @default(now())
+  id            String   @id @default(cuid())
+  schoolId      String
+  school        School   @relation(fields: [schoolId], references: [id])
+  direction     String // INCOMING | OUTGOING
+  contactName   String
+  phone         String?
+  regarding     String
+  handledByName String?
+  followUp      Boolean  @default(false)
+  followUpDone  Boolean  @default(false)
+  calledAt      DateTime @default(now())
+  notes         String?
+  createdAt     DateTime @default(now())
 
   @@index([schoolId, calledAt])
   @@index([schoolId, followUp])
@@ -2864,7 +2865,7 @@ model IssuedDocument {
   school        School    @relation(fields: [schoolId], references: [id])
   studentId     String
   student       Student   @relation(fields: [studentId], references: [id])
-  type          String    // LEAVING_CERT | TESTIMONIAL | ADMISSION_LETTER | INTRO_LETTER
+  type          String // LEAVING_CERT | TESTIMONIAL | ADMISSION_LETTER | INTRO_LETTER
   serialNo      String
   issueDate     DateTime  @db.Date
   // snapshot particulars at issue time
@@ -2873,8 +2874,8 @@ model IssuedDocument {
   className     String
   sessionYear   String
   dateOfBirth   DateTime? @db.Date
-  reason        String?   // reason for leaving / transfer (SLC & intro letters)
-  remarks       String?   // conduct / academic remarks woven into the prose
+  reason        String? // reason for leaving / transfer (SLC & intro letters)
+  remarks       String? // conduct / academic remarks woven into the prose
   status        String    @default("ISSUED") // ISSUED | REVOKED
   issuedByName  String?
   revokedByName String?
@@ -2888,21 +2889,50 @@ model IssuedDocument {
 }
 
 model SchoolEvent {
-  id             String    @id @default(cuid())
-  schoolId       String
-  school         School    @relation(fields: [schoolId], references: [id])
-  termId         String?
-  term           Term?     @relation(fields: [termId], references: [id])
-  title          String
-  category       String    @default("OTHER") // PTA_MEETING | OPEN_DAY | SPORTS | PRIZE_GIVING | EXAMINATION | HOLIDAY | OTHER
-  startsAt       DateTime  @db.Date
-  endsAt         DateTime? @db.Date
-  location       String?
-  description    String?
-  audience       String    @default("ALL") // ALL | STAFF | PARENTS | STUDENTS
-  createdByName  String?
-  createdAt      DateTime  @default(now())
+  id            String    @id @default(cuid())
+  schoolId      String
+  school        School    @relation(fields: [schoolId], references: [id])
+  termId        String?
+  term          Term?     @relation(fields: [termId], references: [id])
+  title         String
+  category      String    @default("OTHER") // PTA_MEETING | OPEN_DAY | SPORTS | PRIZE_GIVING | EXAMINATION | HOLIDAY | OTHER
+  startsAt      DateTime  @db.Date
+  endsAt        DateTime? @db.Date
+  location      String?
+  description   String?
+  audience      String    @default("ALL") // ALL | STAFF | PARENTS | STUDENTS
+  createdByName String?
+  createdAt     DateTime  @default(now())
 
   @@index([schoolId, startsAt])
   @@index([termId])
+}
+
+// ── Wave 31 · Audit trail — the compliance book (iEduPro audit_trail parity) ──
+// Every consequential act in the school's books leaves an immutable line:
+// who did it, what they touched, and the before/after state as JSON diffs.
+// Money records (payments, invoices), results publishing, certificates,
+// staff duty and RBAC changes all post here. The viewer renders side-by-side
+// Before / After panes exactly like the legacy audit_log_viewer.
+model AuditLog {
+  id          String   @id @default(cuid())
+  schoolId    String
+  school      School   @relation(fields: [schoolId], references: [id])
+  actorId     String? // User id when the actor has a login
+  actorName   String
+  actorRole   String? // SUPER_ADMIN | SCHOOL_ADMIN | ACCOUNTANT | CASHIER | TEACHER…
+  action      String // CREATE | UPDATE | DELETE | ISSUE | REVOKE | REINSTATE | PUBLISH | UNPUBLISH | APPROVE | REJECT | LOCK | UNLOCK | VOID | EXPORT | ADJUST | TRANSFER | LOGIN
+  entityType  String // PAYMENT | INVOICE | STUDENT | RESULT | CERTIFICATE | STAFF | TIMETABLE | RBAC | FEES | ATTENDANCE | SETTING…
+  entityId    String?
+  entityLabel String? // receipt number / serial / student name — the human handle
+  summary     String
+  beforeJson  Json? // row state before the change
+  afterJson   Json? // row state after the change
+  ip          String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  @@index([schoolId, createdAt])
+  @@index([schoolId, entityType, entityId])
+  @@index([schoolId, actorId])
 }
