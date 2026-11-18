@@ -16,7 +16,7 @@ import {
   Armchair, BookMarked, Network, UsersRound, HeartPulse, ScrollText, Wrench, Timer, Stethoscope,
   Flag, Trees, Sparkles, Scale, FileSearch, ShoppingBasket, GalleryHorizontal, Rows3, Banknote as Bank, Palette,
   DatabaseBackup, PiggyBank, Award, Gavel, Ruler, Activity, Home as HomeIcon, Hospital, Thermometer,
-  Trophy, Medal, BookUser, Footprints,
+  Trophy, Medal, BookUser, Footprints, Truck, AlarmClock,
   DoorOpen, CalendarClock, PhoneCall, Mailbox, CalendarRange, BellRing, FileBadge, Stamp, Gauge,
   Table2,
 } from "lucide-react";
@@ -88,6 +88,8 @@ export const PAGE_INDEX: PageEntry[] = [
   { id: "pg-structures", label: "Fee Structures", section: S.billing, module: "fees", target: { tab: "structures" }, perm: ["fees.view"], icon: Banknote, keywords: ["class fees", "template", "amounts"] },
   { id: "pg-discounts", label: "Discounts", section: S.billing, module: "fees", target: { tab: "discounts" }, perm: ["discounts.manage"], icon: Percent, keywords: ["scholarship", "bursary", "subsidy", "waiver"] },
   { id: "pg-arrears", label: "Arrears Chase-List", section: S.billing, module: "fees", target: { tab: "arrears" }, perm: ["fees.view"], icon: FileWarning, keywords: ["owing", "debtors", "balance", "chase"] },
+  { id: "pg-drive", label: "Drive List", section: S.billing, module: "fees", target: { tab: "drive-list" }, perm: ["fees.view", "cashier.reports", "daily.collect"], icon: Truck, keywords: ["drive", "debtors", "board", "streams", "collections walk"] },
+  { id: "pg-aging", label: "Receivables Aging", section: S.billing, module: "fees", target: { tab: "aging" }, perm: ["fees.view", "cashier.reports", "daily.collect"], icon: AlarmClock, keywords: ["aging", "buckets", "30 60 90", "overdue", "receivables", "reminder letters", "payment reminders"] },
   { id: "pg-credits", label: "Student Credits", section: S.billing, module: "fees", target: { tab: "credits" }, perm: ["fees.view"], icon: Wallet, keywords: ["prepaid", "advance", "topup", "wallet"] },
   { id: "pg-mod-approvals", label: "Modification Approvals", section: S.billing, module: "fees", target: { tab: "approvals" }, perm: ["fees.view"], icon: Scale, keywords: ["edit receipt", "amend", "level 1"] },
 

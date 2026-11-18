@@ -15,7 +15,7 @@ import { fmtCedi, fmtDate, PAYMENT_LABELS } from "@/lib/format";
 import { canAny } from "@/lib/rbac";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { Banknote, Receipt, AlertTriangle, CheckCircle2, Plus, Flag, Printer, Wallet, Ticket, Percent, UserPlus, XCircle, ListChecks, Copy as CopyIcon, Eye, Link2, ClipboardList, ShieldCheck, Undo2, PencilLine, Trash2, FileWarning, Ban, Download, History, ArrowRightLeft, PiggyBank, HandCoins, CopyPlus, FileUp, Smartphone, Search, UserRound, GraduationCap, Mail, HeartHandshake } from "lucide-react";
+import { Banknote, Receipt, AlertTriangle, CheckCircle2, Plus, Flag, Printer, Wallet, Ticket, Percent, UserPlus, XCircle, ListChecks, Copy as CopyIcon, Eye, Link2, ClipboardList, ShieldCheck, Undo2, PencilLine, Trash2, FileWarning, Ban, Download, History, ArrowRightLeft, PiggyBank, HandCoins, CopyPlus, FileUp, Smartphone, Search, UserRound, GraduationCap, Mail, HeartHandshake, Truck, AlarmClock } from "lucide-react";
 import { ReceiptDocument, BulkReceiptsDocument, RECEIPT_STYLES, type ReceiptStyle } from "@/components/receipts";
 import { BillItemsTab, CreateInvoicesTab, type BillItemRow, type RosterRow } from "@/components/modules/fees-billing";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -23,6 +23,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 import { DiscountProfilesTab, DiscountApprovalsTab, type DiscountData } from "@/components/modules/discounts-workspace";
+import { DriveListTab } from "@/components/modules/drive-list";
+import { AgingTab, ReminderLettersDialog } from "@/components/modules/receivables";
 
 type FeeData = {
   terms: { id: string; name: string; isCurrent: boolean }[];
@@ -110,6 +112,8 @@ export function Fees() {
   /* wave 37 — beneficiary register (legacy benefit_categories parity) */
   const [benefits, setBenefits] = useState<BenefitData | null>(null);
   const [benefitTerm, setBenefitTerm] = useState<string | null>(null);
+  /* wave 38 — receivables aging + reminder letters (CI3 aging_report / print_payment_reminders parity) */
+  const [remindersOpen, setRemindersOpen] = useState(false);
 
   const loadBenefits = (t?: string | null) => {
     if (!currentSchoolId) return;
@@ -132,7 +136,7 @@ export function Fees() {
   const [appliedTarget, setAppliedTarget] = useState<any>(null);
   if (navTarget !== appliedTarget) {
     setAppliedTarget(navTarget);
-    if (navTarget?.tab && ["bill-items", "create", "invoices", "receipts", "structures", "discounts", "arrears", "credits", "approvals", "beneficiaries"].includes(navTarget.tab)) setTab(navTarget.tab);
+    if (navTarget?.tab && ["bill-items", "create", "invoices", "receipts", "structures", "discounts", "arrears", "credits", "approvals", "beneficiaries", "drive-list", "aging"].includes(navTarget.tab)) setTab(navTarget.tab);
   }
   const canManageApprovals = canAny(session?.permissions, ["approvals.manage"]);
   const canRequestMods = canAny(session?.permissions, ["approvals.request", "approvals.manage"]);
@@ -320,6 +324,8 @@ export function Fees() {
           <TabsTrigger value="discounts">Discounts ({discounts?.discounts.length ?? 0})</TabsTrigger>
           <TabsTrigger value="beneficiaries" className="gap-1.5"><HeartHandshake className="size-4" /> Beneficiaries{benefits ? ` (${benefits.stats.beneficiaries})` : ""}</TabsTrigger>
           <TabsTrigger value="arrears">Arrears chase-list ({overdue.length})</TabsTrigger>
+          <TabsTrigger value="drive-list" className="gap-1.5"><Truck className="size-4" /> Drive list</TabsTrigger>
+          <TabsTrigger value="aging" className="gap-1.5"><AlarmClock className="size-4" /> Aging</TabsTrigger>
           <TabsTrigger value="credits">Credits</TabsTrigger>
           <TabsTrigger value="approvals" className="gap-1.5">
             Approvals
@@ -581,6 +587,18 @@ export function Fees() {
           </Card>
         </TabsContent>
 
+        {/* wave 38 — CI3 drive_list_page parity: the debtors board (wave 34 board, now reachable) */}
+        <TabsContent value="drive-list" className="mt-4">
+          {currentSchoolId && <DriveListTab />}
+        </TabsContent>
+
+        {/* wave 38 — CI3 aging_report + print_payment_reminders parity: receivables intelligence */}
+        <TabsContent value="aging" className="mt-4">
+          {currentSchoolId && (
+            <AgingTab schoolId={currentSchoolId} onReminders={canAny(session?.permissions, ["fees.view"]) ? () => setRemindersOpen(true) : undefined} />
+          )}
+        </TabsContent>
+
         <TabsContent value="credits">
           <CreditsTab onHistory={(studentId, name) => setCreditHistoryFor({ studentId, name })} />
         </TabsContent>
@@ -632,6 +650,8 @@ export function Fees() {
       <ReceiptDialog receipt={receipt} onOpenChange={(o) => !o && setReceipt(null)} />
       <CreditHistoryDialog target={creditHistoryFor} onOpenChange={(o) => !o && setCreditHistoryFor(null)} />
       {bulkReceipts && <BulkReceiptsDocument receipts={bulkReceipts} onDone={() => { setBulkReceipts(null); setCheckedReceipts(new Set()); }} />}
+      {/* wave 38 — reminder letter run (CI3 print_payment_reminders parity) */}
+      {currentSchoolId && <ReminderLettersDialog open={remindersOpen} onOpenChange={setRemindersOpen} schoolId={currentSchoolId} />}
 
       {/* ── clone previous term's fee structures ── */}
       <Dialog open={cloneOpen} onOpenChange={setCloneOpen}>

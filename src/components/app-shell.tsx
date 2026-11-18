@@ -87,7 +87,7 @@ import {
   QrCode, UserPlus, Printer, Wallet, BarChart3, CalendarDays, HandCoins, FileWarning, ListChecks, ScanLine, ClipboardPen, Percent,
   PanelLeftClose, PanelLeftOpen, Palette, SlidersHorizontal, Archive, FileText, BookMarked, Target, PiggyBank, Award,
   MessagesSquare, Landmark as LedgerIcon, DatabaseBackup, Gavel, HeartPulse, Stethoscope, Ruler, Trophy, Footprints,
-  DoorOpen, CalendarClock, FileBadge, History,
+  DoorOpen, CalendarClock, FileBadge, History, Truck, AlarmClock,
 } from "lucide-react";
 
 type NavLeaf = { id: string; label: string; icon?: any; target?: NavTarget };
@@ -387,6 +387,8 @@ export function AppShell() {
       { id: "fees-structures", label: "Fee structures", target: { tab: "structures" } },
       { id: "fees-discounts", label: "Discounts", target: { tab: "discounts" } },
       { id: "fees-arrears", label: "Arrears chase-list", target: { tab: "arrears" } },
+      { id: "fees-drive", label: "Drive list", target: { tab: "drive-list" } },
+      { id: "fees-aging", label: "Receivables aging", target: { tab: "aging" } },
       { id: "fees-credits", label: "Credits", target: { tab: "credits" } },
       { id: "fees-approvals", label: "Modification approvals", target: { tab: "approvals" } },
     ];
@@ -593,6 +595,8 @@ export function AppShell() {
           { key: "m-struct", label: "Fee Structure", icon: Banknote, module: "fees", target: { tab: "structures" }, color: C.teal, when: canFees },
           { key: "m-disc", label: "Discounts", icon: Percent, module: "fees", target: { tab: "discounts" }, color: C.pink, when: canFees },
           { key: "m-credits", label: "Student Credits", icon: Wallet, module: "fees", target: { tab: "credits" }, color: C.emerald, when: canFees },
+          { key: "m-drive", label: "Drive List", icon: Truck, module: "fees", target: { tab: "drive-list" }, color: C.red, when: canFees },
+          { key: "m-aging", label: "Receivables Aging", icon: AlarmClock, module: "fees", target: { tab: "aging" }, color: C.violet, when: canFees },
         ],
       },
       {

@@ -173,6 +173,11 @@
   .print-area { position: absolute; inset: 0; width: 100%; box-shadow: none !important; border: none !important; }
   .no-print { display: none !important; }
 
+  /* print-only roots: laid out as `hidden` on screen, revealed only on paper
+     (the reminder-letter sheets live inside a dialog without a screen preview) */
+  .print-only-root { display: block !important; }
+
+
   /* bulk printing: each sheet starts on its own page */
   .print-sheet { page-break-after: always; break-after: page; }
   .print-sheet:last-child { page-break-after: auto; break-after: auto; }

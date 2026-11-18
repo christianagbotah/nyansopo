@@ -239,6 +239,7 @@ model School {
   financialAlertResolutions FinancialAlertResolution[]
   benefitCategories     BenefitCategory[]
   beneficiaries         Beneficiary[]
+  reminderTemplates     ReminderTemplate[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -3012,4 +3013,19 @@ model Beneficiary {
 
   @@unique([studentId, termId])
   @@index([schoolId, termId])
+}
+
+// ── wave 38 — receivables intelligence (CI3 aging_report / drivelist_reminder_templates parity)
+model ReminderTemplate {
+  id            String   @id @default(cuid())
+  schoolId      String
+  school        School   @relation(fields: [schoolId], references: [id])
+  name          String
+  content       String // placeholders: {{student}} {{student_id}} {{parent_name}} {{class_name}} {{amount_owe}} {{expected_date}} {{school_name}} {{current_date}}
+  isDefault     Boolean  @default(false)
+  createdByName String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([schoolId])
 }
