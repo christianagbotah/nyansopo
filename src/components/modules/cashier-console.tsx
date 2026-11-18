@@ -23,8 +23,10 @@ import { FeeCollectionPortal } from "@/components/modules/fee-collection-portal"
 import {
   Receipt, Banknote, TrendingUp, Users, UtensilsCrossed, Banknote as CashIcon, Smartphone, RefreshCcw, Wallet,
   Percent, Printer, Save, ClipboardCheck, CalendarDays, ArrowLeftRight, Search, FileSpreadsheet, ListChecks,
-  BookOpen, Droplets, Bus, Coffee, HandCoins, ChevronRight, FileWarning, BadgeCheck,
+  BookOpen, Droplets, Bus, Coffee, HandCoins, ChevronRight, FileWarning, BadgeCheck, Trophy, Clock, Medal,
+  ArrowUpRight, ArrowDownRight, Gauge,
 } from "lucide-react";
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, AreaChart, Area } from "recharts";
 
 type ReportRow = {
   id: string; date: string; student: string; classroom: string;
@@ -103,7 +105,7 @@ export function CashierConsole() {
   const [appliedTarget, setAppliedTarget] = useState<any>(null);
   if (navTarget !== appliedTarget) {
     setAppliedTarget(navTarget);
-    if (navTarget?.tab && ["collect", "portal", "collections", "summary", "receipts", "ledger", "counter"].includes(navTarget.tab)) {
+    if (navTarget?.tab && ["collect", "portal", "collections", "summary", "receipts", "ledger", "counter", "efficiency"].includes(navTarget.tab)) {
       applyTab(navTarget.tab === "counter" ? "collect" : navTarget.tab === "portal" ? "collect" : navTarget.tab);
     }
   }
@@ -165,6 +167,7 @@ export function CashierConsole() {
           {canReport && <TabsTrigger value="summary" className="gap-1.5"><ClipboardCheck className="size-4" /> Daily summary</TabsTrigger>}
           {canReport && <TabsTrigger value="receipts" className="gap-1.5"><Printer className="size-4" /> Print receipts</TabsTrigger>}
           {canReport && <TabsTrigger value="ledger" className="gap-1.5"><ListChecks className="size-4" /> Student ledger</TabsTrigger>}
+          {canReport && <TabsTrigger value="efficiency" className="gap-1.5"><Gauge className="size-4" /> Efficiency</TabsTrigger>}
         </TabsList>
 
         {/* ── FEE COLLECTION PORTAL — full CI3 fee_collection_portal parity:
@@ -332,7 +335,197 @@ export function CashierConsole() {
         <TabsContent value="ledger">
           <StudentLedgerTab data={data} />
         </TabsContent>
+        <TabsContent value="efficiency">
+          <EfficiencyTab />
+        </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+/* ── EFFICIENCY (CI3 admin/collection_efficiency.php — collector rankings,
+   hourly patterns, KPI trend) — leaderboard with rank badges, the till's
+   hour-of-day rhythm and the per-day takings curve ── */
+type EffData = {
+  period: string; label: string;
+  window: { from: string; to: string };
+  kpis: { total: number; prevTotal: number; transactions: number; studentsServed: number; avg: number; rate: number; arrears: number; trend: number | null };
+  leaderboard: { name: string; total: number; count: number; avg: number; share: number; lastAt: string | null }[];
+  hourly: { hour: number; label: string; total: number; count: number }[];
+  days: { date: string; total: number; count: number }[];
+  byMethod: Record<string, number>;
+  byCounter: Record<string, number>;
+};
+
+function EfficiencyTab() {
+  const { currentSchoolId } = useStore();
+  const [period, setPeriod] = useState("week");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [data, setData] = useState<EffData | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(() => {
+    if (!currentSchoolId) return;
+    setLoading(true);
+    const params = new URLSearchParams({ action: "efficiency", period });
+    if (period === "custom" && from && to) { params.set("from", from); params.set("to", to); }
+    apiGet<EffData>(`/api/school/${currentSchoolId}/ops/cashier?${params.toString()}`)
+      .then(setData)
+      .catch(() => setData(null))
+      .finally(() => setLoading(false));
+  }, [currentSchoolId, period, from, to]);
+  useEffect(() => { load(); }, [load]); // eslint-disable-line react-hooks/set-state-in-effect -- async loader (repo convention)
+
+  const hourData = (data?.hourly ?? []).map((h) => ({ ...h, gh: h.total / 100 }));
+  const dayData = (data?.days ?? []).map((d) => ({ ...d, gh: d.total / 100, label: d.date.slice(5) }));
+  const rankTone = (i: number) =>
+    i === 0 ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+    : i === 1 ? "bg-stone-200 text-stone-700 dark:bg-stone-700 dark:text-stone-200"
+    : i === 2 ? "bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300"
+    : "bg-muted text-muted-foreground";
+
+  if (loading && !data) return <LoadingBlock />;
+  if (!data) return <EmptyState icon={<Gauge className="size-8" />} title="Could not load efficiency" hint="Check your permission and try again." />;
+
+  const k = data.kpis;
+  return (
+    <div className="space-y-4">
+      {/* period selector */}
+      <div className="flex flex-wrap items-center gap-2">
+        {[
+          { id: "today", label: "Today" },
+          { id: "week", label: "Last 7 days" },
+          { id: "month", label: "Last 30 days" },
+          { id: "custom", label: "Custom" },
+        ].map((p) => (
+          <Button key={p.id} size="sm" variant={period === p.id ? "default" : "outline"} className="h-8" onClick={() => setPeriod(p.id)}>{p.label}</Button>
+        ))}
+        {period === "custom" && (
+          <>
+            <DateField value={from} onChange={(v) => setFrom(v ?? "")} aria-label="From date" />
+            <DateField value={to} onChange={(v) => setTo(v ?? "")} aria-label="To date" />
+          </>
+        )}
+        <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={load}><RefreshCcw className="size-3.5" /> Refresh</Button>
+        <Badge variant="secondary" className="gap-1"><CalendarDays className="size-3" /> {data.label}</Badge>
+      </div>
+
+      {/* KPI cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <Card><CardContent className="p-4">
+          <p className="text-[10.5px] font-semibold tracking-wide text-muted-foreground">COLLECTED</p>
+          <p className="text-xl font-bold tabular-nums mt-1">{fmtCedi(k.total)}</p>
+          <p className="text-[11px] text-muted-foreground flex items-center gap-1 mt-0.5">
+            {k.trend !== null ? (
+              <span className={k.trend >= 0 ? "text-emerald-600 dark:text-emerald-400 flex items-center gap-0.5" : "text-red-600 dark:text-red-400 flex items-center gap-0.5"}>
+                {k.trend >= 0 ? <ArrowUpRight className="size-3" /> : <ArrowDownRight className="size-3" />}{Math.abs(k.trend)}%
+              </span>
+            ) : "no prior period"} vs {fmtCedi(k.prevTotal)}
+          </p>
+        </CardContent></Card>
+        <Card><CardContent className="p-4">
+          <p className="text-[10.5px] font-semibold tracking-wide text-muted-foreground">COLLECTION RATE</p>
+          <p className="text-xl font-bold tabular-nums mt-1">{k.rate}%</p>
+          <p className="text-[11px] text-muted-foreground mt-0.5">vs {fmtCedi(k.arrears)} open arrears</p>
+        </CardContent></Card>
+        <Card><CardContent className="p-4">
+          <p className="text-[10.5px] font-semibold tracking-wide text-muted-foreground">AVERAGE TAKING</p>
+          <p className="text-xl font-bold tabular-nums mt-1">{fmtCedi(k.avg)}</p>
+          <p className="text-[11px] text-muted-foreground mt-0.5">{k.transactions} receipts · {k.studentsServed} learners</p>
+        </CardContent></Card>
+        <Card><CardContent className="p-4">
+          <p className="text-[10.5px] font-semibold tracking-wide text-muted-foreground">TOP COLLECTOR</p>
+          <p className="text-sm font-bold mt-1 truncate">{data.leaderboard[0]?.name ?? "—"}</p>
+          <p className="text-[11px] text-muted-foreground mt-0.5">{data.leaderboard[0] ? `${fmtCedi(data.leaderboard[0].total)} · ${data.leaderboard[0].share}% of takings` : "no collections yet"}</p>
+        </CardContent></Card>
+      </div>
+
+      <div className="grid lg:grid-cols-2 gap-4">
+        {/* leaderboard */}
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold flex items-center gap-2"><Trophy className="size-4 text-primary" /> Collector leaderboard</CardTitle></CardHeader>
+          <CardContent className="p-0">
+            {!data.leaderboard.length ? <EmptyState title="No collections in this window" hint="Collections land here as cashiers work the till." /> : (
+              <div className="divide-y max-h-80 overflow-y-auto">
+                {data.leaderboard.map((c, i) => (
+                  <div key={c.name} className="px-4 py-2 flex items-center gap-3">
+                    <span className={`grid place-items-center size-6 rounded-full text-[11px] font-bold shrink-0 ${rankTone(i)}`}>
+                      {i < 3 ? <Medal className="size-3.5" /> : i + 1}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[13px] font-semibold truncate">{c.name}</p>
+                      <p className="text-[11px] text-muted-foreground">{c.count} receipts · avg {fmtCedi(c.avg)}{c.lastAt ? ` · last ${new Date(c.lastAt).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}` : ""}</p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-[13px] font-bold tabular-nums">{fmtCedi(c.total)}</p>
+                      <p className="text-[11px] text-muted-foreground">{c.share}% share</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* hourly pattern */}
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold flex items-center gap-2"><Clock className="size-4 text-primary" /> Hourly collection pattern</CardTitle></CardHeader>
+          <CardContent className="h-64">
+            {hourData.some((h) => h.count > 0) ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={hourData} margin={{ left: 0, right: 8, top: 8, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="2 4" vertical={false} />
+                  <XAxis dataKey="label" tick={{ fontSize: 9 }} interval={1} />
+                  <YAxis tick={{ fontSize: 9 }} tickFormatter={(v: number) => `₵${v}`} width={54} />
+                  <Tooltip contentStyle={{ fontSize: 11 }} formatter={(v: number, n: string) => [n === "gh" ? `₵${v.toFixed(2)}` : v, n === "gh" ? "collected" : n]} />
+                  <Bar dataKey="gh" fill="currentColor" className="text-primary/60" radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : <p className="text-[12px] text-muted-foreground italic pt-16 text-center">No takings in this window.</p>}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* per-day curve */}
+      <Card>
+        <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold flex items-center gap-2"><TrendingUp className="size-4 text-primary" /> Takings by day</CardTitle></CardHeader>
+        <CardContent className="h-56">
+          {dayData.some((d) => d.count > 0) ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={dayData} margin={{ left: 0, right: 8, top: 8, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="2 4" vertical={false} />
+                <XAxis dataKey="label" tick={{ fontSize: 9 }} interval={Math.max(Math.floor(dayData.length / 12), 0)} />
+                <YAxis tick={{ fontSize: 9 }} tickFormatter={(v: number) => `₵${v}`} width={54} />
+                <Tooltip contentStyle={{ fontSize: 11 }} formatter={(v: number) => [`₵${Number(v).toFixed(2)}`, "collected"]} />
+                <Area dataKey="gh" stroke="currentColor" className="text-primary/70" fill="currentColor" fillOpacity={0.12} strokeWidth={1.5} />
+              </AreaChart>
+            </ResponsiveContainer>
+          ) : <p className="text-[12px] text-muted-foreground italic pt-16 text-center">No takings in this window.</p>}
+        </CardContent>
+      </Card>
+
+      {/* counter + method splits */}
+      <div className="grid sm:grid-cols-2 gap-4">
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold">By till counter</CardTitle></CardHeader>
+          <CardContent className="flex flex-wrap gap-1.5">
+            {Object.entries(data.byCounter).sort((a, b) => b[1] - a[1]).map(([cat, amt]) => (
+              <Badge key={cat} variant="outline" className="gap-1 text-[10.5px]">{cat.replace(/_/g, " ")} · {fmtCedi(amt)}</Badge>
+            ))}
+            {!Object.keys(data.byCounter).length && <p className="text-[11.5px] text-muted-foreground italic">No takings.</p>}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold">By payment method</CardTitle></CardHeader>
+          <CardContent className="flex flex-wrap gap-1.5">
+            {Object.entries(data.byMethod).sort((a, b) => b[1] - a[1]).map(([m, amt]) => (
+              <Badge key={m} variant="outline" className="gap-1 text-[10.5px]">{PAYMENT_LABELS[m] ?? m} · {fmtCedi(amt)}</Badge>
+            ))}
+            {!Object.keys(data.byMethod).length && <p className="text-[11.5px] text-muted-foreground italic">No takings.</p>}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

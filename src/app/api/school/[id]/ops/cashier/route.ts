@@ -25,6 +25,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   if (!auth.ok) return auth.res;
 
   if (action === "student-info") return studentInfo(req, schoolId, url);
+  if (action === "efficiency") return efficiency(req, schoolId, url);
 
   const from = url.searchParams.get("from") ? new Date(url.searchParams.get("from")!) : new Date(new Date().toDateString());
   const toSrc = url.searchParams.get("to") ? new Date(url.searchParams.get("to")!) : new Date();
@@ -480,5 +481,107 @@ async function studentInfo(req: NextRequest, schoolId: string, url: URL) {
       id: p.id, receiptNo: p.receiptNo, amountCents: p.amountCents,
       method: paymentMethodLabel(p), category: p.category, paidAt: p.paidAt.toISOString(),
     })),
+  });
+}
+
+/* ── GET ?action=efficiency — collection efficiency & collector rankings ──
+ * CI3 admin/collection_efficiency parity: KPI cards (collection rate, average
+ * collection, period-over-period trend), the collector leaderboard with rank
+ * badges, the hourly collection pattern (when tills are busy) and a per-day
+ * series — over a daily / weekly / monthly / custom window. Ghana is UTC+0,
+ * so the UTC hour of paidAt is the wall-clock hour. */
+async function efficiency(req: NextRequest, schoolId: string, url: URL) {
+  const period = url.searchParams.get("period") ?? "week"; // today | week | month | custom
+  const customFrom = url.searchParams.get("from");
+  const customTo = url.searchParams.get("to");
+  const DAY = 864e5;
+  const now = new Date();
+  const todayStart = new Date(new Date().toISOString().slice(0, 10) + "T00:00:00.000Z");
+
+  let from: Date, to: Date, label: string;
+  if (period === "today") { from = todayStart; to = now; label = "Today"; }
+  else if (period === "month") { from = new Date(todayStart.getTime() - 29 * DAY); to = now; label = "Last 30 days"; }
+  else if (period === "custom" && customFrom && customTo) {
+    from = new Date(`${customFrom.slice(0, 10)}T00:00:00.000Z`);
+    to = new Date(new Date(`${customTo.slice(0, 10)}T00:00:00.000Z`).getTime() + DAY - 1);
+    label = `${customFrom.slice(0, 10)} → ${customTo.slice(0, 10)}`;
+  } else { from = new Date(todayStart.getTime() - 6 * DAY); to = now; label = "Last 7 days"; }
+  const span = Math.max(to.getTime() - from.getTime(), DAY);
+  const prevFrom = new Date(from.getTime() - span);
+  const prevTo = new Date(from.getTime() - 1);
+
+  const [payments, prevPayments, owedAgg] = await Promise.all([
+    db.payment.findMany({
+      where: { schoolId, voided: false, paymentType: "PAYMENT", paidAt: { gte: from, lte: to } },
+      select: { paidAt: true, amountCents: true, receivedByName: true, method: true, studentId: true, category: true },
+    }),
+    db.payment.aggregate({ _sum: { amountCents: true }, _count: { _all: true }, where: { schoolId, voided: false, paymentType: "PAYMENT", paidAt: { gte: prevFrom, lte: prevTo } } }),
+    db.dailyCharge.aggregate({ _sum: { amountCents: true }, where: { schoolId, status: "OWED" } }),
+  ]);
+
+  const total = payments.reduce((s, p) => s + p.amountCents, 0);
+  const prevTotal = prevPayments._sum.amountCents ?? 0;
+  const arrears = owedAgg._sum.amountCents ?? 0;
+  const transactions = payments.length;
+  const studentsServed = new Set(payments.filter((p) => p.studentId).map((p) => p.studentId!)).size;
+  const avg = transactions ? Math.round(total / transactions) : 0;
+  const trend = prevTotal ? Math.round(((total - prevTotal) / prevTotal) * 100) : null;
+  // collection rate: takings vs takings + open arrears (the honest CI3 definition)
+  const rate = total + arrears ? Math.round((total / (total + arrears)) * 100) : 0;
+
+  // collector leaderboard
+  const agg: Record<string, { name: string; total: number; count: number; last: Date | null }> = {};
+  payments.forEach((p) => {
+    const k = p.receivedByName ?? "Unattributed";
+    agg[k] ??= { name: k, total: 0, count: 0, last: null };
+    agg[k].total += p.amountCents;
+    agg[k].count++;
+    if (!agg[k].last || p.paidAt > agg[k].last) agg[k].last = p.paidAt;
+  });
+  const grand = total || 1;
+  const leaderboard = Object.values(agg)
+    .map((v) => ({ name: v.name, total: v.total, count: v.count, avg: v.count ? Math.round(v.total / v.count) : 0, share: Math.round((v.total / grand) * 100), lastAt: v.last ? v.last.toISOString() : null }))
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 10);
+
+  // hourly pattern — Ghana sits on UTC+0, wall clock = UTC hour
+  const hours = Array.from({ length: 14 }, (_, i) => ({ hour: 6 + i, label: `${String(6 + i).padStart(2, "0")}:00`, total: 0, count: 0 }));
+  payments.forEach((p) => {
+    const h = p.paidAt.getUTCHours();
+    const bucket = hours.find((x) => x.hour === h);
+    if (bucket) { bucket.total += p.amountCents; bucket.count++; }
+  });
+
+  // per-day series
+  const days: { date: string; total: number; count: number }[] = [];
+  const dayCount = Math.min(Math.ceil(span / DAY), 62);
+  for (let i = dayCount - 1; i >= 0; i--) {
+    const d = new Date(to.getTime() - i * DAY);
+    const key = d.toISOString().slice(0, 10);
+    days.push({ date: key, total: 0, count: 0 });
+  }
+  payments.forEach((p) => {
+    const key = p.paidAt.toISOString().slice(0, 10);
+    const row = days.find((d) => d.date === key);
+    if (row) { row.total += p.amountCents; row.count++; }
+  });
+
+  // method + counter split
+  const byMethod: Record<string, number> = {};
+  const byCounter: Record<string, number> = {};
+  payments.forEach((p) => {
+    byMethod[p.method] = (byMethod[p.method] ?? 0) + p.amountCents;
+    byCounter[p.category] = (byCounter[p.category] ?? 0) + p.amountCents;
+  });
+
+  return NextResponse.json({
+    period, label,
+    window: { from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) },
+    kpis: { total, prevTotal, transactions, studentsServed, avg, rate, arrears, trend },
+    leaderboard,
+    hourly: hours,
+    days,
+    byMethod,
+    byCounter,
   });
 }

@@ -17,7 +17,7 @@ import {
   Flag, Trees, Sparkles, Scale, FileSearch, ShoppingBasket, GalleryHorizontal, Rows3, Banknote as Bank, Palette,
   DatabaseBackup, PiggyBank, Award, Gavel, Ruler, Activity, Home as HomeIcon, Hospital, Thermometer,
   Trophy, Medal, BookUser, Footprints,
-  DoorOpen, CalendarClock, PhoneCall, Mailbox, CalendarRange, BellRing, FileBadge, Stamp,
+  DoorOpen, CalendarClock, PhoneCall, Mailbox, CalendarRange, BellRing, FileBadge, Stamp, Gauge,
 } from "lucide-react";
 
 export type PageEntry = {
@@ -94,6 +94,7 @@ export const PAGE_INDEX: PageEntry[] = [
   { id: "pg-collect", label: "Fee Collection Portal", section: S.cashier, module: "cashier", target: { tab: "collect" }, perm: ["fees.collect", "daily.collect"], icon: Receipt, keywords: ["pos", "take payment", "counter", "collect fees", "cashier portal"] },
   { id: "pg-cashier-dash", label: "Collections Overview", section: S.cashier, module: "cashier", target: { tab: "portal" }, perm: ["cashier.reports"], icon: BarChart3, keywords: ["takings", "kpi", "today"] },
   { id: "pg-my-collections", label: "My Collections", section: S.cashier, module: "cashier", target: { tab: "collections" }, perm: ["cashier.reports"], icon: HandCoins, keywords: ["my receipts", "report", "csv"] },
+  { id: "pg-efficiency", label: "Collection Efficiency", section: S.cashier, module: "cashier", target: { tab: "efficiency" }, perm: ["cashier.reports"], icon: Gauge, keywords: ["collector rankings", "leaderboard", "hourly pattern", "efficiency", "cashier performance", "top collector"] },
   { id: "pg-daily-summary", label: "Daily Summary", section: S.cashier, module: "cashier", target: { tab: "summary" }, perm: ["cashier.reports"], icon: ClipboardList, keywords: ["handover", "close of day", "sign off"] },
   { id: "pg-cashier-receipts", label: "Print Receipts", section: S.cashier, module: "cashier", target: { tab: "receipts" }, perm: ["cashier.reports"], icon: Printer, keywords: ["reprint", "80mm", "thermal"] },
   { id: "pg-student-ledger", label: "Student Ledger", section: S.cashier, module: "cashier", target: { tab: "ledger" }, perm: ["cashier.reports"], icon: ListChecks, keywords: ["statement", "history", "transactions"] },
