@@ -133,11 +133,14 @@ export async function flushQueue(): Promise<{ synced: number; failed: number; co
     if (body.deviceCode && body.deviceCode !== deviceCode) {
       try { localStorage.setItem("nyansapo.device", JSON.stringify({ code: body.deviceCode })); } catch { /* ignore */ }
     }
-    // wave 41: the flush may replenish this device's offline receipt reserve
-    // (auto-granted when payment ops flushed and the runway was low) — adopt
-    // the new block so offline collections keep printing real receipt numbers
-    if (body.lease) {
-      try { adoptLease(body.lease); } catch { /* best-effort */ }
+    // wave 41/42: the flush may replenish this device's offline code reserves
+    // (auto-granted when payment or enrolment ops flushed and a runway was
+    // low — receipts, invoices, student-index cohorts) — adopt the new blocks
+    // so offline screens keep printing real codes. `leases` is the wave-42
+    // array; the legacy single `lease` (RCP) rides along for older servers.
+    const grants: unknown[] = [...(Array.isArray(body.leases) ? body.leases : []), ...(body.lease ? [body.lease] : [])];
+    for (const g of grants) {
+      try { adoptLease(g as Parameters<typeof adoptLease>[0]); } catch { /* best-effort */ }
     }
     const okIds = (body.results ?? []).filter((r: any) => r.ok).map((r: any) => r.clientId);
     const failed = (body.results ?? []).filter((r: any) => !r.ok);

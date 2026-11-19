@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
 import { apiGet, apiGetCacheable, apiPost, apiPostQueueable } from "@/lib/api";
+import { nextOfflineStudentIndex, nextOfflineInvoiceNo } from "@/lib/offline-codes";
 import { Input } from "@/components/ui/input";
 import { DateField } from "@/components/date-field";
 import { Button } from "@/components/ui/button";
@@ -511,8 +512,22 @@ function EnrolDialog({ open, onOpenChange, classrooms, onDone }: { open: boolean
       if (!online) {
         // collision-proof clientId (same scheme as apiPostQueueable) — two
         // enrolments queued in the same millisecond must never share an id
-        enqueue({ clientId: `q-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, kind: "student", payload: { ...form, schoolId: currentSchoolId }, label: `Enrol ${form.firstName} ${form.lastName}`, queuedAt: Date.now() });
-        toast({ title: "Queued offline", description: "The enrolment will sync when you are back online." });
+        // wave 42: preassign the learner's national index (from this device's
+        // birth-year cohort reserve) and the first-term bill's INV number (from
+        // the invoice reserve) when the blocks exist — the op carries them +
+        // their lease tags; the flush adopts codes that provably belong to this
+        // device, else the server mints at flush (still never a duplicate)
+        const birthYear = form.dateOfBirth ? new Date(form.dateOfBirth).getFullYear() : 2016;
+        const idxTake = nextOfflineStudentIndex(birthYear);
+        const invTake = nextOfflineInvoiceNo();
+        enqueue({ clientId: `q-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, kind: "student", payload: {
+          ...form, schoolId: currentSchoolId,
+          ...(idxTake ? { nyansapoIndex: idxTake.code, indexLeaseTag: idxTake.tag } : {}),
+          ...(invTake ? { invoiceNo: invTake.code, invoiceLeaseTag: invTake.tag } : {}),
+        }, label: `Enrol ${form.firstName} ${form.lastName}`, queuedAt: Date.now() });
+        toast({ title: "Queued offline", description: idxTake || invTake
+          ? `Will sync with pre-printed codes${idxTake ? ` · index ${idxTake.code}` : ""}${invTake ? ` · bill ${invTake.code}` : ""}.`
+          : "The enrolment will sync when you are back online." });
       } else {
         const res = await apiPost<any>(`/api/school/${currentSchoolId}/students`, { action: "create", ...form });
         toast({ title: "Learner enrolled", description: `${res.student.firstName} ${res.student.lastName} now carries index ${res.student.nyansapoIndex}. Invoice generated for the current term.` });

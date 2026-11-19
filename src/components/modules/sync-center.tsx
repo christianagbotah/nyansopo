@@ -32,7 +32,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
 import { apiGet, apiPost, warmPack } from "@/lib/api";
 import { packInfo, packPurge, type PackInfo } from "@/lib/offline-pack";
-import { leaseInfo, reserveReceiptBlock } from "@/lib/offline-codes";
+import { leaseInfo, reserveCodeBlock, LEASE_KINDS, LEASE_KIND_META, formatOfflineCode, type LeaseKind } from "@/lib/offline-codes";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -156,9 +156,12 @@ export function SyncCenter() {
   const [packBusy, setPackBusy] = useState(false);
   const [purgeOpen, setPurgeOpen] = useState(false);
 
-  // code reserve (wave 41 — offline receipt numbers): local browser state, never the server's
-  const [lease, setLease] = useState<ReturnType<typeof leaseInfo>>(null);
+  // code reserve (waves 41+42 — offline receipt / invoice / index codes):
+  // local browser state, never the server's — one slot per code kind
+  const [leases, setLeases] = useState<Partial<Record<LeaseKind, ReturnType<typeof leaseInfo>>>>(() => ({}));
   const [deviceCode, setDeviceCode] = useState<string | null>(null);
+  const [reserveKind, setReserveKind] = useState<LeaseKind>("RCP");
+  const [reserveYear, setReserveYear] = useState(String(new Date().getFullYear()));
   const [reserveSize, setReserveSize] = useState("50");
   const [reserveBusy, setReserveBusy] = useState(false);
 
@@ -171,12 +174,15 @@ export function SyncCenter() {
     if (tab === "pack") setPack(packInfo());
   }, [tab, online]);
 
-  // code reserve (wave 41 — offline receipt numbers): local browser state like
-  // the pack. Refreshed on tab activation, on connectivity flips, and after a
-  // flush (lastSyncAt moves then, and the server tops a low reserve back up as
-  // part of a payment flush — see adoptLease in src/lib/api.ts)
+  // code reserve (waves 41+42): local browser state like the pack — one slot
+  // per kind. Refreshed on tab activation, on connectivity flips, and after a
+  // flush (lastSyncAt moves then, and the server tops low reserves back up as
+  // part of a flush — see adoptLease in src/lib/api.ts)
   useEffect(() => {
-    if (tab === "reserve") { setLease(leaseInfo()); setDeviceCode(readDeviceCode()); }
+    if (tab === "reserve") {
+      setLeases({ RCP: leaseInfo("RCP"), INV: leaseInfo("INV"), NYIDX: leaseInfo("NYIDX") });
+      setDeviceCode(readDeviceCode());
+    }
   }, [tab, online, lastSyncAt]);
 
   const loadDashboard = useCallback(async () => {
@@ -292,22 +298,23 @@ export function SyncCenter() {
     } finally { setBusy(false); }
   }
 
-  /* wave 41: lease a block of real receipt numbers for THIS workstation — the
-     server's atomic counter jumps past the whole block, so the numbers belong to
-     this browser alone and offline collections print them at once */
+  /* waves 41+42: lease a block of real codes (receipts, invoices or student-
+     index cohorts) for THIS workstation — the server's atomic counter for that
+     kind jumps past the whole block, so the numbers belong to this browser
+     alone and offline screens print them at once */
   async function doReserve() {
     setReserveBusy(true);
     try {
-      const granted = await reserveReceiptBlock(parseInt(reserveSize, 10) || 50);
+      const year = reserveKind === "NYIDX" ? parseInt(reserveYear, 10) || new Date().getFullYear() : undefined;
+      const granted = await reserveCodeBlock(reserveKind, parseInt(reserveSize, 10) || 50, year);
       if (!granted) {
         toast({ title: "Could not reserve numbers", description: "Check connectivity — the block is granted by the server's atomic counter.", variant: "destructive" });
         return;
       }
-      const pad = (n: number) => String(n).padStart(5, "0");
-      toast({ title: `Receipt block reserved — RCP-${granted.year}-${pad(granted.from)} to RCP-${granted.year}-${pad(granted.to)}`, description: "These numbers belong to this workstation alone — offline collections print them at once and the server adopts them at flush." });
+      toast({ title: `${LEASE_KIND_META[granted.kind].label} reserved — ${formatOfflineCode(granted.kind, granted.year, granted.from)} to ${formatOfflineCode(granted.kind, granted.year, granted.to)}`, description: "These numbers belong to this workstation alone — offline screens print them at once and the server adopts them at flush." });
     } finally {
       setReserveBusy(false);
-      setLease(leaseInfo());
+      setLeases({ RCP: leaseInfo("RCP"), INV: leaseInfo("INV"), NYIDX: leaseInfo("NYIDX") });
       setDeviceCode(readDeviceCode()); // the server may have just registered this browser as a device
     }
   }
@@ -316,8 +323,6 @@ export function SyncCenter() {
   const kpi = dash?.kpi;
   const pending = conflicts?.pending ?? [];
   const resolved = conflicts?.resolved ?? [];
-  const leaseSize = lease ? lease.size ?? (lease.to - lease.from + 1) : 0;
-  const leaseUsed = lease ? Math.max(0, leaseSize - lease.remaining) : 0;
 
   return (
     <div className="space-y-4">
@@ -765,50 +770,82 @@ export function SyncCenter() {
           </Card>
         </TabsContent>
 
-        {/* ── Code reserve (wave 41 — offline receipt numbers, this browser only) ── */}
+        {/* ── Code reserve (waves 41+42 — offline receipt / invoice / index codes, this browser only) ── */}
         <TabsContent value="reserve" className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            Write-side reserve for this workstation only: a block of real receipt numbers leased from the server's atomic counter. While offline, the POS prints the final RCP-YYYY-NNNNN number on the parent's receipt at once instead of a provisional code. Per-browser, like the data pack.
+            Write-side reserves for <span className="font-mono font-medium text-foreground">{deviceCode ?? "this browser"}</span> only: blocks of real codes leased from the server's atomic counters — receipt numbers, invoice numbers and national student indexes (per birth-year cohort). While offline, the POS prints the final RCP-YYYY-NNNNN on the parent's receipt, bills carry the final INV-YYYY-NNNN, and an enrolment hands over a real NY-YYYY-NNNNNN — instead of provisional codes. Per-browser, like the data pack.
           </p>
 
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base flex items-center gap-2"><Receipt className="size-4 text-muted-foreground" /> Reserve status</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-sm"><span className="text-muted-foreground">Device </span><span className="font-mono font-medium">{deviceCode ?? "—"}</span></div>
-                {lease ? (
-                  <div className="flex items-center gap-1.5">
-                    <Badge variant="outline">Current year {lease.year}</Badge>
-                    <Badge className={lease.remaining >= 10 ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" : "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"}>{lease.remaining >= 10 ? "Healthy" : "Running low"}</Badge>
-                  </div>
-                ) : <Badge variant="outline">none reserved</Badge>}
-              </div>
-              {lease ? (
-                <div className="space-y-2.5 rounded-lg border p-3.5">
-                  <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <div className="font-mono text-sm">
-                      RCP-{lease.year}-{String(lease.from).padStart(5, "0")} … RCP-{lease.year}-{String(lease.to).padStart(5, "0")}
+          <div className="grid lg:grid-cols-3 gap-4">
+            {LEASE_KINDS.map((k) => {
+              const info = leases[k];
+              const size = info ? info.size ?? (info.to - info.from + 1) : 0;
+              const used = info ? Math.max(0, size - info.remaining) : 0;
+              return (
+                <Card key={k}>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base flex items-center gap-2"><Receipt className="size-4 text-muted-foreground" /> {LEASE_KIND_META[k].label}</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="font-mono text-xs text-muted-foreground">{LEASE_KIND_META[k].sample}</div>
+                      {info ? (
+                        <div className="flex items-center gap-1.5">
+                          <Badge variant="outline">{k === "NYIDX" ? `Cohort ${info.year}` : `Year ${info.year}`}</Badge>
+                          <Badge className={info.remaining >= 10 ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" : "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"}>{info.remaining >= 10 ? "Healthy" : "Running low"}</Badge>
+                        </div>
+                      ) : <Badge variant="outline">none reserved</Badge>}
                     </div>
-                    <div className="text-xs text-muted-foreground" title={lease.tag}>granted {lease.tag.slice(0, 8)}…</div>
-                  </div>
-                  <Progress value={leaseSize ? Math.round((leaseUsed / leaseSize) * 100) : 0} />
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>remaining {lease.remaining} of {leaseSize}</span>
-                    <span>{leaseUsed} used</span>
-                  </div>
-                </div>
-              ) : (
-                <EmptyState icon={<Receipt className="size-6" />} title="No reserve on this workstation" hint="Offline receipts fall back to provisional codes minted at sync — reserve a block below to print numbered receipts offline." />
-              )}
-            </CardContent>
-          </Card>
+                    {info ? (
+                      <div className="space-y-2.5 rounded-lg border p-3.5">
+                        <div className="flex flex-wrap items-baseline justify-between gap-2">
+                          <div className="font-mono text-sm">
+                            {formatOfflineCode(k, info.year, info.from)} … {formatOfflineCode(k, info.year, info.to)}
+                          </div>
+                          <div className="text-xs text-muted-foreground" title={info.tag}>granted {info.tag.slice(0, 8)}…</div>
+                        </div>
+                        <Progress value={size ? Math.round((used / size) * 100) : 0} />
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span>remaining {info.remaining} of {size}</span>
+                          <span>{used} used</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <EmptyState icon={<Receipt className="size-6" />} title="No reserve for this kind" hint={LEASE_KIND_META[k].hint} />
+                    )}
+                    <p className="text-xs text-muted-foreground">{LEASE_KIND_META[k].hint}</p>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
 
           <Card>
             <CardHeader className="pb-2"><CardTitle className="text-base">Reserve control</CardTitle></CardHeader>
             <CardContent className="space-y-3">
               <div className="flex flex-wrap items-end gap-3">
+                <div className="w-52 space-y-1.5">
+                  <Label>Code kind</Label>
+                  <Select value={reserveKind} onValueChange={(v) => setReserveKind(v as LeaseKind)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {LEASE_KINDS.map((k) => <SelectItem key={k} value={k}>{LEASE_KIND_META[k].label}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {reserveKind === "NYIDX" && (
+                  <div className="w-44 space-y-1.5">
+                    <Label>Birth-year cohort</Label>
+                    <Select value={reserveYear} onValueChange={setReserveYear}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {Array.from({ length: 13 }, (_, i) => new Date().getFullYear() - i).map((y) => (
+                          <SelectItem key={y} value={String(y)}>Born {y}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
                 <div className="w-36 space-y-1.5">
                   <Label>Block size</Label>
                   <Select value={reserveSize} onValueChange={setReserveSize}>
@@ -824,23 +861,23 @@ export function SyncCenter() {
                 {!online && <p className="text-xs text-muted-foreground self-center">Reserving needs the network — reconnect first.</p>}
               </div>
               <p className="text-xs text-muted-foreground">
-                The server's counter jumps past the whole block at grant time, so the numbers belong to this workstation alone. Reserving again replaces the current block — numbers left in the old one burn as harmless gaps, never duplicates.
+                The server's counter for the chosen kind jumps past the whole block at grant time, so the numbers belong to this workstation alone. Reserving again replaces the current block for that kind — numbers left in the old one burn as harmless gaps, never duplicates.
               </p>
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base flex items-center gap-2"><ShieldCheck className="size-4 text-muted-foreground" /> Can receipt codes duplicate when toggling offline/online?</CardTitle>
+              <CardTitle className="text-base flex items-center gap-2"><ShieldCheck className="size-4 text-muted-foreground" /> Can any of these codes duplicate when toggling offline/online?</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2.5">
               <ul className="space-y-2 text-sm">
                 <li className="flex gap-2"><CheckCircle2 className="size-4 shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" /><span>Every code is minted by the server from an atomic counter — two clerks, two devices or an offline flush can never draw the same number.</span></li>
-                <li className="flex gap-2"><CheckCircle2 className="size-4 shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" /><span>A reserve block is jumped past by the counter at grant time, so the numbers a device prints offline belong to it alone — no online receipt or other device can ever collide with them.</span></li>
-                <li className="flex gap-2"><CheckCircle2 className="size-4 shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" /><span>Every adopted code is backstopped by a unique constraint; a retried sync is recognised by its queue id and never applied twice.</span></li>
+                <li className="flex gap-2"><CheckCircle2 className="size-4 shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" /><span>A reserve block is jumped past by its counter at grant time, so the codes a device prints offline belong to it alone — no online mint or other device can ever collide with them. Student-index blocks are carved per birth-year cohort, matching the registry's NY-YYYY scoping.</span></li>
+                <li className="flex gap-2"><CheckCircle2 className="size-4 shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" /><span>Every adopted code is backstopped by a unique constraint; a retried sync is recognised by its queue id and never applied twice. A preassigned code that fails validation (forged tag, wrong device, wrong cohort) is ignored and the server mints instead.</span></li>
               </ul>
               <p className="text-xs text-muted-foreground border-t pt-2.5">
-                After any sync that includes payments, the server tops a low reserve back up automatically.
+                After any sync that includes payments or enrolments, the server tops the matching low reserves back up automatically — receipts for collections, indexes and invoices for enrolments.
               </p>
             </CardContent>
           </Card>

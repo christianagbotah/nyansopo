@@ -301,6 +301,152 @@ async function main() {
     }
   }
 
+  console.log("\n══ 7. Offline reserve for invoices + student indexes (wave 42) — INV · NYIDX ══");
+  if (!user || !school) console.log("missing demo users — skipping wave-42 reserve test");
+  else {
+    const term7 = await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId: school.id } } });
+    const fsClassroom = term7
+      ? await db.classroom.findFirst({ where: { schoolId: school.id, feeStructures: { some: { termId: term7.id } } } })
+      : await db.classroom.findFirst({ where: { schoolId: school.id } });
+    if (!fsClassroom || !term7) console.log("no classroom/term — skipping wave-42 reserve test");
+    else {
+      const { nextInvoiceNo, nextStudentIndex, leaseSeqBlock } = await import("../src/lib/codes");
+      const H7 = { "content-type": "application/json", "x-user-id": user.id };
+      const preStudents7 = await db.student.count();
+      const preSchool7 = await db.school.findUnique({ where: { id: school.id }, select: { studentsOnRoll: true } });
+      // snapshot the counters this section touches — restored in cleanup
+      const scopes7 = [`INV:${YEAR}`, "NYIDX:2016", "NYIDX:2018"];
+      const snap7 = new Map((await db.codeCounter.findMany({ where: { scope: { in: scopes7 } } })).map((c) => [c.scope, c.next]));
+
+      // (a) INV disjointness — lease blocks vs racing single mints
+      const [ib1, ib2, ib3, invSingles] = await Promise.all([
+        leaseSeqBlock("INV", 20, YEAR),
+        leaseSeqBlock("INV", 20, YEAR),
+        leaseSeqBlock("INV", 20, YEAR),
+        Promise.all(Array.from({ length: 6 }, () => nextInvoiceNo())),
+      ]);
+      const iblocks = [ib1, ib2, ib3];
+      const invSeqOf = (code: string) => Number(code.slice(`INV-${YEAR}-`.length));
+      check("3 concurrently granted INV blocks are pairwise disjoint",
+        iblocks.every((b, i) => iblocks.every((o, j) => i === j || b.to < o.from || o.to < b.from)), JSON.stringify(iblocks));
+      check("online invoice mints racing the grants stay outside every block",
+        invSingles.every((s) => iblocks.every((b) => invSeqOf(s) < b.from || invSeqOf(s) > b.to)), JSON.stringify(invSingles));
+
+      // (b) NYIDX cohort scoping — blocks within ONE birth-year cohort are
+      //     carved from that cohort's own counter and never overlap; a
+      //     different cohort (2018) can share the same seq range harmlessly
+      //     because its codes carry the NY-2018- prefix (different scope).
+      const [n2016a, n2016b, n2018, nSingles] = await Promise.all([
+        leaseSeqBlock("NYIDX", 10, 2016),
+        leaseSeqBlock("NYIDX", 10, 2016),
+        leaseSeqBlock("NYIDX", 10, 2018),
+        Promise.all(Array.from({ length: 4 }, () => nextStudentIndex(2016))),
+      ]);
+      check("two concurrently granted 2016-cohort blocks never overlap",
+        n2016a.to < n2016b.from || n2016b.to < n2016a.from, `a:${n2016a.from}-${n2016a.to} b:${n2016b.from}-${n2016b.to}`);
+      const nySeqOf = (code: string) => Number(code.slice("NY-2016-".length));
+      check("online index mints (born 2016) stay outside the 2016 cohort blocks",
+        nSingles.every((s) => [n2016a, n2016b].every((b) => nySeqOf(s) < b.from || nySeqOf(s) > b.to)), JSON.stringify(nSingles));
+      void n2018; // cross-cohort seq ranges may coincide — prefixes differ, never a collision
+
+      // (c) ADOPTION at enrolment flush — the blackout scenario for enrolments:
+      //     device reserves a 2016 cohort block + an INV block while online …
+      //     (the device registers on the lease call and the RESPONSE carries
+      //     the minted DEV-NNNN code — every later call must use THAT code,
+      //     exactly like the real client does)
+      const leaseRes7 = await (await fetch(`${BASE}/api/sync`, {
+        method: "POST", headers: H7,
+        body: JSON.stringify({ action: "lease", schoolId: school.id, kind: "NYIDX", year: 2016, size: 15, device: { code: `SMOKE42-${Date.now()}`, name: "wave-42 probe", kind: "POS_TABLET" } }),
+      })).json();
+      const DEV42 = leaseRes7.deviceCode as string;
+      const leaseRes7b = await (await fetch(`${BASE}/api/sync`, {
+        method: "POST", headers: H7,
+        body: JSON.stringify({ action: "lease", schoolId: school.id, kind: "INV", size: 20, device: { code: DEV42, name: "wave-42 probe", kind: "POS_TABLET" } }),
+      })).json();
+      check("lease action honours kind=NYIDX + birth-year cohort", leaseRes7?.lease?.kind === "NYIDX" && leaseRes7?.lease?.year === 2016 && leaseRes7.lease.to - leaseRes7.lease.from + 1 === 15, JSON.stringify(leaseRes7?.lease));
+      check("lease action honours kind=INV", leaseRes7b?.lease?.kind === "INV" && leaseRes7b.lease.to - leaseRes7b.lease.from + 1 === 20, JSON.stringify(leaseRes7b?.lease));
+      const idxBlock = leaseRes7.lease as { tag: string; from: number; to: number };
+      const invBlock = leaseRes7b.lease as { tag: string; from: number; to: number };
+      //     … network dies · enrol OFFLINE spending both blocks …
+      let idxCursor = idxBlock.from;
+      let invCursor = invBlock.from;
+      const takeIdx = () => `NY-2016-${String(idxCursor++).padStart(6, "0")}`;
+      const takeInv = () => `INV-${YEAR}-${String(invCursor++).padStart(4, "0")}`;
+      const preIdx = takeIdx();
+      const preInvNo = takeInv();
+      const op42 = {
+        clientId: `smoke-w42-${Date.now()}`,
+        kind: "student",
+        payload: { schoolId: school.id, classroomId: fsClassroom.id, classroomName: fsClassroom.name, firstName: "Wave", lastName: "FortyTwo", gender: "F", dateOfBirth: "2016-05-01", guardianName: "Probe Guardian", guardianPhone: "+233500000002", nyansapoIndex: preIdx, indexLeaseTag: idxBlock.tag, invoiceNo: preInvNo, invoiceLeaseTag: invBlock.tag },
+      };
+      const f42 = await (await fetch(`${BASE}/api/sync`, { method: "POST", headers: H7, body: JSON.stringify({ ops: [op42], device: { code: DEV42, name: "wave-42 probe", kind: "POS_TABLET" } }) })).json();
+      check("enrolment flush adopts BOTH preassigned codes", f42.results?.[0]?.ok === true && (f42.results?.[0]?.detail ?? "").includes("(preassigned)"), JSON.stringify(f42.results?.[0]));
+      const stu42 = await db.student.findFirst({ where: { syncClientId: op42.clientId } });
+      check("student carries EXACTLY the offline-printed index", stu42?.nyansapoIndex === preIdx, `${stu42?.nyansapoIndex} vs ${preIdx}`);
+      const inv42 = await db.invoice.findFirst({ where: { studentId: stu42?.id } });
+      check("first-term bill carries EXACTLY the offline-printed INV number", inv42?.invoiceNo === preInvNo, `${inv42?.invoiceNo} vs ${preInvNo}`);
+      const idxLeaseRow = await db.codeLease.findUnique({ where: { id: idxBlock.tag } });
+      const invLeaseRow = await db.codeLease.findUnique({ where: { id: invBlock.tag } });
+      check("both reserves' spent counters advanced", idxLeaseRow?.spentCount === 1 && invLeaseRow?.spentCount === 1, `idx=${idxLeaseRow?.spentCount} inv=${invLeaseRow?.spentCount}`);
+      check("flush grants no new blocks while runways are healthy", !Array.isArray(f42.leases) || f42.leases.length === 0, JSON.stringify(f42.leases ?? []));
+
+      // (d) DURABILITY — re-flush the same enrolment op → exactly one student
+      const f42b = await (await fetch(`${BASE}/api/sync`, { method: "POST", headers: H7, body: JSON.stringify({ ops: [op42], device: { code: DEV42 } }) })).json();
+      check("re-flush of the offline enrolment is idempotent", f42b.results?.[0]?.detail === "already synced", JSON.stringify(f42b.results?.[0]));
+      check("exactly ONE student row for the retried clientId", (await db.student.findMany({ where: { syncClientId: op42.clientId } })).length === 1);
+
+      // (d2) RUNWAY REPLENISHMENT — burn the 2016 cohort block below the
+      //      runway threshold (spent ≥ 6 of 15), then a fresh offline
+      //      enrolment (fallback mint) flushes → the server tops THAT cohort
+      //      back up and the new block rides on the response
+      await db.codeLease.update({ where: { id: idxBlock.tag }, data: { spentCount: 8 } }); // remaining 7 < 10
+      const op42d = { clientId: `smoke-w42d-${Date.now()}`, kind: "student", payload: { schoolId: school.id, classroomId: fsClassroom.id, classroomName: fsClassroom.name, firstName: "Wave", lastName: "Runway", gender: "M", dateOfBirth: "2016-07-01", guardianName: "Probe Guardian", guardianPhone: "+233500000004" } };
+      const f42d = await (await fetch(`${BASE}/api/sync`, { method: "POST", headers: H7, body: JSON.stringify({ ops: [op42d], device: { code: DEV42 } }) })).json();
+      check("low cohort runway → flush auto-grants a fresh NYIDX block",
+        f42d.results?.[0]?.ok === true && Array.isArray(f42d.leases) && f42d.leases.some((l: any) => l.kind === "NYIDX" && l.year === 2016), JSON.stringify(f42d.leases ?? []));
+      const stu42d = await db.student.findFirst({ where: { syncClientId: op42d.clientId } });
+      check("fallback-mint enrolment still carries a real unique index", /^NY-2016-\d{6}$/.test(stu42d?.nyansapoIndex ?? ""), stu42d?.nyansapoIndex);
+
+      // (e) WRONG-COHORT REJECTION — a 2018-cohort lease tag vouching for a
+      //     2016-coded index is refused; the server mints its own
+      const lease18 = await (await fetch(`${BASE}/api/sync`, {
+        method: "POST", headers: H7,
+        body: JSON.stringify({ action: "lease", schoolId: school.id, kind: "NYIDX", year: 2018, size: 10, device: { code: DEV42, name: "wave-42 probe", kind: "POS_TABLET" } }),
+      })).json();
+      const forgedIdx = `NY-2016-${String(lease18.lease.from).padStart(6, "0")}`;
+      const op42c = { clientId: `smoke-w42c-${Date.now()}`, kind: "student", payload: { schoolId: school.id, classroomId: fsClassroom.id, classroomName: fsClassroom.name, firstName: "Wave", lastName: "Forged", gender: "M", dateOfBirth: "2016-03-01", guardianName: "Probe Guardian", guardianPhone: "+233500000003", nyansapoIndex: forgedIdx, indexLeaseTag: lease18.lease.tag } };
+      const f42c = await (await fetch(`${BASE}/api/sync`, { method: "POST", headers: H7, body: JSON.stringify({ ops: [op42c], device: { code: DEV42 } }) })).json();
+      const stu42c = await db.student.findFirst({ where: { syncClientId: op42c.clientId } });
+      check("wrong-cohort lease tag → adoption refused, server mints", f42c.results?.[0]?.ok === true && !!stu42c && stu42c.nyansapoIndex !== forgedIdx && /^NY-2016-\d{6}$/.test(stu42c.nyansapoIndex), `${stu42c?.nyansapoIndex} vs forged ${forgedIdx}`);
+
+      // (f) the global invariant — every NY and INV code ever minted is unique
+      const allNy = await db.student.findMany({ select: { nyansapoIndex: true } });
+      check("every student index in the database is unique", new Set(allNy.map((s) => s.nyansapoIndex)).size === allNy.length);
+      const allInv = await db.invoice.findMany({ select: { invoiceNo: true } });
+      check("every invoice number in the database is unique", new Set(allInv.map((i) => i.invoiceNo)).size === allInv.length);
+
+      // ── cleanup: remove probe students/invoices/leases/device, restore counters ──
+      const probeIds = [stu42?.id, stu42c?.id, stu42d?.id].filter(Boolean) as string[];
+      const probeInvs = await db.invoice.findMany({ where: { studentId: { in: probeIds } } });
+      for (const pi of probeInvs) { await db.invoiceItem.deleteMany({ where: { invoiceId: pi.id } }); await db.invoice.delete({ where: { id: pi.id } }); }
+      await db.enrollment.deleteMany({ where: { studentId: { in: probeIds } } });
+      await db.student.deleteMany({ where: { id: { in: probeIds } } });
+      await db.school.update({ where: { id: school.id }, data: { studentsOnRoll: preSchool7!.studentsOnRoll } });
+      await db.codeLease.deleteMany({ where: { deviceCode: DEV42 } });
+      await db.syncEvent.deleteMany({ where: { deviceCode: DEV42 } });
+      await db.syncDevice.deleteMany({ where: { code: DEV42 } });
+      for (const scope of scopes7) {
+        if (snap7.has(scope)) await db.codeCounter.update({ where: { scope }, data: { next: snap7.get(scope)! } });
+        else await db.codeCounter.deleteMany({ where: { scope } });
+      }
+      check("cleanup — probe students, invoices, leases and device removed",
+        (await db.student.findMany({ where: { id: { in: probeIds } } })).length === 0
+        && (await db.codeLease.findMany({ where: { deviceCode: DEV42 } })).length === 0
+        && (await db.syncDevice.findMany({ where: { code: DEV42 } })).length === 0
+        && (await db.student.count()) === preStudents7);
+    }
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 }

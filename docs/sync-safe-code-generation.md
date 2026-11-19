@@ -149,7 +149,43 @@ adoption, post-flush replenishment), `CodeLease` model (audit of every grant),
 Sync Center → **Code reserve** tab (reserve status + control), and the POS
 offline collect paths (daily services, fee portal, invoice payments).
 
-## 3. Verification — `scripts/smoke-codes.ts` (37 checks, all green)
+### 2.5 The reserve generalises — invoices + student indexes (wave 42)
+
+Wave 41 proved the lease mechanism for receipts. Wave 42 extends the **same
+invariants** to the two remaining human-facing codes, so every code the
+office touches can be minted offline as a final code:
+
+| Kind | Code format | Counter scope | Offline consumer |
+|---|---|---|---|
+| `RCP` | `RCP-YYYY-NNNNN` | calendar year | POS collections (fees, canteen, transport) |
+| `INV` | `INV-YYYY-NNNN` | calendar year | first-term bill raised at offline enrolment |
+| `NYIDX` | `NY-YYYY-NNNNNN` | **birth-year cohort** (registry semantics) | learner enrolled offline — ID cards, index slips |
+
+What changed:
+
+- `POST /api/sync {action:"lease"}` takes `kind` (`RCP`/`INV`/`NYIDX`) and,
+  for `NYIDX`, a `year` (the birth-year cohort to carve the block from).
+- An offline **enrolment op** may now carry `nyansapoIndex` +
+  `indexLeaseTag` and `invoiceNo` + `invoiceLeaseTag`; `resolvePreassignedCode`
+  (the generalised §2.4 validator) adopts them only when the code's own year,
+  kind, school and device match a granted `CodeLease` block. Anything else —
+  forged tag, wrong device, **wrong cohort** — is ignored and the server mints
+  at flush, exactly as before (unique constraints remain the backstop).
+- Post-flush replenishment is kind- and cohort-aware: a flush that included
+  enrolment ops tops up the `INV` reserve and the **birth-year cohorts the
+  enrolments actually drew from** (never blindly the current year). The
+  response carries `leases: [...]` (array); the legacy single `lease` (RCP)
+  rides along for older clients.
+- The Sync Center **Code reserve** tab renders one status card per kind plus
+  a kind-aware reserve control (with a birth-year cohort selector for
+  `NYIDX`). The client reserves live per-kind in `localStorage`
+  (`nyansapo.lease.<KIND>`, with a wave-41 → 42 migration of the old slot).
+
+Deliberate scope note: cross-cohort sequence ranges *may* coincide
+(`NY-2016-000331` and `NY-2018-000331` are different codes by prefix) — the
+uniqueness invariant is per code string, and the suite verifies it globally.
+
+## 3. Verification — `scripts/smoke-codes.ts` (56 checks, all green)
 
 | Part | Claim proven |
 |---|---|
@@ -159,12 +195,13 @@ offline collect paths (daily services, fee portal, invoice payments).
 | 4. Payment re-flush | Same op posted twice → one receipt, invoice credited **once**, demo data untouched after cleanup |
 | 5. Student re-flush | Same enrolment posted twice → one student (with real `NY-` index), first-term invoice generated at flush, `studentsOnRoll` consistent |
 | 6. Offline code reserve (wave 41) | Concurrent block grants pairwise **disjoint**, single mints racing a grant stay outside every block, the exact blackout scenario (online → reserve → offline spend → more online mints → flush) adopts the printed code **exactly**, later online mints stay **above** the block, retry-storm re-flush is already-synced (unique `syncClientId`), a **forged lease tag is refused**, an **exhausted reserve degrades** to a fresh server mint, and every RCP code in the database is unique |
+| 7. Invoice + index reserves (wave 42) | Concurrent `INV` block grants disjoint with racing mints outside; two same-cohort `NYIDX` blocks never overlap (cross-cohort ranges may coincide — prefixes differ); the lease action honours `kind=NYIDX` + birth-year cohort and `kind=INV`; the enrolment flush **adopts BOTH preassigned codes exactly** (index + first-term bill) and advances both spent counters; a healthy runway grants **nothing**; a low cohort runway auto-grants a fresh `NYIDX` block for the cohort actually used; a **wrong-cohort lease tag is refused** (server mints); every NY and INV code in the database is unique |
 
 Run it with:
 
 ```bash
 DATABASE_URL=postgresql://nyansapo@127.0.0.1:5433/nyansapo?schema=public \
-  bun scripts/smoke-codes.ts     # needs `bun run dev` on :3000 for parts 4–6
+  bun scripts/smoke-codes.ts     # needs `bun run dev` on :3000 for parts 4–7
 ```
 
 The script is self-cleaning: it snapshots and restores counters, and removes
@@ -189,6 +226,18 @@ every row it creates, so the demo database is bit-identical afterwards.
    from a network-dead canteen with an unnumbered receipt stub. Fixed with the
    `CodeLease` reserve (§2.4): real numbers printed offline, adopted exactly
    at flush, replenished automatically after payment flushes.
+6. **Device registration was not deletion-safe** (wave 42) — `resolveDevice`
+   minted `DEV-{count + 1}` from a live row count, so deleting any device
+   (revoke-and-remove in the Sync Center, or the smoke suite's own cleanup)
+   freed a number that a later registration then collided with — the flush
+   that triggered the registration 500'd. Fixed by deriving the code from the
+   **highest existing** `DEV-NNNN` and retrying the rare P2002 race, with a
+   collision-proof suffix as the pathological fallback. A registration can
+   never take down the flush again.
+7. **Cohort-blind index replenishment** (wave 42) — the first cut topped up
+   the current-year cohort after any enrolment flush, but offline enrolments
+   spend their **birth-year** cohort block (registry semantics). The flush now
+   tracks the cohorts actually drawn from and replenishes exactly those.
 
 ## 5. Migrating CI3 legacy numbers
 

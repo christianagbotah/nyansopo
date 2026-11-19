@@ -33,7 +33,38 @@ import { sendAutomated, smsEventEnabled } from "@/lib/sms";
 //   · a flush that included payment ops tops the device's reserve back up
 //     automatically when its runway is low, returning the new block so the
 //     client keeps printing real receipt numbers offline
+//
+// wave 42 — the reserve generalises beyond receipts (the client asked for
+// "student id, invoice id, payment id … every code, offline-safe"):
+//   · CodeLease.kind now spans RCP receipts, INV invoice numbers and NYIDX
+//     national student indexes — each from its own atomic counter scope
+//   · an offline ENROLMENT op may preassign the student's NY index (from a
+//     birth-year cohort block — the index is registry-scoped) AND the first-
+//     term bill's INV number; the flush adopts them under the same ownership
+//     validation as receipts, with the @unique constraints + server re-mint
+//     as the final backstop
+//   · a flush that included enrolment ops tops the NYIDX + INV reserves back
+//     up too; the response carries `leases` (array) alongside the legacy
+//     single `lease` (RCP) for older clients
 type FlushOp = { clientId: string; kind: string; payload: any; label?: string; queuedAt?: number };
+
+type LeaseKind = "RCP" | "INV" | "NYIDX";
+const LEASE_KINDS: LeaseKind[] = ["RCP", "INV", "NYIDX"];
+const KIND_LABEL: Record<LeaseKind, string> = { RCP: "receipt", INV: "invoice", NYIDX: "student-index" };
+
+/** Canonical string form of a sequence number for each code kind —
+ *  RCP-YYYY-NNNNN · INV-YYYY-NNNN · NY-YYYY-NNNNNN. */
+function formatCode(kind: LeaseKind, year: number, seq: number): string {
+  if (kind === "INV") return `INV-${year}-${String(seq).padStart(4, "0")}`;
+  if (kind === "NYIDX") return `NY-${year}-${String(seq).padStart(6, "0")}`;
+  return `RCP-${year}-${String(seq).padStart(5, "0")}`;
+}
+
+function codeRegex(kind: LeaseKind): RegExp {
+  if (kind === "INV") return /^INV-(\d{4})-(\d{4,6})$/;
+  if (kind === "NYIDX") return /^NY-(\d{4})-(\d{6})$/;
+  return /^RCP-(\d{4})-(\d{5})$/;
+}
 
 async function syncPolicy(schoolId: string): Promise<Record<string, boolean>> {
   const row = await db.schoolSetting.findUnique({ where: { schoolId_key: { schoolId, key: "sync.policy" } } });
@@ -94,11 +125,35 @@ async function resolveDevice(
     if (found && found.status === "REVOKED") return { row: null, revoked: found.code };
     if (found) return { row: { id: found.id, code: found.code, status: found.status, schoolId } };
   }
-  // first flush from this browser: register it (CI3 register_device parity)
-  const count = await db.syncDevice.count({ where: { schoolId } });
-  const code = `DEV-${String(count + 1).padStart(4, "0")}`;
+  // first flush from this browser: register it (CI3 register_device parity).
+  // Mint a DEV-NNNN code. Count-based numbering is NOT deletion-safe (a
+  // revoked-and-removed device frees a number that was already taken, and
+  // parallel registrations race), so derive from the HIGHEST existing code
+  // and retry the rare P2002 — a device registration must never 500 the
+  // flush that triggered it.
   const kind = ["POS_TABLET", "SCANNER", "FRONT_DESK", "BROWSER", "OTHER"].includes(device?.kind ?? "") ? device!.kind! : "BROWSER";
-  const created = await db.syncDevice.create({ data: { schoolId, code, name: device?.name ?? "Unnamed device", kind } });
+  const name = device?.name ?? "Unnamed device";
+  const existing = await db.syncDevice.findMany({ select: { code: true } });
+  const maxNum = existing.reduce((m, d) => {
+    const t = /^DEV-(\d+)$/.exec(d.code);
+    return t ? Math.max(m, Number(t[1])) : m;
+  }, 0);
+  let created: { id: string; code: string; status: string; name: string } | null = null;
+  let code = "";
+  for (let attempt = 0; attempt < 5 && !created; attempt++) {
+    code = `DEV-${String(maxNum + 1 + attempt).padStart(4, "0")}`;
+    try {
+      created = await db.syncDevice.create({ data: { schoolId, code, name, kind } });
+    } catch (e) {
+      if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002" && p2002Target(e).includes("code"))) throw e;
+      // another registration took that number — try the next one
+    }
+  }
+  if (!created) {
+    // pathological (five concurrent races): a collision-proof suffix
+    code = `DEV-X${Date.now().toString(36).toUpperCase().slice(-6)}`;
+    created = await db.syncDevice.create({ data: { schoolId, code, name, kind } });
+  }
   await db.syncEvent.create({ data: { schoolId, deviceCode: code, userName: user.fullName, kind: "REGISTER", detail: `${created.name} (${kind}) self-registered on first flush` } });
   return { row: { id: created.id, code, status: created.status, schoolId }, minted: true };
 }
@@ -109,48 +164,58 @@ function p2002Target(e: unknown): string {
   return JSON.stringify((e as { meta?: { target?: unknown } })?.meta?.target ?? "");
 }
 
-/** Reserve a block of real receipt numbers for one device (CodeLease) and
- *  journal the grant. The atomic RCP counter jumps past the whole block, so
- *  online minters and other devices' reserves can never overlap it. */
+/** Reserve a block of real codes (receipts, invoices or student indexes —
+ *  wave 42) for one device (CodeLease) and journal the grant. The atomic
+ *  counter of that kind's scope jumps past the whole block, so online
+ *  minters and other devices' reserves can never overlap it. NYIDX blocks
+ *  are carved per BIRTH-YEAR cohort (registry semantics) — pass `year` for
+ *  a cohort other than the current calendar year. */
 async function grantLease(
   schoolId: string,
   deviceCode: string,
   userName: string,
   size: number,
-): Promise<{ tag: string; kind: "RCP"; year: number; from: number; to: number; size: number }> {
-  const year = new Date().getFullYear();
-  const { from, to } = await leaseSeqBlock("RCP", size, year);
-  const lease = await db.codeLease.create({ data: { schoolId, deviceCode, kind: "RCP", year, fromSeq: from, toSeq: to } });
+  kind: LeaseKind = "RCP",
+  year = new Date().getFullYear(),
+): Promise<{ tag: string; kind: LeaseKind; year: number; from: number; to: number; size: number }> {
+  const { from, to } = await leaseSeqBlock(kind, size, year);
+  const lease = await db.codeLease.create({ data: { schoolId, deviceCode, kind, year, fromSeq: from, toSeq: to } });
   try {
     await db.syncEvent.create({
-      data: { schoolId, deviceCode, userName, kind: "LEASE", detail: `offline receipt reserve RCP-${year}-${String(from).padStart(5, "0")} … ${String(to).padStart(5, "0")} (${to - from + 1} numbers) granted` },
+      data: { schoolId, deviceCode, userName, kind: "LEASE", detail: `offline ${KIND_LABEL[kind]} reserve ${formatCode(kind, year, from)} … ${formatCode(kind, year, to)} (${to - from + 1} numbers) granted` },
     });
   } catch { /* journaling is best-effort */ }
-  return { tag: lease.id, kind: "RCP", year, from, to, size: to - from + 1 };
+  return { tag: lease.id, kind, year, from, to, size: to - from + 1 };
 }
 
-/** Validate + adopt the receipt code an offline op preassigned from the
- *  device's reserve block. Returns null unless the code is well-formed AND
- *  falls inside a block granted to THIS device for THIS school — anything
- *  else (forged, stale, cross-device) is ignored and the server mints. */
-async function resolvePreassignedReceipt(
+/** Validate + adopt a code an offline op preassigned from one of this
+ *  device's reserve blocks (receipt, invoice or student index — wave 42).
+ *  Returns null unless the code is well-formed AND falls inside a block
+ *  granted to THIS device for THIS school IN THE CODE'S OWN YEAR — anything
+ *  else (forged, stale, cross-device, wrong cohort) is ignored and the
+ *  server mints. `field`/`tagField` name the payload keys carrying the
+ *  preassigned code and the lease tag that vouches for it. */
+async function resolvePreassignedCode(
   op: FlushOp,
   deviceCode: string | null,
   schoolId: string,
-): Promise<{ receiptNo: string; seq: number; leaseId: string } | null> {
-  const raw = op.payload?.receiptNo;
+  kind: LeaseKind,
+  field: string,
+  tagField: string,
+): Promise<{ code: string; seq: number; leaseId: string } | null> {
+  const raw = op.payload?.[field];
   if (typeof raw !== "string" || !deviceCode) return null;
-  const m = /^RCP-(\d{4})-(\d{5})$/.exec(raw);
+  const m = codeRegex(kind).exec(raw);
   if (!m) return null;
   const year = Number(m[1]);
   const seq = Number(m[2]);
-  const tag = typeof op.payload?.leaseTag === "string" ? op.payload.leaseTag : null;
+  const tag = typeof op.payload?.[tagField] === "string" ? op.payload[tagField] : null;
   if (!tag) return null;
   const lease = await db.codeLease.findFirst({
-    where: { id: tag, schoolId, deviceCode, kind: "RCP", year, fromSeq: { lte: seq }, toSeq: { gte: seq } },
+    where: { id: tag, schoolId, deviceCode, kind, year, fromSeq: { lte: seq }, toSeq: { gte: seq } },
   });
   if (!lease) return null;
-  return { receiptNo: raw, seq, leaseId: lease.id };
+  return { code: raw, seq, leaseId: lease.id };
 }
 
 /** Create a payment row with durable idempotency + receipt collision fallback:
@@ -180,6 +245,8 @@ export async function POST(req: NextRequest) {
     sections?: number;
     durationMs?: number;
     size?: number;
+    kind?: string;
+    year?: number;
   };
 
   // ── read-side sync (wave 40): a device warmed its offline data pack — the
@@ -195,21 +262,26 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, deviceCode });
   }
 
-  // ── offline code reserve (wave 41): reserve a block of REAL receipt numbers
-  // for this device while it is online — a POS tablet going to a network-dead
-  // counter, sports day or field trip keeps printing final RCP codes. The
-  // counter jumps past the block atomically, so no online mint or other
-  // device's reserve can ever collide with the numbers it hands out offline.
+  // ── offline code reserve (wave 41 receipts, wave 42 invoices + indexes):
+  // reserve a block of REAL codes for this device while it is online — a POS
+  // tablet going to a network-dead counter, sports day or field trip keeps
+  // printing final RCP/INV codes (and enrolling with real NY indexes). Each
+  // kind's counter jumps past the block atomically, so no online mint or
+  // other device's reserve can ever collide with the numbers it hands out
+  // offline. NYIDX reserves are carved per birth-year cohort.
   if (body.action === "lease") {
     const schoolId = body.schoolId && user.schoolIds.includes(body.schoolId) ? body.schoolId : user.schoolIds[0];
     if (!schoolId) return NextResponse.json({ error: "No school scope" }, { status: 400 });
     const size = Math.min(200, Math.max(10, Number(body.size ?? 50) || 50));
+    const kind: LeaseKind = LEASE_KINDS.includes(body.kind as LeaseKind) ? (body.kind as LeaseKind) : "RCP";
+    const thisYear = new Date().getFullYear();
+    const year = kind === "NYIDX" && Number(body.year) >= 1995 && Number(body.year) <= thisYear ? Math.floor(Number(body.year)) : thisYear;
     const resolved = await resolveDevice(user, schoolId, body.device);
     if (resolved.revoked) {
       return NextResponse.json({ error: `Device ${resolved.revoked} is revoked — reserve refused. Contact the administrator.`, deviceCode: resolved.revoked }, { status: 403 });
     }
     if (!resolved.row) return NextResponse.json({ error: "No school scope" }, { status: 400 });
-    const lease = await grantLease(schoolId, resolved.row.code, user.fullName, size);
+    const lease = await grantLease(schoolId, resolved.row.code, user.fullName, size, kind, year);
     try {
       await db.syncDevice.update({
         where: { id: resolved.row.id },
@@ -247,6 +319,8 @@ export async function POST(req: NextRequest) {
   const results: { clientId: string; ok: boolean; detail?: string }[] = [];
   let conflictsFiled = 0;
   let paymentOpsOk = 0;
+  let studentOpsOk = 0;
+  const idxYearsSeen = new Set<number>(); // birth-year cohorts the enrolments actually drew from
 
   for (const op of ops) {
     try {
@@ -267,8 +341,8 @@ export async function POST(req: NextRequest) {
 
         // preassigned receipt code from the device's offline reserve — adopted
         // only when it provably belongs to this device's block
-        const preassigned = await resolvePreassignedReceipt(op, deviceCode, schoolId);
-        const receiptNo: string | null = preassigned?.receiptNo ?? null;
+        const preassigned = await resolvePreassignedCode(op, deviceCode, schoolId, "RCP", "receiptNo", "leaseTag");
+        const receiptNo: string | null = preassigned?.code ?? null;
         const syncFields = {
           syncClientId: op.clientId,
           reference: `SYNC:${op.clientId}`,
@@ -450,13 +524,32 @@ export async function POST(req: NextRequest) {
         const dup = await db.student.findFirst({ where: { syncClientId: op.clientId } });
         if (dup) { results.push({ clientId: op.clientId, ok: true, detail: "already synced" }); continue; }
         const birthYear = p.dateOfBirth ? new Date(p.dateOfBirth).getFullYear() : 2016;
+        // wave 42: the op may carry a PREASSIGNED national index (from a
+        // birth-year cohort block of this device's offline reserve) and the
+        // first-term bill's INV number (from an invoice reserve) — adopted
+        // under the same ownership validation as receipts; anything else is
+        // ignored and the server mints at flush, exactly as before.
+        const preIdx = await resolvePreassignedCode(op, deviceCode, p.schoolId, "NYIDX", "nyansapoIndex", "indexLeaseTag");
+        const preInv = await resolvePreassignedCode(op, deviceCode, p.schoolId, "INV", "invoiceNo", "invoiceLeaseTag");
+        const studentData = { syncClientId: op.clientId, firstName: p.firstName, lastName: p.lastName, gender: p.gender ?? "M", dateOfBirth: p.dateOfBirth ? new Date(p.dateOfBirth) : null, guardianName: p.guardianName, guardianPhone: p.guardianPhone, status: "ACTIVE", previousSchool: p.previousSchool ?? "Registered offline" };
         let student;
         try {
-          student = await db.student.create({ data: { nyansapoIndex: await nextStudentIndex(birthYear), syncClientId: op.clientId, firstName: p.firstName, lastName: p.lastName, gender: p.gender ?? "M", dateOfBirth: p.dateOfBirth ? new Date(p.dateOfBirth) : null, guardianName: p.guardianName, guardianPhone: p.guardianPhone, status: "ACTIVE", previousSchool: p.previousSchool ?? "Registered offline" } });
+          student = await db.student.create({ data: { nyansapoIndex: preIdx?.code ?? await nextStudentIndex(birthYear), ...studentData } });
         } catch (e) {
-          if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") { results.push({ clientId: op.clientId, ok: true, detail: "already synced" }); continue; }
-          throw e;
+          if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+            if (preIdx && p2002Target(e).includes("nyansapoIndex")) {
+              // pathological: the preassigned index collided (cross-school
+              // replay of one lease) — mint server-side instead; still exactly
+              // one student, never a duplicate index
+              student = await db.student.create({ data: { nyansapoIndex: await nextStudentIndex(birthYear), ...studentData } });
+            } else throw e;
+          } else throw e;
         }
+        if (preIdx) {
+          try { await db.codeLease.update({ where: { id: preIdx.leaseId }, data: { spentCount: { increment: 1 } } }); } catch { /* advisory */ }
+        }
+        idxYearsSeen.add(preIdx ? Number(preIdx.code.slice(3, 7)) : birthYear);
+        studentOpsOk++;
         const roll = (await db.enrollment.count({ where: { classroomId: p.classroomId } })) + 1;
         await db.enrollment.create({ data: { studentId: student.id, classroomId: p.classroomId, schoolId: p.schoolId, rollNo: roll, admissionDate: new Date(), status: "ACTIVE" } });
         // auto-bill for the current term — same as the online enrolment path
@@ -465,14 +558,25 @@ export async function POST(req: NextRequest) {
         if (term) {
           const fs = await db.feeStructure.findFirst({ where: { classroomId: p.classroomId, termId: term.id }, include: { items: true } });
           if (fs) {
-            const inv = await db.invoice.create({ data: { invoiceNo: await nextInvoiceNo(), studentId: student.id, schoolId: p.schoolId, termId: term.id, classroomName: p.classroomName ?? "", totalCents: fs.totalCents, status: "UNPAID", dueDate: new Date(Date.now() + 14 * 864e5) } });
+            const invData = { studentId: student.id, schoolId: p.schoolId, termId: term.id, classroomName: p.classroomName ?? "", totalCents: fs.totalCents, status: "UNPAID", dueDate: new Date(Date.now() + 14 * 864e5) };
+            let inv;
+            try {
+              inv = await db.invoice.create({ data: { invoiceNo: preInv?.code ?? await nextInvoiceNo(), ...invData } });
+            } catch (e) {
+              if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002" && preInv && p2002Target(e).includes("invoiceNo")) {
+                inv = await db.invoice.create({ data: { invoiceNo: await nextInvoiceNo(), ...invData } });
+              } else throw e;
+            }
+            if (preInv) {
+              try { await db.codeLease.update({ where: { id: preInv.leaseId }, data: { spentCount: { increment: 1 } } }); } catch { /* advisory */ }
+            }
             for (const it of fs.items.filter((i) => !i.isOptional)) await db.invoiceItem.create({ data: { invoiceId: inv.id, name: it.name, amountCents: it.amountCents } });
             billed = inv.invoiceNo;
           }
         }
         const onRoll = await db.enrollment.count({ where: { schoolId: p.schoolId, status: "ACTIVE" } });
         await db.school.update({ where: { id: p.schoolId }, data: { studentsOnRoll: onRoll } });
-        results.push({ clientId: op.clientId, ok: true, detail: billed ? `student enrolled · billed ${billed}` : "student enrolled" });
+        results.push({ clientId: op.clientId, ok: true, detail: billed ? `student enrolled · index ${student.nyansapoIndex}${preIdx ? " (preassigned)" : ""} · billed ${billed}${preInv ? " (preassigned)" : ""}` : `student enrolled · index ${student.nyansapoIndex}${preIdx ? " (preassigned)" : ""}` });
       } else {
         throw new Error(`unknown op kind ${op.kind}`);
       }
@@ -516,22 +620,37 @@ export async function POST(req: NextRequest) {
     }
   } catch { /* journaling is best-effort */ }
 
-  // ── reserve replenishment (wave 41): a device that just flushed payment ops
-  // is a device that collects while offline — top its receipt reserve back up
-  // when the runway is low so the next blackout still prints real codes. The
-  // new block rides on the flush response; the client adopts it locally.
-  let lease: { tag: string; kind: "RCP"; year: number; from: number; to: number; size: number } | undefined;
-  if (deviceRow && paymentOpsOk > 0 && firstSchoolId && user.schoolIds.includes(firstSchoolId)) {
-    try {
-      const year = new Date().getFullYear();
-      const active = await db.codeLease.findFirst({
-        where: { schoolId: firstSchoolId, deviceCode: deviceRow.code, kind: "RCP", year },
-        orderBy: { grantedAt: "desc" },
-      });
-      const remaining = active ? active.toSeq - active.fromSeq + 1 - active.spentCount : 0;
-      if (!active || remaining < 10) lease = await grantLease(firstSchoolId, deviceRow.code, user.fullName, 50);
-    } catch { /* replenishment is best-effort */ }
+  // ── reserve replenishment (wave 41 receipts; wave 42 invoices + indexes):
+  // a device that just flushed payment or enrolment ops is a device that
+  // works while offline — top its reserves back up when the runway is low so
+  // the next blackout still prints real codes. The new blocks ride on the
+  // flush response; the client adopts them locally. The response carries
+  // `leases` (array, all kinds); the legacy single `lease` (RCP) rides along
+  // for older clients.
+  const grants: { tag: string; kind: LeaseKind; year: number; from: number; to: number; size: number }[] = [];
+  if (deviceRow && firstSchoolId && user.schoolIds.includes(firstSchoolId)) {
+    const year = new Date().getFullYear();
+    const want: { kind: LeaseKind; year: number }[] = [];
+    if (paymentOpsOk > 0) want.push({ kind: "RCP", year });
+    if (studentOpsOk > 0) {
+      want.push({ kind: "INV", year });
+      // replenish the cohorts the enrolments actually drew from (registry
+      // semantics — an offline enrolment of a 2016-born learner spends the
+      // 2016 cohort block, not the current calendar year's)
+      for (const y of [...idxYearsSeen].slice(0, 3)) want.push({ kind: "NYIDX", year: y });
+    }
+    for (const w of want) {
+      try {
+        const active = await db.codeLease.findFirst({
+          where: { schoolId: firstSchoolId, deviceCode: deviceRow.code, kind: w.kind, year: w.year },
+          orderBy: { grantedAt: "desc" },
+        });
+        const remaining = active ? active.toSeq - active.fromSeq + 1 - active.spentCount : 0;
+        if (!active || remaining < 10) grants.push(await grantLease(firstSchoolId, deviceRow.code, user.fullName, 50, w.kind, w.year));
+      } catch { /* replenishment is best-effort */ }
+    }
   }
+  const rcpGrant = grants.find((g) => g.kind === "RCP");
 
-  return NextResponse.json({ results, syncedAt: new Date().toISOString(), deviceCode, conflicts: conflictsFiled, ...(lease ? { lease } : {}) });
+  return NextResponse.json({ results, syncedAt: new Date().toISOString(), deviceCode, conflicts: conflictsFiled, ...(rcpGrant ? { lease: rcpGrant } : {}), ...(grants.length ? { leases: grants } : {}) });
 }
