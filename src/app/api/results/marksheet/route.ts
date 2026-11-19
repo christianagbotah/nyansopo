@@ -63,7 +63,7 @@ export async function GET(req: NextRequest) {
     db.enrollment.findFirst({
       where: { studentId, status: "ACTIVE", classroom: { schoolId } },
       include: {
-        student: { select: { id: true, firstName: true, lastName: true, otherNames: true, nyansapoIndex: true, gender: true, guardianName: true, guardianPhone: true } },
+        student: { select: { id: true, firstName: true, lastName: true, otherNames: true, nyansapoIndex: true, gender: true, guardianName: true, guardianPhone: true, dateOfBirth: true } },
         classroom: { select: { id: true, name: true, classTeacherId: true } },
       },
     }),
@@ -91,6 +91,29 @@ export async function GET(req: NextRequest) {
   const daysTaken = sessions.length;
   const daysAttended = sessions.reduce((n, s) => n + (s.records.length && ATTENDED.has(s.records[0].status) ? 1 : 0), 0);
 
+  /* wave 46 — early-years fallback: crèche / KG cards keep their
+     developmental-domain rows on ReportCardResult (no TermResult rows);
+     surface them as the marksheet rows so the early-years sheet carries
+     the domain summaries (legacy student_marksheet_creche parity). */
+  type SheetRow = {
+    subjectId: string; subjectName: string; subjectCode: string | null;
+    classScore: number | null; examScore: number | null; total: number | null;
+    grade: string | null; remark: string | null; position: number | null;
+  };
+  let sheetRows: SheetRow[] = rows.map((r) => ({
+    subjectId: r.subject.id, subjectName: r.subject.name, subjectCode: r.subject.code,
+    classScore: r.classScore, examScore: r.examScore, total: r.total,
+    grade: r.grade, remark: r.remarks, position: r.position,
+  }));
+  if (!sheetRows.length && card) {
+    const cardResults = await db.reportCardResult.findMany({ where: { reportCardId: card.id }, orderBy: { subjectName: "asc" } });
+    sheetRows = cardResults.map((r) => ({
+      subjectId: r.subjectName, subjectName: r.subjectName, subjectCode: r.subjectCode,
+      classScore: r.classScore, examScore: r.examScore, total: r.total,
+      grade: r.grade, remark: r.remark, position: r.position,
+    }));
+  }
+
   /* class-teacher identity for the signature line (Classroom.classTeacherId) */
   const classTeacher = await db.staff.findUnique({
     where: { id: enrollment.classroom?.classTeacherId ?? "" },
@@ -104,9 +127,9 @@ export async function GET(req: NextRequest) {
     ? headBands.find((b) => average >= (b.minPercent ?? 0) && average <= (b.maxPercent ?? 100))?.text ?? null
     : null;
 
-  const classScoreTotal = rows.reduce((s, r) => s + (r.classScore ?? 0), 0);
-  const examScoreTotal = rows.reduce((s, r) => s + (r.examScore ?? 0), 0);
-  const totalTotal = rows.reduce((s, r) => s + (r.total ?? 0), 0);
+  const classScoreTotal = sheetRows.reduce((s, r) => s + (r.classScore ?? 0), 0);
+  const examScoreTotal = sheetRows.reduce((s, r) => s + (r.examScore ?? 0), 0);
+  const totalTotal = sheetRows.reduce((s, r) => s + (r.total ?? 0), 0);
 
   return NextResponse.json({
     school,
@@ -114,12 +137,8 @@ export async function GET(req: NextRequest) {
     student: enrollment.student,
     classroom: enrollment.classroom,
     classTeacher: classTeacher?.fullName ?? null,
-    rows: rows.map((r) => ({
-      subjectId: r.subject.id, subjectName: r.subject.name, subjectCode: r.subject.code,
-      classScore: r.classScore, examScore: r.examScore, total: r.total,
-      grade: r.grade, remark: r.remarks, position: r.position,
-    })),
-    totals: { classScore: round2(classScoreTotal), examScore: round2(examScoreTotal), total: round2(totalTotal), subjects: rows.length },
+    rows: sheetRows,
+    totals: { classScore: round2(classScoreTotal), examScore: round2(examScoreTotal), total: round2(totalTotal), subjects: sheetRows.length },
     card: card ? {
       id: card.id,
       totalScore: card.totalScore, average: card.average, classPosition: card.classPosition, classSize: card.classSize,

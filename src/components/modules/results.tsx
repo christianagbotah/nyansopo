@@ -23,6 +23,10 @@ import { ModuleHeader, LoadingBlock, EmptyState, StatCard, StatusBadge } from "@
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
+  MarksheetSheet, MarksheetStylePicker,
+  type MarksheetPayload, type MarksheetStyle, type CrecheGridData, type MarksheetBilling,
+} from "@/components/marksheet-sheets";
+import {
   Award, Calculator, Eye, GraduationCap, Printer, Users, BookOpen, TrendingUp, ClipboardCheck,
   Percent, Layers, RefreshCcw, ScrollText, Send, Undo2, Megaphone, BarChart3, Mail, Phone, PhoneOff,
   MailWarning, Gauge, ChevronDown, ChevronUp, BadgeCheck, AlertTriangle,
@@ -127,35 +131,9 @@ type TranscriptPayload = {
    Legacy student_marksheet.php parity: the per-learner terminal sheet
    the class teacher annotates — subject marks with positions, the 15-slot
    conduct grid, one interest pick, teacher + head-teacher remarks and
-   the days-opened / days-present attendance line (aggregation table). */
-type MarksheetRow = {
-  subjectId: string; subjectName: string; subjectCode: string | null;
-  classScore: number | null; examScore: number | null; total: number | null;
-  grade: string | null; remark: string | null; position: number | null;
-};
-type MarksheetPayload = {
-  school: SchoolInfo;
-  term: { id: string; name: string; sequence: number; yearName: string };
-  student: { id: string; firstName: string; lastName: string; otherNames: string | null; nyansapoIndex: string; gender: string; guardianName: string; guardianPhone: string };
-  classroom: { id: string; name: string } | null;
-  classTeacher: string | null;
-  rows: MarksheetRow[];
-  totals: { classScore: number; examScore: number; total: number; subjects: number };
-  card: {
-    id: string; totalScore: number | null; average: number | null; classPosition: number | null; classSize: number | null;
-    aggregate: number | null; promoted: boolean | null; published: boolean;
-    conductIds: string[] | null; interestId: string | null;
-    teacherRemark: string | null; headRemark: string | null;
-    remarkSource: string | null; headSource: string | null;
-    daysOpened: number | null; daysPresent: number | null;
-    attendance: string | null; attendancePct: number | null;
-  } | null;
-  attendance: { daysTaken: number; daysAttended: number };
-  conductItems: { id: string; name: string; kind: string }[];
-  teacherTemplates: { id: string; category: string; text: string }[];
-  headBands: { id: string; minPercent: number | null; maxPercent: number | null; text: string }[];
-  suggestedHead: string | null;
-};
+   the days-opened / days-present attendance line (aggregation table).
+   Wave 46 — payload + print templates now live in marksheet-sheets.tsx
+   (student_marksheet_print_view{,_2,_3,_creche,_creche_2} parity). */
 
 /* ── wave 22 — term analytics payload (/api/results/analytics) ── */
 type GradeCount = { grade: string; count: number; tone: string };
@@ -350,6 +328,14 @@ export function Results() {
   const [sheetLoading, setSheetLoading] = useState(false);
   const [sheetSave, setSheetSave] = useState(false);
   const [sheetPrint, setSheetPrint] = useState(false);
+  /* wave 46 — print-template family + billing + creche grid + bulk set */
+  const [sheetStyle, setSheetStyle] = useState<MarksheetStyle>("classic");
+  const [sheetBilling, setSheetBilling] = useState<MarksheetBilling | null>(null);
+  const [crecheGrid, setCrecheGrid] = useState<CrecheGridData | null>(null);
+  const [bulkSheets, setBulkSheets] = useState<{
+    busy: boolean; done: number; total: number; sheets: MarksheetPayload[];
+    billings: Record<string, MarksheetBilling | null>; grid: CrecheGridData | null; mode: "academic" | "kg" | "early";
+  } | null>(null);
 
   /* iEduPro nested-nav parity: deep-link the analytics tab */
   const [appliedTarget, setAppliedTarget] = useState<NavTarget | null>(null);
@@ -480,6 +466,102 @@ export function Results() {
       toast({ title: "Save refused", description: e.message, variant: "destructive" });
     } finally {
       setSheetSave(false);
+    }
+  }
+
+  /* ── wave 46 — print-template family ────────────────────────────
+     Early-years classrooms (creche / nursery / playgroup) print the
+     developmental-domain sheet; KG classes offer all four templates;
+     academic classes get classic / modern / compact. Billing splits the
+     learner's invoice balances into previous arrears vs this-term bills
+     (legacy accounts/arrears_tb parity); the creche-ratings grid feeds
+     the per-skill rating codes of the early-years sheet. */
+  const sheetClassInfo = useMemo(() => {
+    const rooms = meta?.classrooms ?? [];
+    const room = sheet?.classroom
+      ? rooms.find((c) => c.id === sheet!.classroom!.id) ?? rooms.find((c) => c.name === sheet!.classroom!.name)
+      : null;
+    return room ?? null;
+  }, [meta, sheet]);
+  const sheetMode: "academic" | "kg" | "early" = useMemo(() => {
+    if (!sheetClassInfo) return "academic";
+    const label = `${sheetClassInfo.gradeLevel} ${sheetClassInfo.name}`;
+    if (/CRECHE|NURS|PLAY/i.test(label)) return "early";
+    if (/KG/i.test(sheetClassInfo.gradeLevel)) return "kg";
+    return "academic";
+  }, [sheetClassInfo]);
+  const sheetEffectiveStyle: MarksheetStyle = sheetMode === "early" ? "creche" : sheetStyle;
+
+  /* billing for the accounts block — fetched while the print dialog is open */
+  useEffect(() => {
+    if (!sheetPrint || !sheet) { setSheetBilling(null); return; }
+    let alive = true;
+    apiGet<{ invoices: { invoiceNo: string; term: string; balance: number; status: string }[] }>(`/api/student/${sheet.student.id}`)
+      .then((full) => {
+        if (!alive) return;
+        const thisTerm = `${sheet.term.name} ${sheet.term.yearName}`;
+        const invs = (full.invoices ?? []).map((i) => ({ ...i, balanceCents: i.balance }));
+        const arrearsCents = invs.filter((i) => i.term !== thisTerm).reduce((s, i) => s + Math.max(0, i.balanceCents), 0);
+        const nextTermCents = invs.filter((i) => i.term === thisTerm).reduce((s, i) => s + Math.max(0, i.balanceCents), 0);
+        setSheetBilling({
+          arrearsCents, nextTermCents,
+          lines: invs.filter((i) => i.balanceCents > 0).slice(0, 6).map((i) => ({ invoiceNo: i.invoiceNo, term: i.term, balanceCents: i.balanceCents, status: i.status })),
+        });
+      })
+      .catch(() => { if (alive) setSheetBilling(null); });
+    return () => { alive = false; };
+  }, [sheetPrint, sheet]);
+
+  /* creche-ratings grid — only when the early-years sheet is in play */
+  useEffect(() => {
+    if (!sheetPrint || !sheet || !sheet.classroom || sheetEffectiveStyle !== "creche") { setCrecheGrid(null); return; }
+    let alive = true;
+    apiGet<CrecheGridData>(`/api/school/${currentSchoolId}/ops/academics?action=creche-ratings&classroomId=${sheet.classroom.id}&termId=${sheet.term.id}`)
+      .then((g) => { if (alive) setCrecheGrid(g); })
+      .catch(() => { if (alive) setCrecheGrid(null); });
+    return () => { alive = false; };
+  }, [sheetPrint, sheet, sheetEffectiveStyle, currentSchoolId]);
+
+  /* ── wave 46 — bulk class marksheet set (legacy
+     student_marksheet_bulk_print_view{,_creche} parity): the whole class
+     in one printable set — one sheet per learner, each on its own page. */
+  async function openBulkSheets() {
+    if (!currentSchoolId || !termId || !classId || !data?.students.length || !meta) return;
+    const cls = meta.classrooms.find((c) => c.id === classId);
+    const mode: "academic" | "kg" | "early" = cls
+      ? (/CRECHE|NURS|PLAY/i.test(`${cls.gradeLevel} ${cls.name}`) ? "early" : /KG/i.test(cls.gradeLevel) ? "kg" : "academic")
+      : "academic";
+    setBulkSheets({ busy: true, done: 0, total: data.students.length, sheets: [], billings: {}, grid: null, mode });
+    try {
+      let grid: CrecheGridData | null = null;
+      if (mode !== "academic") {
+        grid = await apiGet<CrecheGridData>(`/api/school/${currentSchoolId}/ops/academics?action=creche-ratings&classroomId=${classId}&termId=${termId}`).catch(() => null);
+      }
+      const sheets: MarksheetPayload[] = [];
+      const billings: Record<string, MarksheetBilling | null> = {};
+      for (const st of data.students) {
+        const d = await apiGet<MarksheetPayload>(`/api/results/marksheet?schoolId=${currentSchoolId}&studentId=${st.id}&termId=${termId}`);
+        sheets.push(d);
+        const full = await apiGet<{ invoices: { invoiceNo: string; term: string; balance: number; status: string }[] }>(`/api/student/${st.id}`).catch(() => null);
+        if (full) {
+          const thisTerm = `${d.term.name} ${d.term.yearName}`;
+          const invs = (full.invoices ?? []).map((i) => ({ ...i, balanceCents: i.balance }));
+          billings[st.id] = {
+            arrearsCents: invs.filter((i) => i.term !== thisTerm).reduce((s, i) => s + Math.max(0, i.balanceCents), 0),
+            nextTermCents: invs.filter((i) => i.term === thisTerm).reduce((s, i) => s + Math.max(0, i.balanceCents), 0),
+            lines: invs.filter((i) => i.balanceCents > 0).slice(0, 6).map((i) => ({ invoiceNo: i.invoiceNo, term: i.term, balanceCents: i.balanceCents, status: i.status })),
+          };
+        } else billings[st.id] = null;
+        setBulkSheets((b) => (b ? { ...b, done: b.done + 1, sheets: [...sheets], billings: { ...billings } } : b));
+      }
+      setBulkSheets({ busy: false, done: sheets.length, total: sheets.length, sheets, billings, grid, mode });
+      toast({
+        title: "Class marksheet set ready",
+        description: `${sheets.length} sheet${sheets.length === 1 ? "" : "s"} assembled${mode === "early" ? " — early-years developmental records" : ""}. Print the whole set.`,
+      });
+    } catch (e: any) {
+      toast({ title: "Bulk print failed", description: e.message, variant: "destructive" });
+      setBulkSheets(null);
     }
   }
 
@@ -1055,6 +1137,10 @@ export function Results() {
               </Badge>
             ) : null}
             {sheet?.card?.published ? <Badge className="bg-emerald-100 text-emerald-800 border-transparent dark:bg-emerald-950 dark:text-emerald-300">Published</Badge> : null}
+            <Button size="sm" variant="outline" className="gap-1.5" disabled={!data?.students.length || bulkSheets?.busy} onClick={openBulkSheets}
+              title="student_marksheet_bulk_print_view parity — the whole class in one printable set, early-years classes get the developmental-domain sheets">
+              <Layers className={cn("size-4", bulkSheets?.busy && "animate-pulse")} /> {bulkSheets?.busy ? `Ruling ${bulkSheets.done}/${bulkSheets.total}…` : "Bulk marksheet print"}
+            </Button>
             <span className="ml-auto text-[11px] text-muted-foreground">
               {data?.students.length ?? 0} learner{(data?.students.length ?? 0) === 1 ? "" : "s"} on roll · {termLabel?.name ?? ""}
             </span>
@@ -1376,21 +1462,74 @@ export function Results() {
         </DialogContent>
       </Dialog>
 
-      {/* ── wave 35 — printable marksheet (legacy student_marksheet_print_view) ── */}
+      {/* ── wave 46 — printable marksheet template family (legacy
+          student_marksheet_print_view{,_2,_3,_creche,_creche_2} parity):
+          Classic GES / Modern chart / Compact A5 — creche, nursery and
+          playgroup classes automatically print the early-years sheet. ── */}
       <Dialog open={sheetPrint} onOpenChange={setSheetPrint}>
         <DialogContent className="max-w-3xl max-h-[92vh] overflow-y-auto nice-scroll">
           <DialogHeader className="no-print">
             <DialogTitle className="flex items-center gap-2"><Printer className="size-4" /> Terminal marksheet</DialogTitle>
-            <DialogDescription>Print on A4 — school header, marks with positions, conduct &amp; interest, remarks, attendance and the signature lines.</DialogDescription>
-            <div className="flex gap-2 pt-1">
-              <Button size="sm" className="gap-1.5" onClick={() => window.print()}><Printer className="size-4" /> Print</Button>
+            <DialogDescription>
+              {sheetMode === "early"
+                ? "Early-years progress record — grading key, developmental domains with per-skill rating codes, physical development, attendance and the accounts block."
+                : sheetMode === "kg"
+                  ? "Pick the template — the three terminal designs, or the early-years developmental sheet for this KG class."
+                  : "Pick the template — Classic GES broadsheet with grading key and arrears, Modern with the subject chart, or the Compact A5 booklet."}
+            </DialogDescription>
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <MarksheetStylePicker value={sheetEffectiveStyle} set={setSheetStyle} mode={sheetMode} />
+              {sheetBilling ? (
+                <Badge variant="outline" className="text-[10.5px] font-mono" title="Previous arrears + this-term bills feeding the accounts block">
+                  arrears GH¢ {((sheetBilling.arrearsCents ?? 0) / 100).toFixed(2)} · bills GH¢ {((sheetBilling.nextTermCents ?? 0) / 100).toFixed(2)}
+                </Badge>
+              ) : null}
+              <Button size="sm" className="gap-1.5 ml-auto" onClick={() => window.print()}><Printer className="size-4" /> Print</Button>
             </div>
           </DialogHeader>
           {sheet ? (
             <div className="print-area">
-              <MarksheetSheet payload={sheet} />
+              <MarksheetSheet payload={sheet} style={sheetEffectiveStyle} billing={sheetBilling} grid={crecheGrid} />
             </div>
           ) : null}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── wave 46 — bulk class marksheet set (legacy
+          student_marksheet_bulk_print_view{,_2,_3,_creche,_creche_2}
+          parity): one printable sheet per learner, each on its own page. ── */}
+      <Dialog open={!!bulkSheets} onOpenChange={(o) => !o && setBulkSheets(null)}>
+        <DialogContent className="max-w-3xl max-h-[92vh] overflow-y-auto nice-scroll">
+          <DialogHeader className="no-print">
+            <DialogTitle className="flex items-center gap-2"><Layers className="size-4" /> Class marksheet set</DialogTitle>
+            <DialogDescription>
+              {bulkSheets ? `${bulkSheets.sheets.length} of ${bulkSheets.total} sheet${bulkSheets.total === 1 ? "" : "s"} assembled — each prints on its own page.` : ""}
+              {bulkSheets?.mode === "early" ? " Early-years developmental-domain records." : ""}
+            </DialogDescription>
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              {bulkSheets && !bulkSheets.busy ? (
+                <MarksheetStylePicker value={bulkSheets.mode === "early" ? "creche" : sheetStyle} set={setSheetStyle} mode={bulkSheets.mode} />
+              ) : null}
+              <Button size="sm" className="gap-1.5 ml-auto" onClick={() => window.print()} disabled={!bulkSheets?.sheets.length}>
+                <Printer className="size-4" /> Print all {bulkSheets?.sheets.length ?? 0}
+              </Button>
+            </div>
+          </DialogHeader>
+          {bulkSheets?.busy ? (
+            <LoadingBlock label={`Ruling the class set… ${bulkSheets.done}/${bulkSheets.total}`} />
+          ) : (
+            <div className="print-area space-y-5">
+              {(bulkSheets?.sheets ?? []).map((s) => (
+                <MarksheetSheet
+                  key={s.student.id}
+                  payload={s}
+                  style={bulkSheets?.mode === "early" ? "creche" : sheetStyle}
+                  billing={bulkSheets?.billings?.[s.student.id] ?? null}
+                  grid={bulkSheets?.grid ?? null}
+                />
+              ))}
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 
@@ -2257,152 +2396,6 @@ function MarksheetPanel(props: {
           </p>
         )}
       </div>
-    </div>
-  );
-}
-
-/* ══════════════════════════════════════════════════════════════
-   Wave 35 — printable terminal marksheet (legacy
-   student_marksheet_print_view parity). Serif face, boxed
-   particulars, marks table with positions, conduct & interest
-   grid, remarks, attendance and three signature lines.
-   ══════════════════════════════════════════════════════════════ */
-function MarksheetSheet({ payload: p }: { payload: MarksheetPayload }) {
-  const studentName = [p.student.lastName, p.student.firstName, p.student.otherNames].filter(Boolean).join(" ");
-  const conducts = p.conductItems.filter((c) => c.kind === "CONDUCT");
-  const interests = p.conductItems.filter((c) => c.kind === "INTEREST");
-  const conductNames = (p.card?.conductIds ?? []).map((id) => p.conductItems.find((c) => c.id === id)?.name).filter(Boolean) as string[];
-  const interestName = interests.find((i) => i.id === p.card?.interestId)?.name ?? null;
-  const daysOpened = p.card?.daysOpened ?? (p.attendance.daysTaken || null);
-  const daysPresent = p.card?.daysPresent ?? (p.attendance.daysAttended || null);
-
-  return (
-    <div className="print-sheet break-inside-avoid bg-white text-black mx-auto max-w-[820px] p-3" style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}>
-      {/* school header */}
-      <div className="flex items-center gap-3 border-b-2 border-black pb-2">
-        <div className="flex size-14 items-center justify-center rounded-full border-2 text-lg font-bold" style={{ borderColor: p.school.logoColor ?? "#7c3aed" }}>
-          {p.school.name.split(/\s+/).slice(0, 2).map((w) => w[0]).join("")}
-        </div>
-        <div className="flex-1 text-center">
-          <h1 className="text-xl font-bold uppercase tracking-wide">{p.school.name}</h1>
-          <p className="text-[11px]">
-            {p.school.town ? `${p.school.town}, ` : ""}{p.school.region}{p.school.district ? ` · ${p.school.district}` : ""}
-            {p.school.phone ? ` · ${p.school.phone}` : ""}
-          </p>
-          {p.school.motto ? <p className="text-[10px] italic">“{p.school.motto}”</p> : null}
-        </div>
-        <div className="w-14" />
-      </div>
-      <h2 className="mt-3 text-center text-base font-bold uppercase tracking-[0.2em]">Terminal Marksheet</h2>
-      <p className="text-center text-[11px]">{p.term.name} · {p.term.yearName} · {p.classroom?.name}</p>
-
-      {/* particulars */}
-      <table className="mt-3 w-full border-collapse text-[11.5px]">
-        <tbody>
-          <tr>
-            <td className="border border-neutral-700 px-2 py-1 w-24 font-semibold">Name</td>
-            <td className="border border-neutral-700 px-2 py-1">{studentName}</td>
-            <td className="border border-neutral-700 px-2 py-1 w-20 font-semibold">Index</td>
-            <td className="border border-neutral-700 px-2 py-1">{p.student.nyansapoIndex || "—"}</td>
-          </tr>
-          <tr>
-            <td className="border border-neutral-700 px-2 py-1 font-semibold">Class</td>
-            <td className="border border-neutral-700 px-2 py-1">{p.classroom?.name ?? "—"}</td>
-            <td className="border border-neutral-700 px-2 py-1 font-semibold">Position</td>
-            <td className="border border-neutral-700 px-2 py-1">{p.card?.classPosition ? `${ordinal(p.card.classPosition)} of ${p.card.classSize ?? "—"}` : "—"}</td>
-          </tr>
-        </tbody>
-      </table>
-
-      {/* marks table */}
-      <table className="mt-3 w-full border-collapse text-[11px]">
-        <thead>
-          <tr className="bg-neutral-200">
-            <th className="border border-neutral-700 px-1.5 py-1 w-8">S/N</th>
-            <th className="border border-neutral-700 px-2 py-1 text-left">Subject</th>
-            <th className="border border-neutral-700 px-1.5 py-1">Class (30)</th>
-            <th className="border border-neutral-700 px-1.5 py-1">Exam (70)</th>
-            <th className="border border-neutral-700 px-1.5 py-1">Total</th>
-            <th className="border border-neutral-700 px-1.5 py-1">Grade</th>
-            <th className="border border-neutral-700 px-1.5 py-1">Remark</th>
-            <th className="border border-neutral-700 px-1.5 py-1">Position</th>
-          </tr>
-        </thead>
-        <tbody>
-          {p.rows.map((r, i) => (
-            <tr key={r.subjectId}>
-              <td className="border border-neutral-700 px-1.5 py-0.5 text-center">{i + 1}</td>
-              <td className="border border-neutral-700 px-2 py-0.5">{r.subjectName}</td>
-              <td className="border border-neutral-700 px-1.5 py-0.5 text-center tabular-nums">{r.classScore ?? "—"}</td>
-              <td className="border border-neutral-700 px-1.5 py-0.5 text-center tabular-nums">{r.examScore ?? "—"}</td>
-              <td className="border border-neutral-700 px-1.5 py-0.5 text-center tabular-nums font-semibold">{r.total ?? "—"}</td>
-              <td className="border border-neutral-700 px-1.5 py-0.5 text-center">{r.grade ?? "—"}</td>
-              <td className="border border-neutral-700 px-1.5 py-0.5 text-[10px]">{r.remark ?? "—"}</td>
-              <td className="border border-neutral-700 px-1.5 py-0.5 text-center">{r.position ? ordinal(r.position) : "—"}</td>
-            </tr>
-          ))}
-          <tr className="font-bold">
-            <td className="border border-neutral-700 px-1.5 py-1 text-center" colSpan={2}>TOTAL</td>
-            <td className="border border-neutral-700 px-1.5 py-1 text-center tabular-nums">{fmt1(p.totals.classScore)}</td>
-            <td className="border border-neutral-700 px-1.5 py-1 text-center tabular-nums">{fmt1(p.totals.examScore)}</td>
-            <td className="border border-neutral-700 px-1.5 py-1 text-center tabular-nums">{fmt1(p.totals.total)}</td>
-            <td className="border border-neutral-700 px-1.5 py-1 text-center" colSpan={3}>
-              Avg {fmt1(p.card?.average)}%{p.card?.aggregate !== null && p.card?.aggregate !== undefined ? ` · Aggregate ${fmt1(p.card.aggregate)}` : ""}
-            </td>
-          </tr>
-        </tbody>
-      </table>
-
-      {/* conduct & interest & attendance */}
-      <div className="mt-3 grid grid-cols-3 gap-3 text-[10.5px]">
-        <div className="border border-neutral-700 p-2">
-          <p className="mb-1 font-bold uppercase tracking-wide">Conduct</p>
-          {conductNames.length ? (
-            <ul className="grid gap-0.5" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(90px, 1fr))" }}>
-              {conductNames.map((n) => <li key={n}>✓ {n}</li>)}
-            </ul>
-          ) : <p>—</p>}
-        </div>
-        <div className="border border-neutral-700 p-2">
-          <p className="mb-1 font-bold uppercase tracking-wide">Interest</p>
-          <p>{interestName ?? "—"}</p>
-          <p className="mt-2 font-bold uppercase tracking-wide">Attendance</p>
-          <p>{daysOpened !== null ? `Present ${daysPresent ?? 0} of ${daysOpened} days` : p.card?.attendance ?? "—"}</p>
-        </div>
-        <div className="border border-neutral-700 p-2">
-          <p className="mb-1 font-bold uppercase tracking-wide">Traits not marked</p>
-          {conducts.length - conductNames.length > 0 ? (
-            <p className="text-neutral-600">{conducts.length - conductNames.length} of {conducts.length} school traits not ticked for this learner.</p>
-          ) : <p>All school traits considered.</p>}
-          <p className="mt-2 font-bold uppercase tracking-wide">Promotion</p>
-          <p>{p.card?.promoted === true ? "Promoted" : p.card?.promoted === false ? "To be repeated" : "—"}</p>
-        </div>
-      </div>
-
-      {/* remarks */}
-      <table className="mt-3 w-full border-collapse text-[11px]">
-        <tbody>
-          <tr>
-            <td className="w-44 border border-neutral-700 bg-neutral-200 px-2 py-1 font-semibold">CLASS TEACHER&apos;S REMARKS</td>
-            <td className="border border-neutral-700 px-2 py-1">{p.card?.teacherRemark ?? "—"}</td>
-          </tr>
-          <tr>
-            <td className="border border-neutral-700 bg-neutral-200 px-2 py-1 font-semibold">HEAD TEACHER&apos;S REMARKS</td>
-            <td className="border border-neutral-700 px-2 py-1">{p.card?.headRemark ?? "—"}</td>
-          </tr>
-        </tbody>
-      </table>
-
-      {/* signatures */}
-      <div className="mt-5 grid grid-cols-3 gap-4 text-[10px] text-neutral-700">
-        <div className="border-t border-neutral-700 pt-1 text-center">Class Teacher{p.classTeacher ? ` (${p.classTeacher})` : ""}</div>
-        <div className="border-t border-neutral-700 pt-1 text-center">Head Teacher</div>
-        <div className="border-t border-neutral-700 pt-1 text-center">Parent / Guardian</div>
-      </div>
-      <p className="mt-3 text-center text-[9px] text-neutral-500">
-        Generated {new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })} · {p.school.name}
-        {p.school.code ? ` (${p.school.code})` : ""}
-      </p>
     </div>
   );
 }

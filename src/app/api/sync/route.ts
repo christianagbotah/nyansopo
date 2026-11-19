@@ -221,7 +221,7 @@ async function resolvePreassignedCode(
 /** Create a payment row with durable idempotency + receipt collision fallback:
  *  P2002 on syncClientId = a racing re-flush already landed it; P2002 on
  *  receiptNo (two tabs racing one reserve) = re-mint server-side and retry. */
-async function createPaymentSafely(data: Prisma.PaymentCreateInput): Promise<{ payment: any; alreadySynced: boolean }> {
+async function createPaymentSafely(data: Prisma.PaymentUncheckedCreateInput): Promise<{ payment: any; alreadySynced: boolean }> {
   try {
     return { payment: await db.payment.create({ data }), alreadySynced: false };
   } catch (e) {
