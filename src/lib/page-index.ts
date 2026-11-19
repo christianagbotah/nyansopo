@@ -87,6 +87,7 @@ export const PAGE_INDEX: PageEntry[] = [
   { id: "pg-sync-journal", label: "Sync Journal", section: S.system, module: "sync", target: { tab: "journal" }, perm: ["sync.view"], icon: History, keywords: ["journal", "sync log", "audit", "flush history", "duration"] },
   { id: "pg-sync-policy", label: "Sync Policy", section: S.system, module: "sync", target: { tab: "policy" }, perm: ["sync.view"], icon: ShieldCheck, keywords: ["policy", "disable sync", "table management", "queueable", "offline kinds"] },
   { id: "pg-sync-pack", label: "Sync Data Pack", section: S.system, module: "sync", target: { tab: "pack" }, perm: ["sync.view"], icon: Database, keywords: ["offline data", "data pack", "cache", "read sync", "warm pack", "pull", "offline screens"] },
+  { id: "pg-sync-reserve", label: "Sync Code Reserve", section: S.system, module: "sync", target: { tab: "reserve" }, perm: ["sync.view"], icon: Receipt, keywords: ["receipt numbers", "offline receipts", "reserve", "lease", "rcp", "atomic counter", "code reserve", "offline code block"] },
 
   // ── Student Billing (invoices / termly) ──
   { id: "pg-bill-items", label: "Bill Items", section: S.billing, module: "fees", target: { tab: "bill-items" }, perm: ["fees.view"], icon: ListChecks, keywords: ["fee items", "catalogue", "tuition"] },

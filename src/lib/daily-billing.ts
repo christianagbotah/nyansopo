@@ -156,6 +156,12 @@ export async function collectDailyItems(db: PrismaClient, opts: {
   paidAt?: Date;
   offlineQueued?: boolean;
   syncedAt?: Date;
+  /** offline-flush durability (wave 41): the queue clientId lands on the row as
+   *  a unique syncClientId so a re-flush can never double-charge, and a
+   *  preassigned receiptNo from the device's offline code reserve is adopted
+   *  here (validated by the flush against the device's CodeLease block). */
+  syncClientId?: string | null;
+  receiptNo?: string | null;
   /** multi-method collection: parts must sum to the items total (see sanitizeMethodParts) */
   methods?: CollectMethodPart[];
 }): Promise<{
@@ -175,17 +181,43 @@ export async function collectDailyItems(db: PrismaClient, opts: {
   const multi = parts.length > 1;
   const payMethod = multi ? "SPLIT" : parts[0].method;
   const splitRef = parts.find((p) => p.reference)?.reference ?? null;
-  const payment = await db.payment.create({
-    data: {
-      receiptNo: await nextReceiptNo(), studentId: opts.studentId, category: "DAILY", schoolId: opts.schoolId,
-      amountCents: total, method: payMethod, reference: splitRef ?? opts.reference ?? null,
-      ...(multi ? { splitJson: parts.map((p) => ({ method: p.method, amountCents: p.amountCents, reference: p.reference })) } : {}),
-      receivedByName: opts.receivedByName,
-      paidAt: opts.paidAt ?? new Date(),
-      offlineQueued: opts.offlineQueued ?? false,
-      syncedAt: opts.syncedAt ?? null,
-    },
-  });
+  // wave 41: preassigned receipt code (offline reserve) or server mint. A
+  // P2002 on receiptNo (two tabs racing one reserve block — pathological)
+  // falls back to a fresh server mint: the row still commits, the code the
+  // paper carries is corrected at sync, and uniqueness is never violated.
+  let receiptNo = opts.receiptNo ?? null;
+  if (!receiptNo) receiptNo = await nextReceiptNo();
+  let payment: Payment;
+  try {
+    payment = await db.payment.create({
+      data: {
+        receiptNo, studentId: opts.studentId, category: "DAILY", schoolId: opts.schoolId,
+        amountCents: total, method: payMethod, reference: splitRef ?? opts.reference ?? null,
+        ...(multi ? { splitJson: parts.map((p) => ({ method: p.method, amountCents: p.amountCents, reference: p.reference })) } : {}),
+        receivedByName: opts.receivedByName,
+        paidAt: opts.paidAt ?? new Date(),
+        offlineQueued: opts.offlineQueued ?? false,
+        syncedAt: opts.syncedAt ?? null,
+        ...(opts.syncClientId ? { syncClientId: opts.syncClientId } : {}),
+      },
+    });
+  } catch (e) {
+    const target = JSON.stringify((e as { meta?: { target?: unknown } })?.meta?.target ?? "");
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002" && target.includes("receiptNo")) {
+      payment = await db.payment.create({
+        data: {
+          receiptNo: await nextReceiptNo(), studentId: opts.studentId, category: "DAILY", schoolId: opts.schoolId,
+          amountCents: total, method: payMethod, reference: splitRef ?? opts.reference ?? null,
+          ...(multi ? { splitJson: parts.map((p) => ({ method: p.method, amountCents: p.amountCents, reference: p.reference })) } : {}),
+          receivedByName: opts.receivedByName,
+          paidAt: opts.paidAt ?? new Date(),
+          offlineQueued: opts.offlineQueued ?? false,
+          syncedAt: opts.syncedAt ?? null,
+          ...(opts.syncClientId ? { syncClientId: opts.syncClientId } : {}),
+        },
+      });
+    } else throw e;
+  }
 
   const breakdown: CollectBreakdownRow[] = [];
   let settledTotal = 0;

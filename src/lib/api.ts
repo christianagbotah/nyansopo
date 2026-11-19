@@ -2,6 +2,7 @@
 // ── Offline-aware API client ──────────────────────────────────
 import { useStore } from "@/lib/store";
 import { packRead, packWrite, packPaths } from "@/lib/offline-pack";
+import { adoptLease } from "@/lib/offline-codes";
 
 export function getHeaders(): Record<string, string> {
   const uid = useStore.getState().session?.id;
@@ -131,6 +132,12 @@ export async function flushQueue(): Promise<{ synced: number; failed: number; co
     const body = await res.json();
     if (body.deviceCode && body.deviceCode !== deviceCode) {
       try { localStorage.setItem("nyansapo.device", JSON.stringify({ code: body.deviceCode })); } catch { /* ignore */ }
+    }
+    // wave 41: the flush may replenish this device's offline receipt reserve
+    // (auto-granted when payment ops flushed and the runway was low) — adopt
+    // the new block so offline collections keep printing real receipt numbers
+    if (body.lease) {
+      try { adoptLease(body.lease); } catch { /* best-effort */ }
     }
     const okIds = (body.results ?? []).filter((r: any) => r.ok).map((r: any) => r.clientId);
     const failed = (body.results ?? []).filter((r: any) => !r.ok);

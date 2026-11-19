@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
 import { apiGet, apiGetCacheable, apiPost, apiPostQueueable } from "@/lib/api";
+import { nextOfflineReceiptNo } from "@/lib/offline-codes";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -742,14 +743,29 @@ function CollectDialog({ student, date, online, onOpenChange, onDone }: { studen
         method, reference, paidAt: paidOn,
         transportUsage: usage || undefined, markPresent, date: paidOn,
       };
+      // wave 41: the offline reserve lets the POS print a REAL receipt number on
+      // the parent's receipt at collection time — take one ONLY when actually
+      // offline (an online collect must never burn a reserved number; a number
+      // taken then abandoned burns as a harmless gap, never a duplicate)
+      const leaseTake = useStore.getState().online === false ? nextOfflineReceiptNo() : null;
       const res = await apiPostQueueable<any>(
         `/api/school/${currentSchoolId}/ops/daily`, "payment", payload,
-        `Daily services ${fmt(totalCents)} — ${student.name}`,
-        (p, clientId) => ({ ...p, category: "DAILY", schoolId: currentSchoolId, studentId: student.id, amountCents: totalCents, method, paidAt: paidOn, clientId })
+        `Daily services ${fmt(totalCents)} — ${student.name}${leaseTake ? ` · ${leaseTake.code}` : ""}`,
+        (p, clientId) => ({
+          ...p, category: "DAILY", schoolId: currentSchoolId, studentId: student.id,
+          amountCents: totalCents, method, paidAt: paidOn, clientId,
+          // preassigned offline number — rides ONLY the queued op payload, never the online one
+          ...(leaseTake ? { receiptNo: leaseTake.code, leaseTag: leaseTake.tag, leaseSeq: leaseTake.seq } : {}),
+        })
       );
       if (res.queued) {
-        toast({ title: "Queued offline", description: "Receipt will be issued when you reconnect." });
-        onDone(null);
+        if (leaseTake) {
+          toast({ title: "Receipt issued offline", description: `Receipt ${leaseTake.code} recorded — it will sync when you reconnect.` });
+          onDone({ amountCents: totalCents, student: student.name, receiptNo: leaseTake.code, method, paidAt: new Date().toISOString(), offline: true });
+        } else {
+          toast({ title: "Queued offline", description: "Receipt will be issued when you reconnect — reserve a code block in the Sync Center to print numbered receipts offline." });
+          onDone(null);
+        }
       } else {
         if (res.data?.present === "marked" || res.data?.present === "updated") toast({ title: "Marked present", description: "Class register updated." });
         onDone(res.data?.receipt ?? { ...res.data?.payment, student: student.name });

@@ -135,6 +135,7 @@ model School {
   feeStructures        FeeStructure[]
   invoices             Invoice[]
   payments             Payment[]
+  codeLeases           CodeLease[]
   paymentRequests      PaymentRequest[]
   enrollments          Enrollment[]
   assessments          Assessment[]
@@ -684,6 +685,7 @@ model Payment {
   recordedAt     DateTime        @default(now())
   offlineQueued  Boolean         @default(false)
   syncedAt       DateTime?
+  syncClientId   String?         @unique // offline-queue clientId that minted this receipt — DB-level re-flush idempotency (a retry storm can never double-charge)
   voided         Boolean         @default(false)
   splitJson      Json? // SPLIT collections — [{method, amountCents, reference}] summing to amountCents
   dailyCharges   DailyCharge[]
@@ -755,6 +757,7 @@ model AttendanceSession {
   term        Term               @relation(fields: [termId], references: [id])
   date        DateTime
   takenByName String?
+  syncClientId String?          @unique // offline-queue clientId that minted this session — durable re-flush idempotency
   records     AttendanceRecord[]
 }
 
@@ -2504,6 +2507,34 @@ model CodeCounter {
   scope     String   @id // e.g. "INV:2026" | "RCP:2026" | "NYIDX:2016"
   next      Int      @default(0) // last allocated sequence number
   updatedAt DateTime @updatedAt
+}
+
+// ─────────────────────────────────────────────────────────────
+// OFFLINE RECEIPT CODE RESERVE (wave 41)
+// A block of REAL receipt numbers reserved for one device. The atomic RCP
+// counter jumps past the whole block at grant time, so every number in it is
+// structurally exclusive to that device: online minters can never collide
+// with numbers a POS tablet prints while offline, and two devices can never
+// hold overlapping blocks. The offline receipt prints the final RCP code at
+// once; the flush validates lease ownership (device + school + seq bounds)
+// before adopting it, with receiptNo @unique + re-mint as the final backstop.
+// Multiple grants per device coexist (replenishment); abandoned numbers are
+// harmless gaps, never duplicates.
+// ─────────────────────────────────────────────────────────────
+model CodeLease {
+  id         String   @id @default(cuid())
+  schoolId   String
+  school     School   @relation(fields: [schoolId], references: [id])
+  deviceCode String // owning device (DEV-0007 …) — adoption is validated against it
+  kind       String   @default("RCP") // code kind the block was carved from
+  year       Int
+  fromSeq    Int // first sequence number in the block (inclusive)
+  toSeq      Int // last sequence number in the block (inclusive)
+  spentCount Int      @default(0) // numbers adopted at flush so far (runway accounting)
+  grantedAt  DateTime @default(now())
+
+  @@index([schoolId, deviceCode])
+  @@index([schoolId, deviceCode, kind])
 }
 
 // ─────────────────────────────────────────────────────────────

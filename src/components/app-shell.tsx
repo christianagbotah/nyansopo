@@ -470,7 +470,7 @@ export function AppShell() {
       { id: "set-statutory", label: "Statutory (SSNIT) rates", target: { tab: "statutory" } },
     ];
 
-    /* sync center sidebar (wave 39): dashboard / devices / conflicts / journal / policy (+ wave 40 data pack) */
+    /* sync center sidebar (wave 39): dashboard / devices / conflicts / journal / policy (+ wave 40 data pack, wave 41 code reserve) */
     const syncChildren: NavChild[] = [
       { id: "sync-dash", label: "Dashboard", target: { tab: "dashboard" } },
       { id: "sync-devices", label: "Devices", target: { tab: "devices" } },
@@ -478,6 +478,7 @@ export function AppShell() {
       { id: "sync-journal", label: "Sync journal", target: { tab: "journal" } },
       { id: "sync-policy", label: "Sync policy", target: { tab: "policy" } },
       { id: "sync-pack", label: "Data pack", target: { tab: "pack" } },
+      { id: "sync-reserve", label: "Code reserve", target: { tab: "reserve" } },
     ];
 
     // boarding (iEduPro navigation.php FACILITIES): houses → dorms → beds + reports

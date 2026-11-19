@@ -23,15 +23,20 @@
  *               and its flushes are refused (CI3 sync_table_management parity)
  *   Data pack — read-side sync (wave 40, own architecture): the offline pack
  *               of THIS workstation — sections cached, freshness, warm/purge
+ *   Code reserve — wave 41: this workstation's block of offline receipt
+ *               numbers — lease status, reserve a block, the no-duplicate
+ *               guarantees (per-browser, like the data pack)
  * ──────────────────────────────────────────────────────────────────────── */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
 import { apiGet, apiPost, warmPack } from "@/lib/api";
 import { packInfo, packPurge, type PackInfo } from "@/lib/offline-pack";
+import { leaseInfo, reserveReceiptBlock } from "@/lib/offline-codes";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -51,7 +56,7 @@ import {
 import {
   RefreshCcw, Laptop, ScanLine, TabletSmartphone, MonitorCheck, Users, ShieldCheck,
   ShieldOff, Plus, TriangleAlert, GitMerge, History, Activity, Smartphone, PencilLine,
-  CheckCircle2, XCircle, CloudOff, Gauge, Database, Trash2,
+  CheckCircle2, XCircle, CloudOff, Gauge, Database, Trash2, Receipt,
 } from "lucide-react";
 
 const OPS = "/ops/sync";
@@ -112,8 +117,13 @@ function healthTone(score: number) {
 
 const fmtKb = (b: number) => (b >= 1024 ? `${(b / 1024).toFixed(1)} KB` : `${b} B`);
 
+/* this workstation's sync device code (minted on first flush / reserve) */
+function readDeviceCode(): string | null {
+  try { return JSON.parse(localStorage.getItem("nyansapo.device") ?? "{}").code || null; } catch { return null; }
+}
+
 export function SyncCenter() {
-  const { currentSchoolId, session, navTarget, online, queue } = useStore();
+  const { currentSchoolId, session, navTarget, online, queue, lastSyncAt } = useStore();
   const schoolId = currentSchoolId ?? "";
   const perms = session?.permissions ?? [];
   const canManage = canAny(perms, ["sync.manage"]);
@@ -146,14 +156,28 @@ export function SyncCenter() {
   const [packBusy, setPackBusy] = useState(false);
   const [purgeOpen, setPurgeOpen] = useState(false);
 
+  // code reserve (wave 41 — offline receipt numbers): local browser state, never the server's
+  const [lease, setLease] = useState<ReturnType<typeof leaseInfo>>(null);
+  const [deviceCode, setDeviceCode] = useState<string | null>(null);
+  const [reserveSize, setReserveSize] = useState("50");
+  const [reserveBusy, setReserveBusy] = useState(false);
+
   useEffect(() => {
-    if (navTarget?.tab && ["dashboard", "devices", "conflicts", "journal", "policy", "pack"].includes(navTarget.tab)) setTab(navTarget.tab);
+    if (navTarget?.tab && ["dashboard", "devices", "conflicts", "journal", "policy", "pack", "reserve"].includes(navTarget.tab)) setTab(navTarget.tab);
   }, [navTarget]);
 
   // the pack lives in localStorage — introspection is a synchronous local read
   useEffect(() => {
     if (tab === "pack") setPack(packInfo());
   }, [tab, online]);
+
+  // code reserve (wave 41 — offline receipt numbers): local browser state like
+  // the pack. Refreshed on tab activation, on connectivity flips, and after a
+  // flush (lastSyncAt moves then, and the server tops a low reserve back up as
+  // part of a payment flush — see adoptLease in src/lib/api.ts)
+  useEffect(() => {
+    if (tab === "reserve") { setLease(leaseInfo()); setDeviceCode(readDeviceCode()); }
+  }, [tab, online, lastSyncAt]);
 
   const loadDashboard = useCallback(async () => {
     if (!schoolId) return;
@@ -268,16 +292,38 @@ export function SyncCenter() {
     } finally { setBusy(false); }
   }
 
+  /* wave 41: lease a block of real receipt numbers for THIS workstation — the
+     server's atomic counter jumps past the whole block, so the numbers belong to
+     this browser alone and offline collections print them at once */
+  async function doReserve() {
+    setReserveBusy(true);
+    try {
+      const granted = await reserveReceiptBlock(parseInt(reserveSize, 10) || 50);
+      if (!granted) {
+        toast({ title: "Could not reserve numbers", description: "Check connectivity — the block is granted by the server's atomic counter.", variant: "destructive" });
+        return;
+      }
+      const pad = (n: number) => String(n).padStart(5, "0");
+      toast({ title: `Receipt block reserved — RCP-${granted.year}-${pad(granted.from)} to RCP-${granted.year}-${pad(granted.to)}`, description: "These numbers belong to this workstation alone — offline collections print them at once and the server adopts them at flush." });
+    } finally {
+      setReserveBusy(false);
+      setLease(leaseInfo());
+      setDeviceCode(readDeviceCode()); // the server may have just registered this browser as a device
+    }
+  }
+
   if (loading) return <LoadingBlock label="Loading the sync empire's control room…" />;
   const kpi = dash?.kpi;
   const pending = conflicts?.pending ?? [];
   const resolved = conflicts?.resolved ?? [];
+  const leaseSize = lease ? lease.size ?? (lease.to - lease.from + 1) : 0;
+  const leaseUsed = lease ? Math.max(0, leaseSize - lease.remaining) : 0;
 
   return (
     <div className="space-y-4">
       <ModuleHeader
         title="Sync Center"
-        description="The offline empire's control room — devices, flush health, replay conflicts, the sync journal and this workstation's offline data pack. The supervisor of both sync directions: writes go up (flush), data comes down (pull)."
+        description="The offline empire's control room — devices, flush health, replay conflicts, the sync journal, this workstation's offline data pack and its receipt-number reserve. The supervisor of both sync directions: writes go up (flush), data comes down (pull)."
         actions={
           <div className="flex items-center gap-2">
             <Badge variant={online ? "secondary" : "destructive"} className={cn("gap-1", online ? "" : "animate-pulse")}>
@@ -309,6 +355,7 @@ export function SyncCenter() {
           <TabsTrigger value="journal" className="gap-1.5"><History className="size-4" /> Journal</TabsTrigger>
           <TabsTrigger value="policy" className="gap-1.5"><ShieldCheck className="size-4" /> Policy</TabsTrigger>
           <TabsTrigger value="pack" className="gap-1.5"><Database className="size-4" /> Data pack</TabsTrigger>
+          <TabsTrigger value="reserve" className="gap-1.5"><Receipt className="size-4" /> Code reserve</TabsTrigger>
         </TabsList>
 
         {/* ── Dashboard ── */}
@@ -714,6 +761,87 @@ export function SyncCenter() {
                 </Button>
                 {!online && <p className="text-xs text-muted-foreground self-center">Warming needs the network — reconnect and it happens automatically.</p>}
               </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ── Code reserve (wave 41 — offline receipt numbers, this browser only) ── */}
+        <TabsContent value="reserve" className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            Write-side reserve for this workstation only: a block of real receipt numbers leased from the server's atomic counter. While offline, the POS prints the final RCP-YYYY-NNNNN number on the parent's receipt at once instead of a provisional code. Per-browser, like the data pack.
+          </p>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2"><Receipt className="size-4 text-muted-foreground" /> Reserve status</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-sm"><span className="text-muted-foreground">Device </span><span className="font-mono font-medium">{deviceCode ?? "—"}</span></div>
+                {lease ? (
+                  <div className="flex items-center gap-1.5">
+                    <Badge variant="outline">Current year {lease.year}</Badge>
+                    <Badge className={lease.remaining >= 10 ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" : "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"}>{lease.remaining >= 10 ? "Healthy" : "Running low"}</Badge>
+                  </div>
+                ) : <Badge variant="outline">none reserved</Badge>}
+              </div>
+              {lease ? (
+                <div className="space-y-2.5 rounded-lg border p-3.5">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <div className="font-mono text-sm">
+                      RCP-{lease.year}-{String(lease.from).padStart(5, "0")} … RCP-{lease.year}-{String(lease.to).padStart(5, "0")}
+                    </div>
+                    <div className="text-xs text-muted-foreground" title={lease.tag}>granted {lease.tag.slice(0, 8)}…</div>
+                  </div>
+                  <Progress value={leaseSize ? Math.round((leaseUsed / leaseSize) * 100) : 0} />
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span>remaining {lease.remaining} of {leaseSize}</span>
+                    <span>{leaseUsed} used</span>
+                  </div>
+                </div>
+              ) : (
+                <EmptyState icon={<Receipt className="size-6" />} title="No reserve on this workstation" hint="Offline receipts fall back to provisional codes minted at sync — reserve a block below to print numbered receipts offline." />
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-2"><CardTitle className="text-base">Reserve control</CardTitle></CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="w-36 space-y-1.5">
+                  <Label>Block size</Label>
+                  <Select value={reserveSize} onValueChange={setReserveSize}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {[25, 50, 100, 200].map((n) => <SelectItem key={n} value={String(n)}>{n} numbers</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button size="sm" className="gap-1.5" disabled={reserveBusy || !online} onClick={doReserve}>
+                  <RefreshCcw className={cn("size-4", reserveBusy && "animate-spin")} /> Reserve numbers
+                </Button>
+                {!online && <p className="text-xs text-muted-foreground self-center">Reserving needs the network — reconnect first.</p>}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                The server's counter jumps past the whole block at grant time, so the numbers belong to this workstation alone. Reserving again replaces the current block — numbers left in the old one burn as harmless gaps, never duplicates.
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2"><ShieldCheck className="size-4 text-muted-foreground" /> Can receipt codes duplicate when toggling offline/online?</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2.5">
+              <ul className="space-y-2 text-sm">
+                <li className="flex gap-2"><CheckCircle2 className="size-4 shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" /><span>Every code is minted by the server from an atomic counter — two clerks, two devices or an offline flush can never draw the same number.</span></li>
+                <li className="flex gap-2"><CheckCircle2 className="size-4 shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" /><span>A reserve block is jumped past by the counter at grant time, so the numbers a device prints offline belong to it alone — no online receipt or other device can ever collide with them.</span></li>
+                <li className="flex gap-2"><CheckCircle2 className="size-4 shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" /><span>Every adopted code is backstopped by a unique constraint; a retried sync is recognised by its queue id and never applied twice.</span></li>
+              </ul>
+              <p className="text-xs text-muted-foreground border-t pt-2.5">
+                After any sync that includes payments, the server tops a low reserve back up automatically.
+              </p>
             </CardContent>
           </Card>
         </TabsContent>

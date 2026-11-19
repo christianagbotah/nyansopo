@@ -2,13 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { getUser } from "@/lib/session";
-import { nextInvoiceNo, nextReceiptNo, nextStudentIndex } from "@/lib/codes";
+import { nextInvoiceNo, nextReceiptNo, nextStudentIndex, leaseSeqBlock } from "@/lib/codes";
 import { sanitizeCollectItems, collectDailyItems, markPresentForDate, applyTransportUsage, TRANSPORT_USAGES, type TransportUsage } from "@/lib/daily-billing";
 import { sendAutomated, smsEventEnabled } from "@/lib/sms";
 
-// POST /api/sync — flush the offline action queue (idempotent per clientId).
+// POST /api/sync — the offline pipeline's write side.
 //
-// wave 39: the flush is now a supervised first-class citizen of the Sync Center
+// wave 39: the flush is a supervised first-class citizen of the Sync Center
 // (CI3 sync push endpoint parity):
 //   · the client identifies its device ({ code?, name, kind }); unknown codes
 //     auto-register (register_device parity) and the minted code is returned
@@ -18,6 +18,21 @@ import { sendAutomated, smsEventEnabled } from "@/lib/sms";
 //   · marks/attendance replays that collide with newer server state file a
 //     SyncConflict (both sides frozen) instead of silently clobbering
 //   · every flush lands in the sync journal (SyncEvent) with counts + duration
+//
+// wave 41 — collision-free codes across offline/online toggling (the project's
+// load-bearing guarantee). Every minting path is now backed by the database,
+// not by check-then-create:
+//   · payment/attendance rows carry the queue clientId as syncClientId
+//     (@unique) — a retry storm (request lands, response lost, client retries)
+//     trips P2002 and is recognised as "already synced", never double-charging
+//   · offline receipts may carry a PREASSIGNED receiptNo minted from the
+//     device's offline code reserve (CodeLease block). The flush validates
+//     ownership — the seq must fall inside a block granted to THIS device —
+//     before adopting it; a receiptNo unique violation (pathological tab race)
+//     falls back to a fresh server mint
+//   · a flush that included payment ops tops the device's reserve back up
+//     automatically when its runway is low, returning the new block so the
+//     client keeps printing real receipt numbers offline
 type FlushOp = { clientId: string; kind: string; payload: any; label?: string; queuedAt?: number };
 
 async function syncPolicy(schoolId: string): Promise<Record<string, boolean>> {
@@ -65,6 +80,94 @@ async function journalPull(
   }
 }
 
+/** Resolve (or self-register) the flushing/reserving device for a school.
+ *  Returns the SyncDevice row, or null when the device is REVOKED (caller
+ *  refuses) or the school is out of scope. */
+async function resolveDevice(
+  user: { fullName: string; schoolIds: string[] },
+  schoolId: string,
+  device: { code?: string; name?: string; kind?: string } | undefined,
+): Promise<{ row: { id: string; code: string; status: string; schoolId: string } | null; revoked?: string; minted?: boolean }> {
+  if (!schoolId || !user.schoolIds.includes(schoolId)) return { row: null };
+  if (device?.code) {
+    const found = await db.syncDevice.findFirst({ where: { code: device.code, schoolId } });
+    if (found && found.status === "REVOKED") return { row: null, revoked: found.code };
+    if (found) return { row: { id: found.id, code: found.code, status: found.status, schoolId } };
+  }
+  // first flush from this browser: register it (CI3 register_device parity)
+  const count = await db.syncDevice.count({ where: { schoolId } });
+  const code = `DEV-${String(count + 1).padStart(4, "0")}`;
+  const kind = ["POS_TABLET", "SCANNER", "FRONT_DESK", "BROWSER", "OTHER"].includes(device?.kind ?? "") ? device!.kind! : "BROWSER";
+  const created = await db.syncDevice.create({ data: { schoolId, code, name: device?.name ?? "Unnamed device", kind } });
+  await db.syncEvent.create({ data: { schoolId, deviceCode: code, userName: user.fullName, kind: "REGISTER", detail: `${created.name} (${kind}) self-registered on first flush` } });
+  return { row: { id: created.id, code, status: created.status, schoolId }, minted: true };
+}
+
+/** Which unique constraint tripped a P2002? (Prisma reports the target as a
+ *  string array or a field-keyed object depending on the engine.) */
+function p2002Target(e: unknown): string {
+  return JSON.stringify((e as { meta?: { target?: unknown } })?.meta?.target ?? "");
+}
+
+/** Reserve a block of real receipt numbers for one device (CodeLease) and
+ *  journal the grant. The atomic RCP counter jumps past the whole block, so
+ *  online minters and other devices' reserves can never overlap it. */
+async function grantLease(
+  schoolId: string,
+  deviceCode: string,
+  userName: string,
+  size: number,
+): Promise<{ tag: string; kind: "RCP"; year: number; from: number; to: number; size: number }> {
+  const year = new Date().getFullYear();
+  const { from, to } = await leaseSeqBlock("RCP", size, year);
+  const lease = await db.codeLease.create({ data: { schoolId, deviceCode, kind: "RCP", year, fromSeq: from, toSeq: to } });
+  try {
+    await db.syncEvent.create({
+      data: { schoolId, deviceCode, userName, kind: "LEASE", detail: `offline receipt reserve RCP-${year}-${String(from).padStart(5, "0")} … ${String(to).padStart(5, "0")} (${to - from + 1} numbers) granted` },
+    });
+  } catch { /* journaling is best-effort */ }
+  return { tag: lease.id, kind: "RCP", year, from, to, size: to - from + 1 };
+}
+
+/** Validate + adopt the receipt code an offline op preassigned from the
+ *  device's reserve block. Returns null unless the code is well-formed AND
+ *  falls inside a block granted to THIS device for THIS school — anything
+ *  else (forged, stale, cross-device) is ignored and the server mints. */
+async function resolvePreassignedReceipt(
+  op: FlushOp,
+  deviceCode: string | null,
+  schoolId: string,
+): Promise<{ receiptNo: string; seq: number; leaseId: string } | null> {
+  const raw = op.payload?.receiptNo;
+  if (typeof raw !== "string" || !deviceCode) return null;
+  const m = /^RCP-(\d{4})-(\d{5})$/.exec(raw);
+  if (!m) return null;
+  const year = Number(m[1]);
+  const seq = Number(m[2]);
+  const tag = typeof op.payload?.leaseTag === "string" ? op.payload.leaseTag : null;
+  if (!tag) return null;
+  const lease = await db.codeLease.findFirst({
+    where: { id: tag, schoolId, deviceCode, kind: "RCP", year, fromSeq: { lte: seq }, toSeq: { gte: seq } },
+  });
+  if (!lease) return null;
+  return { receiptNo: raw, seq, leaseId: lease.id };
+}
+
+/** Create a payment row with durable idempotency + receipt collision fallback:
+ *  P2002 on syncClientId = a racing re-flush already landed it; P2002 on
+ *  receiptNo (two tabs racing one reserve) = re-mint server-side and retry. */
+async function createPaymentSafely(data: Prisma.PaymentCreateInput): Promise<{ payment: any; alreadySynced: boolean }> {
+  try {
+    return { payment: await db.payment.create({ data }), alreadySynced: false };
+  } catch (e) {
+    const target = p2002Target(e);
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002" && target.includes("receiptNo")) {
+      return { payment: await db.payment.create({ data: { ...data, receiptNo: await nextReceiptNo() } }), alreadySynced: false };
+    }
+    throw e;
+  }
+}
+
 export async function POST(req: NextRequest) {
   const started = Date.now();
   const user = await getUser(req);
@@ -76,6 +179,7 @@ export async function POST(req: NextRequest) {
     schoolId?: string;
     sections?: number;
     durationMs?: number;
+    size?: number;
   };
 
   // ── read-side sync (wave 40): a device warmed its offline data pack — the
@@ -91,6 +195,30 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, deviceCode });
   }
 
+  // ── offline code reserve (wave 41): reserve a block of REAL receipt numbers
+  // for this device while it is online — a POS tablet going to a network-dead
+  // counter, sports day or field trip keeps printing final RCP codes. The
+  // counter jumps past the block atomically, so no online mint or other
+  // device's reserve can ever collide with the numbers it hands out offline.
+  if (body.action === "lease") {
+    const schoolId = body.schoolId && user.schoolIds.includes(body.schoolId) ? body.schoolId : user.schoolIds[0];
+    if (!schoolId) return NextResponse.json({ error: "No school scope" }, { status: 400 });
+    const size = Math.min(200, Math.max(10, Number(body.size ?? 50) || 50));
+    const resolved = await resolveDevice(user, schoolId, body.device);
+    if (resolved.revoked) {
+      return NextResponse.json({ error: `Device ${resolved.revoked} is revoked — reserve refused. Contact the administrator.`, deviceCode: resolved.revoked }, { status: 403 });
+    }
+    if (!resolved.row) return NextResponse.json({ error: "No school scope" }, { status: 400 });
+    const lease = await grantLease(schoolId, resolved.row.code, user.fullName, size);
+    try {
+      await db.syncDevice.update({
+        where: { id: resolved.row.id },
+        data: { lastSeenAt: new Date(), lastUser: user.fullName },
+      });
+    } catch { /* best-effort */ }
+    return NextResponse.json({ ok: true, deviceCode: resolved.row.code, lease });
+  }
+
   const ops = body.ops;
   if (!Array.isArray(ops)) return NextResponse.json({ error: "ops[] required" }, { status: 400 });
   if (!ops.length) return NextResponse.json({ results: [], syncedAt: new Date().toISOString() });
@@ -102,23 +230,12 @@ export async function POST(req: NextRequest) {
   let deviceCode: string | null = null;
   let deviceRow: { id: string; code: string; status: string; schoolId: string } | null = null;
   if (firstSchoolId && user.schoolIds.includes(firstSchoolId)) {
-    if (device?.code) {
-      const found = await db.syncDevice.findFirst({ where: { code: device.code, schoolId: firstSchoolId } });
-      if (found && found.status === "REVOKED") {
-        return NextResponse.json({ error: `Device ${found.code} is revoked — flush rejected. Contact the administrator.`, deviceCode: found.code }, { status: 403 });
-      }
-      deviceRow = found;
+    const resolved = await resolveDevice(user, firstSchoolId, device);
+    if (resolved.revoked) {
+      return NextResponse.json({ error: `Device ${resolved.revoked} is revoked — flush rejected. Contact the administrator.`, deviceCode: resolved.revoked }, { status: 403 });
     }
-    if (!deviceRow) {
-      // first flush from this browser: register it (CI3 register_device parity)
-      const count = await db.syncDevice.count({ where: { schoolId: firstSchoolId } });
-      const code = `DEV-${String(count + 1).padStart(4, "0")}`;
-      const kind = ["POS_TABLET", "SCANNER", "FRONT_DESK", "BROWSER", "OTHER"].includes(device?.kind ?? "") ? device!.kind! : "BROWSER";
-      const created = await db.syncDevice.create({ data: { schoolId: firstSchoolId, code, name: device?.name ?? "Unnamed device", kind } });
-      await db.syncEvent.create({ data: { schoolId: firstSchoolId, deviceCode: code, userName: user.fullName, kind: "REGISTER", detail: `${created.name} (${kind}) self-registered on first flush` } });
-      deviceRow = { id: created.id, code, status: created.status, schoolId: firstSchoolId };
-    }
-    deviceCode = deviceRow.code;
+    deviceRow = resolved.row;
+    deviceCode = deviceRow?.code ?? null;
   }
 
   // policies per school (a flush may span schools under one operator)
@@ -129,6 +246,7 @@ export async function POST(req: NextRequest) {
 
   const results: { clientId: string; ok: boolean; detail?: string }[] = [];
   let conflictsFiled = 0;
+  let paymentOpsOk = 0;
 
   for (const op of ops) {
     try {
@@ -140,8 +258,21 @@ export async function POST(req: NextRequest) {
       if (op.kind === "payment") {
         const { schoolId, invoiceId, amountCents, method, reference, paidAt, category, studentId } = op.payload;
         if (!user.schoolIds.includes(schoolId)) throw new Error("forbidden");
-        const dup = await db.payment.findFirst({ where: { reference: `SYNC:${op.clientId}` } });
+        // durable idempotency (wave 41): the clientId lives on the payment row
+        // as a UNIQUE syncClientId, so a re-flush — or two flushes racing
+        // after a lost response — can never double-charge. The legacy
+        // reference marker covers rows minted before wave 41.
+        const dup = await db.payment.findFirst({ where: { OR: [{ syncClientId: op.clientId }, { reference: `SYNC:${op.clientId}` }] } });
         if (dup) { results.push({ clientId: op.clientId, ok: true, detail: "already synced" }); continue; }
+
+        // preassigned receipt code from the device's offline reserve — adopted
+        // only when it provably belongs to this device's block
+        const preassigned = await resolvePreassignedReceipt(op, deviceCode, schoolId);
+        const receiptNo: string | null = preassigned?.receiptNo ?? null;
+        const syncFields = {
+          syncClientId: op.clientId,
+          reference: `SYNC:${op.clientId}`,
+        };
 
         if (category === "DAILY") {
           // per-item offline collection (wave 5): the POS dialog queues `items[]`
@@ -170,7 +301,12 @@ export async function POST(req: NextRequest) {
               receivedByName: `${user.fullName} (offline)`,
               performedByRole: user.role,
               paidAt: day, offlineQueued: true, syncedAt: new Date(),
+              syncClientId: op.clientId,
+              ...(receiptNo ? { receiptNo } : {}),
             });
+            if (preassigned) {
+              try { await db.codeLease.update({ where: { id: preassigned.leaseId }, data: { spentCount: { increment: 1 } } }); } catch { /* advisory */ }
+            }
             const present = op.payload.markPresent ? await markPresentForDate(db, { schoolId, studentId, date: day }) : null;
             // auto receipt SMS — same trigger as the counter, fires when the queue flushes
             // gated by the daily-fee payment event (evtDailyFeesPaid)
@@ -183,7 +319,8 @@ export async function POST(req: NextRequest) {
                 studentId, recipientName: learner.guardianName, recipientPhone: learner.guardianPhone, sentByName: `${user.fullName} (offline)`,
               });
             }
-            results.push({ clientId: op.clientId, ok: true, detail: `daily receipt ${collected.payment.receiptNo} (${collected.paymentType})${present ? ` · present ${present}` : ""}` });
+            results.push({ clientId: op.clientId, ok: true, detail: `daily receipt ${collected.payment.receiptNo} (${collected.payment.paymentType})${present ? ` · present ${present}` : ""}` });
+            paymentOpsOk++;
             continue;
           }
 
@@ -192,7 +329,17 @@ export async function POST(req: NextRequest) {
           const owedCents = owed._sum.amountCents ?? 0;
           if (owedCents <= 0) throw new Error("no daily balance");
           const amt = Math.max(0, Math.min(Number(amountCents), owedCents));
-          const payment = await db.payment.create({ data: { receiptNo: await nextReceiptNo(), studentId, category: "DAILY", schoolId, amountCents: amt, method, reference: `SYNC:${op.clientId}`, receivedByName: `${user.fullName} (offline)`, paidAt: paidAt ? new Date(paidAt) : new Date(), offlineQueued: true, syncedAt: new Date() } });
+          const created = await createPaymentSafely({
+            receiptNo: receiptNo ?? await nextReceiptNo(),
+            studentId, category: "DAILY", schoolId,
+            amountCents: amt, method, ...syncFields,
+            receivedByName: `${user.fullName} (offline)`,
+            paidAt: paidAt ? new Date(paidAt) : new Date(), offlineQueued: true, syncedAt: new Date(),
+          });
+          if (preassigned) {
+            try { await db.codeLease.update({ where: { id: preassigned.leaseId }, data: { spentCount: { increment: 1 } } }); } catch { /* advisory */ }
+          }
+          const payment = created.payment;
           let remaining = amt;
           const owedCharges = await db.dailyCharge.findMany({ where: { studentId, status: "OWED" }, orderBy: { date: "asc" } });
           for (const c of owedCharges) {
@@ -207,21 +354,34 @@ export async function POST(req: NextRequest) {
               remaining = 0;
             }
           }
-          results.push({ clientId: op.clientId, ok: true, detail: "daily receipt issued" });
+          results.push({ clientId: op.clientId, ok: true, detail: `daily receipt ${payment.receiptNo} issued` });
+          paymentOpsOk++;
           continue;
         }
 
         const inv = await db.invoice.findUnique({ where: { id: invoiceId } });
         if (!inv) throw new Error("invoice missing");
         const amt = Math.max(0, Math.min(Number(amountCents), inv.totalCents - inv.discountCents - inv.paidCents));
-        await db.payment.create({ data: { receiptNo: await nextReceiptNo(), invoiceId, studentId: inv.studentId, schoolId, amountCents: amt, method, reference: `SYNC:${op.clientId}`, receivedByName: `${user.fullName} (offline)`, paidAt: paidAt ? new Date(paidAt) : new Date(), offlineQueued: true, syncedAt: new Date() } });
+        const created = await createPaymentSafely({
+          receiptNo: receiptNo ?? await nextReceiptNo(),
+          invoiceId, studentId: inv.studentId, schoolId,
+          amountCents: amt, method, ...syncFields,
+          receivedByName: `${user.fullName} (offline)`,
+          paidAt: paidAt ? new Date(paidAt) : new Date(), offlineQueued: true, syncedAt: new Date(),
+        });
+        if (preassigned) {
+          try { await db.codeLease.update({ where: { id: preassigned.leaseId }, data: { spentCount: { increment: 1 } } }); } catch { /* advisory */ }
+        }
         const paid = inv.paidCents + amt;
         await db.invoice.update({ where: { id: invoiceId }, data: { paidCents: paid, status: paid >= inv.totalCents - inv.discountCents ? "PAID" : "PARTIAL" } });
-        results.push({ clientId: op.clientId, ok: true, detail: `receipt issued` });
+        results.push({ clientId: op.clientId, ok: true, detail: `receipt ${created.payment.receiptNo} issued` });
+        paymentOpsOk++;
       } else if (op.kind === "attendance") {
         const { schoolId, classroomId, date, records } = op.payload;
         if (!user.schoolIds.includes(schoolId)) throw new Error("forbidden");
-        const dup = await db.attendanceSession.findFirst({ where: { classroomId, date: new Date(date), takenByName: { contains: `SYNC:${op.clientId}` } } });
+        // durable idempotency: syncClientId on the session (wave 41) + the
+        // legacy takenByName marker for pre-wave-41 rows
+        const dup = await db.attendanceSession.findFirst({ where: { OR: [{ syncClientId: op.clientId }, { takenByName: { contains: `SYNC:${op.clientId}` } }] } });
         if (dup) { results.push({ clientId: op.clientId, ok: true, detail: "already synced" }); continue; }
         // wave 39 conflict gate: a session for this class + date was already
         // taken online (or by another flush) after this op was queued — replaying
@@ -248,7 +408,7 @@ export async function POST(req: NextRequest) {
           continue;
         }
         const term = await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId } } });
-        const session = await db.attendanceSession.create({ data: { classroomId, schoolId, termId: term!.id, date: new Date(date), takenByName: `${user.fullName} (SYNC:${op.clientId})` } });
+        const session = await db.attendanceSession.create({ data: { classroomId, schoolId, termId: term!.id, date: new Date(date), takenByName: `${user.fullName} (SYNC:${op.clientId})`, syncClientId: op.clientId } });
         for (const r of records) await db.attendanceRecord.create({ data: { sessionId: session.id, studentId: r.studentId, status: r.status, excusedReason: r.excusedReason ?? null, markedOffline: true } });
         results.push({ clientId: op.clientId, ok: true, detail: `${records.length} marked` });
       } else if (op.kind === "marks") {
@@ -317,6 +477,12 @@ export async function POST(req: NextRequest) {
         throw new Error(`unknown op kind ${op.kind}`);
       }
     } catch (e: any) {
+      // P2002 racing a concurrent re-flush on the durable idempotency column:
+      // the row already exists — the op IS synced, not failed
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002" && p2002Target(e).includes("syncClientId")) {
+        results.push({ clientId: op.clientId, ok: true, detail: "already synced" });
+        continue;
+      }
       results.push({ clientId: op.clientId, ok: false, detail: e?.message ?? "failed" });
     }
   }
@@ -350,5 +516,22 @@ export async function POST(req: NextRequest) {
     }
   } catch { /* journaling is best-effort */ }
 
-  return NextResponse.json({ results, syncedAt: new Date().toISOString(), deviceCode, conflicts: conflictsFiled });
+  // ── reserve replenishment (wave 41): a device that just flushed payment ops
+  // is a device that collects while offline — top its receipt reserve back up
+  // when the runway is low so the next blackout still prints real codes. The
+  // new block rides on the flush response; the client adopts it locally.
+  let lease: { tag: string; kind: "RCP"; year: number; from: number; to: number; size: number } | undefined;
+  if (deviceRow && paymentOpsOk > 0 && firstSchoolId && user.schoolIds.includes(firstSchoolId)) {
+    try {
+      const year = new Date().getFullYear();
+      const active = await db.codeLease.findFirst({
+        where: { schoolId: firstSchoolId, deviceCode: deviceRow.code, kind: "RCP", year },
+        orderBy: { grantedAt: "desc" },
+      });
+      const remaining = active ? active.toSeq - active.fromSeq + 1 - active.spentCount : 0;
+      if (!active || remaining < 10) lease = await grantLease(firstSchoolId, deviceRow.code, user.fullName, 50);
+    } catch { /* replenishment is best-effort */ }
+  }
+
+  return NextResponse.json({ results, syncedAt: new Date().toISOString(), deviceCode, conflicts: conflictsFiled, ...(lease ? { lease } : {}) });
 }

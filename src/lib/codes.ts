@@ -22,6 +22,16 @@
 //     the op's clientId — so a re-flush never duplicates a receipt.
 //   • Numbers restart at 0001 each calendar year (new scope per year).
 //
+//   • RECEIPT RESERVE (wave 41): a POS device that must print receipts while
+//     offline can't wait for a flush-time mint — so while online it RESERVES
+//     a block of real receipt numbers (leaseSeqBlock). The counter jumps past
+//     the whole block atomically at grant time: online minters and other
+//     devices' blocks are structurally disjoint from it. Offline collections
+//     spend from the block and print the final RCP code at once; the flush
+//     validates lease ownership before adopting the preassigned number, with
+//     the receiptNo @unique constraint + server re-mint as the final backstop.
+//     Abandoned block numbers are harmless gaps — never duplicates.
+//
 // Full design + verification: docs/sync-safe-code-generation.md
 // (23-check proof suite: scripts/smoke-codes.ts)
 // ─────────────────────────────────────────────────────────────
@@ -75,6 +85,36 @@ export async function nextSeq(kind: "INV" | "RCP" | "NYIDX", year = currentYear(
     data: { next: { increment: 1 } },
   });
   return row.next;
+}
+
+/** Atomically reserve a BLOCK of `size` sequence numbers for `kind` in
+ *  `year` (a device's offline receipt reserve). The counter jumps past the
+ *  whole block in one atomic increment, so every number in [from, to] is
+ *  exclusive to this grant: single minters and other devices' blocks can
+ *  never overlap it. Granting concurrently with single mints is safe —
+ *  both advance the same counter row atomically and receive disjoint
+ *  ranges. */
+export async function leaseSeqBlock(
+  kind: "INV" | "RCP" | "NYIDX",
+  size: number,
+  year = currentYear(),
+): Promise<{ from: number; to: number }> {
+  const scope = `${kind}:${year}`;
+  const safeSize = Math.max(1, Math.floor(size));
+  const seed = await seedValue(kind, year);
+  // First allocation: create the counter past the whole block in one shot.
+  try {
+    await db.codeCounter.create({ data: { scope, next: seed + safeSize } });
+    return { from: seed + 1, to: seed + safeSize };
+  } catch (e) {
+    if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002")) throw e;
+  }
+  // Counter exists: atomic multi-increment — the block is [next-size+1, next].
+  const row = await db.codeCounter.update({
+    where: { scope },
+    data: { next: { increment: safeSize } },
+  });
+  return { from: row.next - safeSize + 1, to: row.next };
 }
 
 /** INV-YYYY-NNNN — invoice number (global per calendar year). */

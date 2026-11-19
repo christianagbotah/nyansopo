@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useStore } from "@/lib/store";
 import { apiGet, apiPost, apiPostQueueable } from "@/lib/api";
+import { nextOfflineReceiptNo } from "@/lib/offline-codes";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -333,8 +334,13 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
     setBusy(true);
     let firstReceipt: any = null;
     let queued = false;
+    // wave 41: the offline reserve lets the counter print a REAL receipt number
+    // at once — take one ONLY when actually offline (an online collect must never
+    // burn a reserved number; an abandoned take is a harmless gap, never a duplicate)
+    let leaseTake: ReturnType<typeof nextOfflineReceiptNo> = null;
     try {
       if (items.length) {
+        leaseTake = useStore.getState().online === false ? nextOfflineReceiptNo() : null;
         const res = await apiPostQueueable<any>(
           `/api/school/${S}/ops/daily`, "payment",
           {
@@ -346,10 +352,18 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
             markPresent, date,
           },
           `Daily fees ${fmt(itemTotal)} — ${info.student.name}`,
-          (p, clientId) => ({ ...p, category: "DAILY", schoolId: S, studentId: info.student.id, amountCents: itemTotal, method: invMethod, paidAt: date, clientId }),
+          (p, clientId) => ({
+            ...p, category: "DAILY", schoolId: S, studentId: info.student.id,
+            amountCents: itemTotal, method: invMethod, paidAt: date, clientId,
+            // preassigned offline number — rides ONLY the queued op payload, never the online one
+            ...(leaseTake ? { receiptNo: leaseTake.code, leaseTag: leaseTake.tag, leaseSeq: leaseTake.seq } : {}),
+          }),
         );
-        if (res.queued) queued = true;
-        else firstReceipt = res.data?.receipt ?? { ...res.data?.payment, student: info.student.name };
+        if (res.queued) {
+          queued = true;
+          // the parent walks away with the numbered receipt printed NOW
+          if (leaseTake) firstReceipt = { receiptNo: leaseTake.code, amountCents: itemTotal, method: invMethod, paidAt: date, student: info.student.name, offline: true };
+        } else firstReceipt = res.data?.receipt ?? { ...res.data?.payment, student: info.student.name };
       } else if (usage || markPresent) {
         // no money moving — record the boarding direction / presence only
         await apiPost(`/api/school/${S}/ops/daily`, {
@@ -364,11 +378,14 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
         });
         firstReceipt = firstReceipt ?? r?.receipt ?? r?.payment;
       }
-      if (queued) toast({ title: "Queued offline", description: "Receipt will be issued when you reconnect." });
-      else if (editing) toast({ title: "Collection re-taken", description: `${editing.receiptNo} was voided — ${fmt(grandTotal)} re-collected as a new receipt.` });
+      if (queued) {
+        if (leaseTake) toast({ title: "Receipt issued offline", description: `Receipt ${leaseTake.code} recorded — it will sync when you reconnect.` });
+        else toast({ title: "Queued offline", description: "Receipt will be issued when you reconnect — reserve a code block in the Sync Center to print numbered receipts offline." });
+      } else if (editing) toast({ title: "Collection re-taken", description: `${editing.receiptNo} was voided — ${fmt(grandTotal)} re-collected as a new receipt.` });
       else toast({ title: "Collection recorded", description: `${fmt(grandTotal)} from ${info.student.name}.` });
       setEditing(null);
-      if (firstReceipt && autoReceipt && !queued) setReceipt(firstReceipt);
+      // wave 41: the offline-synthesized receipt (real reserved number) shows too
+      if (firstReceipt && autoReceipt && (!queued || firstReceipt.offline)) setReceipt(firstReceipt);
       // remove any held basket for this learner
       persistHeld(held.filter((h) => h.studentId !== info.student.id));
       onDone?.();

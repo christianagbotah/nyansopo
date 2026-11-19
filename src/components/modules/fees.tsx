@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
 import { apiGet, apiPost, apiPostQueueable } from "@/lib/api";
+import { nextOfflineReceiptNo } from "@/lib/offline-codes";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -907,17 +908,27 @@ function PayDialog({ open, invoice, roster, invoices, onOpenChange, onDone, onCr
   const canSubmit = !!selectedInvoice && !busy && amountCents > 0 && (method !== "SPLIT" || splitBalanced) && !chequeMissing;
 
   /* one record-payment call — offline it enqueues on the sync queue */
-  async function recordOne(payMethod: string, cents: number): Promise<{ queued: boolean; receipt: any; credit: number }> {
+  async function recordOne(payMethod: string, cents: number): Promise<{ queued: boolean; receipt: any; credit: number; code?: string }> {
     const ref = payMethod.startsWith("MOMO") ? txnId.trim() || undefined : receiptNo.trim() || undefined;
     const bank = payMethod === "CHEQUE" ? bankName.trim() || undefined : undefined;
     const chq = payMethod === "CHEQUE" ? chequeNo.trim() || undefined : undefined;
     const payload = { action: "record-payment", invoiceId: selectedInvoice!.id, amountCents: cents, method: payMethod, reference: ref, bankName: bank, chequeNo: chq };
+    // wave 41: take the next REAL receipt number from this workstation's reserve —
+    // ONLY when actually offline (an online payment must never burn a reserved
+    // number; an abandoned take is a harmless gap, never a duplicate). Aliased
+    // `leaseCode` so it never shadows the operator-typed `receiptNo` reference above.
+    const leaseCode = useStore.getState().online === false ? nextOfflineReceiptNo() : null;
     const res = await apiPostQueueable<any>(
       `/api/school/${currentSchoolId}/fees`, "payment", payload,
       `Payment ${fmtCedi(cents)} — ${studentName ?? "learner"}`,
-      (p, clientId) => ({ ...p, schoolId: currentSchoolId, amountCents: cents, method: payMethod, reference: ref, bankName: bank, chequeNo: chq, paidAt: new Date().toISOString(), invoiceId: selectedInvoice!.id, payloadClientId: clientId, clientId })
+      (p, clientId) => ({
+        ...p, schoolId: currentSchoolId, amountCents: cents, method: payMethod, reference: ref, bankName: bank, chequeNo: chq,
+        paidAt: new Date().toISOString(), invoiceId: selectedInvoice!.id, payloadClientId: clientId, clientId,
+        // preassigned offline number — rides ONLY the queued op payload, never the online one
+        ...(leaseCode ? { receiptNo: leaseCode.code, leaseTag: leaseCode.tag, leaseSeq: leaseCode.seq } : {}),
+      })
     );
-    if (res.queued) return { queued: true, receipt: null, credit: 0 };
+    if (res.queued) return { queued: true, receipt: null, credit: 0, code: leaseCode?.code };
     return { queued: false, receipt: res.data?.receipt ?? res.data?.payment ?? null, credit: res.data?.creditCreated ?? 0 };
   }
 
@@ -929,16 +940,18 @@ function PayDialog({ open, invoice, roster, invoices, onOpenChange, onDone, onCr
         const legs: [string, number][] = [[splitMethodA, splitACents], [splitMethodB, splitBCents]];
         let queued = 0, ok = 0, okCents = 0, credit = 0;
         let lastReceipt: any = null;
+        const queuedCodes: string[] = []; // wave 41: each offline leg preassigns its own real receipt number
         const errors: string[] = [];
         for (const [m, c] of legs) {
           try {
             const r = await recordOne(m, c);
-            if (r.queued) queued++;
+            if (r.queued) { queued++; if (r.code) queuedCodes.push(r.code); }
             else { ok++; okCents += c; if (r.receipt) lastReceipt = r.receipt; credit += r.credit; }
           } catch (e: any) { errors.push(`${PAYMENT_LABELS[m] ?? m}: ${e.message}`); }
         }
         if (queued === 2) {
-          toast({ title: "Queued offline", description: "Both legs of the split are queued — receipts will be issued automatically when you reconnect." });
+          if (queuedCodes.length === 2) toast({ title: "Receipts issued offline", description: `Receipts ${queuedCodes[0]} and ${queuedCodes[1]} recorded — they will sync when you reconnect.` });
+          else toast({ title: "Queued offline", description: "Both legs of the split are queued — receipts will be issued automatically when you reconnect." });
           onDone(null);
         } else if (ok === 2) {
           toast({ title: "Split payment recorded", description: `${fmtCedi(amountCents)} collected in two receipts.` });
@@ -956,8 +969,15 @@ function PayDialog({ open, invoice, roster, invoices, onOpenChange, onDone, onCr
       } else {
         const r = await recordOne(method, amountCents);
         if (r.queued) {
-          toast({ title: "Queued offline", description: "Receipt will be issued automatically when you reconnect." });
-          onDone(null);
+          if (r.code) {
+            // wave 41: the reserved number makes the receipt final NOW — print it;
+            // the queued op carries it and the server adopts it at flush
+            toast({ title: "Receipt issued offline", description: `Receipt ${r.code} recorded — it will sync when you reconnect.` });
+            onDone(printReceipt ? { amountCents, student: studentName ?? "learner", receiptNo: r.code, method, paidAt: new Date().toISOString(), offline: true } : null);
+          } else {
+            toast({ title: "Queued offline", description: "Receipt will be issued automatically when you reconnect — reserve a code block in the Sync Center to print numbered receipts offline." });
+            onDone(null);
+          }
         } else {
           if (r.credit > 0) toast({ title: "Payment received", description: `Overpayment of ${fmtCedi(r.credit)} banked as prepaid credit — it will be applied to future bills.` });
           onDone(printReceipt ? r.receipt : null);
