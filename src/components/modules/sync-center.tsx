@@ -217,6 +217,25 @@ export function SyncCenter() {
 
   const timelineData = useMemo(() => (dash?.timeline ?? []).map((t) => ({ ...t, date: t.date.slice(5) })), [dash]);
 
+  // 14-day window roll-up — fills the space under the flush chart with the
+  // numbers a supervisor actually asks for (totals, reliability, peak day).
+  const windowStats = useMemo(() => {
+    const t = dash?.timeline ?? [];
+    const sum = (k: "synced" | "failed" | "conflicts" | "flushes") => t.reduce((s, d) => s + (d[k] ?? 0), 0);
+    const synced = sum("synced");
+    const failed = sum("failed");
+    const busiest = t.reduce<(typeof t)[number] | null>((b, d) => (!b || d.synced > b.synced ? d : b), null);
+    return {
+      days: t.length,
+      flushes: sum("flushes"),
+      synced,
+      failed,
+      conflicts: sum("conflicts"),
+      reliability: synced + failed > 0 ? Math.round((synced / (synced + failed)) * 100) : null,
+      busiest: busiest && busiest.synced > 0 ? busiest : null,
+    };
+  }, [dash]);
+
   async function saveDevice() {
     if (!devDlg || !schoolId) return;
     setBusy(true);
@@ -370,7 +389,7 @@ export function SyncCenter() {
               <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><Activity className="size-4 text-muted-foreground" /> Flushes — last 14 days</CardTitle></CardHeader>
               <CardContent>
                 {timelineData.length ? (
-                  <div className="h-56">
+                  <div className="h-64">
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={timelineData} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
@@ -384,12 +403,47 @@ export function SyncCenter() {
                     </ResponsiveContainer>
                   </div>
                 ) : <EmptyState icon={<RefreshCcw className="size-5" />} title="No flushes in the last 14 days" hint="Queued offline actions land here the moment they are synced." />}
+                {timelineData.length > 0 && (
+                  <div className="mt-3 border-t pt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+                    <div className="rounded-lg border p-2">
+                      <div className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"><RefreshCcw className="size-3" /> Flushes</div>
+                      <div className="text-lg font-semibold leading-tight mt-0.5">{windowStats.flushes}</div>
+                      <div className="text-[10px] text-muted-foreground">14-day window</div>
+                    </div>
+                    <div className="rounded-lg border p-2">
+                      <div className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"><CheckCircle2 className="size-3 text-emerald-600 dark:text-emerald-400" /> Ops synced</div>
+                      <div className="text-lg font-semibold leading-tight mt-0.5">{windowStats.synced}</div>
+                      <div className="text-[10px] text-muted-foreground">14-day total</div>
+                    </div>
+                    <div className="rounded-lg border p-2">
+                      <div className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"><XCircle className={cn("size-3", windowStats.failed > 0 ? "text-red-600 dark:text-red-400" : "text-muted-foreground/50")} /> Ops failed</div>
+                      <div className={cn("text-lg font-semibold leading-tight mt-0.5", windowStats.failed > 0 && "text-red-700 dark:text-red-400")}>{windowStats.failed}</div>
+                      <div className="text-[10px] text-muted-foreground">14-day total</div>
+                    </div>
+                    <div className="rounded-lg border p-2">
+                      <div className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"><TriangleAlert className={cn("size-3", windowStats.conflicts > 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground/50")} /> Conflicts</div>
+                      <div className={cn("text-lg font-semibold leading-tight mt-0.5", windowStats.conflicts > 0 && "text-amber-700 dark:text-amber-400")}>{windowStats.conflicts}</div>
+                      <div className="text-[10px] text-muted-foreground">14-day total</div>
+                    </div>
+                    <div className="rounded-lg border p-2">
+                      <div className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"><Gauge className="size-3" /> Reliability</div>
+                      <div className="text-lg font-semibold leading-tight mt-0.5">{windowStats.reliability === null ? "—" : `${windowStats.reliability}%`}</div>
+                      <div className="text-[10px] text-muted-foreground">synced ÷ all ops</div>
+                    </div>
+                    <div className="rounded-lg border p-2">
+                      <div className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"><Activity className="size-3" /> Busiest day</div>
+                      <div className="text-lg font-semibold leading-tight mt-0.5">{windowStats.busiest ? windowStats.busiest.synced : "—"}</div>
+                      <div className="text-[10px] text-muted-foreground">{windowStats.busiest ? `${windowStats.busiest.date.slice(5)} · ops synced` : "no flush activity"}</div>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><Laptop className="size-4 text-muted-foreground" /> Devices at a glance</CardTitle></CardHeader>
               <CardContent className="space-y-2">
+                <div className="space-y-2 max-h-96 overflow-y-auto nice-scroll -mx-1 px-1">
                 {(dash?.devices ?? []).length ? dash!.devices.map((d) => {
                   const meta = KIND_META[d.kind] ?? KIND_META.OTHER;
                   return (
@@ -408,6 +462,7 @@ export function SyncCenter() {
                     </div>
                   );
                 }) : <EmptyState icon={<Laptop className="size-5" />} title="No devices registered" hint="Devices register themselves on their first offline flush — or register one ahead of time from the Devices tab." />}
+                </div>
                 <div className="pt-1 text-xs text-muted-foreground border-t">
                   Last flush {dash?.kpi.lastFlushAt ? `${fmtAgo(dash.kpi.lastFlushAt)} by ${dash.kpi.lastFlushUser}` : "— none yet"}
                 </div>
