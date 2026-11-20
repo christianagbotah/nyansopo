@@ -69,6 +69,33 @@ const FEE_TILE_GRADIENT: Record<string, string> = {
   OTHER: "bg-gradient-to-br from-amber-500 to-amber-700",
 };
 
+/* CI3 updateBalancePreview parity (mark_attendance.php JS): projects the
+   wallet state AFTER this register is saved — today's charge lands first
+   (prepaid absorbs up to the rate, the remainder raises arrears), then the
+   amount typed settles arrears FIFO with any excess banking as prepaid.
+   The badge pair on each item re-renders live as the amount / status /
+   opt-in toggle change, exactly like the legacy #prepaid_{type}/{arrears}
+   spans updated by jQuery. */
+export function projectItemBalances(
+  it: AttData["fees"][number]["items"][number],
+  opts: { chargeable: boolean; optionalOn: boolean; paidNowCents: number },
+): { prepaid: number; arrears: number } {
+  let prepaid = it.prepaidCents;
+  let arrears = it.arrearsCents;
+  const chargeApplies =
+    opts.chargeable && !it.optedOut && (!it.optional || opts.optionalOn) && !it.chargedToday && !it.weeklyBilled;
+  if (chargeApplies) {
+    if (prepaid >= it.rateCents) prepaid -= it.rateCents;
+    else { arrears += it.rateCents - prepaid; prepaid = 0; }
+  }
+  const paid = opts.paidNowCents;
+  if (paid > 0) {
+    if (paid >= arrears) { prepaid += paid - arrears; arrears = 0; }
+    else arrears -= paid;
+  }
+  return { prepaid, arrears };
+}
+
 export function Attendance() {
   const { currentSchoolId, online, navTarget, session } = useStore();
   const [tab, setTab] = useState("register");
@@ -467,6 +494,17 @@ export function Attendance() {
                                   }
                                   const optionalOn = it.optional ? !!feeToggles[key] : true;
                                   const amt = feeAmts[key] ?? "";
+                                  /* live projected wallet state (CI3 updateBalancePreview):
+                                     today's charge lands, then the typed amount settles arrears
+                                     FIFO with excess banking as prepaid — re-renders on every
+                                     keystroke, status flip and opt-in toggle */
+                                  const chargeable = ["PRESENT", "LATE"].includes(marks[s.id] ?? "ABSENT");
+                                  const proj = projectItemBalances(it, {
+                                    chargeable,
+                                    optionalOn,
+                                    paidNowCents: Math.round(parseFloat(amt || "0") * 100) || 0,
+                                  });
+                                  const projLive = proj.prepaid !== it.prepaidCents || proj.arrears !== it.arrearsCents;
                                   return (
                                     <div key={it.serviceId} className="space-y-0.5">
                                       <div className="flex items-center gap-1.5">
@@ -499,13 +537,32 @@ export function Attendance() {
                                         )}
                                       </div>
                                       {/* CI3 prepaid / arrears badge pair per fee module
-                                          (mark_attendance #prepaid_{type}_{id} / #arrears_{type}_{id}) */}
+                                          (mark_attendance #prepaid_{type}_{id} / #arrears_{type}_{id}) —
+                                          values are the PROJECTED wallet state after save (live) */}
                                       <div className="flex items-center gap-1">
-                                        <span className={cn("inline-flex items-center gap-0.5 rounded px-1 py-px text-[9px] font-semibold tabular-nums", it.prepaidCents > 0 ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" : "bg-muted text-muted-foreground")}>
-                                          <PlusCircle className="size-2.5" /> Prepaid {fmtCedi(it.prepaidCents, { compact: true })}
+                                        <span
+                                          className={cn(
+                                            "inline-flex items-center gap-0.5 rounded px-1 py-px text-[9px] font-semibold tabular-nums transition-colors",
+                                            proj.prepaid > 0
+                                              ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+                                              : "bg-muted text-muted-foreground",
+                                            projLive && "ring-1 ring-emerald-400/60",
+                                          )}
+                                          title={projLive ? `now ${fmtCedi(it.prepaidCents)} → ${fmtCedi(proj.prepaid)} after save` : `Prepaid ${fmtCedi(it.prepaidCents)}`}
+                                        >
+                                          <PlusCircle className="size-2.5" /> Prepaid {fmtCedi(proj.prepaid, { compact: true })}
                                         </span>
-                                        <span className={cn("inline-flex items-center gap-0.5 rounded px-1 py-px text-[9px] font-semibold tabular-nums", it.arrearsCents > 0 ? "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300" : "bg-muted text-muted-foreground")}>
-                                          <CircleAlert className="size-2.5" /> Arrears {fmtCedi(it.arrearsCents, { compact: true })}
+                                        <span
+                                          className={cn(
+                                            "inline-flex items-center gap-0.5 rounded px-1 py-px text-[9px] font-semibold tabular-nums transition-colors",
+                                            proj.arrears > 0
+                                              ? "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300"
+                                              : "bg-muted text-muted-foreground",
+                                            projLive && "ring-1 ring-red-400/60",
+                                          )}
+                                          title={projLive ? `now ${fmtCedi(it.arrearsCents)} → ${fmtCedi(proj.arrears)} after save` : `Arrears ${fmtCedi(it.arrearsCents)}`}
+                                        >
+                                          <CircleAlert className="size-2.5" /> Arrears {fmtCedi(proj.arrears, { compact: true })}
                                         </span>
                                       </div>
                                     </div>
