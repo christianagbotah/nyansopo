@@ -170,7 +170,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const dateStr = q("date") ?? new Date().toISOString().slice(0, 10);
   const date = new Date(dateStr); // date-only strings parse as UTC midnight, matching session writes
   const classrooms =sortClassrooms(await db.classroom.findMany({ where: { schoolId }, }));
-  if (!classId) return NextResponse.json({ classrooms: classrooms.map((c) => ({ id: c.id, name: c.name, grade: c.gradeLevel, stage: c.stageLabel })), session: null, date: dateStr, termId: null, students: [] });
+  /* CI3 mark_attendance fee-module gate: the fee dashboard + per-item inputs
+     render only in classroom / hybrid collection modes — cashier mode hides
+     all fee UI on the register (collections happen at the cashier console). */
+  const modeRows = await db.opsSetting.findMany({ where: { schoolId, key: "DAILY_COLLECTION_MODE" } });
+  const collectionMode = (modeRows[0]?.value ?? "HYBRID") as string;
+  if (!classId) return NextResponse.json({ classrooms: classrooms.map((c) => ({ id: c.id, name: c.name, grade: c.gradeLevel, stage: c.stageLabel })), session: null, date: dateStr, termId: null, students: [], feeSettings: { collectionMode } });
 
   const term = await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId } } });
   const session = await db.attendanceSession.findFirst({ where: { classroomId: classId, date }, include: { records: { include: { student: true } } } });
@@ -200,7 +205,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
      daily services — the register UI gates the inputs on daily.collect. */
   let fees: null | {
     studentId: string;
-    items: { serviceId: string; name: string; category: string; rateCents: number; arrearsCents: number; prepaidCents: number; optional: boolean; optedOut: boolean; optedIn: boolean; weekly: boolean; weeklyBilled: boolean; chargedToday: boolean }[];
+    items: { serviceId: string; name: string; category: string; rateCents: number; arrearsCents: number; prepaidCents: number; paidTodayCents: number; optional: boolean; optedOut: boolean; optedIn: boolean; weekly: boolean; weeklyBilled: boolean; chargedToday: boolean }[];
     transport: { routeName: string; stopName: string | null; onewayCents: number } | null;
   }[] = null;
   if (canAny(auth.user.permissions, ["daily.view"])) {
@@ -218,6 +223,18 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const weekCharges = await db.dailyCharge.findMany({ where: { studentId: { in: ids }, date: { gte: weekStart, lte: weekEnd } }, include: { service: true } });
     const todayCharges = weekCharges.filter((c) => c.date >= day && c.date <= dayEnd);
     const balances = await db.serviceBalance.findMany({ where: { studentId: { in: ids } } });
+    /* per-item money already received today (CI3 fee-dashboard "banked today"):
+       charges settled by payments made today (any arrears vintage) PLUS today's
+       banked advances — seeds the register's fee-module cards with the day's
+       takings so far. */
+    const paidTodayCharges = await db.dailyCharge.findMany({
+      where: { studentId: { in: ids }, status: "PAID", payment: { paidAt: { gte: day, lte: dayEnd } } },
+      select: { studentId: true, serviceId: true, amountCents: true },
+    });
+    const advancesToday = await db.walletTxn.findMany({
+      where: { studentId: { in: ids }, wallet: "ITEM", kind: "TOPUP", serviceId: { not: null }, at: { gte: day, lte: dayEnd } },
+      select: { studentId: true, serviceId: true, amountCents: true },
+    });
     const fares = await Promise.all(ids.map((sid) => resolveTransportFare(db, sid)));
 
     fees = ids.map((sid, i) => {
@@ -237,6 +254,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
             rateCents: effectivePrice(svc, e, classRate),
             arrearsCents: owedRows.filter((c) => c.studentId === sid && c.serviceId === svc.id).reduce((a, c) => a + c.amountCents, 0),
             prepaidCents: balances.find((b) => b.studentId === sid && b.serviceId === svc.id)?.prepaidCents ?? 0,
+            paidTodayCents:
+              paidTodayCharges.filter((c) => c.studentId === sid && c.serviceId === svc.id).reduce((a, c) => a + c.amountCents, 0)
+              + advancesToday.filter((t) => t.studentId === sid && t.serviceId === svc.id).reduce((a, t) => a + t.amountCents, 0),
             optional: svc.optInDaily,
             optedOut,
             optedIn,
@@ -259,6 +279,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     session: session ? { id: session.id, takenByName: session.takenByName } : null,
     date: dateStr, termId: session?.termId ?? term?.id ?? null,
     students,
+    feeSettings: { collectionMode },
     ...(fees ? { fees } : {}),
   });
 }

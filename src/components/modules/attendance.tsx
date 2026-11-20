@@ -11,26 +11,32 @@ import { DateField } from "@/components/date-field";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { ModuleHeader, LoadingBlock, EmptyState } from "@/components/ui-helpers";
+import { ReceiptDialog, type ReceiptData } from "@/components/receipts";
 import { fmtDateShort, initials, avatarColor, fmtCedi } from "@/lib/format";
 import { canAny } from "@/lib/rbac";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { CalendarCheck, ChevronLeft, ChevronRight, CloudOff, Save, Users, ScanLine, LogIn, LogOut, Ban, CircleCheck, CircleAlert, OctagonX, Undo2, BarChart3, CalendarDays, CheckCheck, UserX, Download, Printer, ChevronDown, ChevronUp, Search, Bus } from "lucide-react";
+import { CalendarCheck, ChevronLeft, ChevronRight, CloudOff, Save, Users, ScanLine, LogIn, LogOut, Ban, CircleCheck, CircleAlert, OctagonX, Undo2, BarChart3, CalendarDays, CheckCheck, UserX, Download, Printer, ChevronDown, ChevronUp, Search, Bus, Banknote, CreditCard, PlusCircle } from "lucide-react";
 
 type AttData = {
   classrooms: { id: string; name: string; grade: string; stage?: string }[];
   session: { id: string; takenByName: string } | null;
   students: { id: string; name: string; rollNo: number | null; status: string | null; markedOffline?: boolean; excusedReason?: string | null }[];
   termId: string;
+  /* CI3 daily_fee_collection_mode parity — classroom/hybrid render the fee
+     dashboard + per-item inputs on the register; cashier mode hides them */
+  feeSettings?: { collectionMode: string };
   /* CI3 save_attendance_and_fees: per-learner fee state rides the register
      payload when the session may view daily services */
   fees?: {
     studentId: string;
-    items: { serviceId: string; name: string; category: string; rateCents: number; arrearsCents: number; prepaidCents: number; optional: boolean; optedOut: boolean; optedIn: boolean; weekly: boolean; weeklyBilled: boolean; chargedToday: boolean }[];
+    items: { serviceId: string; name: string; category: string; rateCents: number; arrearsCents: number; prepaidCents: number; paidTodayCents?: number; optional: boolean; optedOut: boolean; optedIn: boolean; weekly: boolean; weeklyBilled: boolean; chargedToday: boolean }[];
     transport: { routeName: string; stopName: string | null; onewayCents: number } | null;
   }[];
 };
@@ -51,6 +57,18 @@ const STATUS_BY_KEY: Record<string, (typeof STATUSES)[number]> = Object.fromEntr
 
 const OPS = "/ops/attendance"; // attendance ops endpoint (register save + analytics + monthly)
 
+/* CI3 fee-dashboard tile gradients per daily fee module (feeding/classes/
+   transport/breakfast/water hues mapped onto our service categories —
+   no blue/indigo per the house style) */
+const FEE_TILE_GRADIENT: Record<string, string> = {
+  MEAL: "bg-gradient-to-br from-emerald-500 to-emerald-700",
+  DRINK: "bg-gradient-to-br from-cyan-500 to-cyan-700",
+  CLASS: "bg-gradient-to-br from-teal-500 to-teal-700",
+  CARE: "bg-gradient-to-br from-rose-500 to-rose-700",
+  TRANSPORT: "bg-gradient-to-br from-violet-500 to-violet-700",
+  OTHER: "bg-gradient-to-br from-amber-500 to-amber-700",
+};
+
 export function Attendance() {
   const { currentSchoolId, online, navTarget, session } = useStore();
   const [tab, setTab] = useState("register");
@@ -68,9 +86,20 @@ export function Attendance() {
      per-learner item amounts + optional toggles + transport usage. Rendered
      only when this session may collect daily fees. */
   const canCollectFees = canAny(session?.permissions, ["daily.collect", "daily.manage"]);
+  /* CI3 $show_fee_collection: fee dashboard + per-item inputs + take-payment
+     render only when the school's collection mode is classroom or hybrid AND
+     this session may collect — cashier mode routes money to the cashier
+     console, so the register shows pure attendance. */
+  const collectionMode = data?.feeSettings?.collectionMode ?? "HYBRID";
+  const showFeeCollection = canCollectFees && (data?.fees?.length ?? 0) > 0 && ["CLASSROOM", "HYBRID"].includes(collectionMode);
   const [feeAmts, setFeeAmts] = useState<Record<string, string>>({}); // `${studentId}:${serviceId}` → ₵
   const [feeToggles, setFeeToggles] = useState<Record<string, boolean>>({}); // optional items ON/OFF
   const [feeUsage, setFeeUsage] = useState<Record<string, string>>({}); // studentId → MORNING|AFTERNOON|BOTH
+  /* CI3 modal_take_payment parity — per-learner quick daily-fee payment
+     (method + per-item allocation + receipt print) launched from the card */
+  const [takePayFor, setTakePayFor] = useState<{ id: string; name: string; rollNo: number | null } | null>(null);
+  const [payReceipt, setPayReceipt] = useState<ReceiptData | null>(null);
+  const [payReceiptOpen, setPayReceiptOpen] = useState(false);
 
   /* iEduPro nested nav: preselect the Scanner tab when arriving from a
      Attendance → Scanner deep link, and preselect the classroom when a deep
@@ -131,6 +160,30 @@ export function Attendance() {
     };
   }, [marks]);
 
+  /* CI3 fee-collection dashboard cards (#total_{module}): one gradient tile
+     per daily fee module, live-totalling the amounts being typed on the
+     register (updateTotals parity — recalculates on every input/status change)
+     plus what each module has already banked today for this class. */
+  const feeModules = useMemo(() => {
+    if (!data?.fees?.length) return [];
+    const map = new Map<string, { serviceId: string; name: string; category: string; liveCents: number; bankedCents: number; learners: number }>();
+    for (const f of data.fees) {
+      for (const it of f.items) {
+        if (it.optedOut) continue;
+        const row = map.get(it.serviceId) ?? { serviceId: it.serviceId, name: it.name, category: it.category, liveCents: 0, bankedCents: 0, learners: 0 };
+        row.bankedCents += it.paidTodayCents ?? 0;
+        const st = marks[f.studentId] ?? "ABSENT";
+        const active = ["PRESENT", "LATE"].includes(st) && (!it.optional || !!feeToggles[`${f.studentId}:${it.serviceId}`]);
+        if (active) {
+          row.liveCents += Math.round(parseFloat(feeAmts[`${f.studentId}:${it.serviceId}`] || "0") * 100) || 0;
+          row.learners++;
+        }
+        map.set(it.serviceId, row);
+      }
+    }
+    return Array.from(map.values());
+  }, [data, marks, feeAmts, feeToggles]);
+
   function shiftDate(days: number) {
     const d = new Date(date);
     d.setDate(d.getDate() + days);
@@ -165,7 +218,7 @@ export function Attendance() {
       /* CI3 fee inputs ride the same save (save_attendance_and_fees): only the
          picked learners, only non-optional items or toggled-ON optionals, and
          only riders when a bus direction was chosen */
-      const fees = canCollectFees && (data?.fees?.length ?? 0) > 0
+      const fees = canCollectFees && (data?.fees?.length ?? 0) > 0 && ["CLASSROOM", "HYBRID"].includes(collectionMode)
         ? picked
             .map((s) => {
               const f = data!.fees!.find((x) => x.studentId === s.id);
@@ -265,6 +318,43 @@ export function Attendance() {
                 <Card><CardContent className="pt-5 pb-4"><div className="text-xs text-muted-foreground uppercase">Rate</div><div className="text-2xl font-bold text-primary">{stats.total ? Math.round(((stats.present + stats.late) / stats.total) * 100) : 0}%</div></CardContent></Card>
               </div>
 
+              {/* CI3 fee-collection dashboard (mark_attendance #fee_dashboard):
+                  sticky gradient cards per daily fee module — the live total for
+                  each module updates in real time as amounts are typed (the
+                  user's headline ask), plus what the module has banked today. */}
+              {showFeeCollection && feeModules.length > 0 && (
+                <Card className="mb-3 sticky top-2 z-20 shadow-lg">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm flex flex-wrap items-center gap-2">
+                      <CreditCard className="size-4" /> Fee collection dashboard
+                      <Badge variant="outline" className="text-[10px] font-normal">{collectionMode === "CLASSROOM" ? "Classroom mode" : "Hybrid mode"}</Badge>
+                      <span className="ml-auto text-[11px] font-normal text-muted-foreground">live totals update as amounts are entered</span>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="pb-3">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+                      {feeModules.map((fm) => (
+                        <div key={fm.serviceId} className={cn("rounded-lg p-2.5 text-white shadow-sm", FEE_TILE_GRADIENT[fm.category] ?? "bg-gradient-to-br from-stone-500 to-stone-700")}>
+                          <div className="text-[10px] uppercase tracking-wide opacity-90 truncate" title={fm.name}>{fm.name}</div>
+                          <div className="text-lg font-bold tabular-nums leading-tight">{fmtCedi(fm.liveCents)}</div>
+                          <div className="text-[9px] opacity-85">{fmtCedi(fm.bankedCents, { compact: true })} banked today · {fm.learners} collecting</div>
+                        </div>
+                      ))}
+                      <div className="rounded-lg border-2 border-dashed p-2.5">
+                        <div className="text-[10px] uppercase tracking-wide text-muted-foreground">This save</div>
+                        <div className="text-lg font-bold tabular-nums leading-tight text-primary">{fmtCedi(feeModules.reduce((n, m) => n + m.liveCents, 0))}</div>
+                        <div className="text-[9px] text-muted-foreground">{fmtCedi(feeModules.reduce((n, m) => n + m.bankedCents, 0))} already in today</div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+              {canCollectFees && (data?.fees?.length ?? 0) > 0 && collectionMode === "CASHIER" && (
+                <div className="mb-3 flex items-center gap-2 rounded-xl border border-muted bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                  <Banknote className="size-4" /> Fee collection is cashier-only for this school — the register stays pure attendance.
+                </div>
+              )}
+
               {/* CI3 mark_attendance card grid — sticky filter bar + bulk-select +
                 colour-coded status select per learner, cards dim when excluded */}
               <Card className="mb-3">
@@ -359,7 +449,7 @@ export function Attendance() {
                               per-item amounts for chargeable learners, optional
                               items toggle, riders pick the bus direction */}
                           {(() => {
-                            const feeRow = canCollectFees ? (data.fees?.find((f) => f.studentId === s.id) ?? null) : null;
+                            const feeRow = showFeeCollection ? (data.fees?.find((f) => f.studentId === s.id) ?? null) : null;
                             if (!feeRow || !feeRow.items.length) return null;
                             if (!["PRESENT", "LATE"].includes(marks[s.id] ?? "ABSENT")) return null; // not chargeable today
                             return (
@@ -378,35 +468,46 @@ export function Attendance() {
                                   const optionalOn = it.optional ? !!feeToggles[key] : true;
                                   const amt = feeAmts[key] ?? "";
                                   return (
-                                    <div key={it.serviceId} className="flex items-center gap-1.5">
-                                      {it.optional && (
-                                        <input
-                                          type="checkbox"
-                                          className="accent-primary size-3.5 shrink-0"
-                                          checked={optionalOn}
-                                          title="Opt in for today"
-                                          onChange={(e) => {
-                                            setFeeToggles((t) => ({ ...t, [key]: e.target.checked }));
-                                            if (e.target.checked && !feeAmts[key]) {
-                                              setFeeAmts((a) => ({ ...a, [key]: ((it.arrearsCents > 0 ? it.arrearsCents : it.rateCents) / 100).toFixed(2) }));
-                                            }
-                                          }}
-                                        />
-                                      )}
-                                      <span className={`text-[11px] truncate flex-1 ${it.optional && !optionalOn ? "text-muted-foreground line-through" : ""}`} title={`${it.name} — rate ${fmtCedi(it.rateCents)} · arrears ${fmtCedi(it.arrearsCents)} · prepaid ${fmtCedi(it.prepaidCents)}`}>
-                                        {it.name}
-                                        {it.weekly && <span className="text-cyan-700 dark:text-cyan-400"> ·wk</span>}
-                                        {it.chargedToday && <span className="text-emerald-700 dark:text-emerald-400"> ✓</span>}
-                                        {it.arrearsCents > 0 && <span className="text-destructive"> ·{fmtCedi(it.arrearsCents, { compact: true })}</span>}
-                                      </span>
-                                      {(it.optional ? optionalOn : true) && (
-                                        <Input
-                                          type="number" min="0" step="0.5" placeholder="0.00"
-                                          className="h-7 w-20 px-1.5 text-right tabular-nums text-xs"
-                                          value={amt}
-                                          onChange={(e) => setFeeAmts((a) => ({ ...a, [key]: e.target.value }))}
-                                        />
-                                      )}
+                                    <div key={it.serviceId} className="space-y-0.5">
+                                      <div className="flex items-center gap-1.5">
+                                        {it.optional && (
+                                          <input
+                                            type="checkbox"
+                                            className="accent-primary size-3.5 shrink-0"
+                                            checked={optionalOn}
+                                            title="Opt in for today"
+                                            onChange={(e) => {
+                                              setFeeToggles((t) => ({ ...t, [key]: e.target.checked }));
+                                              if (e.target.checked && !feeAmts[key]) {
+                                                setFeeAmts((a) => ({ ...a, [key]: ((it.arrearsCents > 0 ? it.arrearsCents : it.rateCents) / 100).toFixed(2) }));
+                                              }
+                                            }}
+                                          />
+                                        )}
+                                        <span className={`text-[11px] truncate flex-1 ${it.optional && !optionalOn ? "text-muted-foreground line-through" : ""}`} title={`${it.name} — rate ${fmtCedi(it.rateCents)} · arrears ${fmtCedi(it.arrearsCents)} · prepaid ${fmtCedi(it.prepaidCents)}`}>
+                                          {it.name}
+                                          {it.weekly && <span className="text-cyan-700 dark:text-cyan-400"> ·wk</span>}
+                                          {it.chargedToday && <span className="text-emerald-700 dark:text-emerald-400"> ✓</span>}
+                                        </span>
+                                        {(it.optional ? optionalOn : true) && (
+                                          <Input
+                                            type="number" min="0" step="0.5" placeholder="0.00"
+                                            className="h-7 w-20 px-1.5 text-right tabular-nums text-xs"
+                                            value={amt}
+                                            onChange={(e) => setFeeAmts((a) => ({ ...a, [key]: e.target.value }))}
+                                          />
+                                        )}
+                                      </div>
+                                      {/* CI3 prepaid / arrears badge pair per fee module
+                                          (mark_attendance #prepaid_{type}_{id} / #arrears_{type}_{id}) */}
+                                      <div className="flex items-center gap-1">
+                                        <span className={cn("inline-flex items-center gap-0.5 rounded px-1 py-px text-[9px] font-semibold tabular-nums", it.prepaidCents > 0 ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" : "bg-muted text-muted-foreground")}>
+                                          <PlusCircle className="size-2.5" /> Prepaid {fmtCedi(it.prepaidCents, { compact: true })}
+                                        </span>
+                                        <span className={cn("inline-flex items-center gap-0.5 rounded px-1 py-px text-[9px] font-semibold tabular-nums", it.arrearsCents > 0 ? "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300" : "bg-muted text-muted-foreground")}>
+                                          <CircleAlert className="size-2.5" /> Arrears {fmtCedi(it.arrearsCents, { compact: true })}
+                                        </span>
+                                      </div>
                                     </div>
                                   );
                                 })}
@@ -447,6 +548,17 @@ export function Attendance() {
                               </div>
                             );
                           })()}
+                          {/* CI3 modal_take_payment parity — quick per-learner daily-fee
+                               payment (method + per-item allocation + receipt print) */}
+                          {showFeeCollection && (data.fees?.find((f) => f.studentId === s.id)?.items.length ?? 0) > 0 && (
+                            <Button
+                              size="sm" variant="outline"
+                              className="mt-2 h-7 w-full gap-1 text-[11px]"
+                              onClick={() => setTakePayFor({ id: s.id, name: s.name, rollNo: s.rollNo })}
+                            >
+                              <Banknote className="size-3.5" /> Take payment
+                            </Button>
+                          )}
                         </div>
                       );
                     })}
@@ -488,11 +600,228 @@ export function Attendance() {
           {currentSchoolId ? <ScannerPanel schoolId={currentSchoolId} /> : <EmptyState title="No school selected" />}
         </TabsContent>
       </Tabs>
+
+      {/* CI3 modal_take_payment parity — per-learner daily-fee quick payment
+          (balance grid, per-item allocation, cheque/momo fields, receipt print) */}
+      {currentSchoolId && (
+        <TakePaymentDialog
+          schoolId={currentSchoolId}
+          online={online}
+          student={takePayFor ? { ...takePayFor } : null}
+          classroomName={data?.classrooms.find((c) => c.id === classId)?.name ?? "—"}
+          items={
+            takePayFor && showFeeCollection
+              ? (data?.fees?.find((f) => f.studentId === takePayFor.id)?.items ?? [])
+                  .filter((it) => !it.optedOut)
+                  .map((it) => ({ serviceId: it.serviceId, name: it.name, category: it.category, rateCents: it.rateCents, arrearsCents: it.arrearsCents, prepaidCents: it.prepaidCents }))
+              : []
+          }
+          onClose={() => setTakePayFor(null)}
+          onPaid={(receipt) => {
+            setTakePayFor(null);
+            if (receipt) { setPayReceipt(receipt); setPayReceiptOpen(true); }
+            load();
+          }}
+        />
+      )}
+      <ReceiptDialog data={payReceipt} open={payReceiptOpen} onOpenChange={setPayReceiptOpen} />
     </div>
   );
 }
 
 const OPS_BASE = (schoolId: string) => `/api/school/${schoolId}${OPS}`;
+
+/* ════════════════════════════════════════════════════════════
+   CI3 modal_take_payment parity — the daily-fee take-payment modal
+   (admin/modal_take_payment.php): learner balance grid, per-item
+   amount allocation prefilled with arrears, payment mode with
+   conditional MoMo / cheque fields, auto receipt number and the
+   print-receipt toggle; posts pos-collect and returns the printable
+   receipt. Online-only like the CI3 modal — offline capture rides
+   the register card inputs + offline queue instead.
+   ════════════════════════════════════════════════════════════ */
+function TakePaymentDialog(props: {
+  schoolId: string;
+  online: boolean;
+  student: { id: string; name: string; rollNo: number | null } | null;
+  classroomName: string;
+  items: { serviceId: string; name: string; category: string; rateCents: number; arrearsCents: number; prepaidCents: number }[];
+  onClose: () => void;
+  onPaid: (receipt: ReceiptData | null) => void;
+}) {
+  const { student, items } = props;
+  const [amounts, setAmounts] = useState<Record<string, string>>({});
+  const [method, setMethod] = useState("CASH");
+  const [txnId, setTxnId] = useState("");
+  const [bankName, setBankName] = useState("");
+  const [chequeNo, setChequeNo] = useState("");
+  const [printReceipt, setPrintReceipt] = useState(true);
+  const [busy, setBusy] = useState(false);
+
+  /* prefills reset when the target learner changes (render-time
+     derived-state reset — arrears prefill, method, cheque fields) */
+  const seedKey = student?.id ?? "";
+  const [seededFor, setSeededFor] = useState(seedKey);
+  if (seedKey !== seededFor) {
+    setSeededFor(seedKey);
+    setAmounts(Object.fromEntries(items.map((it) => [it.serviceId, it.arrearsCents > 0 ? (it.arrearsCents / 100).toFixed(2) : ""])));
+    setMethod("CASH");
+    setTxnId("");
+    setBankName("");
+    setChequeNo("");
+  }
+
+  const arrearsTotal = items.reduce((n, it) => n + it.arrearsCents, 0);
+  const prepaidTotal = items.reduce((n, it) => n + it.prepaidCents, 0);
+  const totalCents = items.reduce((n, it) => n + (Math.round(parseFloat(amounts[it.serviceId] || "0") * 100) || 0), 0);
+  const settleCents = items.reduce((n, it) => n + Math.min(Math.round(parseFloat(amounts[it.serviceId] || "0") * 100) || 0, it.arrearsCents), 0);
+  const advanceCents = Math.max(0, totalCents - settleCents);
+
+  async function submit() {
+    if (!props.schoolId || !student || totalCents <= 0) return;
+    if (method === "CHEQUE" && !bankName.trim() && !chequeNo.trim()) {
+      toast({ title: "Cheque details required", description: "Capture the bank name or the cheque number.", variant: "destructive" });
+      return;
+    }
+    setBusy(true);
+    try {
+      const reference = method.startsWith("MOMO")
+        ? (txnId.trim() || undefined)
+        : method === "CHEQUE"
+          ? ([bankName.trim(), chequeNo.trim() && `chq #${chequeNo.trim()}`].filter(Boolean).join(" · ") || undefined)
+          : undefined;
+      const res = await apiPost<any>(`/api/school/${props.schoolId}/ops/daily`, {
+        action: "pos-collect",
+        studentId: student.id,
+        items: items
+          .map((it) => ({ serviceId: it.serviceId, amountCents: Math.round(parseFloat(amounts[it.serviceId] || "0") * 100) || 0 }))
+          .filter((it) => it.amountCents > 0),
+        method,
+        ...(reference !== undefined ? { reference } : {}),
+      });
+      const receipt = res?.receipt ?? null;
+      toast({
+        title: "Payment captured",
+        description: `${res?.payment?.receiptNo ?? ""} — ${fmtCedi(totalCents)}`
+          + (settleCents ? ` · settles ${fmtCedi(settleCents)}` : "")
+          + (advanceCents ? ` · ${fmtCedi(advanceCents)} banks as prepaid` : ""),
+      });
+      props.onPaid(printReceipt ? receipt : null);
+    } catch (e: any) {
+      toast({ title: "Payment failed", description: e.message, variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!student) return null;
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) props.onClose(); }}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><Banknote className="size-5" /> Take payment — {student.name}</DialogTitle>
+          <DialogDescription>
+            Daily fee collection · {props.classroomName}{student.rollNo ? ` · roll ${student.rollNo}` : ""} — each item&apos;s arrears settle FIFO; excess banks as prepaid.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 max-h-[62dvh] overflow-y-auto nice-scroll pr-1">
+          {/* learner balance grid (CI3 "student's details") */}
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="rounded-lg border bg-secondary/40 p-2">
+              <div className="text-[10px] uppercase text-muted-foreground">Arrears</div>
+              <div className="text-sm font-bold text-destructive tabular-nums">{fmtCedi(arrearsTotal)}</div>
+            </div>
+            <div className="rounded-lg border bg-secondary/40 p-2">
+              <div className="text-[10px] uppercase text-muted-foreground">Prepaid</div>
+              <div className="text-sm font-bold text-emerald-600 tabular-nums">{fmtCedi(prepaidTotal)}</div>
+            </div>
+            <div className="rounded-lg border bg-secondary/40 p-2">
+              <div className="text-[10px] uppercase text-muted-foreground">Paying now</div>
+              <div className="text-sm font-bold tabular-nums">{fmtCedi(totalCents)}</div>
+            </div>
+          </div>
+
+          {/* per-item allocation */}
+          <div className="space-y-1.5">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Amount per fee module</p>
+            {items.map((it) => (
+              <div key={it.serviceId} className="flex items-center gap-2 rounded-lg border px-2.5 py-1.5">
+                <span className="text-xs font-medium truncate flex-1" title={`${it.name} — rate ${fmtCedi(it.rateCents)} · prepaid ${fmtCedi(it.prepaidCents)}`}>{it.name}</span>
+                {it.arrearsCents > 0 && <Badge variant="outline" className="text-[9px] text-destructive border-destructive/30 shrink-0">owes {fmtCedi(it.arrearsCents, { compact: true })}</Badge>}
+                <Input
+                  type="number" min="0" step="0.5" placeholder="0.00"
+                  className="h-8 w-24 px-2 text-right tabular-nums text-xs"
+                  value={amounts[it.serviceId] ?? ""}
+                  onChange={(e) => setAmounts((a) => ({ ...a, [it.serviceId]: e.target.value }))}
+                  aria-label={`Amount for ${it.name}`}
+                />
+              </div>
+            ))}
+            {!items.length && <p className="text-xs text-muted-foreground">No daily fee items on this learner.</p>}
+            {advanceCents > 0 && <p className="text-[11px] text-emerald-600">Overpayment of {fmtCedi(advanceCents)} banks as prepaid credit for future bills.</p>}
+          </div>
+
+          {/* payment mode (CI3 PAYMENT MODE + conditional fields) */}
+          <div className="space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label className="text-xs">Payment mode</Label>
+                <Select value={method} onValueChange={setMethod}>
+                  <SelectTrigger className="mt-1 h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="CASH">Cash</SelectItem>
+                    <SelectItem value="MOMO_MTN">Mobile Money</SelectItem>
+                    <SelectItem value="CHEQUE">Cheque</SelectItem>
+                    <SelectItem value="BANK">Bank Transfer</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs">Receipt no.</Label>
+                <Input disabled placeholder="auto · RCP-YYYY-NNNNN" className="mt-1 h-9 text-xs" aria-label="Receipt number is minted automatically" />
+              </div>
+            </div>
+            {method.startsWith("MOMO") && (
+              <div>
+                <Label className="text-xs">Transaction ID <span className="font-normal text-muted-foreground">(optional)</span></Label>
+                <Input value={txnId} onChange={(e) => setTxnId(e.target.value)} placeholder="MoMo reference — auto-generated when blank" className="mt-1 h-9 text-xs" />
+              </div>
+            )}
+            {method === "CHEQUE" && (
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label className="text-xs">Bank name</Label>
+                  <Input value={bankName} onChange={(e) => setBankName(e.target.value)} placeholder="e.g. GCB Bank" className="mt-1 h-9 text-xs" />
+                </div>
+                <div>
+                  <Label className="text-xs">Cheque no.</Label>
+                  <Input value={chequeNo} onChange={(e) => setChequeNo(e.target.value)} placeholder="0042215" className="mt-1 h-9 text-xs" />
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center justify-between rounded-lg border px-3 py-2">
+            <div>
+              <p className="text-xs font-medium">Print receipt</p>
+              <p className="text-[10px] text-muted-foreground">opens the printable receipt after saving</p>
+            </div>
+            <Switch checked={printReceipt} onCheckedChange={setPrintReceipt} aria-label="Print receipt after saving" />
+          </div>
+        </div>
+
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={props.onClose}>Cancel</Button>
+          <Button onClick={submit} disabled={busy || totalCents <= 0 || !props.online}>
+            {busy ? "Processing…" : (<><Banknote className="size-4" /> Take {fmtCedi(totalCents)}</>)}
+          </Button>
+          {!props.online && <span className="text-[11px] text-amber-600">Needs a connection — amounts can be captured on the register cards offline.</span>}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 // ── Analytics ─────────────────────────────────────────────────
 type AnalyticsRow = {

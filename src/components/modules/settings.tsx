@@ -55,7 +55,7 @@ export function Settings() {
   const [tab, setTab] = useState("profile");
   const [form, setForm] = useState<any>({ motto: "", phone: "", email: "", curriculum: "GES", curricula: ["GES"], nasiaStatus: "", gnacopsStatus: "" });
   // branding & receipts preferences (SchoolSetting-backed)
-  const [branding, setBranding] = useState<{ logoUrl: string | null; signatureUrl: string | null; ssnitLogoUrl: string | null; receiptStyle: string }>({ logoUrl: null, signatureUrl: null, ssnitLogoUrl: null, receiptStyle: "A5" });
+  const [branding, setBranding] = useState<{ logoUrl: string | null; signatureUrl: string | null; ssnitLogoUrl: string | null; receiptStyle: string; marksheetStyle: string; crecheStyle: string }>({ logoUrl: null, signatureUrl: null, ssnitLogoUrl: null, receiptStyle: "A5", marksheetStyle: "classic", crecheStyle: "creche" });
   // CI3 system_settings_modern General/Payment/Security fields (system.* KV)
   const [sys, setSys] = useState<any>({ slogan: "", address: "", boxNumber: "", digitalAddress: "", website: "", ssnitNumber: "", currency: "GHS", halfPaymentBy: "First Week", fullPaymentBy: "", momoAccountName: "", momoAccountNumber: "", autoLock: false });
   // school theme (CI3 app_theme / theme_settings parity)
@@ -76,7 +76,7 @@ export function Settings() {
     apiGet<any>(`/api/school/${currentSchoolId}/settings`).then((d) => {
       setData(d);
       setForm({ motto: d.school.motto ?? "", phone: d.school.phone ?? "", email: d.school.email ?? "", curriculum: d.school.curriculum, curricula: (() => { try { const arr = d.school.curricula ? JSON.parse(d.school.curricula) : [d.school.curriculum]; return Array.isArray(arr) && arr.length ? arr : [d.school.curriculum]; } catch { return [d.school.curriculum]; } })(), nasiaStatus: d.school.nasiaStatus, gnacopsStatus: d.school.gnacopsStatus });
-      setBranding({ logoUrl: d.branding?.logoUrl ?? null, signatureUrl: d.branding?.signatureUrl ?? null, ssnitLogoUrl: d.branding?.ssnitLogoUrl ?? null, receiptStyle: d.branding?.receiptStyle ?? "A5" });
+      setBranding({ logoUrl: d.branding?.logoUrl ?? null, signatureUrl: d.branding?.signatureUrl ?? null, ssnitLogoUrl: d.branding?.ssnitLogoUrl ?? null, receiptStyle: d.branding?.receiptStyle ?? "A5", marksheetStyle: d.templates?.marksheetStyle ?? "classic", crecheStyle: d.templates?.crecheStyle ?? "creche" });
       setSys((prev: any) => ({ ...prev, ...(d.system ?? {}) }));
       const t: SchoolTheme | null = d.theme ?? null;
       const resolved = t && t.primary && t.secondary && t.accent ? t : DEFAULT_THEME;
@@ -102,7 +102,7 @@ export function Settings() {
     finally { setBusy(false); }
   }
 
-  async function savePreferences(prefs: { logoUrl?: string | null; signatureUrl?: string | null; ssnitLogoUrl?: string | null; receiptStyle?: string; daysOpened?: Record<string, number> }) {
+  async function savePreferences(prefs: { logoUrl?: string | null; signatureUrl?: string | null; ssnitLogoUrl?: string | null; receiptStyle?: string; marksheetStyle?: string; crecheStyle?: string; daysOpened?: Record<string, number> }) {
     setBusy(true);
     try {
       await apiPost(`/api/school/${currentSchoolId}/settings`, { action: "update-preferences", ...prefs });
@@ -322,8 +322,35 @@ export function Settings() {
                   </Select>
                   <p className="text-[11px] text-muted-foreground">Every newly issued receipt (fees, counter, store, transport) opens in this style. Cashiers can still reprint in another style.</p>
                 </div>
-                <Button className="gap-1.5" disabled={busy} onClick={() => savePreferences({ logoUrl: branding.logoUrl, signatureUrl: branding.signatureUrl, ssnitLogoUrl: branding.ssnitLogoUrl, receiptStyle: branding.receiptStyle })}>
-                  <Save className="size-4" /> {busy ? "Saving…" : "Save branding & receipts"}
+                {/* wave 47 — CI3 terminal_report_style + creche_exam_template parity:
+                    default marksheet print template + early-years template */}
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label>Default marksheet template</Label>
+                    <Select value={branding.marksheetStyle} onValueChange={(v) => setBranding({ ...branding, marksheetStyle: v })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="classic">Classic GES — grading key, boxed marks, arrears block</SelectItem>
+                        <SelectItem value="modern">Modern chart — colour-coded grades, subject bar chart</SelectItem>
+                        <SelectItem value="compact">Compact A5 — booklet-style</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-[11px] text-muted-foreground">Terminal report sheets open in this template (Results → Marksheet still offers per-print overrides).</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Early-years template</Label>
+                    <Select value={branding.crecheStyle} onValueChange={(v) => setBranding({ ...branding, crecheStyle: v })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="creche">Booklet — domain rating codes, physical development grid</SelectItem>
+                        <SelectItem value="creche2">Checkmark grid — one column per rating code</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-[11px] text-muted-foreground">Crèche / nursery / playgroup classes print this template by default.</p>
+                  </div>
+                </div>
+                <Button className="gap-1.5" disabled={busy} onClick={() => savePreferences({ logoUrl: branding.logoUrl, signatureUrl: branding.signatureUrl, ssnitLogoUrl: branding.ssnitLogoUrl, receiptStyle: branding.receiptStyle, marksheetStyle: branding.marksheetStyle, crecheStyle: branding.crecheStyle })}>
+                  <Save className="size-4" /> {busy ? "Saving…" : "Save branding, receipts & templates"}
                 </Button>
               </CardContent>
             </Card>
@@ -443,7 +470,33 @@ export function Settings() {
                   </SelectContent>
                 </Select>
               </div>
-              <Button className="gap-1.5" disabled={busy} onClick={() => savePreferences({ logoUrl: branding.logoUrl, signatureUrl: branding.signatureUrl, ssnitLogoUrl: branding.ssnitLogoUrl, receiptStyle: branding.receiptStyle })}>
+              {/* wave 47 — CI3 terminal_report_style + creche_exam_template parity */}
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label>Default marksheet template</Label>
+                  <Select value={branding.marksheetStyle} onValueChange={(v) => setBranding({ ...branding, marksheetStyle: v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="classic">Classic GES &mdash; grading key, boxed marks, arrears block</SelectItem>
+                      <SelectItem value="modern">Modern chart &mdash; colour-coded grades, subject bar chart</SelectItem>
+                      <SelectItem value="compact">Compact A5 &mdash; booklet-style</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[11px] text-muted-foreground">Terminal report sheets open in this template.</p>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Early-years template</Label>
+                  <Select value={branding.crecheStyle} onValueChange={(v) => setBranding({ ...branding, crecheStyle: v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="creche">Booklet &mdash; domain rating codes, physical development grid</SelectItem>
+                      <SelectItem value="creche2">Checkmark grid &mdash; one column per rating code</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[11px] text-muted-foreground">Crèche / nursery / playgroup classes print this template by default.</p>
+                </div>
+              </div>
+              <Button className="gap-1.5" disabled={busy} onClick={() => savePreferences({ logoUrl: branding.logoUrl, signatureUrl: branding.signatureUrl, ssnitLogoUrl: branding.ssnitLogoUrl, receiptStyle: branding.receiptStyle, marksheetStyle: branding.marksheetStyle, crecheStyle: branding.crecheStyle })}>
                 <Save className="size-4" /> {busy ? "Saving&hellip;" : "Save branding &amp; receipts"}
               </Button>
             </CardContent>

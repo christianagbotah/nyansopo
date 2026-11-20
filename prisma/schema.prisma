@@ -868,6 +868,8 @@ model ReportCard {
   interestId    String? // single ConductItem id (kind INTEREST)
   daysOpened    Int? // marksheet attendance line — school days this term
   daysPresent   Int? // marksheet attendance line — days the learner attended
+  // wave 47 — student_marksheet_2 style-2 entry parity (conducts_update_2):
+  attitude      String? // free-text attitude line (legacy placeholder DEPENDABLE)
   remarkSource  String? // TEMPLATE | CUSTOM — provenance of teacherRemark
   headSource    String? // TEMPLATE | CUSTOM — provenance of headRemark
 

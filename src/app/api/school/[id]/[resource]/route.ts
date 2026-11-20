@@ -242,8 +242,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       const staff = await db.staff.findMany({ where: { schoolId } });
       const remarkTemplates = await db.remarkTemplate.findMany({ where: { schoolId }, orderBy: [{ category: "asc" }, { minPercent: "asc" }] });
       const conductItems = await db.conductItem.findMany({ where: { schoolId }, orderBy: [{ kind: "asc" }, { sortOrder: "asc" }] });
-      // branding & receipts preferences (SchoolSetting JSON values)
-      const prefSettings = await db.schoolSetting.findMany({ where: { schoolId, key: { in: ["branding.logoUrl", "branding.signatureUrl", "branding.ssnitLogoUrl", "receipts.style"] } } });
+      // branding & receipts preferences (SchoolSetting JSON values) — wave 47
+      // adds the marksheet + early-years template defaults (CI3
+      // terminal_report_style / creche_exam_template parity)
+      const prefSettings = await db.schoolSetting.findMany({ where: { schoolId, key: { in: ["branding.logoUrl", "branding.signatureUrl", "branding.ssnitLogoUrl", "receipts.style", "marksheets.style", "marksheets.crecheStyle"] } } });
       const daysOpened = await db.schoolSetting.findMany({ where: { schoolId, key: { startsWith: "term.daysOpened:" } } });
       // CI3 system_settings_modern General/Payment/Security tabs (system.* KV)
       const systemSettings = await db.schoolSetting.findMany({ where: { schoolId, key: { startsWith: "system." } } });
@@ -276,6 +278,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         remarkTemplates: remarkTemplates.map((t) => ({ id: t.id, category: t.category, minPercent: t.minPercent, maxPercent: t.maxPercent, text: t.text, active: t.active })),
         conductItems: conductItems.map((c) => ({ id: c.id, name: c.name, kind: c.kind, active: c.active })),
         branding: { logoUrl: pref("branding.logoUrl"), signatureUrl: pref("branding.signatureUrl"), ssnitLogoUrl: pref("branding.ssnitLogoUrl"), receiptStyle: pref("receipts.style") ?? "A5" },
+        templates: {
+          marksheetStyle: pref("marksheets.style") ?? "classic",
+          crecheStyle: pref("marksheets.crecheStyle") ?? "creche",
+        },
         theme,
         daysOpened: daysMap,
         system: sys,
@@ -1041,11 +1047,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       }
       if (action === "update-preferences") {
         // branding uploads + default receipt style + per-term "days opened"
-        // (CI3 system_settings_modern parity). Branding images are stored as
-        // binary MediaAssets; the setting value keeps only the short
-        // /api/media/{id} URL (legacy data-URL values still render).
-        const { logoUrl, signatureUrl, ssnitLogoUrl, receiptStyle, daysOpened } = body as {
-          logoUrl?: string | null; signatureUrl?: string | null; ssnitLogoUrl?: string | null; receiptStyle?: string; daysOpened?: Record<string, number>;
+        // (CI3 system_settings_modern parity) + wave-47 marksheet template
+        // selection (terminal_report_style / creche_exam_template parity).
+        // Branding images are stored as binary MediaAssets; the setting value
+        // keeps only the short /api/media/{id} URL (legacy data-URL values
+        // still render).
+        const { logoUrl, signatureUrl, ssnitLogoUrl, receiptStyle, marksheetStyle, crecheStyle, daysOpened } = body as {
+          logoUrl?: string | null; signatureUrl?: string | null; ssnitLogoUrl?: string | null; receiptStyle?: string; marksheetStyle?: string; crecheStyle?: string; daysOpened?: Record<string, number>;
         };
         const entries: [string, string][] = [];
         // valid data-URL → media asset; explicit null clears; anything else keeps the stored value
@@ -1059,6 +1067,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         if (receiptStyle != null) {
           if (!["A5", "FORMAL", "MODERN", "THERMAL"].includes(receiptStyle)) return NextResponse.json({ error: "Unknown receipt style" }, { status: 400 });
           entries.push(["receipts.style", JSON.stringify(receiptStyle)]);
+        }
+        if (marksheetStyle != null) {
+          if (!["classic", "modern", "compact"].includes(marksheetStyle)) return NextResponse.json({ error: "Unknown marksheet template" }, { status: 400 });
+          entries.push(["marksheets.style", JSON.stringify(marksheetStyle)]);
+        }
+        if (crecheStyle != null) {
+          if (!["creche", "creche2"].includes(crecheStyle)) return NextResponse.json({ error: "Unknown early-years template" }, { status: 400 });
+          entries.push(["marksheets.crecheStyle", JSON.stringify(crecheStyle)]);
         }
         for (const [termId, days] of Object.entries(daysOpened ?? {})) {
           const term = await db.term.findUnique({ where: { id: termId }, include: { academicYear: true } });

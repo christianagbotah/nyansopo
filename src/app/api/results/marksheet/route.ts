@@ -43,15 +43,26 @@ export async function GET(req: NextRequest) {
 
   /* ── selection payload: class → student picker ── */
   if (!studentId) {
-    const [school, years, classrooms, conductItems] = await Promise.all([
+    const [school, years, classrooms, conductItems, tplRows] = await Promise.all([
       db.school.findUnique({ where: { id: schoolId }, select: { id: true, name: true, code: true, motto: true, town: true, region: true, district: true, gpsAddress: true, phone: true, email: true, logoColor: true, curriculum: true } }),
       db.academicYear.findMany({ where: { schoolId }, orderBy: { startsAt: "desc" }, include: { terms: { orderBy: { sequence: "asc" } } } }),
       db.classroom.findMany({ where: { schoolId }, orderBy: [{ gradeLevel: "asc" }, { name: "asc" }], select: { id: true, name: true, gradeLevel: true } }),
       db.conductItem.findMany({ where: { schoolId, active: true }, orderBy: [{ kind: "asc" }, { sortOrder: "asc" }], select: { id: true, name: true, kind: true } }),
+      /* wave 47 — template selection parity (CI3 terminal_report_style +
+         creche_exam_template settings): the school's default marksheet print
+         template + early-years template seed the Results style pickers. */
+      db.schoolSetting.findMany({ where: { schoolId, key: { in: ["marksheets.style", "marksheets.crecheStyle"] } } }),
     ]);
     if (!school) return NextResponse.json({ error: "School not found" }, { status: 404 });
     const terms = years.flatMap((y) => y.terms.map((t) => ({ id: t.id, name: t.name, sequence: t.sequence, yearName: y.name, isCurrent: t.isCurrent })));
-    return NextResponse.json({ school, terms, classrooms, conductItems });
+    const tpl = (k: string, dflt: string) => {
+      const raw = tplRows.find((r) => r.key === k)?.value;
+      try { const v = raw ? JSON.parse(raw) : null; return typeof v === "string" ? v : dflt; } catch { return dflt; }
+    };
+    return NextResponse.json({
+      school, terms, classrooms, conductItems,
+      templateSettings: { marksheetStyle: tpl("marksheets.style", "classic"), crecheStyle: tpl("marksheets.crecheStyle", "creche") },
+    });
   }
 
   /* ── one learner's full marksheet ── */
@@ -145,6 +156,7 @@ export async function GET(req: NextRequest) {
       aggregate: card.aggregate, promoted: card.promoted, published: card.published,
       conductIds: Array.isArray(card.conductIds) ? card.conductIds.filter((v): v is string => typeof v === "string") : null,
       interestId: card.interestId,
+      attitude: card.attitude, conduct: card.conduct,
       teacherRemark: card.teacherRemark, headRemark: card.headRemark,
       remarkSource: card.remarkSource, headSource: card.headSource,
       daysOpened: card.daysOpened, daysPresent: card.daysPresent,
@@ -206,6 +218,12 @@ export async function POST(req: NextRequest) {
     if (!okInterest) return NextResponse.json({ error: "The selected interest is not an active interest item for this school" }, { status: 400 });
   }
 
+  /* wave 47 — student_marksheet_2 style-2 entry (conducts_update_2 parity):
+     free-text attitude line + single A/B/C conduct letter */
+  const attitude = S(body.attitude).slice(0, 60) || null;
+  const conductRaw = S(body.conduct).toUpperCase();
+  const conductLetter = ["A", "B", "C"].includes(conductRaw) ? conductRaw : null;
+
   const teacherRemark = S(body.teacherRemark).slice(0, 600) || null;
   const headRemark = S(body.headRemark).slice(0, 600) || null;
   const remarkTemplateId = S(body.remarkTemplateId) || null;
@@ -244,6 +262,7 @@ export async function POST(req: NextRequest) {
     data: {
       conductIds: conductIds.length ? conductIds : undefined,
       interestId: interestId ?? undefined,
+      attitude, conduct: conductLetter,
       teacherRemark, headRemark,
       remarkSource, headSource,
       daysOpened, daysPresent,
@@ -257,6 +276,7 @@ export async function POST(req: NextRequest) {
     ok: true, cardId: updated.id,
     saved: {
       conductCount: conductIds.length, interestId,
+      attitude, conduct: conductLetter,
       teacherRemark, headRemark, remarkSource, headSource,
       daysOpened, daysPresent, attendance: attendanceLine,
     },

@@ -51,6 +51,7 @@ export type MarksheetPayload = {
     id: string; totalScore: number | null; average: number | null; classPosition: number | null; classSize: number | null;
     aggregate: number | null; promoted: boolean | null; published: boolean;
     conductIds: string[] | null; interestId: string | null;
+    attitude: string | null; conduct: string | null;
     teacherRemark: string | null; headRemark: string | null;
     remarkSource: string | null; headSource: string | null;
     daysOpened: number | null; daysPresent: number | null;
@@ -80,13 +81,14 @@ export type MarksheetBilling = {
   lines: { invoiceNo: string; term: string; balanceCents: number; status: string }[];
 };
 
-export type MarksheetStyle = "classic" | "modern" | "compact" | "creche";
+export type MarksheetStyle = "classic" | "modern" | "compact" | "creche" | "creche2";
 
 export const MARKSHEET_STYLES: { id: MarksheetStyle; label: string; blurb: string }[] = [
   { id: "classic", label: "Classic GES", blurb: "Legacy terminal report — grading key, boxed marks, conducts grid, arrears block" },
   { id: "modern", label: "Modern chart", blurb: "Kente-accented sheet with colour-coded grades and a per-subject bar chart" },
   { id: "compact", label: "Compact A5", blurb: "Booklet-style compact sheet — the whole term on one A5 page" },
-  { id: "creche", label: "Early-years", blurb: "Developmental-domain progress record — rating codes, physical development, billing" },
+  { id: "creche", label: "Early-years booklet", blurb: "Developmental-domain progress record — rating codes, physical development, billing" },
+  { id: "creche2", label: "Early-years grid", blurb: "Template-2 checkmark grid — one column per rating code with a tick on the rated code" },
 ];
 
 /* ─────────────────────────── shared helpers ─────────────────────────── */
@@ -336,6 +338,18 @@ export function MarksheetClassicSheet({ p, billing }: { p: MarksheetPayload; bil
               <td className="border border-neutral-700 px-2 py-1">Interest shown</td>
               <td className="border border-neutral-700 px-2 py-1 text-center font-bold" colSpan={3}>{interestName ?? "—"}</td>
             </tr>
+            {p.card?.attitude ? (
+              <tr>
+                <td className="border border-neutral-700 px-2 py-1">Attitude</td>
+                <td className="border border-neutral-700 px-2 py-1 text-center font-bold" colSpan={3}>{p.card.attitude}</td>
+              </tr>
+            ) : null}
+            {p.card?.conduct ? (
+              <tr>
+                <td className="border border-neutral-700 px-2 py-1">Conduct</td>
+                <td className="border border-neutral-700 px-2 py-1 text-center font-bold" colSpan={3}>{p.card.conduct}</td>
+              </tr>
+            ) : null}
           </tbody>
         </table>
         <table className="border-collapse">
@@ -792,6 +806,149 @@ export function MarksheetCrecheSheet({ p, grid, billing }: { p: MarksheetPayload
   );
 }
 
+/* ────────────── CRECHE TEMPLATE 2 — checkmark grid ──────────────
+   Legacy student_marksheet_bulk_print_view_creche_template2 parity:
+   one column per rating-scale code; each skill row carries a single ✓
+   in the column matching the learner's rating. Right rail: term box,
+   rating-scale legend, attendance, promotion + facilitator signature. */
+export function MarksheetCrecheGridSheet({ p, grid, billing }: { p: MarksheetPayload; grid: CrecheGridData | null; billing?: MarksheetBilling | null }) {
+  const name = fullName(p.student);
+  const domains = (grid?.domains ?? []).filter((d) => d.active);
+  const scale = grid?.scale ?? [];
+  const rating = (skId: string) => grid?.ratings?.[`${p.student.id}_${skId}`] ?? null;
+  const daysOpened = p.card?.daysOpened ?? (p.attendance.daysTaken || null);
+  const daysPresent = p.card?.daysPresent ?? (p.attendance.daysAttended || null);
+
+  return (
+    <div className="print-sheet break-inside-avoid mx-auto max-w-[820px] bg-white p-4 text-black" style={{ fontFamily: "Georgia, 'Times New Roman', serif", fontSize: "11px" }}>
+      {/* letterhead (legacy template2: logo + school + TERMINAL REPORT) */}
+      <div className="border-b-2 border-black pb-2 text-center">
+        <div className="flex items-center justify-center gap-3">
+          <LogoMark size={44} />
+          <div>
+            <h1 className="text-[20px] font-bold uppercase tracking-[0.1em] leading-tight">{p.school.name}</h1>
+            <p className="text-[10px]">{[p.school.town, p.school.region].filter(Boolean).join(", ")}{p.school.phone ? ` · ${p.school.phone}` : ""}</p>
+            <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide underline">Ghana Education Service</p>
+          </div>
+          <div className="w-14" />
+        </div>
+        <p className="mt-1.5 text-[13px] font-bold uppercase tracking-[0.25em]">Terminal Report</p>
+        <p className="text-[10px]">Early-Years Progress Record · {p.term.name} · {p.term.yearName}</p>
+      </div>
+
+      {/* two-column body (legacy template2: left skills grid + right rail) */}
+      <div className="mt-2 grid grid-cols-1 md:grid-cols-[1fr_230px] gap-3">
+        <div>
+          <table className="w-full border-collapse text-[10.5px]">
+            <tbody>
+              <tr>
+                <td className="border border-neutral-700 px-1.5 py-0.5 w-20 font-semibold">Name</td>
+                <td className="border border-neutral-700 px-1.5 py-0.5">{name}</td>
+                <td className="border border-neutral-700 px-1.5 py-0.5 w-14 font-semibold">Class</td>
+                <td className="border border-neutral-700 px-1.5 py-0.5">{p.classroom?.name ?? "—"}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          {/* per-domain checkmark grid — one column per rating code, ✓ on the rated code */}
+          {domains.map((dom) => (
+            <table key={dom.id} className="mt-2 w-full border-collapse text-[10px]">
+              <thead>
+                <tr className="bg-neutral-200">
+                  <th className="border border-neutral-700 px-1.5 py-0.5 text-left">{dom.name}</th>
+                  {scale.map((s) => (
+                    <th key={s.code} className="border border-neutral-700 px-1 py-0.5 text-center w-10" title={s.label}>{s.code}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {dom.skills.map((sk, si) => {
+                  const code = rating(sk.id);
+                  return (
+                    <tr key={sk.id}>
+                      <td className="border border-neutral-700 px-1.5 py-0.5">{si + 1}. {sk.name}</td>
+                      {scale.map((s) => (
+                        <td key={s.code} className="border border-neutral-700 px-1 py-0.5 text-center">
+                          {code === s.code ? <span className="font-bold text-emerald-700">&#10003;</span> : null}
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ))}
+          {!domains.length && (
+            <p className="mt-2 text-[10px] text-neutral-600">No early-years domains configured — add them in Settings → Academics.</p>
+          )}
+        </div>
+
+        {/* right rail (legacy template2: term box, rating scale legend, attendance, facilitator) */}
+        <div>
+          <table className="w-full border-collapse text-[10px]">
+            <tbody>
+              <tr className="bg-neutral-200 font-semibold">
+                <td className="border border-neutral-700 px-1.5 py-0.5">TERM</td>
+                <td className="border border-neutral-700 px-1.5 py-0.5 text-center">{p.term.sequence}</td>
+              </tr>
+              <tr>
+                <td className="border border-neutral-700 px-1.5 py-0.5 font-semibold">YEAR</td>
+                <td className="border border-neutral-700 px-1.5 py-0.5 text-center">{p.term.yearName}</td>
+              </tr>
+            </tbody>
+          </table>
+          {scale.length ? (
+            <>
+              <p className="mt-2 text-[10px] font-bold uppercase tracking-wide">Rating scale</p>
+              <table className="w-full border-collapse text-[9.5px]">
+                <tbody>
+                  {scale.map((s) => (
+                    <tr key={s.code}>
+                      <td className="border border-neutral-700 px-1.5 py-0.5 w-8 text-center font-bold">{s.code}</td>
+                      <td className="border border-neutral-700 px-1.5 py-0.5">{s.label}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="mt-1 text-[9px] text-neutral-600">Learners are assessed based on the rating scale described above.</p>
+            </>
+          ) : null}
+          <table className="mt-2 w-full border-collapse text-[10px]">
+            <tbody>
+              <tr>
+                <td className="border border-neutral-700 px-1.5 py-0.5 font-semibold">ATTENDANCE</td>
+                <td className="border border-neutral-700 px-1.5 py-0.5 text-center font-bold">{daysPresent ?? "—"} out of {daysOpened ?? "—"}</td>
+              </tr>
+              <tr>
+                <td className="border border-neutral-700 px-1.5 py-0.5 font-semibold">PROMOTED TO</td>
+                <td className="border border-neutral-700 px-1.5 py-0.5 text-center">{p.card?.promoted === true ? "next level" : p.card?.promoted === false ? "repeat level" : "—"}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p className="mt-2 text-[10px] font-semibold">Facilitator: <span className="font-normal">{p.classTeacher ?? "—"}</span></p>
+          <div className="mt-6 border-t border-neutral-700 pt-0.5 text-center text-[9px] text-neutral-600">Facilitator&apos;s signature</div>
+        </div>
+      </div>
+
+      {/* general remarks + head signature (legacy template2 bottom) */}
+      <table className="mt-2 w-full border-collapse text-[10px]">
+        <tbody>
+          <tr>
+            <td className="w-28 border border-neutral-700 bg-neutral-200 px-1.5 py-0.5 font-semibold">GENERAL REMARKS</td>
+            <td className="border border-neutral-700 px-1.5 py-1"><em>{p.card?.teacherRemark ?? ""}</em></td>
+          </tr>
+        </tbody>
+      </table>
+      {billing ? <div className="mt-2"><AccountsBlock billing={billing} /></div> : null}
+      <div className="mt-4 flex items-end justify-between text-[9.5px] text-neutral-700">
+        <span>Head Teacher&apos;s name: ..............................</span>
+        <span className="border-t border-neutral-700 pt-0.5 px-8 text-center">Head Teacher&apos;s signature</span>
+      </div>
+      <p className="mt-1.5 text-center text-[8.5px] text-neutral-500">{p.school.name} · {p.term.name} {p.term.yearName} · Nyansapo School Management System</p>
+    </div>
+  );
+}
+
 /* ────────────── dispatcher — one entry point for every template ────────────── */
 
 export function MarksheetSheet({
@@ -803,6 +960,7 @@ export function MarksheetSheet({
   grid?: CrecheGridData | null;
 }) {
   if (style === "creche") return <MarksheetCrecheSheet p={payload} grid={grid ?? null} billing={billing} />;
+  if (style === "creche2") return <MarksheetCrecheGridSheet p={payload} grid={grid ?? null} billing={billing} />;
   if (style === "modern") return <MarksheetModernSheet p={payload} billing={billing} />;
   if (style === "compact") return <MarksheetCompactSheet p={payload} />;
   return <MarksheetClassicSheet p={payload} billing={billing} />;
@@ -819,7 +977,7 @@ export function MarksheetStylePicker({
   mode?: "academic" | "kg" | "early";
 }) {
   const styles = MARKSHEET_STYLES.filter((s) =>
-    mode === "early" ? s.id === "creche" : mode === "kg" ? true : s.id !== "creche");
+    mode === "early" ? (s.id === "creche" || s.id === "creche2") : mode === "kg" ? true : (s.id !== "creche" && s.id !== "creche2"));
   return (
     <div className="no-print flex flex-wrap gap-1.5">
       {styles.map((s) => (

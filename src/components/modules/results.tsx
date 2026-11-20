@@ -330,6 +330,19 @@ export function Results() {
   const [sheetPrint, setSheetPrint] = useState(false);
   /* wave 46 — print-template family + billing + creche grid + bulk set */
   const [sheetStyle, setSheetStyle] = useState<MarksheetStyle>("classic");
+  /* wave 47 — template-selection settings parity (CI3 terminal_report_style +
+     creche_exam_template): the school's saved defaults seed the pickers. */
+  const [crecheDefault, setCrecheDefault] = useState<MarksheetStyle>("creche");
+  useEffect(() => {
+    if (!currentSchoolId) return;
+    apiGet<{ templateSettings: { marksheetStyle: string; crecheStyle: string } }>(`/api/results/marksheet?schoolId=${currentSchoolId}`)
+      .then((d) => {
+        const ms = d.templateSettings?.marksheetStyle;
+        if (ms && ["classic", "modern", "compact", "creche", "creche2"].includes(ms)) setSheetStyle(ms as MarksheetStyle);
+        setCrecheDefault(d.templateSettings?.crecheStyle === "creche2" ? "creche2" : "creche");
+      })
+      .catch(() => {});
+  }, [currentSchoolId]);
   const [sheetBilling, setSheetBilling] = useState<MarksheetBilling | null>(null);
   const [crecheGrid, setCrecheGrid] = useState<CrecheGridData | null>(null);
   const [bulkSheets, setBulkSheets] = useState<{
@@ -433,9 +446,12 @@ export function Results() {
     return () => { alive = false; };
   }, [currentSchoolId, sheetStudent, termId, refresh]);
 
-  /* wave 35 — conducts_update parity: persist the annotated sheet. */
+  /* wave 35 — conducts_update parity: persist the annotated sheet.
+     wave 47 — style-2 entry fields (conducts_update_2): attitude + A/B/C
+     conduct letter ride the same save. */
   async function saveSheet(draft: {
     conductIds: string[]; interestId: string;
+    attitude: string; conductLetter: string;
     teacherRemark: string; remarkTemplateId: string;
     headRemark: string; headTemplateId: string;
     daysOpened: string; daysPresent: string;
@@ -445,11 +461,12 @@ export function Results() {
     try {
       const res = await apiPost<{
         ok: true; cardId: string; studentName: string; termName: string;
-        saved: { conductCount: number; attendance: string; remarkSource: string | null; headSource: string | null };
+        saved: { conductCount: number; attendance: string; remarkSource: string | null; headSource: string | null; attitude: string | null; conduct: string | null };
       }>("/api/results/marksheet", {
         action: "save", schoolId: currentSchoolId,
         studentId: sheet.student.id, termId: sheet.term.id,
         conductIds: draft.conductIds, interestId: draft.interestId || undefined,
+        attitude: draft.attitude || undefined, conduct: draft.conductLetter || undefined,
         teacherRemark: draft.teacherRemark, remarkTemplateId: draft.remarkTemplateId || undefined,
         headRemark: draft.headRemark, headTemplateId: draft.headTemplateId || undefined,
         daysOpened: draft.daysOpened === "" ? undefined : Number(draft.daysOpened),
@@ -490,7 +507,7 @@ export function Results() {
     if (/KG/i.test(sheetClassInfo.gradeLevel)) return "kg";
     return "academic";
   }, [sheetClassInfo]);
-  const sheetEffectiveStyle: MarksheetStyle = sheetMode === "early" ? "creche" : sheetStyle;
+  const sheetEffectiveStyle: MarksheetStyle = sheetMode === "early" ? (["creche", "creche2"].includes(sheetStyle) ? sheetStyle : crecheDefault) : sheetStyle;
 
   /* billing for the accounts block — fetched while the print dialog is open */
   useEffect(() => {
@@ -512,9 +529,9 @@ export function Results() {
     return () => { alive = false; };
   }, [sheetPrint, sheet]);
 
-  /* creche-ratings grid — only when the early-years sheet is in play */
+  /* creche-ratings grid — only when an early-years sheet is in play */
   useEffect(() => {
-    if (!sheetPrint || !sheet || !sheet.classroom || sheetEffectiveStyle !== "creche") { setCrecheGrid(null); return; }
+    if (!sheetPrint || !sheet || !sheet.classroom || !["creche", "creche2"].includes(sheetEffectiveStyle)) { setCrecheGrid(null); return; }
     let alive = true;
     apiGet<CrecheGridData>(`/api/school/${currentSchoolId}/ops/academics?action=creche-ratings&classroomId=${sheet.classroom.id}&termId=${sheet.term.id}`)
       .then((g) => { if (alive) setCrecheGrid(g); })
@@ -1508,7 +1525,7 @@ export function Results() {
             </DialogDescription>
             <div className="flex flex-wrap items-center gap-2 pt-1">
               {bulkSheets && !bulkSheets.busy ? (
-                <MarksheetStylePicker value={bulkSheets.mode === "early" ? "creche" : sheetStyle} set={setSheetStyle} mode={bulkSheets.mode} />
+                <MarksheetStylePicker value={bulkSheets.mode === "early" ? (["creche", "creche2"].includes(sheetStyle) ? sheetStyle : crecheDefault) : sheetStyle} set={setSheetStyle} mode={bulkSheets.mode} />
               ) : null}
               <Button size="sm" className="gap-1.5 ml-auto" onClick={() => window.print()} disabled={!bulkSheets?.sheets.length}>
                 <Printer className="size-4" /> Print all {bulkSheets?.sheets.length ?? 0}
@@ -1523,7 +1540,7 @@ export function Results() {
                 <MarksheetSheet
                   key={s.student.id}
                   payload={s}
-                  style={bulkSheets?.mode === "early" ? "creche" : sheetStyle}
+                  style={bulkSheets?.mode === "early" ? (["creche", "creche2"].includes(sheetStyle) ? sheetStyle : crecheDefault) : sheetStyle}
                   billing={bulkSheets?.billings?.[s.student.id] ?? null}
                   grid={bulkSheets?.grid ?? null}
                 />
@@ -2044,6 +2061,7 @@ function AnalyticsPanel({ payload, loading, className, termLabel }: {
    ══════════════════════════════════════════════════════════════ */
 type MarksheetDraft = {
   conductIds: string[]; interestId: string;
+  attitude: string; conductLetter: string;
   teacherRemark: string; remarkTemplateId: string; teacherCustom: boolean;
   headRemark: string; headTemplateId: string; headCustom: boolean;
   daysOpened: string; daysPresent: string;
@@ -2059,6 +2077,8 @@ function computeMarksheetDraft(p: MarksheetPayload): MarksheetDraft {
   return {
     conductIds: p.card?.conductIds ?? [],
     interestId: p.card?.interestId ?? "",
+    attitude: p.card?.attitude ?? "",
+    conductLetter: p.card?.conduct ?? "",
     teacherRemark: p.card?.teacherRemark ?? "",
     remarkTemplateId: savedTeacherTpl?.id ?? "",
     teacherCustom: !savedTeacherTpl && !!p.card?.teacherRemark,
@@ -2075,6 +2095,7 @@ function MarksheetPanel(props: {
   saving: boolean;
   onSave: (draft: {
     conductIds: string[]; interestId: string;
+    attitude: string; conductLetter: string;
     teacherRemark: string; remarkTemplateId: string;
     headRemark: string; headTemplateId: string;
     daysOpened: string; daysPresent: string;
@@ -2087,6 +2108,11 @@ function MarksheetPanel(props: {
   const conducts = p.conductItems.filter((c) => c.kind === "CONDUCT");
   const interests = p.conductItems.filter((c) => c.kind === "INTEREST");
   const cardKey = `${p.student.id}:${p.card?.id ?? "no-card"}`;
+  /* wave 47 — student_marksheet vs student_marksheet_2 entry styles:
+     style 1 = the 15-slot conduct grid + interest pick (conducts_update);
+     style 2 = attitude free-text + A/B/C conduct letter + interest pick
+     (conducts_update_2). Toggle live; both save to the same ledger. */
+  const [entryStyle, setEntryStyle] = useState<"style_1" | "style_2">("style_1");
 
   /* draft state — reset when the underlying card changes (render-time
      derived-state reset, the sanctioned React pattern for prop-driven
@@ -2222,41 +2248,105 @@ function MarksheetPanel(props: {
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2">
+            <CardTitle className="text-base flex flex-wrap items-center gap-2">
               <SquareCheck className="size-4" /> Conduct &amp; interest
-              <span className="ml-auto text-xs font-normal text-muted-foreground">{draft.conductIds.length}/15 selected</span>
+              {/* CI3 student_marksheet vs student_marksheet_2 entry styles */}
+              <span className="ml-auto flex items-center rounded-lg border p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setEntryStyle("style_1")}
+                  title="Style 1 — the classic 15-slot conduct grid (student_marksheet)"
+                  className={cn("rounded-md px-2 py-0.5 text-[11px] font-medium", entryStyle === "style_1" ? "bg-primary text-primary-foreground" : "hover:bg-muted")}
+                >
+                  Style 1
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEntryStyle("style_2")}
+                  title="Style 2 — attitude + conduct letter entry (student_marksheet_2)"
+                  className={cn("rounded-md px-2 py-0.5 text-[11px] font-medium", entryStyle === "style_2" ? "bg-primary text-primary-foreground" : "hover:bg-muted")}
+                >
+                  Style 2
+                </button>
+              </span>
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            {conducts.length ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2">
-                {conducts.map((c) => (
-                  <label key={c.id} className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm cursor-pointer transition-colors hover:bg-accent/60 has-[button[data-state=checked]]:bg-accent">
-                    <Checkbox
-                      checked={draft.conductIds.includes(c.id)}
-                      onCheckedChange={(v) => toggleConduct(c.id, v === true)}
-                      aria-label={c.name}
-                    />
-                    <span className="select-none">{c.name}</span>
-                  </label>
-                ))}
+            {entryStyle === "style_2" ? (
+              <>
+              {/* student_marksheet_2 field set (conducts_update_2 parity) */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <p className="mb-1.5 text-sm font-medium">Attitude</p>
+                  <Input
+                    value={draft.attitude}
+                    onChange={(e) => setDraft((d) => ({ ...d, attitude: e.target.value.slice(0, 60) }))}
+                    placeholder="DEPENDABLE"
+                    aria-label="Attitude"
+                  />
+                  <p className="mt-0.5 text-[10px] text-muted-foreground">Style-2 free-text attitude line — prints on the terminal sheet.</p>
+                </div>
+                <div>
+                  <p className="mb-1.5 text-sm font-medium">Conduct</p>
+                  <Select value={draft.conductLetter || "none"} onValueChange={(v) => setDraft((d) => ({ ...d, conductLetter: v === "none" ? "" : v }))}>
+                    <SelectTrigger className="w-full" aria-label="Conduct letter"><SelectValue placeholder="A · B · C" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">— none —</SelectItem>
+                      <SelectItem value="A">A — Excellent</SelectItem>
+                      <SelectItem value="B">B — Good</SelectItem>
+                      <SelectItem value="C">C — Fair</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="mt-0.5 text-[10px] text-muted-foreground">Style-2 single conduct letter.</p>
+                </div>
+                <div>
+                  <p className="mb-1.5 text-sm font-medium">Interest</p>
+                  <Select value={draft.interestId || "none"} onValueChange={(v) => setDraft((d) => ({ ...d, interestId: v === "none" ? "" : v }))}>
+                    <SelectTrigger className="w-full" aria-label="Interest"><SelectValue placeholder="One interest" /></SelectTrigger>
+                    <SelectContent className="max-h-60 overflow-y-auto nice-scroll">
+                      <SelectItem value="none">— none —</SelectItem>
+                      {interests.map((it) => <SelectItem key={it.id} value={it.id}>{it.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
+              <p className="text-xs text-muted-foreground">
+                Style 2 swaps the conduct grid for the legacy attitude / conduct-letter / interest trio — the conduct picks below the sheet still print when the class prints through Style 1.
+              </p>
+              </>
             ) : (
-              <p className="text-sm text-muted-foreground">No conduct traits configured — add them in Settings → Report library.</p>
+              <>
+              {conducts.length ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2">
+                  {conducts.map((c) => (
+                    <label key={c.id} className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm cursor-pointer transition-colors hover:bg-accent/60 has-[button[data-state=checked]]:bg-accent">
+                      <Checkbox
+                        checked={draft.conductIds.includes(c.id)}
+                        onCheckedChange={(v) => toggleConduct(c.id, v === true)}
+                        aria-label={c.name}
+                      />
+                      <span className="select-none">{c.name}</span>
+                    </label>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">No conduct traits configured — add them in Settings → Report library.</p>
+              )}
+              {draft.conductIds.length >= 15 && (
+                <p className="text-xs text-amber-600 dark:text-amber-400">The classic sheet holds fifteen conduct slots — picks beyond fifteen are ignored.</p>
+              )}
+              <div>
+                <p className="mb-1.5 text-sm font-medium">Interest</p>
+                <Select value={draft.interestId || "none"} onValueChange={(v) => setDraft((d) => ({ ...d, interestId: v === "none" ? "" : v }))}>
+                  <SelectTrigger className="w-full" aria-label="Interest"><SelectValue placeholder="One interest" /></SelectTrigger>
+                  <SelectContent className="max-h-60 overflow-y-auto nice-scroll">
+                    <SelectItem value="none">— none —</SelectItem>
+                    {interests.map((it) => <SelectItem key={it.id} value={it.id}>{it.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              </>
             )}
-            {draft.conductIds.length >= 15 && (
-              <p className="text-xs text-amber-600 dark:text-amber-400">The classic sheet holds fifteen conduct slots — picks beyond fifteen are ignored.</p>
-            )}
-            <div>
-              <p className="mb-1.5 text-sm font-medium">Interest</p>
-              <Select value={draft.interestId || "none"} onValueChange={(v) => setDraft((d) => ({ ...d, interestId: v === "none" ? "" : v }))}>
-                <SelectTrigger className="w-full" aria-label="Interest"><SelectValue placeholder="One interest" /></SelectTrigger>
-                <SelectContent className="max-h-60 overflow-y-auto nice-scroll">
-                  <SelectItem value="none">— none —</SelectItem>
-                  {interests.map((it) => <SelectItem key={it.id} value={it.id}>{it.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
           </CardContent>
         </Card>
 
@@ -2371,6 +2461,8 @@ function MarksheetPanel(props: {
               onClick={() => props.onSave({
                 conductIds: draft.conductIds,
                 interestId: draft.interestId,
+                attitude: draft.attitude.trim(),
+                conductLetter: draft.conductLetter,
                 teacherRemark: draft.teacherRemark.trim(),
                 remarkTemplateId: draft.remarkTemplateId,
                 headRemark: draft.headRemark.trim(),
