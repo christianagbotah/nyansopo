@@ -380,6 +380,8 @@ export function AppShell() {
         { id: "daily-recon", label: "Reconciliation", target: { tab: "recon" } },
       ]),
       { id: "daily-trend", label: "14-day trend", target: { tab: "trend" } },
+      /* CI3 teacher/daily_payment_report parity — the date-range payment matrix */
+      { id: "daily-payreport", label: "Payment report", target: { tab: "payreport" } },
     ];
     /* CI3 student_payment.php tabs — Bill items / Create invoices / Bulk manage */
     const feesChildren: NavChild[] = [

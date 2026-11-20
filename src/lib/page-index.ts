@@ -122,6 +122,7 @@ export const PAGE_INDEX: PageEntry[] = [
   { id: "pg-rates", label: "Daily Fee Rates", section: S.daily, module: "daily", target: { tab: "rates" }, perm: ["daily.manage"], icon: HandCoins, keywords: ["price", "class rate", "per class"] },
   { id: "pg-recon", label: "Reconciliation", section: S.daily, module: "daily", target: { tab: "recon" }, perm: ["daily.manage"], icon: BarChart3, keywords: ["collections vs charges", "audit"] },
   { id: "pg-trend", label: "14-Day Trend", section: S.daily, module: "daily", target: { tab: "trend" }, perm: ["daily.view"], icon: BarChart3, keywords: ["chart", "statistics"] },
+  { id: "pg-payreport", label: "Daily Payment Report", section: S.daily, module: "daily", target: { tab: "payreport" }, perm: ["daily.view"], icon: ScrollText, keywords: ["daily payment report", "per class payments", "feeding report", "what was collected", "period report"] },
   { id: "pg-transport", label: "Transport", section: S.daily, module: "transport", perm: ["transport.view"], icon: Bus, keywords: ["routes", "bus", "fleet", "vehicles", "assignment"] },
   { id: "pg-boarding", label: "Boarding", section: S.daily, module: "boarding", target: { tab: "houses" }, perm: ["boarding.view"], icon: BedDouble, keywords: ["dormitory", "hostel", "beds"] },
 

@@ -55,6 +55,67 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     return NextResponse.json({ date: dateStr, service: { id: svc.id, name: svc.name, category: svc.category }, rows });
   }
 
+  /* ── DAILY PAYMENT REPORT (CI3 teacher/daily_payment_report.php parity):
+     date-range × class matrix of what each learner paid per daily service —
+     one column per active service (the legacy view hard-coded feeding/
+     breakfast/classes/water/transport; ours renders whatever the school
+     enrolled), grand-total row per service, plus print-ready school meta. ── */
+  if (q("tab") === "payment-report") {
+    const from = q("from") ?? new Date().toISOString().slice(0, 10);
+    const to = q("to") ?? new Date().toISOString().slice(0, 10);
+    const classroomId = q("classroomId");
+    const fromStart = new Date(from); fromStart.setHours(0, 0, 0, 0);
+    const toEnd = new Date(to); toEnd.setHours(23, 59, 59, 999);
+    if (toEnd < fromStart) return NextResponse.json({ error: "The end date is before the start date" }, { status: 400 });
+
+    const [paid, svcs, school] = await Promise.all([
+      db.dailyCharge.findMany({
+        where: { schoolId, status: "PAID", date: { gte: fromStart, lte: toEnd } },
+        include: { service: { select: { id: true, name: true } }, student: { include: { enrollments: { where: { status: "ACTIVE" }, take: 1, include: { classroom: { select: { id: true, name: true } } } } } } },
+      }),
+      db.dailyService.findMany({ where: { schoolId }, select: { id: true, name: true, category: true }, orderBy: { name: "asc" } }),
+      db.school.findUnique({ where: { id: schoolId }, select: { name: true, town: true, region: true } }),
+    ]);
+    const scoped = paid.filter((c) => !classroomId || c.student.enrollments[0]?.classroomId === classroomId);
+
+    const rowMap = new Map<string, { studentId: string; name: string; code: string; classroom: string | null; items: Record<string, number>; total: number; payments: number }>();
+    for (const c of scoped) {
+      const row = rowMap.get(c.studentId) ?? {
+        studentId: c.studentId,
+        name: `${c.student.firstName} ${c.student.lastName}`,
+        code: c.student.nyansapoIndex ?? "",
+        classroom: c.student.enrollments[0]?.classroom?.name ?? null,
+        items: {},
+        total: 0,
+        payments: 0,
+      };
+      row.items[c.serviceId] = (row.items[c.serviceId] ?? 0) + c.amountCents;
+      row.total += c.amountCents;
+      row.payments += c.paymentId ? 1 : 0;
+      rowMap.set(c.studentId, row);
+    }
+    const rows = Array.from(rowMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+    const perService: Record<string, number> = {};
+    const perServiceCount: Record<string, number> = {};
+    for (const c of scoped) {
+      perService[c.serviceId] = (perService[c.serviceId] ?? 0) + c.amountCents;
+      perServiceCount[c.serviceId] = (perServiceCount[c.serviceId] ?? 0) + 1;
+    }
+    return NextResponse.json({
+      from, to,
+      services: svcs,
+      classroom: classroomId ?? null,
+      rows,
+      stats: {
+        students: rows.length,
+        collectedCents: scoped.reduce((n, c) => n + c.amountCents, 0),
+        receipts: scoped.filter((c) => c.paymentId).length,
+        perService, perServiceCount,
+      },
+      school: school ? { name: school.name, town: school.town, region: school.region } : null,
+    });
+  }
+
   const services = await db.dailyService.findMany({
     where: { schoolId },
     include: { _count: { select: { enrollments: { where: { active: true } } } }, classRates: { include: { classroom: { select: { id: true, name: true } } } } },

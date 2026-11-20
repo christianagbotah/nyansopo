@@ -132,7 +132,7 @@ export function DailyServices() {
   const [appliedTarget, setAppliedTarget] = useState<any>(null);
   if (navTarget !== appliedTarget) {
     setAppliedTarget(navTarget);
-    if (navTarget?.tab && ["pos", "wallets", "ledger", "services", "rates", "recon", "trend", "meals"].includes(navTarget.tab)) setTab(navTarget.tab);
+    if (navTarget?.tab && ["pos", "wallets", "ledger", "services", "rates", "recon", "trend", "meals", "payreport"].includes(navTarget.tab)) setTab(navTarget.tab);
   }
 
   const isAdmin = session?.role === "SCHOOL_ADMIN" || session?.role === "GROUP_OWNER";
@@ -254,6 +254,8 @@ export function DailyServices() {
           {!isTeacher && <TabsTrigger value="meals">Meals & opt-ins{pendingMeals ? ` (${pendingMeals})` : ""}</TabsTrigger>}
           {!isTeacher && <TabsTrigger value="rates">Fee rates</TabsTrigger>}
           {!isTeacher && <TabsTrigger value="recon">Reconciliation</TabsTrigger>}
+          {/* CI3 teacher/daily_payment_report parity — the date-range payment matrix */}
+          <TabsTrigger value="payreport">Payment report</TabsTrigger>
           <TabsTrigger value="trend">14-day trend</TabsTrigger>
         </TabsList>
 
@@ -586,6 +588,11 @@ export function DailyServices() {
         </TabsContent>
 
         {/* ── TREND ── */}
+        {/* ── PAYMENT REPORT (CI3 teacher/daily_payment_report.php parity) ── */}
+        <TabsContent value="payreport" className="mt-4">
+          <PaymentReportTab classrooms={data.settings.classrooms} />
+        </TabsContent>
+
         <TabsContent value="trend">
           <Card>
             <CardHeader className="pb-3"><CardTitle className="text-base">Billed vs collected — last 14 school days</CardTitle></CardHeader>
@@ -1841,6 +1848,175 @@ function MealsTab({ data, date, onChanged }: { data: DailyData; date: string; on
     valid until 5:00 PM. Payment type: direct / prepaid wallet / owing. */
 const COUPON_COLORS: Record<string, string> = { MEAL: "#10b981", DRINK: "#06b6d4" };
 type CouponRow = { student: string; studentCode: string; classroom: string | null; amountCents: number; paymentType: string };
+
+/* ── PAYMENT REPORT (CI3 teacher/daily_payment_report.php parity) ──
+   date-range × class matrix of what each learner paid per daily service:
+   stat tiles (learners, collected, receipts, busiest service), the
+   per-learner × service table with grand totals per column, print sheet
+   (A4, school letterhead) and CSV export. Enhancements over the legacy
+   view: dynamic service columns (not the hard-coded five), receipts count,
+   CSV alongside print, and the whole matrix loads on demand. */
+type PayReportData = {
+  from: string; to: string;
+  services: { id: string; name: string; category: string }[];
+  classroom: string | null;
+  rows: { studentId: string; name: string; code: string; classroom: string | null; items: Record<string, number>; total: number; payments: number }[];
+  stats: { students: number; collectedCents: number; receipts: number; perService: Record<string, number>; perServiceCount: Record<string, number> };
+  school: { name: string; town: string | null; region: string | null } | null;
+};
+function PaymentReportTab({ classrooms }: { classrooms: { id: string; name: string }[] }) {
+  const { currentSchoolId } = useStore();
+  const [from, setFrom] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 7); return d.toISOString().slice(0, 10); });
+  const [to, setTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const [classId, setClassId] = useState("all");
+  const [data, setData] = useState<PayReportData | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [ran, setRan] = useState(false);
+
+  async function generate() {
+    if (!currentSchoolId) return;
+    setBusy(true);
+    try {
+      const d = await apiGet<PayReportData>(`/api/school/${currentSchoolId}/ops/daily?tab=payment-report&from=${from}&to=${to}${classId !== "all" ? `&classroomId=${classId}` : ""}`);
+      setData(d);
+      setRan(true);
+    } catch (e: any) {
+      toast({ title: "Report failed", description: e.message, variant: "destructive" });
+    } finally { setBusy(false); }
+  }
+
+  function exportCsv() {
+    if (!data) return;
+    const cols = data.services.map((s) => s.name);
+    const lines = [
+      `Daily payment report,${data.school?.name ?? ""}`,
+      `Period,${data.from} to ${data.to}`,
+      "",
+      ["Student code", "Student", "Class", ...cols, "Total"].join(","),
+      ...data.rows.map((r) => [
+        `"${r.code}"`, `"${r.name.replace(/"/g, '""')}"`, `"${r.classroom ?? ""}"`,
+        ...cols.map((_, i) => {
+          const svc = data.services[i];
+          return ((r.items[svc.id] ?? 0) / 100).toFixed(2);
+        }),
+        (r.total / 100).toFixed(2),
+      ].join(",")),
+      ["", "", "Grand total", ...cols.map((_, i) => ((data.stats.perService[data.services[i].id] ?? 0) / 100).toFixed(2)), (data.stats.collectedCents / 100).toFixed(2)].join(","),
+    ];
+    const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `daily-payment-report-${data.from}-to-${data.to}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const busiest = data ? (Object.entries(data.stats.perService).sort((a, b) => b[1] - a[1])[0] ?? null) : null;
+  const busiestSvc = data && busiest ? data.services.find((s) => s.id === busiest[0]) : null;
+  const activeCols = data ? data.services.filter((s) => (data.stats.perServiceCount[s.id] ?? 0) > 0) : [];
+
+  return (
+    <div className="space-y-4">
+      {/* filters — CI3 start/end date + class + generate */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2"><ScrollText className="size-4 text-primary" /> Daily payment report</CardTitle>
+          <p className="text-xs text-muted-foreground max-w-2xl">What each learner paid per daily service over a period — feeding, water, transport, any service the school runs. Print it for the bursar or export the CSV.</p>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="w-40">
+              <Label className="text-xs">From</Label>
+              <DateField value={from} onChange={(v) => setFrom(v ?? "")} className="mt-1" />
+            </div>
+            <div className="w-40">
+              <Label className="text-xs">To</Label>
+              <DateField value={to} onChange={(v) => setTo(v ?? "")} className="mt-1" />
+            </div>
+            <div className="w-48">
+              <Label className="text-xs">Class</Label>
+              <Select value={classId} onValueChange={setClassId}>
+                <SelectTrigger className="mt-1 h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All classes</SelectItem>
+                  {classrooms.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button onClick={generate} disabled={busy} className="gap-1.5">{busy ? "Generating…" : "Generate report"}</Button>
+            {data && <div className="flex gap-2 ml-auto">
+              <Button variant="outline" size="sm" className="gap-1.5" onClick={() => window.print()}><Printer className="size-4" /> Print</Button>
+              <Button variant="outline" size="sm" className="gap-1.5" onClick={exportCsv}><Layers className="size-4" /> Export CSV</Button>
+            </div>}
+          </div>
+        </CardContent>
+      </Card>
+
+      {!data && ran && <Card><CardContent><EmptyState icon={<ScrollText className="size-5" />} title="No payments in that period" hint="Widen the date range or pick a different class." /></CardContent></Card>}
+      {data && (
+        <>
+          {/* stat tiles — CI3 total_students / total_collected / feeding cards */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+            <StatCard icon={<UserCheck className="size-4" />} label="Learners paid" value={data.stats.students} sub={`across ${activeCols.length} service${activeCols.length === 1 ? "" : "s"}`} />
+            <StatCard icon={<Wallet className="size-4" />} label="Total collected" value={fmtCedi(data.stats.collectedCents, { compact: true })} tone="primary" sub={`${data.from} → ${data.to}`} />
+            <StatCard icon={<ReceiptIcon />} label="Receipts issued" value={data.stats.receipts} tone="gold" sub="direct counter payments" />
+            <StatCard icon={<HandCoins className="size-4" />} label="Busiest service" value={busiestSvc?.name ?? "—"} sub={busiest ? `${fmtCedi(busiest[1], { compact: true })} · ${data.stats.perServiceCount[busiest[0]] ?? 0} charges` : "no payments yet"} />
+          </div>
+
+          {/* per-learner × service matrix with grand totals — CI3 table parity */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Collected per learner × service {classId !== "all" && classrooms.find((c) => c.id === classId) ? `— ${classrooms.find((c) => c.id === classId)!.name}` : ""}</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="print-area overflow-x-auto nice-scroll max-h-[560px]">
+                <Table>
+                  <TableHeader className="sticky top-0 bg-secondary/70 backdrop-blur">
+                    <TableRow>
+                      <TableHead className="w-10">#</TableHead>
+                      <TableHead className="min-w-28">Student code</TableHead>
+                      <TableHead className="min-w-40">Student</TableHead>
+                      <TableHead className="min-w-28 hidden lg:table-cell">Class</TableHead>
+                      {activeCols.map((s) => <TableHead key={s.id} className="text-right min-w-24">{s.name}</TableHead>)}
+                      <TableHead className="text-right min-w-24 font-semibold">Total</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {data.rows.map((r, i) => (
+                      <TableRow key={r.studentId}>
+                        <TableCell className="text-muted-foreground tabular-nums">{i + 1}</TableCell>
+                        <TableCell className="font-mono text-xs">{r.code || "—"}</TableCell>
+                        <TableCell className="font-medium">{r.name}</TableCell>
+                        <TableCell className="hidden lg:table-cell text-muted-foreground">{r.classroom ?? "—"}</TableCell>
+                        {activeCols.map((s) => {
+                          const v = r.items[s.id] ?? 0;
+                          return <TableCell key={s.id} className="text-right tabular-nums">{v > 0 ? fmtCedi(v, { compact: true }) : <span className="text-muted-foreground">—</span>}</TableCell>;
+                        })}
+                        <TableCell className="text-right tabular-nums font-semibold">{fmtCedi(r.total)}</TableCell>
+                      </TableRow>
+                    ))}
+                    {!data.rows.length && (
+                      <TableRow><TableCell colSpan={4 + activeCols.length}><EmptyState icon={<CheckCircle2 className="size-5" />} title="Nothing collected in this window" hint="Try the whole school, or widen the dates." /></TableCell></TableRow>
+                    )}
+                    {/* grand total row — CI3 total_{module} / grand_total */}
+                    {data.rows.length > 0 && (
+                      <TableRow className="bg-secondary/60 font-semibold border-t-2">
+                        <TableCell colSpan={4} className="text-right">Grand total:</TableCell>
+                        {activeCols.map((s) => <TableCell key={s.id} className="text-right tabular-nums">{fmtCedi(data.stats.perService[s.id] ?? 0, { compact: true })}</TableCell>)}
+                        <TableCell className="text-right tabular-nums text-primary">{fmtCedi(data.stats.collectedCents)}</TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        </>
+      )}
+    </div>
+  );
+}
 
 function CouponsDialog({ open, date, services, onOpenChange }: { open: boolean; date: string; services: Service[]; onOpenChange: (o: boolean) => void }) {
   const { currentSchoolId } = useStore();
