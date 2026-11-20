@@ -841,6 +841,63 @@ export function usageFare(onewayCents: number, boardingFareCents?: number | null
   };
 }
 
+/** Resolve the ACTIVE daily-fee discount covering the transport service for one
+ *  learner (CI3 get_student_discount_for_date parity — profile serviceIds scope,
+ *  per-class rule override, catalog discounts, validity windows; most generous
+ *  wins). Self-contained here to avoid an import cycle with lib/discounts.
+ *  Returns null when nothing covers the fare. */
+async function transportFareDiscount(
+  db: PrismaClient, schoolId: string, studentId: string, now = new Date(),
+): Promise<{ method: string; value: number } | null> {
+  const [apps, svc, enroll] = await Promise.all([
+    db.discountApplication.findMany({
+      where: { schoolId, studentId, status: "ACTIVE" },
+      include: {
+        discount: { select: { type: true, value: true, scope: true } },
+        profile: { select: { category: true, method: true, value: true, serviceIds: true, rules: { select: { classroomName: true, value: true } } } },
+      },
+    }) as unknown as Promise<any[]>,
+    db.dailyService.findFirst({ where: { schoolId, category: "TRANSPORT" }, select: { id: true } }),
+    db.enrollment.findFirst({ where: { studentId, status: "ACTIVE", classroom: { schoolId } }, select: { classroomId: true } }),
+  ]);
+  if (!svc) return null;
+  let best: { method: string; value: number } | null = null;
+  const netPerCedi = (m: string, v: number) => (m === "PERCENT" ? 1 - Math.min(100, Math.max(0, v)) / 100 : Math.max(0, 1 - Math.max(0, v) / 100));
+  for (const a of apps) {
+    if (a.validFrom && a.validFrom > now) continue;
+    if (a.validTo && a.validTo < now) continue;
+    let method: string | null = null;
+    let value = 0;
+    if (a.profile && a.profile.category === "DAILY_SERVICE") {
+      const ids = String(a.profile.serviceIds ?? "*").trim();
+      const all = !ids || ids === "*";
+      if (!all && !ids.split(",").map((s: string) => s.trim()).filter(Boolean).includes(svc.id)) continue;
+      value = a.valueOverride ?? a.profile.value;
+      if (!a.valueOverride && a.profile.rules.length) {
+        const byClass = a.profile.rules.filter((r: any) => r.classroomName && r.classroomName === enroll?.classroomId);
+        const anyClass = a.profile.rules.filter((r: any) => !r.classroomName);
+        const rule = byClass[byClass.length - 1] ?? anyClass[anyClass.length - 1];
+        if (rule) value = rule.value;
+      }
+      method = a.profile.method;
+    } else if (a.discount && a.discount.scope === "DAILY_SERVICE") {
+      if (a.serviceId && a.serviceId !== svc.id) continue;
+      method = a.discount.type;
+      value = a.valueOverride ?? a.discount.value;
+    }
+    if (!method) continue;
+    if (!best || netPerCedi(method, value) < netPerCedi(best.method, best.value)) best = { method, value };
+  }
+  return best;
+}
+
+/** Net a discounted amount off a fare (PERCENT % off, FIXED pesewas off).
+ *  Mirrors the subsidies engine's subsidisedPrice so display and charging agree. */
+export function netDiscountedCents(amountCents: number, method: string, value: number): number {
+  if (method === "PERCENT") return Math.max(0, Math.round(amountCents * (1 - Math.min(100, Math.max(0, value)) / 100)));
+  return Math.max(0, amountCents - Math.max(0, value));
+}
+
 /** Apply a usage choice to a learner's transport-fare charge on a given day.
  *  iEduPro parity: the charge is created lazily here (a direction pick at the
  *  counter materialises the day's transport bill). Returns the charge, or null
@@ -866,7 +923,13 @@ export async function applyTransportUsage(
     where: { assignment: { studentId, active: true }, date: { gte: dStart, lte: dEnd } },
   });
   const options = usageFare(fare.onewayCents, boarding?.fareCents ?? null);
-  const amount = options[usage];
+  /* CI3 parity: the daily-fee discount resolves for transport too — a full
+     discount rides free, a partial one pays the net fare (process_daily_charges
+     discount block). The charge records the NET amount. */
+  const fareDiscount = await transportFareDiscount(db, schoolId, studentId, dStart);
+  const rawAmount = options[usage];
+  const amount = fareDiscount && rawAmount > 0 ? netDiscountedCents(rawAmount, fareDiscount.method, fareDiscount.value) : rawAmount;
+  const fareOffCents = rawAmount > 0 ? rawAmount - amount : 0;
 
   const charge = await db.dailyCharge.findFirst({
     where: { schoolId, studentId, date: { gte: dStart, lte: dEnd }, service: { category: "TRANSPORT" } },
@@ -894,7 +957,7 @@ export async function applyTransportUsage(
         arrearsBeforeCents: arrearsAfter - owedAfter, arrearsAfterCents: arrearsAfter,
         performedByName: opts?.performedByName, performedByRole: opts?.performedByRole,
         reference: createdCharge.id,
-        notes: `transport fare · ${usage.toLowerCase()} · ${dStart.toISOString().slice(0, 10)}${covered > 0 ? ` · ₵${(covered / 100).toFixed(2)} auto-deducted from item balance` : ""}`,
+        notes: `transport fare · ${usage.toLowerCase()} · ${dStart.toISOString().slice(0, 10)}${fareOffCents > 0 && fareDiscount ? ` · discount −₵${(fareOffCents / 100).toFixed(2)} (${fareDiscount.method === "PERCENT" ? `${fareDiscount.value}%` : `₵${(fareDiscount.value / 100).toFixed(2)}`})` : ""}${covered > 0 ? ` · ₵${(covered / 100).toFixed(2)} auto-deducted from item balance` : ""}`,
       });
     }
     return createdCharge;
@@ -916,7 +979,7 @@ export async function applyTransportUsage(
       arrearsBeforeCents: arrearsAfter - delta, arrearsAfterCents: arrearsAfter,
       performedByName: opts?.performedByName, performedByRole: opts?.performedByRole,
       reference: charge.id,
-      notes: `transport fare adjusted · ${usage.toLowerCase()} · ${dStart.toISOString().slice(0, 10)}`,
+      notes: `transport fare adjusted · ${usage.toLowerCase()} · ${dStart.toISOString().slice(0, 10)}${fareOffCents > 0 && fareDiscount ? ` · discount −₵${(fareOffCents / 100).toFixed(2)}` : ""}`,
     });
   } else if (charge.status === "OWED" && status === "WAIVED") {
     const arrearsAfter = await arrearsTotalCents(db, studentId);

@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
 import { sendAutomated, smsEventEnabled } from "@/lib/sms";
 import { applyAttendanceChargeRule, applyTransportUsage, collectDailyItems, resolveTransportFare, effectivePrice, TRANSPORT_USAGES, type TransportUsage } from "@/lib/daily-billing";
+import { resolveDailyDiscounts } from "@/lib/discounts";
 import { canAny } from "@/lib/rbac";
 
 // ── Attendance ops (iEduPro CI3 register parity) ──────────────
@@ -205,8 +206,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
      daily services — the register UI gates the inputs on daily.collect. */
   let fees: null | {
     studentId: string;
-    items: { serviceId: string; name: string; category: string; rateCents: number; arrearsCents: number; prepaidCents: number; paidTodayCents: number; optional: boolean; optedOut: boolean; optedIn: boolean; weekly: boolean; weeklyBilled: boolean; chargedToday: boolean }[];
-    transport: { routeName: string; stopName: string | null; onewayCents: number } | null;
+    items: { serviceId: string; name: string; category: string; rateCents: number; listRateCents: number; discountCents: number; discountName: string | null; discountMethod: string | null; discountValue: number | null; fullDiscount: boolean; arrearsCents: number; prepaidCents: number; paidTodayCents: number; optional: boolean; optedOut: boolean; optedIn: boolean; weekly: boolean; weeklyBilled: boolean; chargedToday: boolean }[];
+    transport: { routeName: string; stopName: string | null; onewayCents: number; netOnewayCents: number; fareDiscountCents: number; fullFareDiscount: boolean } | null;
+    discountInfo: { hasDiscount: boolean; fullDiscountAllFees: boolean; badges: { serviceName: string; name: string; method: string; value: number; offCents: number; netCents: number; free: boolean }[] };
   }[] = null;
   if (canAny(auth.user.permissions, ["daily.view"])) {
     const day = new Date(date); day.setHours(0, 0, 0, 0);
@@ -236,8 +238,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       select: { studentId: true, serviceId: true, amountCents: true },
     });
     const fares = await Promise.all(ids.map((sid) => resolveTransportFare(db, sid)));
+    /* CI3 mark_attendance discount block: resolve every learner's ACTIVE
+       daily-fee discounts once for the whole class (profiles + catalog, window
+       valid) — the same ACTIVE applications the subsidies engine materialises
+       into enrolment overrides, so display and charging always agree. */
+    const discountSummaries = await resolveDailyDiscounts(schoolId, ids, { date: day });
 
     fees = ids.map((sid, i) => {
+      const summary = discountSummaries.get(sid);
       const items = enrollRows
         .filter((e) => e.studentId === sid)
         .map((e) => {
@@ -247,11 +255,19 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
           const optedIn = exceptions.some((x) => x.studentId === sid && x.serviceId === svc.id && x.kind === "OPT_IN");
           const weekly = svc.chargeMode === "WEEKLY";
           const weeklyBilled = weekly && weekCharges.some((c) => c.studentId === sid && c.serviceId === svc.id && c.service.chargeMode === "WEEKLY");
+          const rateCents = effectivePrice(svc, e, classRate);
+          const meta = summary?.services[svc.id] ?? null;
           return {
             serviceId: svc.id,
             name: svc.name,
             category: svc.category,
-            rateCents: effectivePrice(svc, e, classRate),
+            rateCents,
+            listRateCents: meta?.listPriceCents ?? classRate ?? svc.priceCents,
+            discountCents: meta?.offCents ?? 0,
+            discountName: meta?.sourceName ?? null,
+            discountMethod: meta?.method ?? null,
+            discountValue: meta?.value ?? null,
+            fullDiscount: meta?.fullDiscount ?? false,
             arrearsCents: owedRows.filter((c) => c.studentId === sid && c.serviceId === svc.id).reduce((a, c) => a + c.amountCents, 0),
             prepaidCents: balances.find((b) => b.studentId === sid && b.serviceId === svc.id)?.prepaidCents ?? 0,
             paidTodayCents:
@@ -269,7 +285,21 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       return {
         studentId: sid,
         items,
-        transport: fare ? { routeName: fare.routeName, stopName: fare.stopName, onewayCents: fare.onewayCents } : null,
+        transport: fare
+          ? {
+              routeName: fare.routeName,
+              stopName: fare.stopName,
+              onewayCents: fare.onewayCents,
+              netOnewayCents: summary?.transport?.netFareCents ?? fare.onewayCents,
+              fareDiscountCents: summary?.transport?.offCents ?? 0,
+              fullFareDiscount: summary?.transport?.fullFareDiscount ?? false,
+            }
+          : null,
+        discountInfo: {
+          hasDiscount: summary?.hasDiscount ?? false,
+          fullDiscountAllFees: summary?.fullDiscountAllFees ?? false,
+          badges: summary?.badges ?? [],
+        },
       };
     });
   }

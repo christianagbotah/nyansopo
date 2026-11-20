@@ -22,7 +22,7 @@ import { canAny } from "@/lib/rbac";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { CalendarCheck, ChevronLeft, ChevronRight, CloudOff, Save, Users, ScanLine, LogIn, LogOut, Ban, CircleCheck, CircleAlert, OctagonX, Undo2, BarChart3, CalendarDays, CheckCheck, UserX, Download, Printer, ChevronDown, ChevronUp, Search, Bus, Banknote, CreditCard, PlusCircle } from "lucide-react";
+import { CalendarCheck, ChevronLeft, ChevronRight, CloudOff, Save, Users, ScanLine, LogIn, LogOut, Ban, CircleCheck, CircleAlert, OctagonX, Undo2, BarChart3, CalendarDays, CheckCheck, UserX, Download, Printer, ChevronDown, ChevronUp, Search, Bus, Banknote, CreditCard, PlusCircle, Gift, Tag, Sparkles } from "lucide-react";
 
 type AttData = {
   classrooms: { id: string; name: string; grade: string; stage?: string }[];
@@ -36,8 +36,10 @@ type AttData = {
      payload when the session may view daily services */
   fees?: {
     studentId: string;
-    items: { serviceId: string; name: string; category: string; rateCents: number; arrearsCents: number; prepaidCents: number; paidTodayCents?: number; optional: boolean; optedOut: boolean; optedIn: boolean; weekly: boolean; weeklyBilled: boolean; chargedToday: boolean }[];
-    transport: { routeName: string; stopName: string | null; onewayCents: number } | null;
+    items: { serviceId: string; name: string; category: string; rateCents: number; listRateCents?: number; discountCents?: number; discountName?: string | null; discountMethod?: string | null; discountValue?: number | null; fullDiscount?: boolean; arrearsCents: number; prepaidCents: number; paidTodayCents?: number; optional: boolean; optedOut: boolean; optedIn: boolean; weekly: boolean; weeklyBilled: boolean; chargedToday: boolean }[];
+    transport: { routeName: string; stopName: string | null; onewayCents: number; netOnewayCents?: number; fareDiscountCents?: number; fullFareDiscount?: boolean } | null;
+    /* CI3 discount block — badges + has_full_discount_on_all_daily_fees */
+    discountInfo?: { hasDiscount: boolean; fullDiscountAllFees: boolean; badges: { serviceName: string; name: string; method: string; value: number; offCents: number; netCents: number; free: boolean }[] };
   }[];
 };
 
@@ -77,7 +79,7 @@ const FEE_TILE_GRADIENT: Record<string, string> = {
    opt-in toggle change, exactly like the legacy #prepaid_{type}/{arrears}
    spans updated by jQuery. */
 export function projectItemBalances(
-  it: AttData["fees"][number]["items"][number],
+  it: NonNullable<AttData["fees"]>[number]["items"][number],
   opts: { chargeable: boolean; optionalOn: boolean; paidNowCents: number },
 ): { prepaid: number; arrears: number } {
   let prepaid = it.prepaidCents;
@@ -474,14 +476,58 @@ export function Attendance() {
 
                           {/* CI3 fee collection inputs (save_attendance_and_fees):
                               per-item amounts for chargeable learners, optional
-                              items toggle, riders pick the bus direction */}
+                              items toggle, riders pick the bus direction.
+                              Discount parity (mark_attendance.php): a learner
+                              with has_full_discount_on_all_daily_fees gets the
+                              green 100% card instead of fee inputs; partial
+                              discounts render the green "₵X off" strip and the
+                              net charge as the input placeholder. */}
                           {(() => {
                             const feeRow = showFeeCollection ? (data.fees?.find((f) => f.studentId === s.id) ?? null) : null;
                             if (!feeRow || !feeRow.items.length) return null;
                             if (!["PRESENT", "LATE"].includes(marks[s.id] ?? "ABSENT")) return null; // not chargeable today
+                            /* CI3 students_with_full_discount — the whole fee block
+                               (inputs AND the bus picker) is replaced by the hero card */
+                            if (feeRow.discountInfo?.fullDiscountAllFees) {
+                              return (
+                                <div className="mt-2 rounded-lg border-2 border-emerald-400/70 bg-gradient-to-br from-emerald-50 to-green-50 dark:from-emerald-950/50 dark:to-green-950/40 p-2.5 text-center">
+                                  <div className="flex items-center justify-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+                                    <Gift className="size-3.5" /> 100% Discount Applied
+                                  </div>
+                                  <div className="text-[10px] text-emerald-700/80 dark:text-emerald-400/80 mt-0.5">No fees required for this student — all daily fees are covered.</div>
+                                  {feeRow.discountInfo.badges.length > 0 && (
+                                    <div className="mt-1 flex flex-wrap justify-center gap-1">
+                                      {feeRow.discountInfo.badges.map((b, i) => (
+                                        <span key={i} className="rounded-full bg-emerald-100 dark:bg-emerald-900/60 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-800 dark:text-emerald-300">
+                                          {b.serviceName}: {b.method === "PERCENT" ? `${b.value}%` : `₵${(b.offCents / 100).toFixed(2)}`} (FREE)
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            }
                             return (
                               <div className="mt-2 rounded-lg border bg-secondary/30 p-2 space-y-1.5">
                                 <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Daily fees</div>
+                                {/* CI3 discount badge block — green, per-service terms:
+                                    "Feeding: 50% | ₵5.00 (FREE)" (percentage | money off) */}
+                                {feeRow.discountInfo?.hasDiscount && feeRow.discountInfo.badges.length > 0 && (
+                                  <div className="rounded-lg border border-emerald-300/70 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-1.5">
+                                    <div className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+                                      <Tag className="size-3" /> Discount Applied
+                                    </div>
+                                    <div className="mt-0.5 space-y-px">
+                                      {feeRow.discountInfo.badges.map((b, i) => (
+                                        <div key={i} className="text-[10px] text-emerald-800 dark:text-emerald-200">
+                                          <b>{b.serviceName}:</b> {b.method === "PERCENT" ? `${b.value}%` : `₵${(b.offCents / 100).toFixed(2)}`} | ₵{(b.offCents / 100).toFixed(2)} off
+                                          {b.free && <span className="font-bold"> (FREE)</span>}
+                                          <span className="text-emerald-700/70 dark:text-emerald-400/70"> · {b.name}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
                                 {feeRow.items.map((it) => {
                                   const key = `${s.id}:${it.serviceId}`;
                                   if (it.optedOut) {
@@ -489,6 +535,19 @@ export function Attendance() {
                                       <div key={it.serviceId} className="flex items-center justify-between text-[11px] text-muted-foreground">
                                         <span className="line-through">{it.name}</span>
                                         <Badge variant="outline" className="text-[9px] px-1.5 text-amber-700 dark:text-amber-300 border-amber-400/50">opt-out approved</Badge>
+                                      </div>
+                                    );
+                                  }
+                                  /* CI3: a row the discount covers 100% renders as a
+                                     green FREE strip (legacy hid the row; the strip
+                                     keeps the register self-explanatory) */
+                                  if (it.fullDiscount && (it.arrearsCents ?? 0) <= 0) {
+                                    return (
+                                      <div key={it.serviceId} className="flex items-center justify-between rounded-md bg-emerald-50 dark:bg-emerald-950/40 px-1.5 py-1">
+                                        <span className="flex items-center gap-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+                                          <Sparkles className="size-3" /> {it.name} — FREE
+                                        </span>
+                                        <span className="text-[9px] text-emerald-600/80 dark:text-emerald-400/80">{it.discountName ?? "discount"}{it.discountMethod === "PERCENT" && it.discountValue != null ? ` · ${it.discountValue}%` : ""}</span>
                                       </div>
                                     );
                                   }
@@ -505,6 +564,8 @@ export function Attendance() {
                                     paidNowCents: Math.round(parseFloat(amt || "0") * 100) || 0,
                                   });
                                   const projLive = proj.prepaid !== it.prepaidCents || proj.arrears !== it.arrearsCents;
+                                  /* CI3 placeholder = the NET charge (discounted rate) */
+                                  const netPlaceholder = (it.arrearsCents > 0 ? "0.00" : (it.rateCents / 100).toFixed(2));
                                   return (
                                     <div key={it.serviceId} className="space-y-0.5">
                                       <div className="flex items-center gap-1.5">
@@ -522,20 +583,27 @@ export function Attendance() {
                                             }}
                                           />
                                         )}
-                                        <span className={`text-[11px] truncate flex-1 ${it.optional && !optionalOn ? "text-muted-foreground line-through" : ""}`} title={`${it.name} — rate ${fmtCedi(it.rateCents)} · arrears ${fmtCedi(it.arrearsCents)} · prepaid ${fmtCedi(it.prepaidCents)}`}>
+                                        <span className={`text-[11px] truncate flex-1 ${it.optional && !optionalOn ? "text-muted-foreground line-through" : ""}`} title={`${it.name} — rate ${fmtCedi(it.listRateCents ?? it.rateCents)}${it.discountCents ? ` · discount −${fmtCedi(it.discountCents)}` : ""} · arrears ${fmtCedi(it.arrearsCents)} · prepaid ${fmtCedi(it.prepaidCents)}`}>
                                           {it.name}
+                                          {it.discountCents ? <span className="text-emerald-700 dark:text-emerald-400"> · {fmtCedi(it.rateCents, { compact: true })} <span className="line-through opacity-60">{fmtCedi(it.listRateCents ?? it.rateCents, { compact: true })}</span></span> : null}
                                           {it.weekly && <span className="text-cyan-700 dark:text-cyan-400"> ·wk</span>}
                                           {it.chargedToday && <span className="text-emerald-700 dark:text-emerald-400"> ✓</span>}
                                         </span>
                                         {(it.optional ? optionalOn : true) && (
                                           <Input
-                                            type="number" min="0" step="0.5" placeholder="0.00"
+                                            type="number" min="0" step="0.5" placeholder={netPlaceholder}
                                             className="h-7 w-20 px-1.5 text-right tabular-nums text-xs"
                                             value={amt}
                                             onChange={(e) => setFeeAmts((a) => ({ ...a, [key]: e.target.value }))}
                                           />
                                         )}
                                       </div>
+                                      {/* CI3 green strip: "🎁 Discount: ₵X.XX off" (method-aware) */}
+                                      {it.discountCents ? (
+                                        <div className="flex items-center gap-1 rounded bg-emerald-50 dark:bg-emerald-950/40 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700 dark:text-emerald-300">
+                                          <Tag className="size-2.5" /> Discount: ₵{(it.discountCents / 100).toFixed(2)} off{it.discountName ? ` (${it.discountName})` : ""}
+                                        </div>
+                                      ) : null}
                                       {/* CI3 prepaid / arrears badge pair per fee module
                                           (mark_attendance #prepaid_{type}_{id} / #arrears_{type}_{id}) —
                                           values are the PROJECTED wallet state after save (live) */}
@@ -568,11 +636,12 @@ export function Attendance() {
                                     </div>
                                   );
                                 })}
-                                {feeRow.transport && (
+                                {feeRow.transport && !feeRow.transport.fullFareDiscount && (
                                   <div className="flex items-center gap-1.5 pt-1 border-t">
                                     <Bus className="size-3.5 text-emerald-600 shrink-0" />
-                                    <span className="text-[11px] text-muted-foreground truncate flex-1" title={`${feeRow.transport.routeName} — one-way ${fmtCedi(feeRow.transport.onewayCents)}${feeRow.transport.stopName ? ` · ${feeRow.transport.stopName}` : ""}`}>
+                                    <span className="text-[11px] text-muted-foreground truncate flex-1" title={`${feeRow.transport.routeName} — one-way ${fmtCedi(feeRow.transport.onewayCents)}${feeRow.transport.fareDiscountCents ? ` · discount −${fmtCedi(feeRow.transport.fareDiscountCents)}` : ""}${feeRow.transport.stopName ? ` · ${feeRow.transport.stopName}` : ""}`}>
                                       {feeRow.transport.routeName}
+                                      {feeRow.transport.fareDiscountCents ? <span className="text-emerald-700 dark:text-emerald-400"> · {fmtCedi(feeRow.transport.netOnewayCents ?? feeRow.transport.onewayCents, { compact: true })} <span className="line-through opacity-60">{fmtCedi(feeRow.transport.onewayCents, { compact: true })}</span></span> : null}
                                     </span>
                                     <select
                                       value={feeUsage[s.id] ?? ""}
@@ -581,10 +650,18 @@ export function Attendance() {
                                       aria-label={`Bus usage for ${s.name}`}
                                     >
                                       <option value="">no bus</option>
-                                      <option value="MORNING">AM · {fmtCedi(feeRow.transport.onewayCents, { compact: true })}</option>
-                                      <option value="AFTERNOON">PM · {fmtCedi(feeRow.transport.onewayCents, { compact: true })}</option>
-                                      <option value="BOTH">Both · {fmtCedi(feeRow.transport.onewayCents * 2, { compact: true })}</option>
+                                      <option value="MORNING">AM · {fmtCedi(feeRow.transport.netOnewayCents ?? feeRow.transport.onewayCents, { compact: true })}</option>
+                                      <option value="AFTERNOON">PM · {fmtCedi(feeRow.transport.netOnewayCents ?? feeRow.transport.onewayCents, { compact: true })}</option>
+                                      <option value="BOTH">Both · {fmtCedi((feeRow.transport.netOnewayCents ?? feeRow.transport.onewayCents) * 2, { compact: true })}</option>
                                     </select>
+                                  </div>
+                                )}
+                                {feeRow.transport?.fullFareDiscount && (
+                                  <div className="flex items-center justify-between rounded-md bg-emerald-50 dark:bg-emerald-950/40 px-1.5 py-1">
+                                    <span className="flex items-center gap-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+                                      <Bus className="size-3" /> {feeRow.transport.routeName} — FREE ride
+                                    </span>
+                                    <span className="text-[9px] text-emerald-600/80 dark:text-emerald-400/80">fare discount</span>
                                   </div>
                                 )}
                                 {(() => {
@@ -606,8 +683,9 @@ export function Attendance() {
                             );
                           })()}
                           {/* CI3 modal_take_payment parity — quick per-learner daily-fee
-                               payment (method + per-item allocation + receipt print) */}
-                          {showFeeCollection && (data.fees?.find((f) => f.studentId === s.id)?.items.length ?? 0) > 0 && (
+                               payment (method + per-item allocation + receipt print);
+                               hidden for fully-discounted learners (nothing to take) */}
+                          {showFeeCollection && (data.fees?.find((f) => f.studentId === s.id)?.items.length ?? 0) > 0 && !data.fees?.find((f) => f.studentId === s.id)?.discountInfo?.fullDiscountAllFees && (
                             <Button
                               size="sm" variant="outline"
                               className="mt-2 h-7 w-full gap-1 text-[11px]"
@@ -669,7 +747,7 @@ export function Attendance() {
           items={
             takePayFor && showFeeCollection
               ? (data?.fees?.find((f) => f.studentId === takePayFor.id)?.items ?? [])
-                  .filter((it) => !it.optedOut)
+                  .filter((it) => !it.optedOut && (!it.fullDiscount || it.arrearsCents > 0)) // 100%-discounted items vanish (CI3 hides the row)
                   .map((it) => ({ serviceId: it.serviceId, name: it.name, category: it.category, rateCents: it.rateCents, arrearsCents: it.arrearsCents, prepaidCents: it.prepaidCents }))
               : []
           }

@@ -27,7 +27,7 @@ import { ReceiptDialog } from "@/components/modules/daily-services";
 import {
   UtensilsCrossed, Droplets, BookOpenCheck, Coffee, Bus, Wallet, Search, Printer, UserCheck,
   PauseCircle, PlayCircle, Trash2, Ticket, TrendingUp, HandCoins, AlertTriangle, CheckCircle2,
-  GraduationCap, Percent, X, Banknote, CircleDollarSign, SplitSquareHorizontal, Pencil, Plus,
+  GraduationCap, Percent, X, Banknote, CircleDollarSign, SplitSquareHorizontal, Pencil, Plus, Gift,
 } from "lucide-react";
 
 /* ── types ── */
@@ -45,6 +45,7 @@ type KpiData = {
 type PortalCard = {
   kind: "DAILY"; serviceId: string; name: string; category: string;
   priceCents: number; discountedCents: number; discountCents: number; discountLabel: string | null;
+  discountMethod?: string | null; discountValue?: number | null; fullDiscount?: boolean;
   hidden: boolean; optional: boolean;
   optOut: { status: string; reason: string | null } | null;
   optedIn: { status: string; reason: string | null } | null;
@@ -58,9 +59,12 @@ type PortalInfo = {
   student: { id: string; name: string; index: string; classroom: string; classroomId: string; guardianName: string | null; guardianPhone: string | null };
   attendance: { status: string; excusedReason: string | null; takenBy: string | null } | null;
   wallet: { prepaidCents: number; transportCents: number; itemPrepaidTotal: number; arrearsTotal: number };
-  discounts: { name: string; method: string; value: number; scoped: boolean }[];
+  discounts: { name: string; method: string; value: number; scoped: boolean; serviceName?: string; offCents?: number; netCents?: number; free?: boolean }[];
+  /* CI3 hasDiscount / has_full_discount_on_all_daily_fees — hero card + pill */
+  hasDiscount?: boolean;
+  fullDiscountAllFees?: boolean;
   cards: PortalCard[];
-  transport: { routeName: string; stopName: string | null; onewayCents: number; bothCents: number; arrearsCents: number; transportWalletCents: number; todayUsage: string | null } | null;
+  transport: { routeName: string; stopName: string | null; onewayCents: number; netOnewayCents?: number; fareDiscountCents?: number; fullFareDiscount?: boolean; bothCents: number; netBothCents?: number; arrearsCents: number; transportWalletCents: number; todayUsage: string | null } | null;
   invoices: { invoiceId: string; invoiceNo: string; term: string | null; totalCents: number; paidCents: number; dueCents: number; dueDate: string | null; status: string; items: { name: string; amountCents: number }[] }[];
   recentPayments: { id: string; receiptNo: string; amountCents: number; method: string; category: string; paidAt: string }[];
 };
@@ -218,19 +222,22 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
   const prepaidTotal = info ? info.wallet.itemPrepaidTotal + info.wallet.prepaidCents + info.wallet.transportCents : 0;
   const arrearsTotal = info ? info.wallet.arrearsTotal : 0;
 
-  /* transport direction → fare preview (route-based, never class-based) */
+  /* transport direction → fare preview (route-based, never class-based);
+     discounts net the fare (CI3 process_daily_charges transport block) */
   const transportCard = activeCards.find((c) => c.category === "TRANSPORT") ?? null;
+  const netOneway = info?.transport ? (info.transport.fullFareDiscount ? 0 : (info.transport.netOnewayCents ?? info.transport.onewayCents)) : 0;
+  const netBoth = info?.transport ? (info.transport.fullFareDiscount ? 0 : (info.transport.netBothCents ?? (info.transport.netOnewayCents ?? info.transport.onewayCents) * 2)) : 0;
   const usageFare = () => {
     if (!info?.transport) return 0;
-    if (usage === "MORNING" || usage === "AFTERNOON") return info.transport.onewayCents;
-    if (usage === "BOTH") return info.transport.bothCents || info.transport.onewayCents * 2;
+    if (usage === "MORNING" || usage === "AFTERNOON") return netOneway;
+    if (usage === "BOTH") return netBoth;
     return 0;
   };
   const pickUsage = (v: string) => {
     setUsage(v);
     setBoarded(false);
     if (transportCard && v !== "NOT_USING") {
-      const fare = v === "BOTH" ? (info?.transport?.bothCents || (info?.transport?.onewayCents ?? 0) * 2) : (info?.transport?.onewayCents ?? 0);
+      const fare = v === "BOTH" ? netBoth : netOneway;
       const owed = transportCard.arrearsCents;
       setAmounts((a) => ({ ...a, [transportCard.serviceId]: ((owed > 0 ? owed : fare) / 100).toFixed(2) }));
       setCollectOn((o) => ({ ...o, [transportCard.serviceId]: true }));
@@ -624,9 +631,10 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
                 ) : <Badge variant="outline" className="text-[10px] text-muted-foreground shrink-0">not marked</Badge>}
               </div>
               <div className="flex flex-wrap gap-1.5 mt-2.5">
+                {/* CI3 green "DISCOUNT APPLIED" pill — one badge per discounted service */}
                 {info.discounts.map((d, i) => (
-                  <Badge key={i} variant="outline" className="gap-1 text-[10px] text-violet-700 dark:text-violet-300 border-violet-400/50">
-                    <Percent className="size-2.5" /> {d.name} {d.method === "PERCENT" ? `${d.value}%` : fmt(d.value)}
+                  <Badge key={i} variant="outline" className={cn("gap-1 text-[10px]", d.free ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-400/50" : "text-violet-700 dark:text-violet-300 border-violet-400/50")}>
+                    <Percent className="size-2.5" /> {d.serviceName ? `${d.serviceName}: ` : ""}{d.name} {d.method === "PERCENT" ? `${d.value}%` : `−${fmt(d.offCents ?? d.value)}`}{d.free ? " · FREE" : ""}
                   </Badge>
                 ))}
                 {info.transport && <Badge variant="outline" className="gap-1 text-[10px] text-indigo-700 dark:text-indigo-300 border-indigo-400/50"><Bus className="size-2.5" /> {info.transport.routeName}</Badge>}
@@ -691,6 +699,38 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
 
           {/* ── MAIN: fee cards + transaction rail ── */}
           <div className="lg:col-span-2 space-y-4">
+            {/* CI3 #fullDiscountMessage — the green hero card replaces the whole
+                fee grid + wallet actions for has_full_discount_on_all_daily_fees */}
+            {info.fullDiscountAllFees && (
+              <div className="rounded-xl border-2 border-emerald-400/70 bg-gradient-to-br from-emerald-50 to-green-50 dark:from-emerald-950/50 dark:to-green-950/40 p-5 text-center shadow-sm">
+                <div className="mx-auto size-11 rounded-full bg-emerald-500 text-white grid place-items-center shadow-md">
+                  <Gift className="size-5" />
+                </div>
+                <div className="mt-2 text-sm font-extrabold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">100% Discount Applied</div>
+                <div className="text-xs text-emerald-700/80 dark:text-emerald-400/80 mt-1">
+                  This student has a full discount on all daily fees. No daily payment is required.
+                </div>
+                <div className="mt-3 inline-flex flex-wrap items-center justify-center gap-2 rounded-lg border border-emerald-300/70 bg-card px-3 py-2 text-left">
+                  <div className="size-8 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 text-white grid place-items-center font-bold text-xs shrink-0">
+                    {info.student.name.split(" ").map((p) => p[0]).slice(0, 2).join("")}
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold">{info.student.name} · {info.student.classroom}</div>
+                    <div className="text-[10px] text-muted-foreground">{info.student.index}</div>
+                  </div>
+                </div>
+                {info.discounts.length > 0 && (
+                  <div className="mt-2 flex flex-wrap justify-center gap-1">
+                    {info.discounts.map((d, i) => (
+                      <span key={i} className="rounded-full bg-emerald-100 dark:bg-emerald-900/60 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-800 dark:text-emerald-300">
+                        {d.serviceName}: {d.method === "PERCENT" ? `${d.value}%` : `−${fmt(d.offCents ?? d.value)}`} (FREE)
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* edit-mode indicator (CI3 editModeIndicator) */}
             {editing && (
               <div className="rounded-xl border-2 border-amber-400 bg-amber-50 dark:bg-amber-950/40 p-3 flex flex-wrap items-center gap-3">
@@ -707,10 +747,12 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
 
             {/* fee cards grid — CI3 metro cards, EVERY applicable module on one
                 row (fee_cards_grid repeat(N, 1fr)); compact stacked card so the
-                row holds 2, 3, 4 or ALL of the learner's module cards */}
-            {activeCards.length === 0 && !info.transport && !(canInvoice && info.invoices.some((i) => i.dueCents > 0)) && (
+                row holds 2, 3, 4 or ALL of the learner's module cards.
+                Full-discount learners see the hero card instead (CI3 parity). */}
+            {!info.fullDiscountAllFees && activeCards.length === 0 && !info.transport && !(canInvoice && info.invoices.some((i) => i.dueCents > 0)) && (
               <EmptyState title="No fee modules for this learner" hint="No active enrolments, transport assignment or open invoices for the date." />
             )}
+            {!info.fullDiscountAllFees && (
             <div className={cn(
               "grid gap-2 md:grid-cols-[repeat(var(--m),minmax(0,1fr))]",
               activeCards.length === 1 ? "grid-cols-1" : "grid-cols-2",
@@ -745,7 +787,7 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
                       )}
                       {c.prepaidCents > 0 && <span className="rounded-full bg-white/25 px-1.5 py-0.5">prepaid {fmt(c.prepaidCents, { compact: true })}</span>}
                       {c.arrearsCents > 0 && <span className="rounded-full bg-black/30 px-1.5 py-0.5">arrears {fmt(c.arrearsCents, { compact: true })}</span>}
-                      {c.discountLabel && <span className="rounded-full bg-white/25 px-1.5 py-0.5">{c.discountLabel}</span>}
+                      {c.discountLabel && <span className="rounded-full bg-white/25 px-1.5 py-0.5">{c.discountLabel} · −{fmt(c.discountCents, { compact: true })}</span>}
                       {waterDone && <span className="rounded-full bg-emerald-300 text-emerald-950 px-1.5 py-0.5 flex items-center gap-0.5"><CheckCircle2 className="size-2.5" /> PAID THIS WEEK</span>}
                     </div>
                     {/* collect toggle above a full-width amount input — stacked
@@ -774,13 +816,12 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
                 );
               })}
             </div>
-
-            {activeCards.some((c) => c.optional) && (
+            )}{!info.fullDiscountAllFees && activeCards.some((c) => c.optional) && (
               <p className="text-[10px] text-muted-foreground">* optional module — collected only when checked; leave unchecked to skip charging it today.</p>
             )}
 
             {/* approved opt-outs (CI3: the cards that never load) */}
-            {offCards.length > 0 && (
+            {!info.fullDiscountAllFees && offCards.length > 0 && (
               <div className="rounded-xl border border-amber-300/60 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/30 p-3">
                 <div className="text-[11px] font-medium text-amber-800 dark:text-amber-200 mb-1.5 flex items-center gap-1.5">
                   <AlertTriangle className="size-3.5" /> Approved opt-outs — these cards are disabled today (not charged):
@@ -795,18 +836,22 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
               </div>
             )}
 
-            {/* transport direction — route-based fare (CI3 transport_direction) */}
-            {transportCard && info.transport && (
+            {/* transport direction — route-based fare (CI3 transport_direction);
+                fares show NET (discounted) values and the block vanishes for
+                fully-discounted riders (CI3 hides transport on the hero card) */}
+            {!info.fullDiscountAllFees && transportCard && info.transport && (
               <div className="rounded-xl border bg-card p-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <Bus className="size-4 text-indigo-600 dark:text-indigo-400" />
                   <span className="text-sm font-semibold">{info.transport.routeName}</span>
-                  <span className="text-xs text-muted-foreground">one-way {fmt(info.transport.onewayCents)}{info.transport.stopName ? ` from ${info.transport.stopName}` : ""} · both ways {fmt(info.transport.bothCents || info.transport.onewayCents * 2)}</span>
+                  <span className="text-xs text-muted-foreground">
+                    one-way {fmt(netOneway)}{info.transport.fareDiscountCents ? <> <span className="line-through opacity-60">{fmt(info.transport.onewayCents)}</span> <span className="text-emerald-700 dark:text-emerald-400 font-semibold">−{fmt(info.transport.fareDiscountCents)}</span></> : ""}{info.transport.stopName ? ` from ${info.transport.stopName}` : ""} · both ways {fmt(netBoth)}
+                  </span>
                   <div className="flex-1" />
                   <Select value={usage || "NOT_USING"} onValueChange={pickUsage}>
                     <SelectTrigger className="w-[190px] h-9"><SelectValue placeholder="Not using bus" /></SelectTrigger>
                     <SelectContent>
-                      {USE_OPTS.map((o) => <SelectItem key={o.v} value={o.v}>{o.label}{o.v !== "NOT_USING" ? ` — ${fmt(o.v === "BOTH" ? (info.transport!.bothCents || info.transport!.onewayCents * 2) : info.transport!.onewayCents)}` : ""}</SelectItem>)}
+                      {USE_OPTS.map((o) => <SelectItem key={o.v} value={o.v}>{o.label}{o.v !== "NOT_USING" ? ` — ${fmt(o.v === "BOTH" ? netBoth : netOneway)}` : ""}</SelectItem>)}
                     </SelectContent>
                   </Select>
                   <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">

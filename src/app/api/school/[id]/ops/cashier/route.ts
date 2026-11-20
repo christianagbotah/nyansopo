@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
 import { audit } from "@/lib/audit";
 import { paymentMethodLabel, resolveTransportFare, effectivePrice, voidPaymentCore, type CollectMethodPart } from "@/lib/daily-billing";
+import { resolveDailyDiscounts } from "@/lib/discounts";
 import { dailyServicesReceipt, invoicePaymentReceipt } from "@/lib/receipt-payload";
 
 // ── GET /api/school/[id]/ops/cashier ──
@@ -340,38 +341,12 @@ async function studentInfo(req: NextRequest, schoolId: string, url: URL) {
     else optInByService.set(e.serviceId, { status: e.status, reason: e.reason });
   });
 
-  /* approved discounts (DAILY_SERVICE scope) — CI3 get_student_discount_for_date */
-  const discountApps = await db.discountApplication.findMany({
-    where: {
-      studentId, schoolId, status: "APPROVED",
-      OR: [
-        { serviceId: null, discount: { isNot: null } },
-        { serviceId: { not: null } },
-      ],
-    },
-    include: { discount: true },
-  });
-  const dailyDiscounts = discountApps.filter((a) => {
-    if (a.serviceId) return true; // service-scoped
-    const d = a.discount;
-    return !!d && d.scope === "DAILY_SERVICE"; // generic
-  });
-
-  const discountFor = (serviceId: string, priceCents: number) => {
-    // specific service application first, then a generic DAILY_SERVICE discount
-    const specific = dailyDiscounts.find((a) => a.serviceId === serviceId);
-    const generic = dailyDiscounts.find((a) => !a.serviceId);
-    const pick = specific ?? generic;
-    if (!pick) return { cents: 0, label: null as string | null, hidden: false };
-    const method = pick.discount?.type ?? "PERCENT";
-    const raw = pick.valueOverride ?? pick.discount?.value ?? 0;
-    const cents = method === "PERCENT" ? Math.round((priceCents * Math.min(100, Math.max(0, raw))) / 100) : Math.min(priceCents, raw);
-    return {
-      cents,
-      label: pick.discount?.name ?? "Discount",
-      hidden: cents >= priceCents && priceCents > 0, // 100% → the card will not load
-    };
-  };
+  /* approved discounts (DAILY_SERVICE scope) — CI3 get_student_discount_for_date:
+     the shared resolver reads the SAME ACTIVE applications the subsidies engine
+     materialises into enrolment overrides (profiles + catalog, window valid,
+     per-class rules) so display and charging can never disagree. Covers the
+     legacy "APPROVED" status too for backwards compatibility. */
+  const discountSummary = (await resolveDailyDiscounts(schoolId, [studentId], { date: dayStart })).get(studentId) ?? null;
 
   /* transport assignment → the transport card */
   const fare = await resolveTransportFare(db, studentId);
@@ -392,13 +367,18 @@ async function studentInfo(req: NextRequest, schoolId: string, url: URL) {
     take: 6,
   });
 
-  /* build the card list — ordering: daily items, transport, invoices */
+  /* build the card list — ordering: daily items, transport, invoices.
+     CI3 portal parity: list price struck through, net rate displayed,
+     100%-discounted cards hidden (fullDiscount) — per-service full discount. */
   const cards = enrollRows
     .map((se) => {
       const svc = se.service;
       const classRate = svc.classRates.find((r) => r.classroomId === classroomId)?.priceCents ?? null;
       const price = effectivePrice(svc, se, classRate);
-      const disc = discountFor(svc.id, price);
+      const meta = discountSummary?.services[svc.id] ?? null;
+      const listPrice = meta?.listPriceCents ?? classRate ?? svc.priceCents;
+      const offCents = meta?.offCents ?? Math.max(0, listPrice - price);
+      const fullDiscount = listPrice > 0 && price === 0;
       const optOut = optOutByService.get(svc.id) ?? null;
       const optIn = optInByService.get(svc.id) ?? null;
       const optional = svc.optInDaily;
@@ -407,11 +387,14 @@ async function studentInfo(req: NextRequest, schoolId: string, url: URL) {
         serviceId: svc.id,
         name: svc.name,
         category: svc.category,
-        priceCents: price,
-        discountedCents: Math.max(0, price - disc.cents),
-        discountCents: disc.cents,
-        discountLabel: disc.label,
-        hidden: disc.hidden, // 100% discount → card not loaded
+        priceCents: listPrice,
+        discountedCents: price,
+        discountCents: offCents,
+        discountLabel: meta?.sourceName ?? null,
+        discountMethod: meta?.method ?? null,
+        discountValue: meta?.value ?? null,
+        fullDiscount,
+        hidden: fullDiscount, // 100% → the card will not load (CI3 parity)
         optional, // optInDaily → rendered as a toggle
         optOut, // APPROVED → card disabled (admin approved the lunch skip)
         optedIn: optional ? optIn : null, // APPROVED → opted in for the day
@@ -431,7 +414,11 @@ async function studentInfo(req: NextRequest, schoolId: string, url: URL) {
     routeName: fare.routeName,
     stopName: fare.stopName,
     onewayCents: fare.onewayCents,
+    netOnewayCents: discountSummary?.transport?.netFareCents ?? fare.onewayCents,
+    fareDiscountCents: discountSummary?.transport?.offCents ?? 0,
+    fullFareDiscount: discountSummary?.transport?.fullFareDiscount ?? false,
     bothCents: fare.onewayCents * 2,
+    netBothCents: (discountSummary?.transport?.netFareCents ?? fare.onewayCents) * 2,
     arrearsCents: transportOwed,
     transportWalletCents: wallet?.transportCents ?? 0,
     todayUsage: (todayByService.get("__transport__")?.usage) ?? null,
@@ -468,12 +455,20 @@ async function studentInfo(req: NextRequest, schoolId: string, url: URL) {
       itemPrepaidTotal: Array.from(balByService.values()).reduce((a, b) => a + b, 0),
       arrearsTotal: owedRows.reduce((a, c) => a + c.amountCents, 0),
     },
-    discounts: dailyDiscounts.map((a) => ({
-      name: a.discount?.name ?? "Discount",
-      method: a.discount?.type ?? "PERCENT",
-      value: a.valueOverride ?? a.discount?.value ?? 0,
-      scoped: !!a.serviceId,
+    /* CI3 badge block — one row per discounted service, method-aware */
+    discounts: (discountSummary?.badges ?? []).map((b) => ({
+      name: b.name,
+      method: b.method,
+      value: b.value,
+      scoped: b.serviceName !== "Transport",
+      serviceName: b.serviceName,
+      offCents: b.offCents,
+      netCents: b.netCents,
+      free: b.free,
     })),
+    /* CI3 has_full_discount_on_all_daily_fees — drives the green hero card */
+    hasDiscount: discountSummary?.hasDiscount ?? false,
+    fullDiscountAllFees: discountSummary?.fullDiscountAllFees ?? false,
     cards,
     transport: transportCard,
     invoices: invoiceCards,
