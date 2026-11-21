@@ -86,7 +86,7 @@ export async function recalcDailySubsidies(
   if (!schoolId) return { services: [] };
 
   const [services, appsRaw, activeEnrollment] = await Promise.all([
-    db.dailyService.findMany({ where: { schoolId, active: true }, orderBy: { name: "asc" } }),
+    db.dailyService.findMany({ where: { schoolId, active: true }, orderBy: { name: "asc" }, include: { classRates: true } }),
     db.discountApplication.findMany({
       where: { studentId, status: "ACTIVE" },
       include: { discount: true, profile: true },
@@ -94,6 +94,7 @@ export async function recalcDailySubsidies(
     db.enrollment.findFirst({ where: { studentId, status: "ACTIVE" }, include: { classroom: true } }),
   ]);
   const clsName = activeEnrollment?.classroom?.name ?? null;
+  const clsId = activeEnrollment?.classroom?.id ?? null;
 
   // resolve each application once (profile per-class rules, coverage set)
   const resolved: ResolvedApp[] = [];
@@ -124,18 +125,24 @@ export async function recalcDailySubsidies(
   const changes: { serviceId: string; name: string; from: number | null; to: number | null }[] = [];
 
   for (const svc of services) {
+    /* CI3 parity: the discount base is the per-class rate when the learner's
+       classroom has one (daily_fee_rates is per class), else the catalog price.
+       A 50% profile on a ₵3 class rate must net ₵1.50 — not 50% of the ₵8
+       catalog price, which could land ABOVE the class rate. */
+    const classRate = clsId ? svc.classRates.find((r) => r.classroomId === clsId)?.priceCents ?? null : null;
+    const base = classRate ?? svc.priceCents;
     // candidates: every resolved application covering this service
     let best: number | null = null;
     let bestAppId: string | null = null;
     for (const r of resolved) {
       if (!(r.coversAll || r.covers.has(svc.id))) continue;
-      const price = subsidisedPrice(svc.priceCents, r.type, r.value);
-      if (price < svc.priceCents && (best === null || price < best)) { best = price; bestAppId = r.appId; }
+      const price = subsidisedPrice(base, r.type, r.value);
+      if (price < base && (best === null || price < best)) { best = price; bestAppId = r.appId; }
     }
 
     const current = await db.dailyServiceEnrollment.findUnique({ where: { serviceId_studentId: { serviceId: svc.id, studentId } } });
     const cur = current?.priceCentsOverride ?? null;
-    const next = best !== null && best < svc.priceCents ? best : null;
+    const next = best !== null && best < base ? best : null;
 
     if (cur === next) continue; // nothing changed for this service
     if (current) {
@@ -147,7 +154,7 @@ export async function recalcDailySubsidies(
     changes.push({ serviceId: svc.id, name: svc.name, from: cur, to: next });
     // iEduPro daily_fee_audit_log — rate adjustments are auditable events
     if (cur !== null || next !== null) {
-      const delta = (next ?? svc.priceCents) - (cur ?? svc.priceCents); // negative = rate reduced
+      const delta = (next ?? base) - (cur ?? base); // negative = rate reduced
       await logDailyFeeAudit(db, {
         schoolId, studentId, actionType: "ADJUSTMENT", serviceCode: svc.name,
         amountCents: delta, performedByName: opts?.performedByName, performedByRole: opts?.performedByRole,
