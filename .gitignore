@@ -87,3 +87,7 @@ scripts/pg/postgres.log
 
 # local credential notes — never commit
 GIT_REMOTE.md
+
+# cluster snapshots: only the stable latest copy is tracked (off-site via GitHub);
+# timestamped history is local-only
+/backups/history/

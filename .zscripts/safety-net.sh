@@ -5,8 +5,10 @@
 #   1. embedded PostgreSQL up (bootstraps cluster/role/db if wiped)
 #   2. bun install (if node_modules missing)
 #   3. prisma db push + reseed chain (if DB is empty)
-#   4. git add -A + daily safety-net commit + push (idempotent)
-#   5. dev server up on :3000
+#   4. cold-snapshot backup of the cluster -> backups/latest-cluster.tar.gz
+#      (git-tracked, so GitHub always holds a restorable copy of live data)
+#   5. git add -A + daily safety-net commit + push (idempotent)
+#   6. dev server up on :3000
 #
 # Appends a one-line REPORT to .zscripts/safety-net.log (git-ignored via *.log).
 set -u
@@ -23,7 +25,7 @@ fi
 exec >> "$LOG" 2>&1
 echo "=== safety-net $(date '+%F %T') ==="
 
-PG=down SEEDED=unknown COMMIT=none PUSH=skipped LOCAL=unknown ORIGIN=unknown SERVER=down
+PG=down SEEDED=unknown COMMIT=none PUSH=skipped LOCAL=unknown ORIGIN=unknown SERVER=down BK=skipped
 
 # --- 0. git credentials (self-heal if GH_TOKEN provided in env; no secrets in repo) --
 if [ ! -s "$HOME/.git-credentials" ] && [ -n "${GH_TOKEN:-}" ]; then
@@ -57,6 +59,15 @@ if [ "$PG" = "up" ] && [ "$SEEDED" = "0" ]; then
   else
     SEEDED=reseed-failed
   fi
+fi
+
+# --- 3b. cold-snapshot backup of the live cluster (only when it has data) ------------
+if [ "$PG" = "up" ] && [ "$SEEDED" != "0" ] && [ "$SEEDED" != "reseed-failed" ]; then
+  BK_OUT=$(bash "$ROOT/scripts/pg/backup-cluster.sh" 2>/dev/null || echo "BK: fail subprocess")
+  case "$BK_OUT" in
+    "BK: ok"*) BK="ok($(echo "$BK_OUT" | awk '{print $4}'))" ;;
+    *) BK="${BK_OUT#BK: }"; echo "backup issue: $BK_OUT" ;;
+  esac
 fi
 
 # --- 4. commit + push ----------------------------------------------------------------
@@ -93,7 +104,7 @@ for i in $(seq 1 40); do
 done
 case "$code" in 200) SERVER=up ;; *) SERVER="down($code)"; tail -5 dev.log 2>/dev/null ;; esac
 
-echo "REPORT $(date '+%F %T') PG=$PG DEPS=$DEPS SEEDED=$SEEDED COMMIT=$COMMIT PUSH=$PUSH LOCAL=$LOCAL ORIGIN=$ORIGIN SERVER=$SERVER"
+echo "REPORT $(date '+%F %T') PG=$PG DEPS=$DEPS SEEDED=$SEEDED BK=$BK COMMIT=$COMMIT PUSH=$PUSH LOCAL=$LOCAL ORIGIN=$ORIGIN SERVER=$SERVER"
 if [ "$PG" = "up" ] && [ "$SERVER" = "up" ] && [ "$LOCAL" = "$ORIGIN" ]; then
   echo "=== safety-net OK ==="
 else
