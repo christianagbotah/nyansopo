@@ -51,7 +51,23 @@ else
 fi
 
 # --- 3. schema + seed (only when DB is empty) ----------------------------------------
+# Recovery order when the cluster is found empty:
+#   1. restore the last git-tracked snapshot (REAL data: collections, grades,
+#      discounts applied after seeding — everything a reseed loses)
+#   2. fall back to the demo reseed chain only when no snapshot exists or the
+#      restore fails (first-ever boot)
 SEEDED=$(node -e 'const{PrismaClient}=require("@prisma/client");const p=new PrismaClient();p.school.count().then(c=>{console.log(c);return p.$disconnect()}).catch(()=>{console.log(0)})' 2>/dev/null || echo 0)
+if [ "$PG" = "up" ] && [ "$SEEDED" = "0" ]; then
+  if [ -s "$ROOT/backups/latest-cluster.tar.gz" ] && [ -f "$ROOT/scripts/pg/restore-cluster.sh" ]; then
+    echo "--- cluster empty: restoring snapshot (real data) ---"
+    bunx prisma generate >/dev/null 2>&1 || true
+    if bash "$ROOT/scripts/pg/restore-cluster.sh"; then
+      SEEDED=restored
+    else
+      echo "snapshot restore failed — falling back to reseed"
+    fi
+  fi
+fi
 if [ "$PG" = "up" ] && [ "$SEEDED" = "0" ]; then
   echo "--- prisma db push + reseed ---"
   if bunx prisma db push --skip-generate >/dev/null 2>&1 && bash scripts/reseed-chain.sh; then

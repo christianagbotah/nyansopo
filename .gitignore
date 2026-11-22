@@ -67,6 +67,8 @@ server.log
 # (initdb cluster + prisma db push + seed chain — see scripts/pg/README.md)
 /scripts/pg/*
 !/scripts/pg/start-postgres.sh
+!/scripts/pg/backup-cluster.sh
+!/scripts/pg/restore-cluster.sh
 !/scripts/pg/README.md
 !/scripts/pg/bin/
 !/scripts/pg/lib/
