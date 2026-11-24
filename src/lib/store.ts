@@ -30,7 +30,7 @@ export type ModuleId =
   | "library" | "rbac" | "cashier" | "conductor" | "staffhub" | "portal" | "campus"
   | "boarding" | "curriculum" | "momo" | "accounts" | "messages" | "budget"
   | "discipline" | "health" | "clubs" | "staffduty" | "frontoffice" | "certificates" | "audit" | "sync"
-  | "website" | "siren" | "office";
+  | "website" | "siren" | "office" | "waec";
 
 /** Deep-link target within a module (iedupro nested navigation):
  *  tab — a named tab inside the module (e.g. daily → rates / recon)

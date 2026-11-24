@@ -251,6 +251,7 @@ model School {
   sirenSchedules        SirenSchedule[]
   sirenEvents           SirenEvent[]
   officeFiles           OfficeFile[]
+  waecCentres           WaecCentre[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -546,6 +547,7 @@ model Student {
   healthVisits           HealthVisit[]
   healthScreeningRecords HealthScreeningRecord[]
   clubMemberships        ClubMembership[]
+  waecCandidacies        WaecCandidacy[]
 }
 
 model Enrollment {
@@ -2322,6 +2324,83 @@ model RawScoreGrade {
   markUpto          Float
   comment           String?
   sortOrder         Int     @default(0)
+}
+
+// ─────────────────────────────────────────────────────────────
+// WAEC CANDIDACY (wave 57 — BECE / WASSCE registration & mocks)
+// Ghanaian schools register JHS3 / SHS3 cohorts with WAEC every year:
+// an exam centre number, per-candidate index numbers, subject entries,
+// registration fees billed onto term invoices, and mock exams that are
+// graded on the school's RawScoreGrade bands (A1..F9) with best-6
+// aggregate analysis — the run-up to BECE / WASSCE.
+// ─────────────────────────────────────────────────────────────
+model WaecCentre {
+  id           String   @id @default(cuid())
+  schoolId     String
+  school       School   @relation(fields: [schoolId], references: [id])
+  examType     String // BECE | WASSCE | NOVDEC
+  examYear     Int
+  centreNumber String // WAEC-assigned centre number (digits)
+  centreName   String
+  regFeeCents  Int      @default(0) // registration fee billed per candidate
+  status       String   @default("OPEN") // OPEN | CLOSED
+  note         String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  candidacies  WaecCandidacy[]
+
+  @@unique([schoolId, examType, examYear])
+  @@index([schoolId])
+}
+
+model WaecCandidacy {
+  id          String   @id @default(cuid())
+  centreId    String
+  centre      WaecCentre @relation(fields: [centreId], references: [id], onDelete: Cascade)
+  studentId   String
+  student     Student  @relation(fields: [studentId], references: [id])
+  serialNo    Int // candidate serial within the centre (roll order)
+  indexNumber String? // centre number + padded serial — WAEC index
+  status      String   @default("REGISTERED") // REGISTERED | INDEXED | SUBMITTED | WITHDRAWN
+  feeInvoiced Boolean  @default(false)
+  note        String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  subjects    WaecSubjectEntry[]
+  mocks       WaecMockResult[]
+
+  @@unique([centreId, studentId])
+  @@unique([centreId, serialNo])
+  @@index([studentId])
+}
+
+model WaecSubjectEntry {
+  id          String   @id @default(cuid())
+  candidacyId String
+  candidacy   WaecCandidacy @relation(fields: [candidacyId], references: [id], onDelete: Cascade)
+  subjectName String // matches the school Subject name (joined for mocks)
+  subjectCode String? // WAEC subject code (e.g. "101" Mathematics)
+  isCore      Boolean  @default(false) // core subjects drive the aggregate
+  sortOrder   Int      @default(0)
+
+  @@unique([candidacyId, subjectName])
+}
+
+model WaecMockResult {
+  id          String   @id @default(cuid())
+  candidacyId String
+  candidacy   WaecCandidacy @relation(fields: [candidacyId], references: [id], onDelete: Cascade)
+  subjectName String // matches WaecSubjectEntry.subjectName
+  mockNo      Int // 1 | 2 | 3
+  objective   Float? // section A / objective paper score
+  theory      Float? // section B / theory paper score
+  practical   Float? // optional practical / oral component
+  maxScore    Float    @default(100)
+  total       Float?
+  grade       String? // A1..F9 via the school's RawScoreGrade bands
+  gradePoint  Float? // BECE aggregate weight (lower is better)
+
+  @@unique([candidacyId, subjectName, mockNo])
 }
 
 // ─────────────────────────────────────────────────────────────

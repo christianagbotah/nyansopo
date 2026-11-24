@@ -82,6 +82,7 @@ const SyncCenter = dynamic(() => import("@/components/modules/sync-center").then
 const Website = dynamic(() => import("@/components/modules/website").then((m: any) => m.Website), { loading: () => <ModuleSkeleton /> });
 const Siren = dynamic(() => import("@/components/modules/siren").then((m: any) => m.Siren), { loading: () => <ModuleSkeleton /> });
 const SirenTicker = dynamic(() => import("@/components/modules/siren").then((m: any) => m.SirenTicker), { ssr: false });
+const Waec = dynamic(() => import("@/components/modules/waec").then((m: any) => m.Waec), { loading: () => <ModuleSkeleton /> });
 const Office = dynamic(() => import("@/components/modules/office").then((m: any) => m.Office), { loading: () => <ModuleSkeleton /> });
 import { applyThemeToDOM, type SchoolTheme } from "@/lib/theme";
 import { sortClassrooms } from "@/lib/classes";
@@ -91,7 +92,7 @@ import {
   Download, ChevronDown, ChevronRight, School, MessageSquareText, UtensilsCrossed, Bus, Smartphone, Calculator, Package, PieChart, LayoutList,
   BookOpen, ShieldCheck, Receipt, Route, UserRound, Home, Backpack, Laptop, BedDouble, NotebookPen, Search, LayoutGrid, SmartphoneNfc,
   QrCode, UserPlus, Printer, Wallet, BarChart3, CalendarDays, HandCoins, FileWarning, ListChecks, ScanLine, ClipboardPen, Percent,
-  PanelLeftClose, PanelLeftOpen, Palette, SlidersHorizontal, Archive, FileText, BookMarked, Target, PiggyBank, Award,
+  PanelLeftClose, PanelLeftOpen, Palette, SlidersHorizontal, Archive, FileText, BookMarked, Target, PiggyBank, Award, IdCard,
   MessagesSquare, Landmark as LedgerIcon, DatabaseBackup, Gavel, HeartPulse, Stethoscope, Ruler, Trophy, Footprints,
   DoorOpen, CalendarClock, FileBadge, History, Truck, AlarmClock, Globe,
 } from "lucide-react";
@@ -132,6 +133,7 @@ const SCHOOL_NAV: NavItem[] = [
   { id: "curriculum", label: "Curriculum & Notes", icon: NotebookPen, section: "Academic" },
   { id: "reports", label: "Exams & Reports", icon: GraduationCap, section: "Academic" },
   { id: "exams", label: "Online Exams", icon: Laptop, section: "Academic" },
+  { id: "waec", label: "WAEC Candidacy", icon: IdCard, section: "Academic" },
   { id: "library", label: "Library", icon: BookOpen, section: "Academic" },
   { id: "sms", label: "SMS Centre", icon: Smartphone, section: "Communication" },
   { id: "messages", label: "Messages", icon: MessagesSquare, section: "Communication" },
@@ -535,6 +537,13 @@ export function AppShell() {
       { id: "office-slides", label: "Presentations", target: { tab: "SLIDE" } },
     ];
 
+    // waec candidacy (wave 57 — BECE/WASSCE registration & mocks)
+    const waecChildren: NavChild[] = [
+      { id: "waec-candidates", label: "Candidacies", target: { tab: "candidates" } },
+      { id: "waec-mocks", label: "Mock results", target: { tab: "mocks" } },
+      { id: "waec-analysis", label: "Analysis", target: { tab: "analysis" } },
+    ];
+
     // permission-gated school modules
     for (const item of SCHOOL_NAV) {
       if (item.id === "branches") continue;
@@ -559,6 +568,7 @@ export function AppShell() {
       if (item.id === "website") enriched.children = websiteChildren;
       if (item.id === "siren") enriched.children = sirenChildren;
       if (item.id === "office") enriched.children = officeChildren;
+      if (item.id === "waec") enriched.children = waecChildren;
       items.push(enriched);
     }
     // proprietor branch console
@@ -689,6 +699,7 @@ export function AppShell() {
           { key: "m-sickbay", label: "Sick Bay", icon: Stethoscope, module: "health", target: { tab: "sickbay" }, color: C.red, when: open("health") },
           { key: "m-screenings", label: "Screenings", icon: Ruler, module: "health", target: { tab: "screenings" }, color: C.teal, when: open("health") },
           { key: "m-exams", label: "Online Exams", icon: Laptop, module: "exams", color: C.teal, when: open("exams") },
+          { key: "m-waec", label: "WAEC Candidacy", icon: IdCard, module: "waec", color: C.amber, when: open("waec") },
           { key: "m-library", label: "Library", icon: BookOpen, module: "library", color: C.orange, when: open("library") },
           { key: "m-tt", label: "Timetable", icon: CalendarDays, module: "classes", target: { tab: "timetable" }, color: C.cyan, when: open("classes") },
           { key: "m-syll", label: "Syllabus", icon: BookOpen, module: "curriculum", target: { tab: "syllabus" }, color: C.pink, when: open("curriculum") },
@@ -1008,6 +1019,7 @@ export function AppShell() {
              module === "curriculum" && show("curriculum") ? <Curriculum /> :
              module === "reports" && show("reports") ? <Reports /> :
              module === "exams" && show("exams") ? <OnlineExams /> :
+             module === "waec" && show("waec") ? <Waec /> :
              module === "library" && show("library") ? <LibraryPortal /> :
              module === "boarding" && show("boarding") ? <Boarding /> :
              module === "rbac" && show("rbac") ? <RbacConsole /> :
