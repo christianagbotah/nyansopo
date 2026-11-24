@@ -110,6 +110,10 @@ export const PERMISSIONS: PermDef[] = [
   // Sync Center (wave 39 — offline devices, conflicts, sync journal)
   { id: "sync.view", label: "View sync devices, conflicts & journal", group: "System" },
   { id: "sync.manage", label: "Register/revoke sync devices and resolve conflicts", group: "System" },
+  // Siren & bells (wave 55 — the electronic school bell)
+  { id: "siren.manage", label: "School siren & bells — schedules, live trigger & history", group: "System" },
+  // Nyansapo Office (wave 56 — Microsoft Office-like document portal)
+  { id: "office.use", label: "Office suite — create & edit documents, spreadsheets & presentations", group: "System" },
   // Self-service portals
   { id: "staffhub.self", label: "Staff self-service portal", group: "Self-service" },
   { id: "portal.self", label: "Parent portal (own children)", group: "Self-service" },
@@ -150,6 +154,7 @@ export const ROLE_DEFAULTS: Record<string, string[] | "*"> = {
   // Backup/restore can wipe the whole school database — same restriction.
   SCHOOL_ADMIN: minus(ALL_PERM_IDS, ["rbac.manage", "approvals.manage", "settings.theme", "backup.manage", "portal.self", "campus.self"]),
   ACCOUNTANT: [
+    "office.use",
     "students.view", "admissions.manage",
     "fees.view", "fees.manage", "fees.collect", "payments.momo", "discounts.manage", "cashier.reports",
     "daily.view", "daily.collect", "daily.manage",
@@ -191,10 +196,11 @@ export const ROLE_DEFAULTS: Record<string, string[] | "*"> = {
     "staffduty.view",
     "certificates.view",
     "ai.use", "staffhub.self",
+    "siren.manage", "office.use",
   ],
   // non-teaching staff often man the front desk (secretary / receptionist)
-  NON_TEACHING: ["staffhub.self", "messages.use", "frontoffice.view", "frontoffice.manage", "certificates.view", "certificates.manage"],
-  LIBRARIAN: ["students.view", "library.view", "library.issue", "library.manage", "messages.use"],
+  NON_TEACHING: ["staffhub.self", "messages.use", "frontoffice.view", "frontoffice.manage", "certificates.view", "certificates.manage", "siren.manage", "office.use"],
+  LIBRARIAN: ["students.view", "library.view", "library.issue", "library.manage", "messages.use", "office.use"],
   PARENT: ["portal.self"],
   STUDENT: ["campus.self"],
   // Association network roles use their own portal — no school permissions.
@@ -354,6 +360,8 @@ export const MODULE_PERMS: Record<string, string[]> = {
   ai: ["ai.use"],
   settings: ["settings.manage"],
   website: ["website.manage"],
+  siren: ["siren.manage"],
+  office: ["office.use"],
   library: ["library.view"],
   boarding: ["boarding.view"],
   rbac: ["rbac.manage"],

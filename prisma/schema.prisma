@@ -248,6 +248,9 @@ model School {
   benefitCategories     BenefitCategory[]
   beneficiaries         Beneficiary[]
   reminderTemplates     ReminderTemplate[]
+  sirenSchedules        SirenSchedule[]
+  sirenEvents           SirenEvent[]
+  officeFiles           OfficeFile[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -3223,4 +3226,64 @@ model SiteContactMessage {
   createdAt DateTime @default(now())
 
   @@index([schoolId, createdAt])
+}
+
+// ── wave 55 — school siren & bell management ──
+// The electronic substitute for the hand bell: timetabled rings (assembly,
+// change of lesson, break, closing) plus a live console for manual rings —
+// with a full firing history. Schedules fire from any open console client.
+model SirenSchedule {
+  id          String   @id @default(cuid())
+  schoolId    String
+  school      School   @relation(fields: [schoolId], references: [id])
+  label       String   // e.g. "Morning assembly", "End of break"
+  time        String   // "HH:MM" 24-hour
+  daysJson    String   @default("[1,2,3,4,5]") // weekday indices 0=Sun..6=Sat
+  sound       String   @default("BELL") // BELL | SIREN | CHIME | KLAXON | BUGLE
+  durationSec Int      @default(10)
+  enabled     Boolean  @default(true)
+  note        String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([schoolId, time])
+}
+
+model SirenEvent {
+  id          String   @id @default(cuid())
+  schoolId    String
+  school      School   @relation(fields: [schoolId], references: [id])
+  scheduleId  String?  // set when fired from a schedule
+  label       String
+  sound       String
+  durationSec Int
+  kind        String   @default("MANUAL") // MANUAL | SCHEDULED | TEST
+  byName      String
+  byRole      String?
+  note        String?
+  createdAt   DateTime @default(now())
+
+  @@index([schoolId, createdAt])
+  @@index([schoolId, scheduleId, createdAt])
+}
+
+// ── wave 56 — Nyansapo Office (Microsoft Office-like portal) ──
+// Teachers & staff type documents, workbooks and presentations directly in
+// the system. kind: DOC (word processor) | SHEET (spreadsheet) | SLIDE
+// (presentation) — contentJson holds the kind-specific editor state.
+model OfficeFile {
+  id            String   @id @default(cuid())
+  schoolId      String
+  school        School   @relation(fields: [schoolId], references: [id])
+  kind          String   // DOC | SHEET | SLIDE
+  title         String
+  folder        String   @default("My Documents")
+  contentJson   String   @default("{}")
+  createdByName String
+  updatedByName String
+  starred       Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([schoolId, kind, updatedAt])
 }

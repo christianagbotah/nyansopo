@@ -89,6 +89,15 @@ export const PAGE_INDEX: PageEntry[] = [
   { id: "pg-website-pages", label: "Website — Pages", section: S.system, module: "website", target: { tab: "pages" }, perm: ["website.manage"], icon: FileText, keywords: ["about us", "terms", "privacy policy", "contact email", "static pages"] },
   { id: "pg-website-staff", label: "Website — Staff Showcase", section: S.system, module: "website", target: { tab: "staff" }, perm: ["website.manage"], icon: UsersRound, keywords: ["staff page", "teachers on website", "show staff", "profiles"] },
   { id: "pg-website-inbox", label: "Website — Contact Inbox", section: S.system, module: "website", target: { tab: "inbox" }, perm: ["website.manage"], icon: Inbox, keywords: ["contact form", "messages", "enquiries", "inbox", "admission enquiry"] },
+  // wave 55 — siren & bells
+  { id: "pg-siren-live", label: "Siren — Live Console", section: S.system, module: "siren", target: { tab: "live" }, perm: ["siren.manage"], icon: AlarmClock, keywords: ["siren", "bell", "ring", "assembly", "emergency", "alarm", "sound", "gong"] },
+  { id: "pg-siren-schedule", label: "Siren — Ring Timetable", section: S.system, module: "siren", target: { tab: "schedule" }, perm: ["siren.manage"], icon: CalendarClock, keywords: ["siren schedule", "bell timetable", "periods", "break", "closing time", "rings"] },
+  { id: "pg-siren-history", label: "Siren — Firing History", section: S.system, module: "siren", target: { tab: "history" }, perm: ["siren.manage"], icon: History, keywords: ["siren log", "bell history", "firings", "who rang"] },
+  // wave 56 — Nyansapo Office
+  { id: "pg-office-files", label: "Office — My Files", section: S.system, module: "office", target: { tab: "all" }, perm: ["office.use"], icon: FileText, keywords: ["office", "documents", "word", "excel", "powerpoint", "type", "editor", "write", "spreadsheet", "slides", "presentation"] },
+  { id: "pg-office-docs", label: "Office — Documents", section: S.system, module: "office", target: { tab: "DOC" }, perm: ["office.use"], icon: FileText, keywords: ["word processor", "letter", "report writing", "docs"] },
+  { id: "pg-office-sheets", label: "Office — Spreadsheets", section: S.system, module: "office", target: { tab: "SHEET" }, perm: ["office.use"], icon: FileSpreadsheet, keywords: ["excel", "workbook", "marks sheet", "budget", "formula"] },
+  { id: "pg-office-slides", label: "Office — Presentations", section: S.system, module: "office", target: { tab: "SLIDE" }, perm: ["office.use"], icon: GalleryHorizontal, keywords: ["powerpoint", "slides", "presentation", "teaching aid"] },
 
   // ── Sync Center (wave 39 — offline devices, conflicts, journal) ──
   { id: "pg-sync-dash", label: "Sync Dashboard", section: S.system, module: "sync", target: { tab: "dashboard" }, perm: ["sync.view"], icon: Gauge, keywords: ["sync", "offline", "health score", "flush", "timeline", "sync dashboard", "devices at a glance"] },

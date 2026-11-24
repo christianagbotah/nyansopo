@@ -80,6 +80,8 @@ const Certificates = dynamic(() => import("@/components/modules/certificates").t
 const AuditTrail = dynamic(() => import("@/components/modules/audit").then((m: any) => m.AuditTrail), { loading: () => <ModuleSkeleton /> });
 const SyncCenter = dynamic(() => import("@/components/modules/sync-center").then((m: any) => m.SyncCenter), { loading: () => <ModuleSkeleton /> });
 const Website = dynamic(() => import("@/components/modules/website").then((m: any) => m.Website), { loading: () => <ModuleSkeleton /> });
+const Siren = dynamic(() => import("@/components/modules/siren").then((m: any) => m.Siren), { loading: () => <ModuleSkeleton /> });
+const SirenTicker = dynamic(() => import("@/components/modules/siren").then((m: any) => m.SirenTicker), { ssr: false });
 import { applyThemeToDOM, type SchoolTheme } from "@/lib/theme";
 import { sortClassrooms } from "@/lib/classes";
 import {
@@ -135,6 +137,7 @@ const SCHOOL_NAV: NavItem[] = [
   { id: "ai", label: "AI Assistant", icon: BrainCircuit, section: "Support" },
   { id: "staffhub", label: "My Staff Portal", icon: UserRound, section: "Support" },
   { id: "website", label: "Website", icon: Globe, section: "Support" },
+  { id: "siren", label: "Siren & Bells", icon: AlarmClock, section: "Support" },
   { id: "settings", label: "Settings", icon: SettingsIcon, section: "Support" },
   { id: "rbac", label: "Users & Access", icon: ShieldCheck, section: "Support" },
   { id: "audit", label: "Audit Trail", icon: History, section: "Support" },
@@ -515,6 +518,13 @@ export function AppShell() {
       { id: "website-inbox", label: "Contact inbox", target: { tab: "inbox" } },
     ];
 
+    // siren & bells (wave 55 — the electronic school bell)
+    const sirenChildren: NavChild[] = [
+      { id: "siren-live", label: "Live console", target: { tab: "live" } },
+      { id: "siren-schedule", label: "Ring timetable", target: { tab: "schedule" } },
+      { id: "siren-history", label: "Firing history", target: { tab: "history" } },
+    ];
+
     // permission-gated school modules
     for (const item of SCHOOL_NAV) {
       if (item.id === "branches") continue;
@@ -537,6 +547,7 @@ export function AppShell() {
       if (item.id === "boarding") enriched.children = boardingChildren;
       if (item.id === "curriculum") enriched.children = curriculumChildren;
       if (item.id === "website") enriched.children = websiteChildren;
+      if (item.id === "siren") enriched.children = sirenChildren;
       items.push(enriched);
     }
     // proprietor branch console
@@ -978,6 +989,7 @@ export function AppShell() {
              module === "audit" && show("audit") ? <AuditTrail /> :
              module === "sync" && show("sync") ? <SyncCenter /> :
              module === "website" && show("website") ? <Website /> :
+             module === "siren" && show("siren") ? <Siren /> :
              module === "classes" && show("classes") ? <Classes /> :
              module === "gradebook" && show("gradebook") ? <Gradebook /> :
              module === "results" && show("results") ? <Results /> :
@@ -1019,6 +1031,10 @@ export function AppShell() {
         onToggleTheme={toggleTheme}
         theme={theme}
       />
+
+      {/* wave 55 — the machine is the school bell: fire timetabled siren rings
+          from any page while a siren-enabled user is signed in */}
+      <SirenTicker schoolId={canAny(session?.permissions, ["siren.manage"]) ? currentSchoolId : null} />
 
       {/* Metro Start screen (iEduPro metro_menu parity) — colorful tile grid of
           every module the session may open, with live search. Conditionally
