@@ -82,6 +82,7 @@ const SyncCenter = dynamic(() => import("@/components/modules/sync-center").then
 const Website = dynamic(() => import("@/components/modules/website").then((m: any) => m.Website), { loading: () => <ModuleSkeleton /> });
 const Siren = dynamic(() => import("@/components/modules/siren").then((m: any) => m.Siren), { loading: () => <ModuleSkeleton /> });
 const SirenTicker = dynamic(() => import("@/components/modules/siren").then((m: any) => m.SirenTicker), { ssr: false });
+const Office = dynamic(() => import("@/components/modules/office").then((m: any) => m.Office), { loading: () => <ModuleSkeleton /> });
 import { applyThemeToDOM, type SchoolTheme } from "@/lib/theme";
 import { sortClassrooms } from "@/lib/classes";
 import {
@@ -138,6 +139,7 @@ const SCHOOL_NAV: NavItem[] = [
   { id: "staffhub", label: "My Staff Portal", icon: UserRound, section: "Support" },
   { id: "website", label: "Website", icon: Globe, section: "Support" },
   { id: "siren", label: "Siren & Bells", icon: AlarmClock, section: "Support" },
+  { id: "office", label: "Office Suite", icon: FileText, section: "Support" },
   { id: "settings", label: "Settings", icon: SettingsIcon, section: "Support" },
   { id: "rbac", label: "Users & Access", icon: ShieldCheck, section: "Support" },
   { id: "audit", label: "Audit Trail", icon: History, section: "Support" },
@@ -525,6 +527,14 @@ export function AppShell() {
       { id: "siren-history", label: "Firing history", target: { tab: "history" } },
     ];
 
+    // nyansapo office (wave 56 — Microsoft Office-like portal)
+    const officeChildren: NavChild[] = [
+      { id: "office-all", label: "All files", target: { tab: "all" } },
+      { id: "office-docs", label: "Documents", target: { tab: "DOC" } },
+      { id: "office-sheets", label: "Spreadsheets", target: { tab: "SHEET" } },
+      { id: "office-slides", label: "Presentations", target: { tab: "SLIDE" } },
+    ];
+
     // permission-gated school modules
     for (const item of SCHOOL_NAV) {
       if (item.id === "branches") continue;
@@ -548,6 +558,7 @@ export function AppShell() {
       if (item.id === "curriculum") enriched.children = curriculumChildren;
       if (item.id === "website") enriched.children = websiteChildren;
       if (item.id === "siren") enriched.children = sirenChildren;
+      if (item.id === "office") enriched.children = officeChildren;
       items.push(enriched);
     }
     // proprietor branch console
@@ -990,6 +1001,7 @@ export function AppShell() {
              module === "sync" && show("sync") ? <SyncCenter /> :
              module === "website" && show("website") ? <Website /> :
              module === "siren" && show("siren") ? <Siren /> :
+             module === "office" && show("office") ? <Office /> :
              module === "classes" && show("classes") ? <Classes /> :
              module === "gradebook" && show("gradebook") ? <Gradebook /> :
              module === "results" && show("results") ? <Results /> :
