@@ -101,6 +101,7 @@ export const PERMISSIONS: PermDef[] = [
   // System
   { id: "settings.manage", label: "School & statutory settings", group: "System" },
   { id: "settings.theme", label: "Set the school colour scheme (Theme tab)", group: "System" },
+  { id: "website.manage", label: "Manage the public school website (slider, news, gallery, pages, publish)", group: "System" },
   { id: "backup.manage", label: "Database backup & restore", group: "System" },
   { id: "rbac.manage", label: "Manage users, roles & permissions", group: "System" },
   // Audit trail (wave 31 — the compliance book)
@@ -352,6 +353,7 @@ export const MODULE_PERMS: Record<string, string[]> = {
   messages: ["messages.use"],
   ai: ["ai.use"],
   settings: ["settings.manage"],
+  website: ["website.manage"],
   library: ["library.view"],
   boarding: ["boarding.view"],
   rbac: ["rbac.manage"],

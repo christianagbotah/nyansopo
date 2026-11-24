@@ -79,6 +79,7 @@ const FrontOffice = dynamic(() => import("@/components/modules/front-office").th
 const Certificates = dynamic(() => import("@/components/modules/certificates").then((m: any) => m.Certificates), { loading: () => <ModuleSkeleton /> });
 const AuditTrail = dynamic(() => import("@/components/modules/audit").then((m: any) => m.AuditTrail), { loading: () => <ModuleSkeleton /> });
 const SyncCenter = dynamic(() => import("@/components/modules/sync-center").then((m: any) => m.SyncCenter), { loading: () => <ModuleSkeleton /> });
+const Website = dynamic(() => import("@/components/modules/website").then((m: any) => m.Website), { loading: () => <ModuleSkeleton /> });
 import { applyThemeToDOM, type SchoolTheme } from "@/lib/theme";
 import { sortClassrooms } from "@/lib/classes";
 import {
@@ -89,7 +90,7 @@ import {
   QrCode, UserPlus, Printer, Wallet, BarChart3, CalendarDays, HandCoins, FileWarning, ListChecks, ScanLine, ClipboardPen, Percent,
   PanelLeftClose, PanelLeftOpen, Palette, SlidersHorizontal, Archive, FileText, BookMarked, Target, PiggyBank, Award,
   MessagesSquare, Landmark as LedgerIcon, DatabaseBackup, Gavel, HeartPulse, Stethoscope, Ruler, Trophy, Footprints,
-  DoorOpen, CalendarClock, FileBadge, History, Truck, AlarmClock,
+  DoorOpen, CalendarClock, FileBadge, History, Truck, AlarmClock, Globe,
 } from "lucide-react";
 
 type NavLeaf = { id: string; label: string; icon?: any; target?: NavTarget };
@@ -133,6 +134,7 @@ const SCHOOL_NAV: NavItem[] = [
   { id: "messages", label: "Messages", icon: MessagesSquare, section: "Communication" },
   { id: "ai", label: "AI Assistant", icon: BrainCircuit, section: "Support" },
   { id: "staffhub", label: "My Staff Portal", icon: UserRound, section: "Support" },
+  { id: "website", label: "Website", icon: Globe, section: "Support" },
   { id: "settings", label: "Settings", icon: SettingsIcon, section: "Support" },
   { id: "rbac", label: "Users & Access", icon: ShieldCheck, section: "Support" },
   { id: "audit", label: "Audit Trail", icon: History, section: "Support" },
@@ -501,6 +503,18 @@ export function AppShell() {
       { id: "curriculum-completion", label: "Completion dashboard", target: { tab: "completion" } },
     ];
 
+    // website (wave 54 — public school site CMS, CI3 frontend_pages parity)
+    const websiteChildren: NavChild[] = [
+      { id: "website-publish", label: "Publish & link", target: { tab: "publish" } },
+      { id: "website-slider", label: "Hero slider", target: { tab: "slider" } },
+      { id: "website-events", label: "Events", target: { tab: "events" } },
+      { id: "website-news", label: "News", target: { tab: "news" } },
+      { id: "website-gallery", label: "Gallery", target: { tab: "gallery" } },
+      { id: "website-pages", label: "Pages", target: { tab: "pages" } },
+      { id: "website-staff", label: "Staff showcase", target: { tab: "staff" } },
+      { id: "website-inbox", label: "Contact inbox", target: { tab: "inbox" } },
+    ];
+
     // permission-gated school modules
     for (const item of SCHOOL_NAV) {
       if (item.id === "branches") continue;
@@ -522,6 +536,7 @@ export function AppShell() {
       if (item.id === "sync") enriched.children = syncChildren;
       if (item.id === "boarding") enriched.children = boardingChildren;
       if (item.id === "curriculum") enriched.children = curriculumChildren;
+      if (item.id === "website") enriched.children = websiteChildren;
       items.push(enriched);
     }
     // proprietor branch console
@@ -962,6 +977,7 @@ export function AppShell() {
              module === "certificates" && show("certificates") ? <Certificates /> :
              module === "audit" && show("audit") ? <AuditTrail /> :
              module === "sync" && show("sync") ? <SyncCenter /> :
+             module === "website" && show("website") ? <Website /> :
              module === "classes" && show("classes") ? <Classes /> :
              module === "gradebook" && show("gradebook") ? <Gradebook /> :
              module === "results" && show("results") ? <Results /> :

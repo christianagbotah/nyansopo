@@ -204,6 +204,10 @@ model School {
   crecheRatings        CrecheRating[]
   schoolSettings       SchoolSetting[]
   mediaAssets          MediaAsset[]
+  siteSetting          SiteSetting?
+  siteNews             SiteNews[]
+  siteGalleryAlbums    SiteGalleryAlbum[]
+  siteContactMessages  SiteContactMessage[]
   billItems            BillItem[]
   serviceBalances      ServiceBalance[]
   disciplineCases      DisciplineCase[]
@@ -443,6 +447,8 @@ model Staff {
   // switch lives on SmsSetting.autoLessonNoteAlerts
   smsNotify      Boolean           @default(true)
   active         Boolean           @default(true)
+  // CI3 teacher.show_on_website parity — appears on the public school website staff page
+  showOnWebsite  Boolean           @default(false)
   classrooms     Classroom[]
   payslips       Payslip[]
   timetableSlots TimetableSlot[]
@@ -1699,14 +1705,17 @@ model SmsMessage {
 // + the GET route only.
 // ─────────────────────────────────────────────────────────────
 model MediaAsset {
-  id        String   @id @default(cuid())
-  schoolId  String
-  school    School   @relation(fields: [schoolId], references: [id])
-  kind      String // PORTRAIT | LOGO | SIGNATURE
-  mimeType  String // image/png | image/jpeg | image/webp
-  sizeBytes Int
-  data      Bytes
-  createdAt DateTime @default(now())
+  id          String   @id @default(cuid())
+  schoolId    String
+  school      School   @relation(fields: [schoolId], references: [id])
+  kind        String // PORTRAIT | LOGO | SIGNATURE | SITE (public website asset)
+  mimeType    String // image/png | image/jpeg | image/webp
+  sizeBytes   Int
+  data        Bytes
+  // wave 54 — public website: assets shown on /site/{code} are served
+  // unauthenticated via /api/media/{id}?t={publicToken}; null stays private
+  publicToken String?  @unique
+  createdAt   DateTime @default(now())
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -3141,4 +3150,77 @@ model ReminderTemplate {
   updatedAt     DateTime @updatedAt
 
   @@index([schoolId])
+}
+
+// ── wave 54 — public school website (CI3 frontend_pages / Frontend_model parity)
+// One published site per school at /site/{school.code}: hero slider, events
+// (reuses SchoolEvent audience=ALL), news, gallery albums, staff page, about,
+// terms & privacy pages and a contact inbox.
+model SiteSetting {
+  id             String  @id @default(cuid())
+  schoolId       String  @unique
+  school         School  @relation(fields: [schoolId], references: [id])
+  published      Boolean @default(false)
+  // 3 slides as JSON: [{title, description, imageId}] — imageId = MediaAsset id
+  sliderJson     String  @default("[]")
+  aboutUs        String?
+  aboutUsImageId String?
+  terms          String?
+  privacy        String?
+  contactEmail   String?
+  contactPhone   String?
+  updatedAt      DateTime @updatedAt
+}
+
+model SiteNews {
+  id          String   @id @default(cuid())
+  schoolId    String
+  school      School   @relation(fields: [schoolId], references: [id])
+  title       String
+  body        String
+  imageId     String?
+  publishedAt DateTime @default(now())
+
+  @@index([schoolId, publishedAt])
+}
+
+model SiteGalleryAlbum {
+  id            String   @id @default(cuid())
+  schoolId      String
+  school        School   @relation(fields: [schoolId], references: [id])
+  title         String
+  description   String?
+  showOnWebsite Boolean  @default(true)
+  coverId       String?
+  createdAt     DateTime @default(now())
+  images        SiteGalleryImage[]
+
+  @@index([schoolId, createdAt])
+}
+
+model SiteGalleryImage {
+  id        String  @id @default(cuid())
+  albumId   String
+  album     SiteGalleryAlbum @relation(fields: [albumId], references: [id], onDelete: Cascade)
+  imageId   String // MediaAsset id
+  caption   String?
+  createdAt DateTime @default(now())
+
+  @@index([albumId])
+}
+
+model SiteContactMessage {
+  id        String   @id @default(cuid())
+  schoolId  String
+  school    School   @relation(fields: [schoolId], references: [id])
+  firstName String
+  lastName  String?
+  email     String?
+  phone     String?
+  address   String?
+  comment   String
+  handled   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([schoolId, createdAt])
 }

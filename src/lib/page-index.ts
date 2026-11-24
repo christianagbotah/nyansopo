@@ -18,7 +18,7 @@ import {
   DatabaseBackup, PiggyBank, Award, Gavel, Ruler, Activity, Home as HomeIcon, Hospital, Thermometer,
   Trophy, Medal, BookUser, Footprints, Truck, AlarmClock,
   DoorOpen, CalendarClock, PhoneCall, Mailbox, CalendarRange, BellRing, FileBadge, Stamp, Gauge, GitMerge, History,
-  Table2, Database,
+  Table2, Database, Globe, Newspaper, Image, Inbox, FileText,
 } from "lucide-react";
 
 export type PageEntry = {
@@ -79,6 +79,16 @@ export const PAGE_INDEX: PageEntry[] = [
   { id: "pg-rbac", label: "Users & Access", section: S.people, module: "rbac", target: { tab: "users" }, perm: ["rbac.manage"], icon: ShieldCheck, keywords: ["accounts", "logins", "passwords", "staff accounts"] },
   { id: "pg-roles", label: "Roles & Permissions", section: S.people, module: "rbac", target: { tab: "roles" }, perm: ["rbac.manage"], icon: ShieldCheck, keywords: ["access control", "custom role", "cashier permissions", "acl", "grant"] },
   { id: "pg-audit", label: "Audit Trail", section: S.system, module: "audit", perm: ["audit.view"], icon: ScrollText, keywords: ["audit", "compliance", "who changed", "before after", "audit log viewer", "audit trail", "activity log", "governance", "forensics"] },
+
+  // ── Website (wave 54 — public school site CMS, CI3 frontend_pages parity) ──
+  { id: "pg-website-publish", label: "Website — Publish & Link", section: S.system, module: "website", target: { tab: "publish" }, perm: ["website.manage"], icon: Globe, keywords: ["website", "public site", "publish", "link", "internet", "online presence", "go live", "homepage"] },
+  { id: "pg-website-slider", label: "Website — Hero Slider", section: S.system, module: "website", target: { tab: "slider" }, perm: ["website.manage"], icon: GalleryHorizontal, keywords: ["slider", "banner", "hero", "carousel", "slides", "cover image"] },
+  { id: "pg-website-events", label: "Website — Events", section: S.system, module: "website", target: { tab: "events" }, perm: ["website.manage"], icon: CalendarRange, keywords: ["events", "upcoming", "open day", "sports", "pta"] },
+  { id: "pg-website-news", label: "Website — News", section: S.system, module: "website", target: { tab: "news" }, perm: ["website.manage"], icon: Newspaper, keywords: ["news", "announcements", "stories", "blog", "posts"] },
+  { id: "pg-website-gallery", label: "Website — Gallery", section: S.system, module: "website", target: { tab: "gallery" }, perm: ["website.manage"], icon: Image, keywords: ["gallery", "photos", "albums", "pictures", "images"] },
+  { id: "pg-website-pages", label: "Website — Pages", section: S.system, module: "website", target: { tab: "pages" }, perm: ["website.manage"], icon: FileText, keywords: ["about us", "terms", "privacy policy", "contact email", "static pages"] },
+  { id: "pg-website-staff", label: "Website — Staff Showcase", section: S.system, module: "website", target: { tab: "staff" }, perm: ["website.manage"], icon: UsersRound, keywords: ["staff page", "teachers on website", "show staff", "profiles"] },
+  { id: "pg-website-inbox", label: "Website — Contact Inbox", section: S.system, module: "website", target: { tab: "inbox" }, perm: ["website.manage"], icon: Inbox, keywords: ["contact form", "messages", "enquiries", "inbox", "admission enquiry"] },
 
   // ── Sync Center (wave 39 — offline devices, conflicts, journal) ──
   { id: "pg-sync-dash", label: "Sync Dashboard", section: S.system, module: "sync", target: { tab: "dashboard" }, perm: ["sync.view"], icon: Gauge, keywords: ["sync", "offline", "health score", "flush", "timeline", "sync dashboard", "devices at a glance"] },

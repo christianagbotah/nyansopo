@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+import { randomBytes } from "crypto";
 
 // ── Media/blob storage helper ────────────────────────────────
 // Portraits & branding uploads arrive as client-resized data-URLs but are
@@ -7,16 +8,13 @@ import { PrismaClient } from "@prisma/client";
 // slim and makes the fetch lazy + immutable-cacheable. To move to S3 or
 // a CDN later, change this module + GET /api/media/[id] only.
 
-export type MediaKind = "PORTRAIT" | "LOGO" | "SIGNATURE";
+export type MediaKind = "PORTRAIT" | "LOGO" | "SIGNATURE" | "SITE";
 
 /** mime types accepted for uploads (matches the client-side resize output) */
 const ALLOWED_MIME = new Set(["image/png", "image/jpeg", "image/webp"]);
 
 /** decoded byte cap — the client resizes to well below this (~320px JPEG) */
 export const MAX_MEDIA_BYTES = 700 * 1024;
-
-/** URL form a stored asset is referenced by. */
-export const MEDIA_URL_RE = /^\/api\/media\/[A-Za-z0-9]{20,}$/;
 
 /** Parse + decode an image data-URL into bytes, enforcing mime + size caps. */
 export function decodeImageDataUrl(value: string): { mimeType: string; bytes: Buffer } | null {
@@ -35,15 +33,29 @@ export function decodeImageDataUrl(value: string): { mimeType: string; bytes: Bu
   return { mimeType: mimeType.toLowerCase(), bytes };
 }
 
-/** Store a data-URL as a binary MediaAsset and return its reference URL. */
+/** URL form a stored asset is referenced by. */
+export const MEDIA_URL_RE = /^\/api\/media\/[A-Za-z0-9]{20,}(\?.*)?$/;
+
+/** Cryptographically strong public token for website assets (wave 54). */
+export function makePublicToken(): string {
+  return randomBytes(24).toString("base64url");
+}
+
+/**
+ * Store a data-URL as a binary MediaAsset and return its reference URL.
+ * With `public: true` (wave 54 — public school website) the asset gets a
+ * publicToken and is served unauthenticated at /api/media/{id}?t={token}.
+ */
 export async function storeMedia(opts: {
   db: PrismaClient;
   schoolId: string;
   kind: MediaKind;
   dataUrl: string;
+  public?: boolean;
 }): Promise<string | null> {
   const decoded = decodeImageDataUrl(opts.dataUrl);
   if (!decoded) return null;
+  const publicToken = opts.public ? makePublicToken() : null;
   const asset = await opts.db.mediaAsset.create({
     data: {
       schoolId: opts.schoolId,
@@ -51,6 +63,7 @@ export async function storeMedia(opts: {
       mimeType: decoded.mimeType,
       sizeBytes: decoded.bytes.length,
       data: new Uint8Array(decoded.bytes), // plain Uint8Array (Prisma Bytes typing)
+      publicToken,
     },
   });
   return `/api/media/${asset.id}`;
