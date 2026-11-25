@@ -13,11 +13,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "@/hooks/use-toast";
 import { avatarColor } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { Backpack, CalendarDays, BookOpen, GraduationCap, Wallet, Megaphone, Clock, AlertTriangle, CheckCircle2, UserRound, Laptop, Send, BookPlus, Hourglass, XCircle, MessageSquare } from "lucide-react";
+import { Backpack, CalendarDays, BookOpen, GraduationCap, Wallet, Megaphone, Clock, AlertTriangle, CheckCircle2, UserRound, Laptop, Send, BookPlus, Hourglass, XCircle, MessageSquare, PenLine, Loader2 } from "lucide-react";
 import { PortalMessenger } from "@/components/portal-messenger";
 
 type Slot = { day: number; start: number; end: number; subject: string; teacher: string | null };
@@ -34,6 +35,12 @@ type BookRequestLite = {
   handledAt: string | null; handledByName: string | null; createdAt: string; overdue: boolean;
 };
 type CatalogueBook = { id: string; title: string; author: string | null; category: string; available: number };
+// wave 65 — homework from the teachers' board (portal view)
+type HwLite = {
+  id: string; title: string; subject: string; classroom: string; instructions: string;
+  dueDate: string; overdue: boolean; status: string; maxScore: number; postedBy: string;
+  myStatus: string; myNote: string | null; myScore: number | null; myFeedback: string | null;
+};
 const REQ_STATUS: Record<string, { label: string; className: string; icon: React.ReactNode }> = {
   PENDING: { label: "Waiting for librarian", className: "bg-amber-600", icon: <Hourglass className="size-3" /> },
   ISSUED: { label: "Issued", className: "bg-emerald-600", icon: <CheckCircle2 className="size-3" /> },
@@ -54,6 +61,7 @@ type StudentData = {
     bookRequests: BookRequestLite[];
     wallet: { prepaid: number; transport: number } | null;
     feesBalance: number;
+    homework: HwLite[];
   };
   announcements: { id: string; title: string; body: string; postedByName: string; postedAt: string; priority: string }[];
   libraryCatalogue: CatalogueBook[];
@@ -91,6 +99,8 @@ export function StudentPortal() {
   const pendingRequests = me.bookRequests.filter((r) => r.status === "PENDING").length;
   /* wave 21 — only published terminal reports reach the learner */
   const pubCards = me.reportCards.filter((rc) => rc.published);
+  /* wave 65 — outstanding homework count for the tab badge */
+  const hwPending = me.homework.filter((h) => h.status === "OPEN" && (h.myStatus === "PENDING")).length;
 
   return (
     <div>
@@ -110,6 +120,7 @@ export function StudentPortal() {
       <Tabs defaultValue="overview">
         <TabsList className="flex-wrap h-auto">
           <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="homework" className="gap-1.5"><BookPlus className="size-4" /> Homework{hwPending ? ` (${hwPending})` : ""}</TabsTrigger>
           <TabsTrigger value="timetable">Timetable</TabsTrigger>
           <TabsTrigger value="results">My results</TabsTrigger>
           <TabsTrigger value="library">Library</TabsTrigger>
@@ -178,6 +189,10 @@ export function StudentPortal() {
               </CardContent>
             </Card>
           )}
+        </TabsContent>
+
+        <TabsContent value="homework" className="mt-3">
+          <StudentHomework homework={me.homework} studentId={me.id} onChanged={load} />
         </TabsContent>
 
         <TabsContent value="timetable" className="mt-3">
@@ -679,6 +694,150 @@ function StudentExams({ studentId, classroomId }: { studentId: string; classroom
             <Button variant="outline" onClick={() => { setSitting(null); setAnswers({}); setBlankInputs({}); setSecsLeft(null); }}>Cancel</Button>
             <Button className="gap-1.5" onClick={() => submit()} disabled={answeredCount() !== (sitting?.questions.length ?? 0)}>
               Submit {answeredCount()}/{sitting?.questions.length ?? 0}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+/* ── wave 65 — Homework tab: the learner's own assignment list ──
+   Read the teacher's instructions, confirm "I have done it" (late is flagged
+   automatically after the due date), and see the score + teacher feedback
+   once marking is done. Parents submit on the child's behalf from their own
+   portal tab. */
+function StudentHomework({ homework, studentId, onChanged }: {
+  homework: HwLite[]; studentId: string; onChanged: () => void;
+}) {
+  const { currentSchoolId } = useStore();
+  const [submitting, setSubmitting] = useState<HwLite | null>(null);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const open = homework.filter((h) => h.status === "OPEN");
+  const done = homework.filter((h) => h.status === "CLOSED" || h.myStatus === "GRADED" || h.myStatus === "SUBMITTED" || h.myStatus === "LATE");
+
+  async function submitHw() {
+    if (!submitting) return;
+    setBusy(true);
+    try {
+      const r = await apiPost<{ status: string }>(`/api/school/${currentSchoolId}/ops/portal`, {
+        action: "homework.self-submit", homeworkId: submitting.id, studentId, note,
+      });
+      toast({
+        title: r.status === "LATE" ? "Submitted — marked late" : "Homework submitted",
+        description: r.status === "LATE"
+          ? "The due date has passed. Your teacher will still see it."
+          : "Nice one — your teacher has been notified.",
+      });
+      setSubmitting(null); setNote(""); onChanged();
+    } catch (e: any) {
+      toast({ title: "Could not submit", description: e.message, variant: "destructive" });
+    } finally { setBusy(false); }
+  }
+
+  const HW_CHIP: Record<string, string> = {
+    PENDING: "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30",
+    SUBMITTED: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30",
+    LATE: "bg-orange-500/15 text-orange-700 dark:text-orange-300 border-orange-500/30",
+    GRADED: "bg-primary/15 text-primary border-primary/30",
+    EXCUSED: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-300 border-zinc-500/30",
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-3 gap-3">
+        <Mini label="Outstanding" value={open.filter((h) => h.myStatus === "PENDING").length} tone={open.some((h) => h.myStatus === "PENDING") ? "warn" : "good"} />
+        <Mini label="Handed in" value={homework.filter((h) => h.myStatus === "SUBMITTED" || h.myStatus === "LATE").length} tone="good" />
+        <Mini label="Marked" value={homework.filter((h) => h.myStatus === "GRADED").length} />
+      </div>
+
+      {[open.length > 0 && "open", done.length > 0 && "done"].filter(Boolean).length === 0 && (
+        <Card><CardContent className="py-8"><EmptyState icon={<BookPlus className="size-8" />} title="No homework yet" hint="When your teacher posts an assignment, it appears here." /></CardContent></Card>
+      )}
+
+      {open.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><PenLine className="size-4" /> Current assignments</CardTitle></CardHeader>
+          <CardContent className="space-y-2.5">
+            {open.map((h) => {
+              const dueIn = Math.ceil((new Date(h.dueDate).getTime() - Date.now()) / 86400000);
+              return (
+                <div key={h.id} className="rounded-xl border p-3.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <Badge variant="secondary" className="text-[10px]">{h.subject}</Badge>
+                        <span className={cn("inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium", HW_CHIP[h.myStatus] ?? "")}>{h.myStatus.toLowerCase()}</span>
+                      </div>
+                      <div className="font-semibold leading-snug mt-1.5">{h.title}</div>
+                      <div className="text-xs text-muted-foreground mt-0.5">by {h.postedBy} · max {h.maxScore} marks</div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className={cn("text-[11px] font-semibold", h.overdue ? "text-destructive" : dueIn <= 1 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground")}>
+                        {h.overdue ? "overdue" : dueIn <= 0 ? "due today" : dueIn === 1 ? "due tomorrow" : `due in ${dueIn}d`}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground">{fmtDate(h.dueDate)}</div>
+                    </div>
+                  </div>
+                  <p className="text-sm mt-2 rounded-lg bg-secondary/40 border p-2.5 whitespace-pre-wrap leading-relaxed max-h-36 overflow-y-auto">{h.instructions}</p>
+                  {h.myFeedback && (
+                    <div className="mt-2 rounded-lg border border-primary/30 bg-primary/5 p-2.5 text-sm">
+                      <span className="font-medium">Teacher: </span>{h.myFeedback}
+                      {h.myScore != null && <Badge className="ml-2 bg-primary">{h.myScore}/{h.maxScore}</Badge>}
+                    </div>
+                  )}
+                  {(h.myStatus === "PENDING") ? (
+                    <Button size="sm" className="mt-2.5 gap-1.5" onClick={() => { setSubmitting(h); setNote(""); }}>
+                      <CheckCircle2 className="size-3.5" /> I have done it
+                    </Button>
+                  ) : h.myNote ? (
+                    <div className="text-[11px] text-muted-foreground mt-2">Your note: &ldquo;{h.myNote}&rdquo;</div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
+      )}
+
+      {done.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-base">Earlier work</CardTitle></CardHeader>
+          <CardContent className="space-y-2">
+            {done.map((h) => (
+              <div key={h.id} className="flex items-center justify-between gap-3 rounded-lg border p-2.5">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium truncate">{h.title}</div>
+                  <div className="text-[11px] text-muted-foreground">{h.subject} · due {fmtDate(h.dueDate)}</div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className={cn("inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium", HW_CHIP[h.myStatus] ?? "")}>{h.myStatus.toLowerCase()}</span>
+                  {h.myScore != null && <span className="text-sm font-bold tabular-nums">{h.myScore}/{h.maxScore}</span>}
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      <Dialog open={!!submitting} onOpenChange={(o) => !o && setSubmitting(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><CheckCircle2 className="size-4.5" /> Confirm — {submitting?.title}</DialogTitle>
+            <DialogDescription>
+              Tell your teacher the work is done. Handing in after the due date is recorded as late.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Label htmlFor="hw-note">Note for the teacher (optional)</Label>
+            <Textarea id="hw-note" value={note} onChange={(e) => setNote(e.target.value)} rows={3} placeholder="e.g. I finished all 10 sums; my exercise book is in my bag." />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSubmitting(null)}>Not yet</Button>
+            <Button onClick={submitHw} disabled={busy} className="gap-1.5">
+              {busy ? <Loader2 className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />} Submit homework
             </Button>
           </DialogFooter>
         </DialogContent>

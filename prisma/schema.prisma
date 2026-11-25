@@ -256,6 +256,7 @@ model School {
   cpdSetting            CpdSetting?
   cpdActivities         CpdActivity[]
   emisReturns           EmisReturn[]
+  homeworkItems         Homework[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -349,6 +350,7 @@ model Term {
   resultApprovals    ResultApproval[]
   termResults        TermResult[]
   schoolEvents       SchoolEvent[]
+  homeworkItems      Homework[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -379,6 +381,7 @@ model Classroom {
   resultApprovals     ResultApproval[]
   sections            Section[]
   termResults         TermResult[]
+  homeworkItems       Homework[]
 }
 
 // Section (stream) within a classroom — iEduPro parity: a class like
@@ -417,6 +420,7 @@ model Subject {
   studyMaterials      StudyMaterial[]
   syllabusTopics      SyllabusTopic[]
   termResults         TermResult[]
+  homeworkItems       Homework[]
 }
 
 model Staff {
@@ -478,6 +482,7 @@ model Staff {
   coversReceived SubstitutionLog[] @relation("AbsentStaff")
   cpdActivities  CpdActivity[]
   visitorsToSee  Visitor[]      @relation("VisitorSeesStaff")
+  homeworkPosted Homework[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -560,6 +565,7 @@ model Student {
   healthScreeningRecords HealthScreeningRecord[]
   clubMemberships        ClubMembership[]
   waecCandidacies        WaecCandidacy[]
+  homeworkSubmissions    HomeworkSubmission[]
 }
 
 model Enrollment {
@@ -602,6 +608,7 @@ model TimetableSlot {
   endMinute   Int
   notes       String?
   createdAt   DateTime  @default(now())
+  substitutions SubstitutionLog[]
 
   @@index([schoolId, classroomId, dayOfWeek, startMinute])
 }
@@ -2971,23 +2978,29 @@ model StaffMovement {
 }
 
 model SubstitutionLog {
-  id                String   @id @default(cuid())
+  id                String        @id @default(cuid())
   schoolId          String
-  school            School   @relation(fields: [schoolId], references: [id])
+  school            School        @relation(fields: [schoolId], references: [id])
   absentStaffId     String
-  absentStaff       Staff    @relation("AbsentStaff", fields: [absentStaffId], references: [id])
+  absentStaff       Staff         @relation("AbsentStaff", fields: [absentStaffId], references: [id])
   substituteStaffId String
-  substituteStaff   Staff    @relation("SubstituteStaff", fields: [substituteStaffId], references: [id])
-  date              DateTime @db.Date
+  substituteStaff   Staff         @relation("SubstituteStaff", fields: [substituteStaffId], references: [id])
+  date              DateTime      @db.Date
+  // wave 65 — Timetable Intelligence: when the cover comes from the planner
+  // it rides the exact timetable slot (period-accurate suggestions, busy
+  // checks, printable day sheets). Manual staffduty entries keep slotId null.
+  slotId            String?
+  slot              TimetableSlot? @relation(fields: [slotId], references: [id])
   classRef          String? // "JHS 3 B9" / timetable slot label
   periods           String? // "1-3" or "Maths, English"
   note              String?
   recordedByName    String?
-  createdAt         DateTime @default(now())
+  createdAt         DateTime      @default(now())
 
   @@index([schoolId, date])
   @@index([absentStaffId])
   @@index([substituteStaffId])
+  @@index([slotId])
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -3478,4 +3491,59 @@ model OfficeFile {
   updatedAt     DateTime @updatedAt
 
   @@index([schoolId, kind, updatedAt])
+}
+
+// ─────────────────────────────────────────────────────────────
+// HOMEWORK & ASSIGNMENTS (wave 65 — the daily teacher workflow)
+// A teacher posts an assignment to a class with a due date; every ACTIVE
+// learner in the class gets a PENDING submission row (the teacher's marking
+// checklist). Parents receive an SMS the moment it is posted (opt-out per
+// post), learners see it in their portal and can self-submit with a note,
+// the teacher marks handed-in / scores / feedback, and can push the scores
+// into the Gradebook as a HOMEWORK assessment with one tap.
+model Homework {
+  id            String    @id @default(cuid())
+  schoolId      String
+  school        School    @relation(fields: [schoolId], references: [id])
+  classroomId   String
+  classroom     Classroom @relation(fields: [classroomId], references: [id])
+  subjectId     String?
+  subject       Subject?  @relation(fields: [subjectId], references: [id])
+  subjectName   String // free-text fallback when the subject is not in the catalog
+  staffId       String?
+  staff         Staff?    @relation(fields: [staffId], references: [id])
+  termId        String?
+  term          Term?     @relation(fields: [termId], references: [id])
+  title         String
+  instructions  String
+  dueDate       DateTime
+  maxScore      Int       @default(10)
+  status        String    @default("OPEN") // OPEN | CLOSED
+  notifyParents Boolean   @default(true)
+  createdByName String
+  submissions   HomeworkSubmission[]
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([schoolId, classroomId, dueDate])
+}
+
+model HomeworkSubmission {
+  id           String    @id @default(cuid())
+  homeworkId   String
+  homework     Homework  @relation(fields: [homeworkId], references: [id], onDelete: Cascade)
+  studentId    String
+  student      Student   @relation(fields: [studentId], references: [id])
+  status       String    @default("PENDING") // PENDING | SUBMITTED | LATE | GRADED | EXCUSED
+  note         String? // learner/parent submission note
+  submittedAt  DateTime?
+  score        Float?
+  feedback     String?
+  gradedAt     DateTime?
+  gradedByName String?
+  createdAt    DateTime  @default(now())
+
+  @@unique([homeworkId, studentId])
+  @@index([homeworkId])
+  @@index([studentId])
 }

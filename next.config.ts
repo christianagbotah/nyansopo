@@ -9,13 +9,12 @@ const nextConfig: NextConfig = {
   reactStrictMode: false,
   /* sandbox has 4 GB total RAM — cap Turbopack's heap so the module-graph
      compile never OOM-kills next-server while the verification browser is
-     resident alongside it. Verified empirically: at 1024 the first compile
-     of the big /api/sync route pushed next-server RSS to ~2.1 GB and the
-     kernel OOM-killer SIGKILLed it mid-request (dmesg 2026-05-28). 768
-     caps the compiler heap while still fitting the whole route graph;
-     keep Postgres + Caddy + control plane headroom above all. */
+     resident alongside it. Wave 65 raised 768 → 1280: the app-shell grew
+     (homework module + portals) and the first compile of / was killed
+     repeatedly at 768 (three silent deaths mid-"Compiling /"), while 1280
+     completes with ~1 GB still free for Postgres + Caddy + the browser. */
   experimental: {
-    turbopackMemoryLimit: 768,
+    turbopackMemoryLimit: 1280,
   },
 };
 

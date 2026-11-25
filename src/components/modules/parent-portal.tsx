@@ -14,11 +14,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "@/hooks/use-toast";
 import { initials, avatarColor } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { Home, Wallet, CalendarCheck, GraduationCap, Bus, MessageSquareText, Megaphone, Phone, ArrowUpRight, CheckCircle2, AlertTriangle, Receipt, BookOpen, BookPlus, Hourglass, XCircle, Send, UtensilsCrossed, Clock } from "lucide-react";
+import { Home, Wallet, CalendarCheck, GraduationCap, Bus, MessageSquareText, Megaphone, Phone, ArrowUpRight, CheckCircle2, AlertTriangle, Receipt, BookOpen, BookPlus, Hourglass, XCircle, Send, UtensilsCrossed, Clock, Loader2 } from "lucide-react";
 import { PortalMessenger } from "@/components/portal-messenger";
 
 type Invoice = {
@@ -48,6 +49,7 @@ type Child = {
   // iEduPro parity: library loans + book requests per child
   library: { book: string; dueAt: string; overdue: boolean }[];
   bookRequests: BookRequestLite[];
+  homework: HwLite[];
 };
 // iEduPro parity: parents request books on behalf of their children
 type BookRequestLite = {
@@ -55,6 +57,12 @@ type BookRequestLite = {
   handledAt: string | null; handledByName: string | null; createdAt: string; overdue: boolean;
 };
 type CatalogueBook = { id: string; title: string; author: string | null; category: string; available: number };
+// wave 65 — homework for the selected child
+ type HwLite = {
+  id: string; title: string; subject: string; classroom: string; instructions: string;
+  dueDate: string; overdue: boolean; status: string; maxScore: number; postedBy: string;
+  myStatus: string; myNote: string | null; myScore: number | null; myFeedback: string | null;
+};
 // meal opt-in / opt-out (dining register): the school's meal services + this family's requests
 type MealServiceLite = { id: string; name: string; category: string; optInDaily: boolean; weekdays: string };
 type MealRequestLite = { id: string; studentId: string; student: string; service: string; date: string; kind: "OPT_OUT" | "OPT_IN"; status: "PENDING" | "APPROVED" | "DECLINED"; reason: string | null; decidedByName: string | null; createdAt: string };
@@ -144,6 +152,7 @@ export function ParentPortal() {
       <Tabs defaultValue="overview">
         <TabsList className="flex-wrap h-auto">
           <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="homework" className="gap-1.5"><BookPlus className="size-4" /> Homework</TabsTrigger>
           <TabsTrigger value="fees">Fees & Payments</TabsTrigger>
           <TabsTrigger value="attendance">Attendance</TabsTrigger>
           <TabsTrigger value="reports">Reports</TabsTrigger>
@@ -287,6 +296,12 @@ export function ParentPortal() {
               </CardContent>
             </Card>
           )}
+        </TabsContent>
+
+        {/* wave 65 — Homework: what the teachers posted for this child, with a
+            one-tap "submit" the parent can do on the learner's behalf */}
+        <TabsContent value="homework" className="mt-3">
+          <ParentHomework child={child} onChanged={load} />
         </TabsContent>
 
         <TabsContent value="fees" className="mt-3 space-y-4">
@@ -670,6 +685,141 @@ function MiniStat({ label, value, tone }: { label: string; value: React.ReactNod
     <div className="rounded-lg border p-2.5 text-center">
       <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
       <div className={`text-lg font-bold tabular-nums ${tone === "good" ? "text-emerald-600 dark:text-emerald-400" : tone === "bad" ? "text-destructive" : tone === "warn" ? "text-amber-600" : ""}`}>{value}</div>
+    </div>
+  );
+}
+
+/* ── wave 65 — Homework tab (parent view): every assignment posted to the
+    selected child's class, with submission state, teacher feedback and a
+    one-tap submit for the family on the go. ── */
+function ParentHomework({ child, onChanged }: { child: Child; onChanged: () => void }) {
+  const { currentSchoolId } = useStore();
+  const [submitting, setSubmitting] = useState<HwLite | null>(null);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const hw = child.homework ?? [];
+  const open = hw.filter((h) => h.status === "OPEN");
+  const outstanding = open.filter((h) => h.myStatus === "PENDING");
+  const HW_CHIP: Record<string, string> = {
+    PENDING: "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30",
+    SUBMITTED: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30",
+    LATE: "bg-orange-500/15 text-orange-700 dark:text-orange-300 border-orange-500/30",
+    GRADED: "bg-primary/15 text-primary border-primary/30",
+    EXCUSED: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-300 border-zinc-500/30",
+  };
+
+  async function submitHw() {
+    if (!submitting) return;
+    setBusy(true);
+    try {
+      const r = await apiPost<{ status: string }>(`/api/school/${currentSchoolId}/ops/portal`, {
+        action: "homework.self-submit", homeworkId: submitting.id, studentId: child.id, note,
+      });
+      toast({
+        title: r.status === "LATE" ? "Submitted — recorded as late" : "Homework submitted",
+        description: r.status === "LATE"
+          ? `The due date for "${submitting.title}" has passed — the teacher will still see it.`
+          : `${child.name}'s teacher has been notified.`,
+      });
+      setSubmitting(null); setNote(""); onChanged();
+    } catch (e: any) {
+      toast({ title: "Could not submit", description: e.message, variant: "destructive" });
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2"><BookPlus className="size-4" /> Homework — {child.name}</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-3 gap-3">
+            <MiniStat label="Outstanding" value={outstanding.length} tone={outstanding.length ? "warn" : "good"} />
+            <MiniStat label="Handed in" value={hw.filter((h) => h.myStatus === "SUBMITTED" || h.myStatus === "LATE").length} tone="good" />
+            <MiniStat label="Marked" value={hw.filter((h) => h.myStatus === "GRADED").length} />
+          </div>
+
+          {!hw.length && (
+            <EmptyState icon={<BookPlus className="size-8" />} title="No homework posted yet" hint="When a teacher posts an assignment for the class, it appears here — and you get an SMS." />
+          )}
+
+          {open.map((h) => {
+            const dueIn = Math.ceil((new Date(h.dueDate).getTime() - Date.now()) / 86400000);
+            return (
+              <div key={h.id} className="rounded-xl border p-3.5">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <Badge variant="secondary" className="text-[10px]">{h.subject}</Badge>
+                      <span className={cn("inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium", HW_CHIP[h.myStatus] ?? "")}>{h.myStatus.toLowerCase()}</span>
+                    </div>
+                    <div className="font-semibold leading-snug mt-1.5">{h.title}</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">by {h.postedBy} · max {h.maxScore} marks</div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div className={cn("text-[11px] font-semibold", h.overdue ? "text-destructive" : dueIn <= 1 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground")}>
+                      {h.overdue ? "overdue" : dueIn <= 0 ? "due today" : dueIn === 1 ? "due tomorrow" : `due in ${dueIn}d`}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground">{fmtDate(h.dueDate)}</div>
+                  </div>
+                </div>
+                <p className="text-sm mt-2 rounded-lg bg-secondary/40 border p-2.5 whitespace-pre-wrap leading-relaxed max-h-36 overflow-y-auto">{h.instructions}</p>
+                {h.myFeedback && (
+                  <div className="mt-2 rounded-lg border border-primary/30 bg-primary/5 p-2.5 text-sm">
+                    <span className="font-medium">Teacher: </span>{h.myFeedback}
+                    {h.myScore != null && <Badge className="ml-2 bg-primary">{h.myScore}/{h.maxScore}</Badge>}
+                  </div>
+                )}
+                {h.myStatus === "PENDING" && (
+                  <Button size="sm" className="mt-2.5 gap-1.5" onClick={() => { setSubmitting(h); setNote(""); }}>
+                    <CheckCircle2 className="size-3.5" /> Submit for {child.name.split(" ")[0]}
+                  </Button>
+                )}
+                {h.myNote && <div className="text-[11px] text-muted-foreground mt-2">Your note: &ldquo;{h.myNote}&rdquo;</div>}
+              </div>
+            );
+          })}
+
+          {hw.filter((h) => h.status === "CLOSED" || h.myStatus === "GRADED").length > 0 && (
+            <div className="space-y-2 pt-1">
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Earlier work</div>
+              {hw.filter((h) => h.status === "CLOSED" || h.myStatus === "GRADED").map((h) => (
+                <div key={h.id} className="flex items-center justify-between gap-3 rounded-lg border p-2.5">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium truncate">{h.title}</div>
+                    <div className="text-[11px] text-muted-foreground">{h.subject} · due {fmtDate(h.dueDate)}</div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className={cn("inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium", HW_CHIP[h.myStatus] ?? "")}>{h.myStatus.toLowerCase()}</span>
+                    {h.myScore != null && <span className="text-sm font-bold tabular-nums">{h.myScore}/{h.maxScore}</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Dialog open={!!submitting} onOpenChange={(o) => !o && setSubmitting(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><CheckCircle2 className="size-4.5" /> Submit — {submitting?.title}</DialogTitle>
+            <DialogDescription>Confirm {child.name}&apos;s homework is done. Late submissions after the due date are flagged for the teacher.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Label htmlFor="phw-note">Note for the teacher (optional)</Label>
+            <Textarea id="phw-note" value={note} onChange={(e) => setNote(e.target.value)} rows={3} placeholder="e.g. Done — exercise book will be brought to school tomorrow." />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSubmitting(null)}>Not yet</Button>
+            <Button onClick={submitHw} disabled={busy} className="gap-1.5">
+              {busy ? <Loader2 className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />} Submit homework
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

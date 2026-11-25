@@ -104,6 +104,29 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // 3b — homework (wave 65): my open assignments due within 2 days, or overdue
+  //      with unmarked work — the daily "what must I chase tonight" nudge
+  if (can("homework.view") && user.staffId) {
+    const now = new Date();
+    const soon = new Date(now.getTime() + 2 * 86400000);
+    const myOpen = await db.homework.findMany({
+      where: { schoolId, staffId: user.staffId, status: "OPEN", dueDate: { lte: soon } },
+      orderBy: { dueDate: "asc" }, take: 1,
+      include: { _count: { select: { submissions: { where: { status: { in: ["PENDING"] } } } } } },
+    });
+    if (myOpen.length) {
+      const hw = myOpen[0];
+      const overdueOrSoon = hw.dueDate < now;
+      items.push({
+        id: "homework-due", kind: "homework", severity: overdueOrSoon ? "warning" : "info",
+        count: hw._count.submissions,
+        title: `${hw._count.submissions} learner${hw._count.submissions === 1 ? "" : "s"} yet to hand in "${hw.title}"`,
+        detail: `${overdueOrSoon ? "Overdue" : "Due soon"} · ${new Date(hw.dueDate).toLocaleDateString("en-GB", { day: "numeric", month: "short" })} — remind parents or mark what has come in`,
+        module: "homework", at: hw.dueDate,
+      });
+    }
+  }
+
   // 4 — low / out-of-stock inventory
   if (can("inventory.view")) {
     const all = await db.inventoryItem.findMany({ where: { schoolId } });
@@ -214,6 +237,31 @@ export async function GET(req: NextRequest) {
         title: cnt > 1 ? `${cnt} visitors are waiting to see you` : "A visitor is waiting to see you",
         detail: `${v.name}${v.organisation ? ` (${v.organisation})` : ""} · ${v.purpose}${v.passNo ? ` · pass ${v.passNo}` : ""} — at the desk since ${since}`,
         module: "frontoffice", tab: "visitors", at: v.timeIn,
+      });
+    }
+  }
+
+  // 8b — you are COVERING a lesson today (wave 65 Timetable Intelligence).
+  //      Derived from the slot-accurate substitution rows the cover planner
+  //      creates — the covering teacher sees exactly which lesson, class and
+  //      period without anyone having to shout across the compound.
+  if (user.staffId) {
+    const today = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`);
+    const coversToday = await db.substitutionLog.findMany({
+      where: { schoolId, substituteStaffId: user.staffId, date: today, slotId: { not: null } },
+      include: { absentStaff: { select: { fullName: true } }, slot: { select: { subjectName: true, startMinute: true } } },
+      orderBy: { createdAt: "asc" },
+    });
+    if (coversToday.length) {
+      const first = coversToday[0];
+      const at = first.slot ? new Date(first.slot.startMinute * 60_000).toISOString().slice(11, 16) : "";
+      items.push({
+        id: "cover-duty", kind: "timetable", severity: "info", count: coversToday.length,
+        title: coversToday.length > 1 ? `You are covering ${coversToday.length} lessons today` : `You are covering ${first.slot?.subjectName ?? "a lesson"} today`,
+        detail: coversToday.length > 1
+          ? `First up ${first.slot?.subjectName ?? ""} ${at}${first.absentStaff.fullName ? ` · for ${first.absentStaff.fullName}` : ""} — open the cover planner for the full list`
+          : `${first.classRef ?? ""}${at ? ` at ${at}` : ""}${first.absentStaff.fullName ? ` · for ${first.absentStaff.fullName}` : ""}`,
+        module: "timetable", tab: "cover", at: first.createdAt,
       });
     }
   }

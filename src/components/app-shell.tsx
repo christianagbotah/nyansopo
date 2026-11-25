@@ -76,6 +76,7 @@ const Discipline = dynamic(() => import("@/components/modules/discipline").then(
 const Health = dynamic(() => import("@/components/modules/health").then((m: any) => m.Health), { loading: () => <ModuleSkeleton /> });
 const Clubs = dynamic(() => import("@/components/modules/clubs").then((m: any) => m.Clubs), { loading: () => <ModuleSkeleton /> });
 const StaffDaily = dynamic(() => import("@/components/modules/staff-daily").then((m: any) => m.StaffDaily), { loading: () => <ModuleSkeleton /> });
+const TimetableIntel = dynamic(() => import("@/components/modules/timetable-intel").then((m: any) => m.TimetableIntel), { loading: () => <ModuleSkeleton /> });
 const FrontOffice = dynamic(() => import("@/components/modules/front-office").then((m: any) => m.FrontOffice), { loading: () => <ModuleSkeleton /> });
 const Certificates = dynamic(() => import("@/components/modules/certificates").then((m: any) => m.Certificates), { loading: () => <ModuleSkeleton /> });
 const AuditTrail = dynamic(() => import("@/components/modules/audit").then((m: any) => m.AuditTrail), { loading: () => <ModuleSkeleton /> });
@@ -88,6 +89,7 @@ const Waec = dynamic(() => import("@/components/modules/waec").then((m: any) => 
 const StaffCpd = dynamic(() => import("@/components/modules/staff-cpd").then((m: any) => m.StaffCpd), { loading: () => <ModuleSkeleton /> });
 const Emis = dynamic(() => import("@/components/modules/emis").then((m: any) => m.Emis), { loading: () => <ModuleSkeleton /> });
 const Office = dynamic(() => import("@/components/modules/office").then((m: any) => m.Office), { loading: () => <ModuleSkeleton /> });
+const Homework = dynamic(() => import("@/components/modules/homework").then((m: any) => m.HomeworkModule), { loading: () => <ModuleSkeleton /> });
 import { applyThemeToDOM, type SchoolTheme } from "@/lib/theme";
 import { sortClassrooms } from "@/lib/classes";
 import {
@@ -99,6 +101,7 @@ import {
   PanelLeftClose, PanelLeftOpen, Palette, SlidersHorizontal, Archive, FileText, BookMarked, Target, PiggyBank, Award, IdCard,
   MessagesSquare, Landmark as LedgerIcon, DatabaseBackup, Gavel, HeartPulse, Stethoscope, Ruler, Trophy, Footprints,
   DoorOpen, CalendarClock, FileBadge, History, Truck, AlarmClock, Globe, BadgeCheck, ClipboardCheck,
+  BookPlus,
 } from "lucide-react";
 
 type NavLeaf = { id: string; label: string; icon?: any; target?: NavTarget };
@@ -132,7 +135,9 @@ const SCHOOL_NAV: NavItem[] = [
   { id: "health", label: "Health & Sick Bay", icon: HeartPulse, section: "Academic" },
   { id: "clubs", label: "Clubs & Societies", icon: Trophy, section: "Academic" },
   { id: "classes", label: "Classes & Timetable", icon: LayoutList, section: "Academic" },
+  { id: "timetable", label: "Timetable Intelligence", icon: CalendarClock, section: "Academic" },
   { id: "gradebook", label: "Gradebook", icon: ClipboardList, section: "Academic" },
+  { id: "homework", label: "Homework & Assignments", icon: BookPlus, section: "Academic" },
   { id: "results", label: "Results & Report Cards", icon: Award, section: "Academic" },
   { id: "certificates", label: "Certificates & Documents", icon: FileBadge, section: "Academic" },
   { id: "curriculum", label: "Curriculum & Notes", icon: NotebookPen, section: "Academic" },
@@ -484,6 +489,13 @@ export function AppShell() {
       { id: "cert-issue", label: "Issue a document", target: { tab: "issue" } },
       { id: "cert-formats", label: "Document formats", target: { tab: "formats" } },
     ];
+    /* wave 65 — Timetable Intelligence: teacher grids, clash detection,
+       the absent-teacher cover planner (slot-accurate + instant alerts) */
+    const timetableChildren: NavChild[] = [
+      { id: "timetable-teachers", label: "Teacher timetables", target: { tab: "teachers" } },
+      { id: "timetable-cover", label: "Cover planner", target: { tab: "cover" } },
+    ];
+
     /* CI3 settings sidebar: general / theme / sms / permissions / payment */
     const settingsChildren: NavChild[] = [
       { id: "set-system", label: "System settings", target: { tab: "system" } },
@@ -579,6 +591,7 @@ export function AppShell() {
       const enriched: NavItem = { ...item };
       if (item.id === "students" && classGroups.length) enriched.children = studentChildren;
       if (item.id === "classes" && classGroups.length) enriched.children = classChildren;
+      if (item.id === "timetable") enriched.children = timetableChildren;
       if (item.id === "daily") enriched.children = dailyChildren;
       if (item.id === "fees") enriched.children = feesChildren;
       if (item.id === "cashier") enriched.children = cashierChildren;
@@ -724,6 +737,7 @@ export function AppShell() {
         title: "Academics & Exams",
         tiles: [
           { key: "m-grade", label: "Manage Marks", icon: ClipboardList, module: "gradebook", color: C.blue, when: open("gradebook") },
+          { key: "m-homework", label: "Homework", icon: BookPlus, module: "homework", color: C.teal, when: open("homework") },
           { key: "m-curr", label: "Lesson Notes", icon: NotebookPen, module: "curriculum", target: { tab: "notes" }, color: C.green, when: open("curriculum") },
           { key: "m-reports", label: "Reports & Marksheets", icon: GraduationCap, module: "reports", color: C.purple, when: open("reports") },
           { key: "m-discipline", label: "Discipline", icon: Gavel, module: "discipline", color: C.red, when: open("discipline") },
@@ -1056,7 +1070,9 @@ export function AppShell() {
              module === "siren" && show("siren") ? <Siren /> :
              module === "office" && show("office") ? <Office /> :
              module === "classes" && show("classes") ? <Classes /> :
+             module === "timetable" && show("timetable") ? <TimetableIntel /> :
              module === "gradebook" && show("gradebook") ? <Gradebook /> :
+             module === "homework" && show("homework") ? <Homework /> :
              module === "results" && show("results") ? <Results /> :
              module === "curriculum" && show("curriculum") ? <Curriculum /> :
              module === "reports" && show("reports") ? <Reports /> :

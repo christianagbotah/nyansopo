@@ -18,7 +18,7 @@ import {
   DatabaseBackup, PiggyBank, Award, Gavel, Ruler, Activity, Home as HomeIcon, Hospital, Thermometer,
   Trophy, Medal, BookUser, Footprints, Truck, AlarmClock, Target,
   DoorOpen, CalendarClock, PhoneCall, Mailbox, CalendarRange, BellRing, FileBadge, Stamp, Gauge, GitMerge, History,
-  Table2, Database, Globe, Newspaper, Image, Inbox, FileText, IdCard, Megaphone,
+  Table2, Database, Globe, Newspaper, Image, Inbox, FileText, IdCard, Megaphone, BookPlus, UserCheck,
 } from "lucide-react";
 
 export type PageEntry = {
@@ -152,11 +152,15 @@ export const PAGE_INDEX: PageEntry[] = [
   { id: "pg-att-monthly", label: "Monthly Register", section: S.academic, module: "attendance", target: { tab: "monthly" }, perm: ["attendance.view"], icon: CalendarDays, keywords: ["grid", "month", "report"] },
   { id: "pg-att-scanner", label: "Barcode Scanner", section: S.academic, module: "attendance", target: { tab: "scanner" }, perm: ["attendance.view"], icon: ScanLine, keywords: ["camera", "qr", "id card"] },
   { id: "pg-classes", label: "Classes & Timetable", section: S.academic, module: "classes", perm: ["classes.view"], icon: BookOpen, keywords: ["streams", "sections", "periods"] },
+  { id: "pg-tt-teachers", label: "Teacher Timetables", section: S.academic, module: "timetable", target: { tab: "teachers" }, perm: ["classes.view"], icon: CalendarClock, keywords: ["weekly routine", "teacher grid", "clash", "double booked", "load", "free periods"] },
+  { id: "pg-tt-cover", label: "Cover Planner", section: S.academic, module: "timetable", target: { tab: "cover" }, perm: ["classes.view"], icon: UserCheck, keywords: ["absent teacher", "substitute", "substitution", "cover lesson", "who takes my class"] },
   { id: "pg-marks", label: "Enter Marks", section: S.academic, module: "gradebook", target: { tab: "assessments" }, perm: ["gradebook.enter"], icon: ClipboardList, keywords: ["gradebook", "scores", "assessment"] },
   { id: "pg-portfolio", label: "Portfolio Assessment", section: S.academic, module: "gradebook", target: { tab: "portfolio" }, perm: ["gradebook.enter"], icon: GalleryHorizontal, keywords: ["project", "rubric"] },
   { id: "pg-sba", label: "SBA & Basal", section: S.academic, module: "gradebook", target: { tab: "sba" }, perm: ["gradebook.enter"], icon: Layers, keywords: ["basal", "creche", "continous"] },
   { id: "pg-creche", label: "Early Years Marks", section: S.academic, module: "gradebook", target: { tab: "creche" }, perm: ["gradebook.enter"], icon: HeartPulse, keywords: ["kindergarten", "kg", "nursery", "montessori"] },
   { id: "pg-gb-analytics", label: "Gradebook Analytics", section: S.academic, module: "gradebook", target: { tab: "analytics" }, perm: ["gradebook.view"], icon: BarChart3, keywords: ["subject performance", "class average"] },
+  { id: "pg-homework", label: "Homework Board", section: S.academic, module: "homework", perm: ["homework.view"], icon: BookPlus, keywords: ["assignment", "due", "marks", "exercise"] },
+  { id: "pg-homework-new", label: "Post an Assignment", section: S.academic, module: "homework", target: { tab: "new" }, perm: ["homework.manage"], icon: BookPlus, keywords: ["new homework", "ai draft", "notify parents", "sms"] },
   { id: "pg-results", label: "Results Broadsheet", section: S.academic, module: "results", target: { tab: "grid" }, perm: ["reports.view"], icon: Award, keywords: ["term results", "report cards", "bece grades", "positions", "aggregate", "publish"] },
   { id: "pg-results-tabulation", label: "Exam Tabulation Sheet", section: S.academic, module: "results", target: { tab: "tabulation" }, perm: ["reports.view"], icon: Table2, keywords: ["tabulation", "master sheet", "exams officer", "raw scores", "class exam total", "ca 30 exam 70", "cummulative pack", "print tabulation"] },
   { id: "pg-results-analytics", label: "Term Analytics", section: S.academic, module: "results", target: { tab: "analytics" }, perm: ["reports.view"], icon: BarChart3, keywords: ["waec distribution", "pass rate", "weak subjects", "distinctions", "a1 f9", "term analytics"] },
@@ -256,7 +260,7 @@ export const PAGE_SECTIONS = [S.quick, S.people, S.billing, S.cashier, S.daily, 
 export const MODULE_LABELS: Record<string, string> = {
   dashboard: "Dashboard", students: "Students", admissions: "Admissions", fees: "Fees", momo: "MoMo",
   daily: "Daily Services", cashier: "Cashier", conductor: "Conductor", transport: "Transport",
-  attendance: "Attendance", classes: "Classes", gradebook: "Gradebook", curriculum: "Curriculum",
+  attendance: "Attendance", classes: "Classes", gradebook: "Gradebook", curriculum: "Curriculum", homework: "Homework",
   reports: "Reports", exams: "Exams", library: "Library", boarding: "Boarding", payroll: "Payroll",
   inventory: "Store", finance: "Finance", sms: "SMS", ai: "AI", settings: "Settings", rbac: "Access",
   staffhub: "Staff Hub", portal: "Parent Portal", campus: "Learner Portal", branches: "Branches",

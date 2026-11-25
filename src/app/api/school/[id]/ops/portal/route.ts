@@ -38,6 +38,23 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const year = await db.academicYear.findFirst({ where: { schoolId, isCurrent: true }, include: { terms: true } });
     const term = year?.terms.find((t) => t.isCurrent) ?? null;
 
+    // wave 65 — homework for every linked child (the parent sees what was posted,
+    // when it is due, and whether the learner has submitted / been graded).
+    // Queried BEFORE the children loop — the loop maps these rows per learner.
+    const homeworkRows = await db.homeworkSubmission.findMany({
+      where: { studentId: { in: user.linkedStudentIds } },
+      include: { homework: { include: { classroom: { select: { name: true } } } } },
+      orderBy: { homework: { dueDate: "desc" } },
+      take: 60,
+    });
+    const mapHw = (r: (typeof homeworkRows)[number]) => ({
+      id: r.homework.id, title: r.homework.title, subject: r.homework.subjectName,
+      classroom: r.homework.classroom.name, instructions: r.homework.instructions,
+      dueDate: r.homework.dueDate, overdue: r.homework.dueDate < now, status: r.homework.status,
+      maxScore: r.homework.maxScore, postedBy: r.homework.createdByName,
+      myStatus: r.status, myNote: r.note, myScore: r.score, myFeedback: r.feedback,
+    });
+
     const children: any[] = [];
     for (const sid of user.linkedStudentIds) {
       const s = await db.student.findUnique({
@@ -98,6 +115,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         wallet: s.wallet ? { prepaid: s.wallet.prepaidCents, transport: s.wallet.transportCents } : null,
         library: (s.libraryLoans ?? []).map((l) => ({ book: l.book.title, dueAt: l.dueAt, overdue: l.dueAt < now })),
         bookRequests: (s.bookRequests ?? []).map(mapBookRequest),
+        homework: homeworkRows.filter((r) => r.studentId === s.id).map(mapHw),
       });
     }
 
@@ -194,6 +212,20 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         bookRequests: s.bookRequests.map(mapBookRequest),
         wallet: s.wallet ? { prepaid: s.wallet.prepaidCents, transport: s.wallet.transportCents } : null,
         feesBalance: balance,
+        homework: (
+          await db.homeworkSubmission.findMany({
+            where: { studentId: s.id },
+            include: { homework: { include: { classroom: { select: { name: true } } } } },
+            orderBy: { homework: { dueDate: "desc" } },
+            take: 40,
+          })
+        ).map((r) => ({
+          id: r.homework.id, title: r.homework.title, subject: r.homework.subjectName,
+          classroom: r.homework.classroom.name, instructions: r.homework.instructions,
+          dueDate: r.homework.dueDate, overdue: r.homework.dueDate < now, status: r.homework.status,
+          maxScore: r.homework.maxScore, postedBy: r.homework.createdByName,
+          myStatus: r.status, myNote: r.note, myScore: r.score, myFeedback: r.feedback,
+        })),
       },
       announcements,
       libraryCatalogue: await loadCatalogue(),
@@ -387,6 +419,36 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (duplicate) return NextResponse.json({ error: `There is already a pending request for "${book.title}" — wait for the librarian's decision.` }, { status: 409 });
     const request = await db.bookRequest.create({ data: { schoolId, bookId, studentId, startAt: start, endAt: end } });
     return NextResponse.json({ request: { id: request.id, status: request.status } });
+  }
+
+  // ── wave 65 — homework self-submit from the learner/parent portal: the
+  //    learner (or their parent) confirms the homework is done, with an
+  //    optional note for the teacher. Late auto-flags against the due date. ──
+  if (body.action === "homework.self-submit") {
+    if (user.role !== "PARENT" && user.role !== "STUDENT") {
+      return NextResponse.json({ error: "Only learner and parent accounts submit homework here" }, { status: 403 });
+    }
+    const allowedStudentIds = user.role === "STUDENT" && user.studentId ? [user.studentId] : user.role === "PARENT" ? user.linkedStudentIds : [];
+    const { homeworkId, studentId, note } = body;
+    if (!homeworkId || !studentId || !allowedStudentIds.includes(studentId)) {
+      return NextResponse.json({ error: "You can only submit homework for yourself or your own children" }, { status: 403 });
+    }
+    const hw = await db.homework.findUnique({ where: { id: homeworkId } });
+    if (!hw || hw.schoolId !== schoolId) return NextResponse.json({ error: "Assignment not found" }, { status: 404 });
+    if (hw.status === "CLOSED") return NextResponse.json({ error: "This assignment is closed — talk to your teacher." }, { status: 409 });
+    const sub = await db.homeworkSubmission.findUnique({ where: { homeworkId_studentId: { homeworkId, studentId } } });
+    if (!sub) return NextResponse.json({ error: "No submission slot for this learner on this assignment" }, { status: 404 });
+    if (sub.status === "GRADED") return NextResponse.json({ error: "Already graded — no further submission needed." }, { status: 409 });
+    const late = new Date() > hw.dueDate;
+    const updated = await db.homeworkSubmission.update({
+      where: { id: sub.id },
+      data: {
+        status: late ? "LATE" : "SUBMITTED",
+        submittedAt: new Date(),
+        note: typeof note === "string" && note.trim() ? note.trim().slice(0, 500) : null,
+      },
+    });
+    return NextResponse.json({ status: updated.status, submittedAt: updated.submittedAt });
   }
 
   // ── meal opt-in / opt-out request from the parent portal (dining parity):
