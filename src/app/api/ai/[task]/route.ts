@@ -508,6 +508,33 @@ Return STRICT JSON only — no markdown fences, no commentary. Exact shape:
         return NextResponse.json({ explanation: typeof parsed?.explanation === "string" ? parsed.explanation.slice(0, 600) : "Could not explain that formula." });
       }
 
+      /* wave 63 · translate — full-document translation into the Ghanaian
+         languages the school community reads (or French). Returns plain text;
+         the editor offers replace / copy actions. */
+      if (mode === "translate") {
+        if (!text.trim()) return NextResponse.json({ error: "The document is empty" }, { status: 400 });
+        const LANGS: Record<string, string> = {
+          twi: "Ghanaian Twi (Asante Twi, standard orthography)",
+          ewe: "Ewe (standard orthography)",
+          ga: "Ga (standard orthography)",
+          hausa: "Hausa (standard orthography, Boko script)",
+          dagbani: "Dagbani (standard orthography)",
+          pidgin: "Ghanaian Pidgin English (everyday spoken variety)",
+          french: "French (clear standard French)",
+        };
+        const language = typeof body.language === "string" && LANGS[body.language] ? body.language : "twi";
+        const completion = await client.chat.completions.create({
+          messages: [
+            { role: "system", content: `You translate school documents for Ghanaian schools. Translate the document into ${LANGS[language]}. Keep the structure (headings stay headings, lists stay lists), names and numbers unchanged, and the tone faithful. Return STRICT JSON only: {"text":"the translated document as plain text with \\n\\n between paragraphs"}. No notes, no explanations, no markdown fences.` },
+            { role: "user", content: `Document title: ${title || "(untitled)"}\n\n${text}` },
+          ],
+          thinking: { type: "disabled" },
+        });
+        const parsed = parseJsonBlock(completion.choices[0]?.message?.content ?? "");
+        if (!parsed?.text) return NextResponse.json({ error: "The AI could not translate that document — try again" }, { status: 502 });
+        return NextResponse.json({ text: String(parsed.text).slice(0, 12000), language });
+      }
+
       return NextResponse.json({ error: "Unknown office-assist mode" }, { status: 400 });
     }
 

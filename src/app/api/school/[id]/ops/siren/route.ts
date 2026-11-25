@@ -543,6 +543,38 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     });
   }
 
+  /* ── wave 63 · AI VOICE STUDIO — server-side text-to-speech. The browser's
+     speechSynthesis depends on the device having voices installed; a generated
+     WAV tone plays identically from every console, can be hung on the timetable
+     like any other tone, and survives closed tabs. Voices: 7 personas, speed
+     0.5-2.0, ≤900 chars (TTS engine limit 1024). ── */
+  if (action === "voice.generate") {
+    const VOICES = ["tongtong", "chuichui", "xiaochen", "jam", "kazi", "douji", "luodo"] as const;
+    const text = optStr(body.text, 900);
+    if (!text) return bad("Write the announcement text first");
+    const voice = (typeof body.voice === "string" && (VOICES as readonly string[]).includes(body.voice)) ? body.voice : "tongtong";
+    const speedRaw = Number(body.speed);
+    const speed = Number.isFinite(speedRaw) ? Math.min(2, Math.max(0.5, Math.round(speedRaw * 10) / 10)) : 1;
+    const label = optStr(body.label, 80) ?? `Voice — ${text.slice(0, 44).replace(/\s+/g, " ").trim()}${text.length > 44 ? "…" : ""}`;
+    try {
+      const { default: ZAI } = await import("z-ai-web-dev-sdk");
+      const client = await ZAI.create();
+      const res = await client.audio.tts.create({ input: text, voice, speed, response_format: "wav", stream: false });
+      const buf = Buffer.from(new Uint8Array(await res.arrayBuffer()));
+      if (!buf.length) throw new Error("empty audio from the voice engine");
+      if (buf.length > 12 * 1024 * 1024) return bad("Generated audio too large — shorten the announcement text");
+      // WAV at 24 kHz 16-bit mono ≈ 48 KB per second of speech
+      const durationSec = Math.min(300, Math.max(2, Math.round(buf.length / 48000)));
+      const row = await db.sirenTone.create({
+        data: { schoolId, label, mimeType: "audio/wav", sizeBytes: buf.length, durationSec, data: buf, createdByName: actor.fullName },
+      });
+      await audit({ schoolId, actor, action: "CREATE", entityType: "SirenTone", entityId: row.id, entityLabel: label, summary: `AI voice generated: "${label}" (${voice}, ×${speed}, ${durationSec}s) — usable on the console and timetable`, req });
+      return NextResponse.json({ ok: true, tone: { id: row.id, label: row.label, mimeType: row.mimeType, sizeBytes: row.sizeBytes, durationSec: row.durationSec, createdByName: row.createdByName, createdAt: row.createdAt }, voice, speed });
+    } catch (e: any) {
+      return bad(`The AI voice engine could not generate that audio — try again in a moment${e?.message ? ` (${String(e.message).slice(0, 140)})` : ""}`, 502);
+    }
+  }
+
   /* ── wave 62 · AI PA TRANSLATION — compound announcements in the languages
      the school community actually speaks (Twi, Ewe, Ga, Hausa, Dagbani, Pidgin). ── */
   if (action === "ai.translate") {

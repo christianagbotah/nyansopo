@@ -30,7 +30,7 @@ import {
   Undo2, Redo2, Minus, Eraser, Image as ImageIcon, Save, Printer, Download, Type, Link2,
   Plus, Trash2, Copy, ChevronLeft, ChevronRight, ArrowUp, ArrowDown, Play, X,
   Sparkles, Wand2, SpellCheck, Search, Table, CalendarDays, Highlighter, Subscript, Superscript,
-  PanelTop, FileDown, Rows3, Columns3, Loader2, Replace, Palette,
+  PanelTop, FileDown, Rows3, Columns3, Loader2, Replace, Palette, Languages, CheckCircle2,
 } from "lucide-react";
 
 export type OfficeFileLike = {
@@ -746,18 +746,30 @@ function AiDocPanel({ open, onOpenChange, title, getText, hasText, insertAtCurso
   applyChanges: (changes: { from: string; to: string }[]) => number;
 }) {
   const { toast } = useToast();
-  const [mode, setMode] = useState<"continue" | "improve" | "fix" | "summarize" | "instruction">("continue");
+  const [mode, setMode] = useState<"continue" | "improve" | "fix" | "summarize" | "instruction" | "translate">("continue");
   const [instruction, setInstruction] = useState("");
+  const [lang, setLang] = useState("twi");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{ html?: string; text?: string; changes?: { from: string; to: string }[] } | null>(null);
   const [applied, setApplied] = useState<number | null>(null);
 
+  const DOC_LANGS = [
+    { value: "twi", label: "Twi" },
+    { value: "ewe", label: "Ewe" },
+    { value: "ga", label: "Ga" },
+    { value: "hausa", label: "Hausa" },
+    { value: "dagbani", label: "Dagbani" },
+    { value: "pidgin", label: "Ghanaian Pidgin" },
+    { value: "french", label: "French" },
+  ];
+
   const MODES: { id: typeof mode; label: string; icon: React.ReactNode; hint: string }[] = [
     { id: "continue", label: "Continue writing", icon: <Wand2 className="size-4" />, hint: "Keep the document going in the same voice" },
     { id: "improve", label: "Improve writing", icon: <Sparkles className="size-4" />, hint: "Clearer, more professional rewrite" },
-    { id: "fix", label: "Fix grammar & spelling", icon: <SpellCheck className="size-4" />, hint: "Targeted corrections — formatting kept" },
+    { id: "fix", label: "Fix grammar & spelling", icon: <SpellCheck className="size-4" />, hint: "Accept or dismiss each correction" },
     { id: "summarize", label: "Summarise", icon: <Type className="size-4" />, hint: "A short summary of the whole document" },
     { id: "instruction", label: "Rewrite my way", icon: <Replace className="size-4" />, hint: "Tell the AI exactly what to change" },
+    { id: "translate", label: "Translate", icon: <Languages className="size-4" />, hint: "Twi, Ewe, Ga, Hausa, Dagbani, Pidgin or French" },
   ];
 
   const run = async () => {
@@ -767,7 +779,7 @@ function AiDocPanel({ open, onOpenChange, title, getText, hasText, insertAtCurso
     setResult(null);
     setApplied(null);
     try {
-      const d = await officeAI({ mode, title, text: getText(), instruction: mode === "instruction" ? instruction.slice(0, 500) : undefined });
+      const d = await officeAI({ mode, title, text: getText(), instruction: mode === "instruction" ? instruction.slice(0, 500) : undefined, language: mode === "translate" ? lang : undefined });
       if (mode === "continue" && d.text) {
         insertAtCursor(paragraphsToHtml(String(d.text)));
         toast({ title: "Continuation inserted", description: "Inserted at the cursor — edit as you like." });
@@ -776,6 +788,8 @@ function AiDocPanel({ open, onOpenChange, title, getText, hasText, insertAtCurso
         const changes = Array.isArray(d.changes) ? d.changes.slice(0, 25) : [];
         setResult({ changes });
         if (!changes.length) toast({ title: "No corrections found", description: "The grammar and spelling look clean." });
+      } else if (mode === "translate" && d.text) {
+        setResult({ text: String(d.text) });
       } else {
         setResult({ html: String(d.html ?? "") });
       }
@@ -789,6 +803,24 @@ function AiDocPanel({ open, onOpenChange, title, getText, hasText, insertAtCurso
     const n = applyChanges(result.changes);
     setApplied(n);
     toast({ title: n ? `${n} correction${n > 1 ? "s" : ""} applied` : "Nothing to apply", description: n ? "The document now carries the corrections." : "The AI's suggestions no longer match the text exactly — review them below." });
+  };
+
+  /* wave 63 — per-correction accept / dismiss */
+  const applyOne = (i: number) => {
+    if (!result?.changes) return;
+    const c = result.changes[i];
+    const n = applyChanges([c]);
+    if (n > 0) {
+      setResult({ changes: result.changes.filter((_, j) => j !== i) });
+      setApplied((a) => (a ?? 0) + n);
+      toast({ title: "Correction applied" });
+    } else {
+      toast({ title: "Could not find that text anymore", description: "It may already be corrected — dismiss it instead.", variant: "destructive" });
+    }
+  };
+  const dismissOne = (i: number) => {
+    if (!result?.changes) return;
+    setResult({ changes: result.changes.filter((_, j) => j !== i) });
   };
 
   return (
@@ -819,6 +851,16 @@ function AiDocPanel({ open, onOpenChange, title, getText, hasText, insertAtCurso
                 placeholder="e.g. Make it shorter and more formal, addressed to parents, mention the PTA meeting on Friday" />
             </div>
           )}
+          {mode === "translate" && (
+            <div>
+              <Label className="text-xs">Translate the whole document into</Label>
+              <Select value={lang} onValueChange={setLang}>
+                <SelectTrigger className="mt-1 w-56"><SelectValue /></SelectTrigger>
+                <SelectContent>{DOC_LANGS.map((l) => <SelectItem key={l.value} value={l.value}>{l.label}</SelectItem>)}</SelectContent>
+              </Select>
+              <p className="mt-1.5 text-[11px] text-muted-foreground">Structure, names and numbers are kept; the translation opens below — replace the document or copy it out.</p>
+            </div>
+ )}
 
           {loading && (
             <div className="flex items-center justify-center gap-2 rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
@@ -835,15 +877,44 @@ function AiDocPanel({ open, onOpenChange, title, getText, hasText, insertAtCurso
                     <span className="text-destructive line-through flex-1 truncate">{c.from}</span>
                     <span className="text-muted-foreground">→</span>
                     <span className="font-medium text-emerald-600 flex-1 truncate">{c.to}</span>
+                    <span className="flex gap-1">
+                      <Button type="button" size="sm" variant="ghost" className="h-6 px-1.5 text-[11px] text-emerald-600 hover:text-emerald-700" onClick={() => applyOne(i)} aria-label="Accept this correction">
+                        <CheckCircle2 className="size-3.5" /> Fix
+                      </Button>
+                      <Button type="button" size="sm" variant="ghost" className="h-6 px-1.5 text-[11px] text-muted-foreground" onClick={() => dismissOne(i)} aria-label="Dismiss this correction">
+                        <X className="size-3.5" />
+                      </Button>
+                    </span>
                   </div>
                 ))}
-                {!result.changes.length && <p className="text-xs text-muted-foreground">Nothing to fix — the document reads clean.</p>}
+                {!result.changes.length && <p className="text-xs text-muted-foreground">All corrections handled — the document reads clean.</p>}
               </div>
-              {applied === null ? (
-                <Button size="sm" onClick={applyFixes} disabled={!result.changes.length}><SpellCheck className="size-3.5 mr-1" /> Apply corrections</Button>
-              ) : (
-                <p className="text-xs text-muted-foreground">{applied} applied. Close to keep editing.</p>
+              {result.changes.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <Button size="sm" onClick={applyFixes}><SpellCheck className="size-3.5 mr-1" /> Apply all remaining ({result.changes.length})</Button>
+                  {(applied ?? 0) > 0 && <span className="text-xs text-muted-foreground">{applied} applied so far — accept or dismiss each one, or bulk-apply the rest.</span>}
+                </div>
               )}
+            </div>
+          )}
+
+          {result?.text !== undefined && result.text !== "" && (
+            <div className="space-y-2">
+              <div className="text-xs font-medium">Translation ({DOC_LANGS.find((l) => l.value === lang)?.label ?? lang})</div>
+              <div
+                className="max-h-64 overflow-y-auto whitespace-pre-wrap rounded-lg border bg-white p-4 text-sm text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100"
+                style={{ fontFamily: "Georgia, serif" }}
+              >
+                {result.text}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" onClick={() => { replaceDoc(paragraphsToHtml(result.text!)); toast({ title: "Document replaced with the translation", description: "Undo (Ctrl+Z) brings the original back." }); onOpenChange(false); }}>
+                  <Replace className="size-3.5 mr-1" /> Replace document
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => { void navigator.clipboard?.writeText(result.text!); toast({ title: "Translation copied" }); }}>
+                  <Copy className="size-3.5 mr-1" /> Copy
+                </Button>
+              </div>
             </div>
           )}
 

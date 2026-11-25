@@ -39,7 +39,9 @@ import {
   AlarmClock, Bell, Siren as SirenIcon, History, Play, Square, Plus, Pencil, Trash2, Zap,
   Clock3, CalendarDays, Volume2, TriangleAlert, CircleCheck, Timer, Music, Upload, FileAudio, Loader2,
   Sparkles, Megaphone, Hourglass, MapPin, Pause, RotateCcw, Check, X, Languages, ShieldAlert,
+  AudioLines, BarChart3, Mic,
 } from "lucide-react";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 
 const OPS = "/ops/siren";
 const KIND_LABEL: Record<string, string> = { MANUAL: "Manual", SCHEDULED: "Timetable", TEST: "Sound test", ANNOUNCEMENT: "PA announcement", EMERGENCY: "Emergency" };
@@ -60,6 +62,19 @@ const PA_LANGS = [
   { value: "dagbani", label: "Dagbani" },
   { value: "pidgin", label: "Ghanaian Pidgin" },
 ];
+
+/* wave 63 · AI Voice Studio — server-generated voice personas (real WAV audio,
+   identical from every console — not dependent on the device's browser voices) */
+const AI_VOICES = [
+  { value: "tongtong", label: "Tongtong · warm & friendly", hint: "daily notices, devotions" },
+  { value: "chuichui", label: "Chuichui · bright & cheerful", hint: "assemblies, sports days" },
+  { value: "xiaochen", label: "Xiaochen · calm & professional", hint: "exam instructions" },
+  { value: "jam", label: "Jam · British English", hint: "formal announcements" },
+  { value: "kazi", label: "Kazi · clear & standard", hint: "emergency clarity" },
+  { value: "douji", label: "Douji · natural & smooth", hint: "everyday PA" },
+  { value: "luodo", label: "Luodo · expressive", hint: "events & excitement" },
+];
+const VS_SPEEDS = [0.7, 0.85, 1, 1.15, 1.3, 1.5];
 const fmtMB = (b: number) => `${(b / 1024 / 1024).toFixed(1)} MB`;
 const DEVICE_ZONE_KEY = "siren-device-zone";
 
@@ -256,6 +271,12 @@ export function Siren() {
   // ── wave 62: AI PA translation (compound announcements in local languages) ──
   const [paLang, setPaLang] = useState("twi");
   const [paTransBusy, setPaTransBusy] = useState(false);
+
+  // ── wave 63: AI Voice Studio (server-side TTS → a real, schedulable WAV tone) ──
+  const [vsText, setVsText] = useState("");
+  const [vsVoice, setVsVoice] = useState("tongtong");
+  const [vsSpeed, setVsSpeed] = useState(1);
+  const [vsBusy, setVsBusy] = useState(false);
 
   const tones = data?.tones ?? [];
   const label = (sound: string) => (sound === "VOICE" ? "Spoken announcement" : sirenSoundLabel(sound, tones));
@@ -572,6 +593,55 @@ export function Siren() {
     } finally { setPaTransBusy(false); }
   };
 
+  // ── wave 63: AI Voice Studio — generate a real voice audio (WAV) from text.
+  //    The generated tone is a first-class tone: it plays from every console,
+  //    hangs on the timetable, and doesn't depend on the device's browser
+  //    voices the way speechSynthesis does. ──
+  const playToneNow = (toneId: string, secs: number, asTest: boolean) => {
+    if (!schoolId) return;
+    stopAll();
+    void (async () => {
+      stopRef.current = await playSchoolSound(`${CUSTOM_PREFIX}${toneId}`, secs, toneFetcher(schoolId), { volume: 100 });
+      setPlaying(`${CUSTOM_PREFIX}${toneId}`);
+      setPlayKind(asTest ? "TEST" : "MANUAL");
+      window.setTimeout(() => { setPlaying(null); stopRef.current = null; }, secs * 1000);
+    })();
+  };
+
+  const generateVoiceTone = async (text: string, opts?: { speakNow?: boolean }): Promise<Tone | null> => {
+    if (!schoolId) return null;
+    const t = text.trim();
+    if (!t) { toast({ title: "Write the announcement first", variant: "destructive" }); return null; }
+    setVsBusy(true);
+    try {
+      const d = await apiPost<{ tone: Tone }>(`/api/school/${schoolId}${OPS}`, { action: "voice.generate", text: t, voice: vsVoice, speed: vsSpeed });
+      await load();
+      if (opts?.speakNow) {
+        const secs = Math.min(d.tone.durationSec, 120);
+        playToneNow(d.tone.id, secs, false);
+        try { await apiPost(`/api/school/${schoolId}${OPS}`, { action: "announce", text: t }); await load(); } catch { /* logged best-effort */ }
+      }
+      return d.tone;
+    } catch (e: any) {
+      toast({ title: "Voice generation failed", description: e.message, variant: "destructive" });
+      return null;
+    } finally { setVsBusy(false); }
+  };
+
+  const speakWithAiVoice = async () => {
+    const tone = await generateVoiceTone(paText, { speakNow: true });
+    if (tone) toast({ title: "AI voice broadcast over the PA", description: `“${tone.label}” also saved to My tones — hang it on the timetable or replay it any day.` });
+  };
+
+  const generateVoicePreview = async () => {
+    const tone = await generateVoiceTone(vsText);
+    if (tone) {
+      const secs = Math.min(tone.durationSec, 120);
+      playToneNow(tone.id, secs, true);
+      toast({ title: "Voice generated", description: `Previewing now (${secs}s) — saved to My tones, ready for the timetable.` });
+    }
+  };
+
   const clock = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
   const todayKey = now.toDateString();
   const todayOccurrences = useMemo(() => {
@@ -590,6 +660,22 @@ export function Siren() {
   const nextOcc = todayOccurrences.find((o) => o.mins >= nowMins);
   const nextLocal = nextOcc ? { time: minsToClock(nextOcc.mins), label: nextOcc.s.label, sound: nextOcc.s.sound } : null;
   const events = (data?.events ?? []).filter((e) => kindFilter === "ALL" || e.kind === kindFilter);
+  // wave 63: firings per day for the last 14 days (from the loaded history window)
+  const activity14 = useMemo(() => {
+    const base = new Date(todayKey);
+    const days: { day: string; label: string; rings: number }[] = [];
+    for (let i = 13; i >= 0; i--) {
+      const d = new Date(base.getTime() - i * 86_400_000);
+      days.push({ day: d.toDateString(), label: `${d.getDate()}/${d.getMonth() + 1}`, rings: 0 });
+    }
+    const idx = new Map(days.map((d, i) => [d.day, i]));
+    for (const e of data?.events ?? []) {
+      const k = new Date(e.createdAt).toDateString();
+      const i = idx.get(k);
+      if (i !== undefined) days[i].rings++;
+    }
+    return days;
+  }, [data?.events, todayKey]);
   const profileSchedules = schedules.filter((s) => s.profile === shownProfile).sort((a, b) => timeToMins(a.time) - timeToMins(b.time));
   const zonesDirty = !!zoneDrafts && JSON.stringify(zoneDrafts) !== JSON.stringify(data?.zones ?? []);
   const examPct = examTotal > 0 ? ((examTotal - examLeft) / examTotal) * 100 : 0;
@@ -601,7 +687,7 @@ export function Siren() {
     <div className="space-y-4">
       <ModuleHeader
         title="Siren &amp; Bells"
-        description="The complete electronic school bell — day profiles, campus zones, period bells, spoken PA announcements in Ghanaian languages, an AI Emergency Command that alerts every staff member by SMS, and an AI that builds the timetable from a plain-English description."
+        description="The complete electronic school bell — day profiles, campus zones, period bells, AI-generated voice announcements that play on every device, spoken PA in Ghanaian languages, an AI Emergency Command that SMS-alerts every staff member, and an AI that builds the timetable from a plain-English description."
         actions={
           <div className="flex items-center gap-2">
             <Badge variant="outline" className="gap-1"><MapPin className="size-3" /> This device: {deviceZone}</Badge>
@@ -839,9 +925,29 @@ export function Siren() {
                 </Button>
                 <span className="text-[11px] text-muted-foreground">replaces the text above — re-draft to start over</span>
               </div>
+              {/* wave 63: AI voice — server-generated audio, identical on every device */}
+              <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-secondary/30 p-2.5">
+                <AudioLines className="size-4 text-primary shrink-0" />
+                <span className="text-xs font-medium">AI voice:</span>
+                <Select value={vsVoice} onValueChange={setVsVoice}>
+                  <SelectTrigger className="w-52 h-8" aria-label="AI voice persona"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {AI_VOICES.map((v) => <SelectItem key={v.value} value={v.value}>{v.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Select value={String(vsSpeed)} onValueChange={(v) => setVsSpeed(Number(v))}>
+                  <SelectTrigger className="w-20 h-8" aria-label="AI voice speed"><SelectValue /></SelectTrigger>
+                  <SelectContent>{VS_SPEEDS.map((s) => <SelectItem key={s} value={String(s)}>×{s}</SelectItem>)}</SelectContent>
+                </Select>
+                <span className="text-[11px] text-muted-foreground">reads English best · generated audio plays on every device</span>
+              </div>
               <div className="flex flex-wrap items-center gap-2">
                 <Button onClick={speakNow} disabled={speaking}><Megaphone className="size-4 mr-1" /> Speak over the PA</Button>
+                <Button variant="outline" onClick={speakWithAiVoice} disabled={vsBusy || !paText.trim()}>
+                  {vsBusy ? <><Loader2 className="size-4 mr-1 animate-spin" /> Generating voice…</> : <><AudioLines className="size-4 mr-1" /> Speak with AI voice</>}
+                </Button>
                 {speaking && <Button variant="destructive" onClick={stopSpeaking}><Square className="size-4 mr-1" /> Stop speaking</Button>}
+                <span className="text-[11px] text-muted-foreground">browser voice = this device only · AI voice = real audio saved to My tones, schedulable</span>
               </div>
             </CardContent>
           </Card>
@@ -1186,8 +1292,64 @@ export function Siren() {
           </Card>
         </TabsContent>
 
-        {/* ── MY TONES (uploaded songs / sounds) ── */}
+        {/* ── MY TONES (uploaded songs / sounds + AI Voice Studio) ── */}
         <TabsContent value="tones" className="space-y-4 mt-4">
+          {/* wave 63: AI Voice Studio — type it, pick a persona, get a real audio tone */}
+          <Card className="border-primary/30 bg-gradient-to-br from-primary/5 via-transparent to-transparent">
+            <CardContent className="p-4 sm:p-6 space-y-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="font-semibold flex items-center gap-2"><Mic className="size-4 text-primary" /> AI Voice Studio</div>
+                <Badge variant="outline" className="gap-1 text-primary border-primary/40"><Sparkles className="size-2.5" /> NEW</Badge>
+                <span className="text-xs text-muted-foreground ml-auto">turns typed announcements into real audio — plays on every device, schedulable like any tone</span>
+              </div>
+              <div className="grid gap-4 lg:grid-cols-3">
+                <div className="lg:col-span-2 space-y-3">
+                  <Textarea
+                    rows={3}
+                    value={vsText}
+                    onChange={(e) => setVsText(e.target.value)}
+                    maxLength={900}
+                    placeholder="e.g. Good morning teachers and learners. School closes at 12 noon today because of the PTA meeting. Please go straight home. Thank you."
+                  />
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Select value={vsVoice} onValueChange={setVsVoice}>
+                      <SelectTrigger className="w-56 h-9" aria-label="Voice persona"><SelectValue /></SelectTrigger>
+                      <SelectContent>{AI_VOICES.map((v) => <SelectItem key={v.value} value={v.value}>{v.label}</SelectItem>)}</SelectContent>
+                    </Select>
+                    <div className="flex items-center gap-2">
+                      <Label className="text-xs text-muted-foreground">Speed</Label>
+                      <Select value={String(vsSpeed)} onValueChange={(v) => setVsSpeed(Number(v))}>
+                        <SelectTrigger className="w-20 h-9" aria-label="Speed"><SelectValue /></SelectTrigger>
+                        <SelectContent>{VS_SPEEDS.map((s) => <SelectItem key={s} value={String(s)}>×{s}</SelectItem>)}</SelectContent>
+                      </Select>
+                    </div>
+                    <Button onClick={generateVoicePreview} disabled={vsBusy || !vsText.trim()} className="ml-auto">
+                      {vsBusy ? <><Loader2 className="size-4 mr-1 animate-spin" /> Generating…</> : <><AudioLines className="size-4 mr-1" /> Generate voice tone</>}
+                    </Button>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {[
+                      "Good morning teachers and learners. Assembly begins in five minutes. Please move to the assembly ground now.",
+                      "Attention please: the J-H-S 3 extra classes begin at 3 o'clock this afternoon. Report to your classroom.",
+                      "School closes at 12 noon today because of the P-T-A meeting. Please go straight home and travel safely.",
+                    ].map((ex, i) => (
+                      <button key={i} type="button" onClick={() => setVsText(ex)}
+                        className="rounded-full border bg-background px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
+                        {["Assembly call", "Extra classes", "Early closing"][i]}
+                      </button>
+                    ))}
+                    <span className="text-[11px] text-muted-foreground self-center">{vsText.length}/900 characters · AI voices read English best</span>
+                  </div>
+                </div>
+                <div className="rounded-lg border bg-background/60 p-4 text-xs leading-relaxed text-muted-foreground space-y-2">
+                  <div className="font-semibold text-foreground flex items-center gap-1.5"><Sparkles className="size-3.5 text-primary" /> Why it beats a bell box</div>
+                  <p>Every generated voice is a <b className="text-foreground">first-class tone</b>: it rings from the console, loops on the timetable (morning assembly call every day at 7:25), and sounds identical from the front desk, staff room and office.</p>
+                  <p>Combine with <b className="text-foreground">PA translations</b> on the Live console to voice the same notice in Twi, Ewe, Ga, Hausa, Dagbani or Pidgin.</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
           <div className="grid gap-4 lg:grid-cols-3">
             <Card className="lg:col-span-1">
               <CardContent className="p-6 space-y-4">
@@ -1296,6 +1458,28 @@ export function Siren() {
 
         {/* ── HISTORY ── */}
         <TabsContent value="history" className="space-y-4 mt-4">
+          {/* wave 63: activity at a glance — rings per day, last 14 days */}
+          <Card>
+            <CardContent className="p-4 sm:p-6 space-y-3">
+              <div className="font-semibold flex items-center gap-2"><BarChart3 className="size-4 text-primary" /> Activity — last 14 days</div>
+              <div className="h-36" role="img" aria-label="Bar chart of siren firings per day over the last 14 days">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={activity14} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+                    <XAxis dataKey="label" tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" tickLine={false} axisLine={false} interval={2} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 10 }} width={26} stroke="hsl(var(--muted-foreground))" tickLine={false} axisLine={false} />
+                    <Tooltip
+                      formatter={(v) => [`${v} firing${Number(v) === 1 ? "" : "s"}`, ""]}
+                      labelFormatter={(l) => `Day ${l}`}
+                      contentStyle={{ fontSize: 12, borderRadius: 8 }}
+                    />
+                    <Bar dataKey="rings" name="firings" radius={[4, 4, 0, 0]} fill="hsl(var(--primary))" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <p className="text-xs text-muted-foreground">Rings, announcements, tests and emergencies per day. Empty days mean no console was open.</p>
+            </CardContent>
+          </Card>
+
           {/* AI reliability report */}
           <Card className="border-primary/30 bg-gradient-to-br from-primary/5 via-transparent to-transparent">
             <CardContent className="p-4 sm:p-6 space-y-4">

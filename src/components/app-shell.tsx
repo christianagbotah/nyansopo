@@ -540,6 +540,7 @@ export function AppShell() {
     const sirenChildren: NavChild[] = [
       { id: "siren-live", label: "Live console", target: { tab: "live" } },
       { id: "siren-schedule", label: "Ring timetable", target: { tab: "schedule" } },
+      { id: "siren-tones", label: "Tones & AI voices", target: { tab: "tones" } },
       { id: "siren-history", label: "Firing history", target: { tab: "history" } },
     ];
 
