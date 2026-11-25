@@ -192,6 +192,32 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // 8 — visitor waiting to see YOU (wave 59 front-desk alerts). Derived from
+  //     the ON_SITE visitor row linked to this user's staff record — fires the
+  //     moment the desk books the visitor in and clears itself at check-out
+  //     (or after 12h, so yesterday's stragglers never haunt the bell).
+  if (user.staffId) {
+    const cutoff = new Date(Date.now() - 12 * 3600_000);
+    const waiting = await db.visitor.findMany({
+      where: { schoolId, status: "ON_SITE", personToSeeStaffId: user.staffId, timeIn: { gte: cutoff } },
+      orderBy: { timeIn: "desc" },
+      take: 1,
+    });
+    if (waiting.length) {
+      const cnt = await db.visitor.count({
+        where: { schoolId, status: "ON_SITE", personToSeeStaffId: user.staffId, timeIn: { gte: cutoff } },
+      });
+      const v = waiting[0];
+      const since = new Date(v.timeIn).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+      items.push({
+        id: "visitor-waiting", kind: "visitors", severity: "info", count: cnt,
+        title: cnt > 1 ? `${cnt} visitors are waiting to see you` : "A visitor is waiting to see you",
+        detail: `${v.name}${v.organisation ? ` (${v.organisation})` : ""} · ${v.purpose}${v.passNo ? ` · pass ${v.passNo}` : ""} — at the desk since ${since}`,
+        module: "frontoffice", tab: "visitors", at: v.timeIn,
+      });
+    }
+  }
+
   // most recent first; severities weighted so danger leads ties
   const rank: Record<string, number> = { danger: 0, warning: 1, info: 2 };
   items.sort((a, b) => (rank[a.severity] - rank[b.severity]) || ((b.at?.getTime?.() ?? 0) - (a.at?.getTime?.() ?? 0)));

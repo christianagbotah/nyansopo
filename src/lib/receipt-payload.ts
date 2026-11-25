@@ -78,7 +78,7 @@ export async function invoicePaymentReceipt(db: PrismaClient, paymentId: string)
     type: "INVOICE_PAYMENT" as const,
     receiptNo: p.receiptNo,
     date: p.paidAt.toISOString(),
-    method: p.method,
+    method: paymentMethodLabel(p), // wave 59: expands SPLIT rows into "Cash + MTN MoMo"
     reference: p.reference,
     cashier: p.receivedByName,
     student: {

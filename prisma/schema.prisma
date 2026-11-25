@@ -476,6 +476,7 @@ model Staff {
   coversMade     SubstitutionLog[] @relation("SubstituteStaff")
   coversReceived SubstitutionLog[] @relation("AbsentStaff")
   cpdActivities  CpdActivity[]
+  visitorsToSee  Visitor[]      @relation("VisitorSeesStaff")
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1656,6 +1657,7 @@ model SmsSetting {
   autoAbsenceAlerts    Boolean @default(true)
   autoPaymentReceipts  Boolean @default(true)
   autoLessonNoteAlerts Boolean @default(true) // teacher SMS when a GES note is returned / endorsed
+  autoVisitorAlerts    Boolean @default(true) // front-desk → staff visitor-arrival alerts (SMS + email + in-app)
   // ── per-event toggles (iEduPro parity — granular control over each trigger) ──
   evtInvoicePaid       Boolean @default(true) // billed invoice settled in full
   evtDailyFeesPaid     Boolean @default(true) // daily-fee payment made (lunch/bus etc.)
@@ -2988,6 +2990,13 @@ model Visitor {
   purpose        String
   personToSee    String?
   passNo         String?
+  // ── wave 59: staff-linked "to see who" — selectable from the staff register,
+  // drives the instant visitor-arrival alerts (SMS + email + in-app) ──
+  personToSeeStaffId String?
+  personToSeeStaff   Staff?  @relation("VisitorSeesStaff", fields: [personToSeeStaffId], references: [id])
+  alertedSms     Boolean   @default(false) // visitor-arrival SMS delivered to the staff member
+  alertedEmail   Boolean   @default(false) // visitor-arrival email delivered
+  alertedInApp   Boolean   @default(false) // in-app bell item live for the staff member
   timeIn         DateTime  @default(now())
   timeOut        DateTime?
   status         String    @default("ON_SITE") // ON_SITE | DEPARTED

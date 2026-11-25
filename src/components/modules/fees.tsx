@@ -16,7 +16,7 @@ import { fmtCedi, fmtDate, PAYMENT_LABELS } from "@/lib/format";
 import { canAny } from "@/lib/rbac";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { Banknote, Receipt, AlertTriangle, CheckCircle2, Plus, Flag, Printer, Wallet, Ticket, Percent, UserPlus, XCircle, ListChecks, Copy as CopyIcon, Eye, Link2, ClipboardList, ShieldCheck, Undo2, PencilLine, Trash2, FileWarning, Ban, Download, History, ArrowRightLeft, PiggyBank, HandCoins, CopyPlus, FileUp, Smartphone, Search, UserRound, GraduationCap, Mail, HeartHandshake, Truck, AlarmClock } from "lucide-react";
+import { Banknote, Receipt, AlertTriangle, CheckCircle2, Plus, X, Flag, Printer, Wallet, Ticket, Percent, UserPlus, XCircle, ListChecks, Copy as CopyIcon, Eye, Link2, ClipboardList, ShieldCheck, Undo2, PencilLine, Trash2, FileWarning, Ban, Download, History, ArrowRightLeft, PiggyBank, HandCoins, CopyPlus, FileUp, Smartphone, Search, UserRound, GraduationCap, Mail, HeartHandshake, Truck, AlarmClock } from "lucide-react";
 import { ReceiptDocument, BulkReceiptsDocument, RECEIPT_STYLES, type ReceiptStyle } from "@/components/receipts";
 import { BillItemsTab, CreateInvoicesTab, type BillItemRow, type RosterRow } from "@/components/modules/fees-billing";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -805,15 +805,17 @@ function PayDialog({ open, invoice, roster, invoices, onOpenChange, onDone, onCr
   const [query, setQuery] = useState(""); // debounced 300ms (CI3 parity)
   const [showResults, setShowResults] = useState(false);
   const [amount, setAmount] = useState("");
-  const [method, setMethod] = useState("MOMO_MTN"); // "SPLIT" = two methods
+  const [method, setMethod] = useState("MOMO_MTN"); // "SPLIT" = multi-method split (wave 59)
   const [receiptNo, setReceiptNo] = useState("");
   const [txnId, setTxnId] = useState("");
   const [bankName, setBankName] = useState("");
   const [chequeNo, setChequeNo] = useState("");
-  const [splitMethodA, setSplitMethodA] = useState("CASH");
-  const [splitAmountA, setSplitAmountA] = useState("");
-  const [splitMethodB, setSplitMethodB] = useState("MOMO_MTN");
-  const [splitAmountB, setSplitAmountB] = useState("");
+  // wave 59: the real split — N parts (method + amount + reference), summed
+  // onto ONE receipt with splitJson (CI3 daily_fee_payment_splits parity)
+  const [splitParts, setSplitParts] = useState<{ method: string; amount: string; reference: string }[]>([
+    { method: "CASH", amount: "", reference: "" },
+    { method: "MOMO_MTN", amount: "", reference: "" },
+  ]);
   const [printReceipt, setPrintReceipt] = useState(true);
   const [busy, setBusy] = useState(false);
   const [creditBal, setCreditBal] = useState(0);
@@ -824,7 +826,7 @@ function PayDialog({ open, invoice, roster, invoices, onOpenChange, onDone, onCr
     if (open) return;
     setStudentId(null); setSelectedInvoiceId(null); setSearch(""); setQuery(""); setShowResults(false);
     setAmount(""); setMethod("MOMO_MTN"); setReceiptNo(""); setTxnId(""); setBankName(""); setChequeNo("");
-    setSplitMethodA("CASH"); setSplitAmountA(""); setSplitMethodB("MOMO_MTN"); setSplitAmountB("");
+    setSplitParts([{ method: "CASH", amount: "", reference: "" }, { method: "MOMO_MTN", amount: "", reference: "" }]);
     setPrintReceipt(true); setBusy(false);
   }, [open]);
 
@@ -899,20 +901,33 @@ function PayDialog({ open, invoice, roster, invoices, onOpenChange, onDone, onCr
   }
 
   const amountCents = Math.round((parseFloat(amount || "0") || 0) * 100);
-  const splitACents = Math.round((parseFloat(splitAmountA || "0") || 0) * 100);
-  const splitBCents = Math.round((parseFloat(splitAmountB || "0") || 0) * 100);
-  const splitSumCents = splitACents + splitBCents;
-  const splitBalanced = splitACents > 0 && splitBCents > 0 && splitSumCents === amountCents;
-  const chequeNeeded = method === "CHEQUE" || (method === "SPLIT" && (splitMethodA === "CHEQUE" || splitMethodB === "CHEQUE"));
+  const cent = (s: string) => Math.round(parseFloat(s || "0") * 100) || 0;
+  const splitSumCents = splitParts.reduce((s, p) => s + cent(p.amount), 0);
+  const splitRemaining = amountCents - splitSumCents;
+  const filledParts = splitParts.filter((p) => cent(p.amount) > 0);
+  const splitBalanced = filledParts.length >= 2 && splitSumCents === amountCents;
+  const chequeNeeded = method === "CHEQUE" || (method === "SPLIT" && splitParts.some((p) => p.method === "CHEQUE" && cent(p.amount) > 0));
   const chequeMissing = chequeNeeded && (!bankName.trim() || !chequeNo.trim());
   const canSubmit = !!selectedInvoice && !busy && amountCents > 0 && (method !== "SPLIT" || splitBalanced) && !chequeMissing;
 
-  /* one record-payment call — offline it enqueues on the sync queue */
-  async function recordOne(payMethod: string, cents: number): Promise<{ queued: boolean; receipt: any; credit: number; code?: string }> {
+  const patchPart = (i: number, patch: Partial<{ method: string; amount: string; reference: string }>) =>
+    setSplitParts((rows) => rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const addPart = () => setSplitParts((rows) => [...rows, { method: "MOMO_MTN", amount: "", reference: "" }]);
+  const fillSplitRemaining = () => {
+    if (splitRemaining <= 0) return;
+    setSplitParts((rows) => rows.map((r, j) => (j === rows.length - 1 ? { ...r, amount: (splitRemaining / 100).toFixed(2) } : r)));
+  };
+
+  /* one record-payment call — offline it enqueues on the sync queue.
+   * wave 59: parts[] rides the payload so a split is ONE receipt both online
+   * and at flush time (method=SPLIT + splitJson on the Payment row). */
+  async function recordOne(payMethod: string, cents: number, parts?: { method: string; amountCents: number; reference: string | null }[]): Promise<{ queued: boolean; receipt: any; credit: number; code?: string }> {
     const ref = payMethod.startsWith("MOMO") ? txnId.trim() || undefined : receiptNo.trim() || undefined;
-    const bank = payMethod === "CHEQUE" ? bankName.trim() || undefined : undefined;
-    const chq = payMethod === "CHEQUE" ? chequeNo.trim() || undefined : undefined;
-    const payload = { action: "record-payment", invoiceId: selectedInvoice!.id, amountCents: cents, method: payMethod, reference: ref, bankName: bank, chequeNo: chq };
+    // cheque details ride the row whenever collected — a SPLIT with a cheque
+    // part needs them just as a pure cheque payment does (wave 59)
+    const bank = bankName.trim() || undefined;
+    const chq = chequeNo.trim() || undefined;
+    const payload = { action: "record-payment", invoiceId: selectedInvoice!.id, amountCents: cents, method: payMethod, reference: ref, bankName: bank, chequeNo: chq, ...(parts?.length ? { methods: parts } : {}) };
     // wave 41: take the next REAL receipt number from this workstation's reserve —
     // ONLY when actually offline (an online payment must never burn a reserved
     // number; an abandoned take is a harmless gap, never a duplicate). Aliased
@@ -937,34 +952,21 @@ function PayDialog({ open, invoice, roster, invoices, onOpenChange, onDone, onCr
     setBusy(true);
     try {
       if (method === "SPLIT") {
-        const legs: [string, number][] = [[splitMethodA, splitACents], [splitMethodB, splitBCents]];
-        let queued = 0, ok = 0, okCents = 0, credit = 0;
-        let lastReceipt: any = null;
-        const queuedCodes: string[] = []; // wave 41: each offline leg preassigns its own real receipt number
-        const errors: string[] = [];
-        for (const [m, c] of legs) {
-          try {
-            const r = await recordOne(m, c);
-            if (r.queued) { queued++; if (r.code) queuedCodes.push(r.code); }
-            else { ok++; okCents += c; if (r.receipt) lastReceipt = r.receipt; credit += r.credit; }
-          } catch (e: any) { errors.push(`${PAYMENT_LABELS[m] ?? m}: ${e.message}`); }
-        }
-        if (queued === 2) {
-          if (queuedCodes.length === 2) toast({ title: "Receipts issued offline", description: `Receipts ${queuedCodes[0]} and ${queuedCodes[1]} recorded — they will sync when you reconnect.` });
-          else toast({ title: "Queued offline", description: "Both legs of the split are queued — receipts will be issued automatically when you reconnect." });
-          onDone(null);
-        } else if (ok === 2) {
-          toast({ title: "Split payment recorded", description: `${fmtCedi(amountCents)} collected in two receipts.` });
-          if (credit > 0) toast({ title: "Payment received", description: `Overpayment of ${fmtCedi(credit)} banked as prepaid credit — it will be applied to future bills.` });
-          onDone(printReceipt ? lastReceipt : null);
-        } else if (ok + queued === 2) {
-          toast({ title: "Split payment recorded", description: `One receipt issued now and one leg queued to sync when you reconnect${credit ? ` · ${fmtCedi(credit)} banked as prepaid credit` : ""}.` });
-          onDone(printReceipt ? lastReceipt : null);
-        } else if (ok + queued === 1) {
-          toast({ title: "Partial payment recorded", description: `Only one leg of the split succeeded — ${fmtCedi(okCents)} received${errors.length ? `; failed leg: ${errors.join(" · ")}` : ""}. Re-take the failed part if it is still owed.`, variant: "destructive" });
-          onDone(printReceipt ? lastReceipt : null);
+        // wave 59: ONE receipt carrying every part — the parent keeps a single
+        // proof of payment even when the tender mixed cash + MoMo + cheque
+        const parts = filledParts.map((p) => ({ method: p.method, amountCents: cent(p.amount), reference: p.reference.trim() || null }));
+        const r = await recordOne("SPLIT", amountCents, parts);
+        if (r.queued) {
+          if (r.code) {
+            toast({ title: "Receipt issued offline", description: `Receipt ${r.code} recorded — it will sync when you reconnect.` });
+            onDone(printReceipt ? { amountCents, student: studentName ?? "learner", receiptNo: r.code, method: "SPLIT", paidAt: new Date().toISOString(), offline: true } : null);
+          } else {
+            toast({ title: "Queued offline", description: "The split payment is queued — the receipt will be issued automatically when you reconnect." });
+            onDone(null);
+          }
         } else {
-          toast({ title: "Payment failed", description: errors.join(" · ") || "Both legs failed.", variant: "destructive" });
+          if (r.credit > 0) toast({ title: "Payment received", description: `Overpayment of ${fmtCedi(r.credit)} banked as prepaid credit — it will be applied to future bills.` });
+          onDone(printReceipt ? r.receipt : null);
         }
       } else {
         const r = await recordOne(method, amountCents);
@@ -990,22 +992,52 @@ function PayDialog({ open, invoice, roster, invoices, onOpenChange, onDone, onCr
 
   const resultsOpen = showResults && query.trim().length >= 2;
 
-  function splitRow(label: string, m: string, setM: (v: string) => void, amt: string, setAmt: (v: string) => void) {
+  // wave 59: the split editor — one row per part (method + amount + reference).
+  // Parts must balance against the payment amount; a part may be a cheque
+  // (bank + cheque number collected once, above).
+  function splitEditor() {
     return (
-      <div className="grid grid-cols-2 gap-2">
-        <div className="space-y-1">
-          <Label className="text-[11px] font-semibold uppercase tracking-wide">{label} — method</Label>
-          <Select value={m} onValueChange={setM} disabled={!selectedInvoice}>
-            <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {Object.entries(PAYMENT_LABELS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
-            </SelectContent>
-          </Select>
+      <div className="space-y-2.5 rounded-lg border bg-secondary/20 p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="font-mono text-xs font-bold uppercase tracking-wider text-muted-foreground">Split — each part&rsquo;s method &amp; amount</div>
+          <div className={cn("text-xs font-semibold tabular-nums", amountCents > 0 && splitBalanced ? "text-emerald-600" : "text-destructive")}>
+            parts <b>{fmtCedi(splitSumCents)}</b> of {fmtCedi(amountCents)}
+            {splitRemaining !== 0 && <span className="text-amber-600"> · {splitRemaining > 0 ? "remaining" : "over"} {fmtCedi(Math.abs(splitRemaining))}</span>}
+          </div>
         </div>
-        <div className="space-y-1">
-          <Label className="text-[11px] font-semibold uppercase tracking-wide">{label} — amount (₵)</Label>
-          <Input type="number" step="0.01" min="0" value={amt} onChange={(e) => setAmt(e.target.value)} className="h-9" disabled={!selectedInvoice} />
+        {splitParts.map((p, i) => (
+          <div key={i} className="flex flex-wrap items-center gap-2">
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground" aria-hidden>{i + 1}</span>
+            <Select value={p.method} onValueChange={(v) => patchPart(i, { method: v, reference: v === "CASH" ? "" : p.reference })} disabled={!selectedInvoice}>
+              <SelectTrigger className="w-[150px] h-9"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {Object.entries(PAYMENT_LABELS).filter(([k]) => k !== "WALLET" && k !== "TRANSPORT_WALLET").map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Input type="number" step="0.01" min="0" value={p.amount}
+              onChange={(e) => patchPart(i, { amount: e.target.value })}
+              className="w-28 h-9 text-right font-bold tabular-nums" disabled={!selectedInvoice} aria-label={`Split part ${i + 1} amount`} />
+            {p.method !== "CASH" && (
+              <Input value={p.reference} onChange={(e) => patchPart(i, { reference: e.target.value })}
+                placeholder={p.method.startsWith("MOMO") ? "Transaction ID" : p.method === "CHEQUE" ? "Cheque no." : p.method === "BANK" ? "Bank ref." : "Reference"}
+                className="flex-1 min-w-[150px] h-9 text-xs" disabled={!selectedInvoice} aria-label={`Split part ${i + 1} reference`} />
+            )}
+            <Button size="sm" variant="ghost" type="button" className="size-9 p-0 shrink-0 text-destructive hover:text-destructive"
+              disabled={splitParts.length <= 2} onClick={() => setSplitParts((rows) => rows.filter((_, j) => j !== i))} title="Remove this part">
+              <X className="size-4" />
+              <span className="sr-only">Remove split part {i + 1}</span>
+            </Button>
+          </div>
+        ))}
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
+          <Button size="sm" variant="outline" type="button" className="h-8 gap-1" onClick={addPart} disabled={splitParts.length >= 4 || !selectedInvoice}>
+            <Plus className="size-3.5" /> Add method
+          </Button>
+          <Button size="sm" variant="outline" type="button" className="h-8" onClick={fillSplitRemaining} disabled={splitRemaining <= 0}>
+            Fill remaining {splitRemaining > 0 ? fmtCedi(splitRemaining) : ""}
+          </Button>
         </div>
+        <p className="text-[11px] text-muted-foreground">At least two parts, together exactly the payment amount — the parent receives ONE receipt showing the full tender (e.g. Cash + MTN MoMo).</p>
       </div>
     );
   }
@@ -1134,7 +1166,7 @@ function PayDialog({ open, invoice, roster, invoices, onOpenChange, onDone, onCr
                 <Select value={method} onValueChange={setMethod} disabled={!selectedInvoice}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="SPLIT">Split payment (two methods)</SelectItem>
+                    <SelectItem value="SPLIT">Split payment (multiple methods)</SelectItem>
                     {Object.entries(PAYMENT_LABELS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
                   </SelectContent>
                 </Select>
@@ -1178,20 +1210,8 @@ function PayDialog({ open, invoice, roster, invoices, onOpenChange, onDone, onCr
               </p>
             )}
 
-            {/* SPLIT — two methods, amounts must add up */}
-            {method === "SPLIT" && (
-              <div className="space-y-3 rounded-lg border bg-secondary/20 p-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="font-mono text-xs font-bold uppercase tracking-wider text-muted-foreground">Split — two methods</div>
-                  <div className={cn("text-xs font-semibold tabular-nums", amountCents > 0 && splitBalanced ? "text-emerald-600" : "text-destructive")}>
-                    Total: {fmtCedi(splitSumCents)}{amountCents > 0 && !splitBalanced ? ` of ${fmtCedi(amountCents)}` : ""}
-                  </div>
-                </div>
-                {splitRow("First", splitMethodA, setSplitMethodA, splitAmountA, setSplitAmountA)}
-                {splitRow("Second", splitMethodB, setSplitMethodB, splitAmountB, setSplitAmountB)}
-                <p className="text-[11px] text-muted-foreground">Both amounts must be above zero and together equal the payment amount above.</p>
-              </div>
-            )}
+            {/* SPLIT — multi-method, parts must add up (wave 59: one receipt) */}
+            {method === "SPLIT" && splitEditor()}
           </section>
         </div>
 

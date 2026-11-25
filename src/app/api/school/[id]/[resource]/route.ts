@@ -6,6 +6,7 @@ import { canAny } from "@/lib/rbac";
 import { gradeFor } from "@/lib/grading";
 import { sendSms, sendAutomated, smsEventEnabled } from "@/lib/sms";
 import { invoicePaymentReceipt } from "@/lib/receipt-payload";
+import { sanitizeMethodParts, type CollectMethodPart } from "@/lib/daily-billing";
 import { nextInvoiceNo, nextReceiptNo, nextStudentIndex } from "@/lib/codes";
 import { effectiveValue } from "@/lib/discounts";
 import { storeMedia } from "@/lib/media";
@@ -604,10 +605,24 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         const invBalance = Math.max(0, inv.totalCents - inv.discountCents - inv.paidCents);
         const amt = Math.min(requested, invBalance);
         const excess = requested - amt;
+        // ── wave 59: multi-method split (CI3 daily_fee_payment_splits parity for
+        // invoice bills): parts must sum to the requested amount; one Payment
+        // row carries every part (method=SPLIT + splitJson), so the receipt and
+        // the method-mix reports expand the full tender. Per-part references
+        // ride the split; the legacy single-method path is untouched.
+        let methodParts: CollectMethodPart[] | undefined;
+        if (Array.isArray(body.methods) && body.methods.length) {
+          const sp = sanitizeMethodParts(body.methods, requested);
+          if (sp.error) return NextResponse.json({ error: sp.error }, { status: 400 });
+          methodParts = sp.parts;
+        }
+        const payMethod = methodParts && methodParts.length > 1 ? "SPLIT" : (methodParts?.[0]?.method ?? method ?? "CASH");
+        const splitRef = methodParts?.find((p) => p.reference)?.reference ?? null;
         const payment = await db.payment.create({
           data: {
             receiptNo: await nextReceiptNo(), invoiceId, studentId: inv.studentId, schoolId, amountCents: requested,
-            method: method ?? "CASH", reference: clientId ? `SYNC:${clientId}` : reference ?? null,
+            method: payMethod, reference: clientId ? `SYNC:${clientId}` : splitRef ?? reference ?? null,
+            ...(methodParts && methodParts.length > 1 ? { splitJson: methodParts.map((p) => ({ method: p.method, amountCents: p.amountCents, reference: p.reference })) } : {}),
             bankName: bankName ?? null, chequeNo: chequeNo ?? null,
             receivedByName: user.fullName, paidAt: new Date(body.paidAt ?? Date.now()),
             offlineQueued: !!offline, syncedAt: offline ? new Date() : null,

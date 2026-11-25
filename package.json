@@ -3,7 +3,7 @@
   "version": "0.2.1",
   "private": true,
   "scripts": {
-    "dev": "DATABASE_URL='postgresql://nyansapo@127.0.0.1:5433/nyansapo?schema=public' next dev -p 3000 2>&1 | tee dev.log",
+    "dev": "DATABASE_URL='postgresql://nyansapo@127.0.0.1:5433/nyansapo?schema=public' NODE_OPTIONS='--max-old-space-size=1536' next dev -p 3000 2>&1 | tee dev.log",
     "build": "next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/",
     "start": "DATABASE_URL='postgresql://nyansapo@127.0.0.1:5433/nyansapo?schema=public' NODE_ENV=production bun .next/standalone/server.js 2>&1 | tee server.log",
     "lint": "eslint .",

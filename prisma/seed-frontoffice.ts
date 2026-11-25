@@ -84,7 +84,7 @@ async function main() {
 
   const staff = await db.staff.findMany({
     where: { schoolId: school.id, active: true },
-    select: { fullName: true, position: true },
+    select: { id: true, fullName: true, position: true, role: true },
     orderBy: { fullName: "asc" },
   });
   const deskOfficer = staff.find((s) => /secret|admin|front/i.test(s.position ?? ""))?.fullName ?? staff[0]?.fullName ?? "Front desk";
@@ -131,22 +131,31 @@ async function main() {
     }
   }
 
-  // two visitors on site right now (this morning, still in)
+  // two visitors on site right now (this morning, still in) — wave 59: both are
+  // STAFF-LINKED so the "to see who" picker + arrival-alert trail is visible
+  // out of the box (the head with SMS + in-app fired, a teacher with in-app)
   const nowHour = now.getUTCHours();
-  for (const [i, who] of [["Mrs. Akosua Mensah", "Dropped ward's forgotten lunch"], ["Mr. Adjei (Glory Bookshop)", "Delivered textbooks order"]].entries()) {
+  const headStaff = staff.find((s) => /head/i.test(s.position ?? "")) ?? staff[0] ?? null;
+  const teacherStaff = staff.find((s) => /teach/i.test(s.role ?? "") || /teach/i.test(s.position ?? "")) ?? staff[1] ?? null;
+  const onSitePair: { name: string; purpose: string; org: string | null; category: string; staff: typeof headStaff }[] = [
+    { name: "Mrs. Akosua Mensah", purpose: "Dropped ward's forgotten lunch", org: null, category: "PARENT", staff: teacherStaff },
+    { name: "Mr. Adjei (Glory Bookshop)", purpose: "Delivered textbooks order", org: "Glory Bookshop", category: "VENDOR", staff: headStaff },
+  ];
+  for (const [i, who] of onSitePair.entries()) {
     const timeIn = new Date();
     timeIn.setUTCHours(Math.max(7, nowHour - 1 - i), int(5, 50), 0, 0);
     if (timeIn > now) timeIn.setTime(now.getTime() - 25 * 60_000);
     visitorCreates.push({
       schoolId: school.id,
-      name: who[0], phone: phone(), organisation: i === 1 ? "Glory Bookshop" : null,
-      category: i === 1 ? "VENDOR" : "PARENT",
-      purpose: who[1],
-      personToSee: i === 1 ? "The Bursar" : pick(PERSONS),
+      name: who.name, phone: phone(), organisation: who.org,
+      category: who.category,
+      purpose: who.purpose,
+      personToSee: who.staff?.fullName ?? (i === 1 ? bursar : pick(PERSONS)),
+      ...(who.staff ? { personToSeeStaffId: who.staff.id, alertedSms: i === 1, alertedEmail: false, alertedInApp: true } : {}),
       passNo: nextPass(),
       timeIn, timeOut: null, status: "ON_SITE",
       recordedByName: deskOfficer,
-    });
+    } as VCreate & { personToSeeStaffId?: string; alertedSms?: boolean; alertedEmail?: boolean; alertedInApp?: boolean });
   }
 
   await db.visitor.createMany({ data: visitorCreates });

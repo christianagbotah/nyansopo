@@ -38,8 +38,15 @@ const OPS = "/ops/frontoffice";
 type VisitorRow = {
   id: string; name: string; phone: string | null; organisation: string | null;
   category: string; purpose: string; personToSee: string | null; passNo: string | null;
+  personToSeeStaffId: string | null; alertedSms: boolean; alertedEmail: boolean; alertedInApp: boolean;
   timeIn: string | null; timeOut: string | null; minutesOnSite: number | null;
   status: string; badgeIssued: boolean; notes: string | null; recordedByName: string | null;
+};
+/** wave 59: active staff for the "To see who" picker — selecting one fires the
+ *  instant arrival alerts (SMS / email / in-app bell) at book-in. */
+type StaffOption = {
+  id: string; fullName: string; role: string; title: string | null;
+  category: string; position: string | null; hasPhone: boolean; hasEmail: boolean;
 };
 type AppointmentRow = {
   id: string; title: string; withName: string; withRole: string; personToSee: string | null;
@@ -144,6 +151,10 @@ export function FrontOffice() {
   const [visDialog, setVisDialog] = useState(false);
   const [visForm, setVisForm] = useState({ name: "", phone: "", organisation: "", category: "PARENT", purpose: "", personToSee: "", notes: "" });
   const [visBusy, setVisBusy] = useState(false);
+  // wave 59: staff picker for "to see who" + the alert outcome of the last book-in
+  const [staffOpts, setStaffOpts] = useState<StaffOption[]>([]);
+  const [seeStaff, setSeeStaff] = useState("none"); // none | <staffId> | other
+  const [lastAlert, setLastAlert] = useState<{ staff: string | null; sms: string; email: string; inApp: boolean } | null>(null);
 
   // appointments
   const [appointments, setAppointments] = useState<AppointmentRow[]>([]);
@@ -227,8 +238,8 @@ export function FrontOffice() {
     if (visDate) p.set("date", visDate);
     if (visOpenOnly) p.set("open", "1");
     if (visSearch.trim()) p.set("search", visSearch.trim());
-    apiGet<{ onSite: number; visitors: VisitorRow[] }>(`/api/school/${schoolId}${OPS}?${p}`)
-      .then((r) => { setVisitors(r.visitors); setVisOnSite(r.onSite); })
+    apiGet<{ onSite: number; visitors: VisitorRow[]; staff: StaffOption[] }>(`/api/school/${schoolId}${OPS}?${p}`)
+      .then((r) => { setVisitors(r.visitors); setVisOnSite(r.onSite); if (r.staff?.length) setStaffOpts(r.staff); })
       .catch((e: Error) => toast({ title: "Could not load the visitors book", description: e.message, variant: "destructive" }));
   }, [schoolId, tab, visDate, visOpenOnly, visSearch, visitorsTick]);
 
@@ -288,12 +299,36 @@ export function FrontOffice() {
       return;
     }
     setVisBusy(true);
-    await post({ action: "visitor-in", ...visForm }, "Visitor booked in — pass issued", () => {
+    // wave 59: staff-linked "to see who" — one POST, the backend fires the
+    // SMS / email / in-app arrival alerts the moment the row lands
+    const staffPicked = seeStaff !== "none" && seeStaff !== "other" ? seeStaff : null;
+    try {
+      const r = await apiPost<{ ok: boolean; visitor: VisitorRow; alert?: { staff: string | null; sms: string; email: string; inApp: boolean } }>(`/api/school/${schoolId}${OPS}`, {
+        action: "visitor-in", ...visForm,
+        ...(staffPicked ? { personToSeeStaffId: staffPicked, personToSee: undefined } : {}),
+      });
+      const a = r.alert ?? null;
+      setLastAlert(a);
       setVisDialog(false);
       setVisForm({ name: "", phone: "", organisation: "", category: "PARENT", purpose: "", personToSee: "", notes: "" });
+      setSeeStaff("none");
       bumpVisitors();
       bumpBoard();
-    });
+      if (a?.staff) {
+        const bits: string[] = [];
+        if (a.sms === "SENT" || a.sms === "SIMULATED") bits.push(a.sms === "SIMULATED" ? "SMS queued" : "SMS sent");
+        if (a.email === "SENT" || a.email === "SIMULATED") bits.push(a.email === "SIMULATED" ? "email queued" : "email sent");
+        if (a.inApp) bits.push("in-app alert");
+        toast({
+          title: `Visitor booked in — ${a.staff} alerted`,
+          description: bits.length ? `${bits.join(" · ")}${a.sms === "FAILED" || a.email === "FAILED" ? " (some channels failed — see the SMS / email logs)" : ""}` : "No channel was available for this staff member — add a phone or email on their staff record.",
+        });
+      } else {
+        toast({ title: "Visitor booked in — pass issued" });
+      }
+    } catch (e: any) {
+      toast({ title: "Action failed", description: e.message, variant: "destructive" });
+    }
     setVisBusy(false);
   };
 
@@ -568,7 +603,16 @@ export function FrontOffice() {
                           <td className="hidden px-3 py-2 font-mono text-xs md:table-cell">{v.passNo ?? "—"}</td>
                           <td className="px-3 py-2">
                             <p className="max-w-56 truncate">{v.purpose}</p>
-                            {v.personToSee && <p className="text-xs text-muted-foreground">to see {v.personToSee}</p>}
+                            {v.personToSee && (
+                              <p className="text-xs text-muted-foreground">
+                                to see {v.personToSee}
+                                {v.personToSeeStaffId && (v.alertedSms || v.alertedEmail || v.alertedInApp) && (
+                                  <span className="ml-1 inline-flex items-center gap-0.5 align-middle" title={`Arrival alerts fired: ${[v.alertedSms ? "SMS" : null, v.alertedEmail ? "email" : null, v.alertedInApp ? "in-app" : null].filter(Boolean).join(", ")}`}>
+                                    <BellRing className="size-3 text-teal-600 dark:text-teal-400" aria-label="arrival alerts sent" />
+                                  </span>
+                                )}
+                              </p>
+                            )}
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap text-xs">
                             {hhmm(v.timeIn)} → {v.timeOut ? hhmm(v.timeOut) : "—"}
@@ -888,9 +932,31 @@ export function FrontOffice() {
                 <SelectContent>{Object.keys(CAT_LABELS).map((c) => <SelectItem key={c} value={c}>{CAT_LABELS[c]}</SelectItem>)}</SelectContent>
               </Select>
             </FormField>
-            <FormField label="To see">
-              <Input value={visForm.personToSee} onChange={(e) => setVisForm({ ...visForm, personToSee: e.target.value })} placeholder="e.g. The Headmistress" />
+            <FormField label="To see (staff alert)">
+              <Select value={seeStaff} onValueChange={setSeeStaff}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">— not specified —</SelectItem>
+                  {staffOpts.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.fullName} · {s.title ?? s.position ?? titleCase(s.role)}{!s.hasPhone && !s.hasEmail ? " (no contact on file)" : ""}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value="other">Other — type a name…</SelectItem>
+                </SelectContent>
+              </Select>
             </FormField>
+            {seeStaff === "other" && (
+              <FormField label="Who are they here to see?" span={2}>
+                <Input value={visForm.personToSee} onChange={(e) => setVisForm({ ...visForm, personToSee: e.target.value })} placeholder="e.g. The Headmistress" />
+              </FormField>
+            )}
+            {seeStaff !== "none" && seeStaff !== "other" && (
+              <div className="sm:col-span-2 col-span-2 rounded-lg border border-teal-500/40 bg-teal-50 dark:bg-teal-950/40 px-3 py-2 text-[11px] text-teal-800 dark:text-teal-300 flex items-start gap-2">
+                <BellRing className="size-3.5 shrink-0 mt-0.5" />
+                <span>The staff member is alerted the moment you book the visitor in — SMS{(() => { const s = staffOpts.find((x) => x.id === seeStaff); return s?.hasEmail ? ", email" : ""; })()} and the in-app notification bell. The alert clears when the visitor checks out.</span>
+              </div>
+            )}
             <FormField label="Purpose of visit" required span={2}>
               <Input value={visForm.purpose} onChange={(e) => setVisForm({ ...visForm, purpose: e.target.value })} placeholder="e.g. Ward's pick-up / textbook delivery" />
             </FormField>

@@ -203,6 +203,9 @@ export const ROLE_DEFAULTS: Record<string, string[] | "*"> = {
     "certificates.view",
     "ai.use", "staffhub.self",
     "siren.manage", "office.use",
+    // wave 59: teachers can view the visitors book — the front-desk "to see
+    // who" alert deep-links here, and staff can check who is waiting for them
+    "frontoffice.view",
   ],
   // non-teaching staff often man the front desk (secretary / receptionist)
   NON_TEACHING: ["staffhub.self", "messages.use", "frontoffice.view", "frontoffice.manage", "certificates.view", "certificates.manage", "siren.manage", "office.use"],

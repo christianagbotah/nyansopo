@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
+import { sendSms } from "@/lib/sms";
+import { sendEmail } from "@/lib/email";
 
 // ── Front Office (wave 29 — the front desk books) ──
 // The desk beside the gate every Ghanaian school keeps: the Visitors
@@ -79,6 +81,10 @@ const toVisitor = (v: any) => ({
   category: v.category,
   purpose: v.purpose,
   personToSee: v.personToSee ?? null,
+  personToSeeStaffId: v.personToSeeStaffId ?? null,
+  alertedSms: v.alertedSms ?? false,
+  alertedEmail: v.alertedEmail ?? false,
+  alertedInApp: v.alertedInApp ?? false,
   passNo: v.passNo ?? null,
   timeIn: iso(v.timeIn),
   timeOut: iso(v.timeOut),
@@ -88,6 +94,19 @@ const toVisitor = (v: any) => ({
   notes: v.notes ?? null,
   recordedByName: v.recordedByName ?? null,
 });
+
+/** Active staff options for the "To see who" picker (wave 59) — the front
+ *  desk selects the staff member, who is then alerted instantly on arrival. */
+const staffOptions = async (schoolId: string) =>
+  (await db.staff.findMany({
+    where: { schoolId, active: true },
+    select: { id: true, fullName: true, role: true, title: true, category: true, position: true, phone: true, email: true },
+    orderBy: [{ category: "asc" }, { fullName: "asc" }],
+  })).map((s) => ({
+    id: s.id, fullName: s.fullName, role: s.role, title: s.title ?? null,
+    category: s.category, position: s.position ?? null,
+    hasPhone: !!s.phone, hasEmail: !!s.email,
+  }));
 
 const toAppt = (a: any) => ({
   id: a.id,
@@ -162,7 +181,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   /* ── board: the front desk at a glance ── */
   if (action === "board") {
-    const [onSite, todayVisitors, todayAppts, openFollowUps, postalPending, upcomingEvents, nextAppt] = await Promise.all([
+    const [onSite, todayVisitors, todayAppts, openFollowUps, postalPending, upcomingEvents, nextAppt, staff] = await Promise.all([
       db.visitor.findMany({ where: { schoolId, status: "ON_SITE" }, orderBy: { timeIn: "asc" } }),
       db.visitor.count({ where: { schoolId, timeIn: { gte: dayZero, lt: dayEnd } } }),
       db.appointment.findMany({
@@ -176,6 +195,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         where: { schoolId, scheduledAt: { gte: new Date() }, status: { in: ["SCHEDULED", "CONFIRMED"] } },
         orderBy: { scheduledAt: "asc" },
       }),
+      staffOptions(schoolId),
     ]);
     return NextResponse.json({
       date: today,
@@ -191,6 +211,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       todayAppointments: todayAppts.map(toAppt),
       nextAppointment: nextAppt ? toAppt(nextAppt) : null,
       upcomingEvents: upcomingEvents.map(toEvent),
+      staff,
     });
   }
 
@@ -218,6 +239,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       date: isoDay(date) ?? "all",
       onSite,
       visitors: filtered.map(toVisitor),
+      staff: await staffOptions(schoolId),
     });
   }
 
@@ -376,26 +398,91 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   try { body = await req.json(); } catch { return bad("Invalid JSON body"); }
   const action = optStr(body?.action);
 
-  /* ── visitor-in: book a visitor into the Visitors Book ── */
+  /* ── visitor-in: book a visitor into the Visitors Book ──
+     wave 59: "to see who" is selectable from the staff register — the moment
+     the booking completes, the linked staff member is alerted through every
+     live channel: SMS (SmsSetting.autoVisitorAlerts + Staff.smsNotify gate),
+     email (EmailSetting.enabled gate) and the in-app notification bell
+     (derived from the ON_SITE visitor row, so it clears itself at check-out). */
   if (action === "visitor-in") {
     const name = optStr(body?.name);
     const purpose = optStr(body?.purpose);
     if (!name) return bad("Visitor name is required");
     if (!purpose) return bad("Purpose of visit is required");
     const category = enumVal(body?.category, VISITOR_CATEGORIES) ?? "OTHER";
+    const personToSeeStaffId = optStr(body?.personToSeeStaffId);
+    // resolve the staff member (school-scoped; silent fall-through to free text)
+    const staff = personToSeeStaffId
+      ? await db.staff.findFirst({ where: { id: personToSeeStaffId, schoolId, active: true } })
+      : null;
     const passNo = await nextPassNo(schoolId);
     const row = await db.visitor.create({
       data: {
         schoolId, name, purpose, category,
         phone: optStr(body?.phone),
         organisation: optStr(body?.organisation),
-        personToSee: optStr(body?.personToSee),
+        personToSee: staff?.fullName ?? optStr(body?.personToSee),
+        ...(staff ? { personToSeeStaffId: staff.id } : {}),
         passNo, badgeIssued: body?.badgeIssued === false ? false : true,
         notes: optStr(body?.notes),
         recordedByName: actorName,
       },
     });
-    return NextResponse.json({ ok: true, visitor: toVisitor(row) });
+
+    /* ── instant arrival alerts to the selected staff member ── */
+    const alert = { sms: "SKIPPED" as string, email: "SKIPPED" as string, inApp: false, staff: staff?.fullName ?? null };
+    if (staff) {
+      const catLabel = { PARENT: "a parent", VENDOR: "a vendor", GOVT: "a government official", ALUMNI: "an alumna/us", OTHER: "a visitor" }[category] ?? "a visitor";
+      const when = new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+      const smsBody = `VISITOR ALERT: ${name}${optStr(body?.organisation) ? ` (${optStr(body?.organisation)})` : ""} — ${catLabel} — is at the front desk to see you. Purpose: ${purpose}. Pass ${passNo}. Booked ${when} by ${actorName}.`;
+
+      // SMS — school master switch (autoVisitorAlerts) + the staff member's own
+      // opt-in (smsNotify) + a phone on file. Outcome lands on the row either way.
+      const [smsSetting, emailSetting] = await Promise.all([
+        db.smsSetting.findUnique({ where: { schoolId } }),
+        db.emailSetting.findUnique({ where: { schoolId } }),
+      ]);
+      if (smsSetting?.autoVisitorAlerts && staff.smsNotify && staff.phone) {
+        const msg = await sendSms({
+          db, schoolId, recipientName: staff.fullName, recipientPhone: staff.phone,
+          body: smsBody, category: "FRONT_OFFICE", sentByName: actorName,
+        });
+        alert.sms = msg.status; // SENT | SIMULATED | FAILED
+      }
+      // email — only when the school has SMTP configured & enabled
+      if (emailSetting?.enabled && staff.email) {
+        const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+        const msg = await sendEmail({
+          db, schoolId, to: staff.email, toName: staff.fullName,
+          subject: `Visitor waiting: ${name} (pass ${passNo})`,
+          category: "FRONT_OFFICE", sentByName: actorName,
+          html: `<div style="font-family:system-ui,Segoe UI,Arial,sans-serif;max-width:520px;margin:0 auto;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden">
+  <div style="background:#0d9488;color:#fff;padding:14px 20px;font-size:15px;font-weight:700">Visitor arrival — front desk</div>
+  <div style="padding:20px">
+    <p style="margin:0 0 12px;font-size:15px"><b style="font-size:18px">${esc(name)}</b>${optStr(body?.organisation) ? ` · ${esc(optStr(body?.organisation)!)}` : ""} is at the front desk to see <b>you</b>.</p>
+    <table style="width:100%;border-collapse:collapse;font-size:13px;color:#374151">
+      <tr><td style="padding:6px 0;color:#6b7280;width:120px">Category</td><td style="padding:6px 0">${catLabel.replace(/^an? /, "").replace(/^./, (c) => c.toUpperCase())}</td></tr>
+      <tr><td style="padding:6px 0;color:#6b7280">Purpose</td><td style="padding:6px 0">${esc(purpose)}</td></tr>
+      <tr><td style="padding:6px 0;color:#6b7280">Pass number</td><td style="padding:6px 0;font-weight:700">${esc(passNo)}</td></tr>
+      <tr><td style="padding:6px 0;color:#6b7280">Arrived</td><td style="padding:6px 0">${when}</td></tr>
+      <tr><td style="padding:6px 0;color:#6b7280">Booked by</td><td style="padding:6px 0">${esc(actorName)}</td></tr>
+      ${optStr(body?.phone) ? `<tr><td style="padding:6px 0;color:#6b7280">Visitor phone</td><td style="padding:6px 0">${esc(optStr(body?.phone)!)}</td></tr>` : ""}
+    </table>
+    <p style="margin:16px 0 0;font-size:12px;color:#6b7280">Please come to the front desk, or call the desk to ask the visitor to be seated.</p>
+  </div>
+</div>`,
+        });
+        alert.email = msg.status; // SENT | SIMULATED | FAILED
+      }
+      // in-app — the bell derives the "visitor waiting for you" item from this
+      // ON_SITE row (see /api/notifications); the flag records that it fired
+      alert.inApp = true;
+      await db.visitor.update({
+        where: { id: row.id },
+        data: { alertedSms: alert.sms !== "FAILED" && alert.sms !== "SKIPPED", alertedEmail: alert.email !== "FAILED" && alert.email !== "SKIPPED", alertedInApp: true },
+      });
+    }
+    return NextResponse.json({ ok: true, visitor: toVisitor(row), alert });
   }
 
   /* ── visitor-out: check a visitor out of the book ── */

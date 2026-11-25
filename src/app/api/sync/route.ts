@@ -3,7 +3,7 @@ import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { getUser } from "@/lib/session";
 import { nextInvoiceNo, nextReceiptNo, nextStudentIndex, leaseSeqBlock } from "@/lib/codes";
-import { sanitizeCollectItems, collectDailyItems, markPresentForDate, applyTransportUsage, TRANSPORT_USAGES, type TransportUsage } from "@/lib/daily-billing";
+import { sanitizeCollectItems, collectDailyItems, markPresentForDate, applyTransportUsage, TRANSPORT_USAGES, sanitizeMethodParts, type TransportUsage, type CollectMethodPart } from "@/lib/daily-billing";
 import { sendAutomated, smsEventEnabled } from "@/lib/sms";
 
 // POST /api/sync — the offline pipeline's write side.
@@ -436,10 +436,20 @@ export async function POST(req: NextRequest) {
         const inv = await db.invoice.findUnique({ where: { id: invoiceId } });
         if (!inv) throw new Error("invoice missing");
         const amt = Math.max(0, Math.min(Number(amountCents), inv.totalCents - inv.discountCents - inv.paidCents));
+        // wave 59: offline split invoice payment — parts must sum to the queued
+        // amount; the flush replays them as ONE receipt (method=SPLIT + splitJson)
+        let invParts: CollectMethodPart[] | undefined;
+        if (Array.isArray(op.payload.methods) && op.payload.methods.length) {
+          const sp = sanitizeMethodParts(op.payload.methods, Number(amountCents));
+          if (sp.error) throw new Error(sp.error);
+          invParts = sp.parts;
+        }
+        const invMethod = invParts && invParts.length > 1 ? "SPLIT" : (invParts?.[0]?.method ?? method);
         const created = await createPaymentSafely({
           receiptNo: receiptNo ?? await nextReceiptNo(),
           invoiceId, studentId: inv.studentId, schoolId,
-          amountCents: amt, method, ...syncFields,
+          amountCents: amt, method: invMethod, ...syncFields,
+          ...(invParts && invParts.length > 1 ? { splitJson: invParts.map((p) => ({ method: p.method, amountCents: p.amountCents, reference: p.reference })) } : {}),
           receivedByName: `${user.fullName} (offline)`,
           paidAt: paidAt ? new Date(paidAt) : new Date(), offlineQueued: true, syncedAt: new Date(),
         });

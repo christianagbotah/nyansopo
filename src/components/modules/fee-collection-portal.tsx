@@ -257,13 +257,17 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
     }
   };
 
-  /* ── split helpers: parts must sum to the daily-items total ── */
+  /* ── split helpers: parts must sum to the WHOLE collection (daily items +
+     invoice bills — wave 59 full split). The parts are allocated across the
+     receipts in order: the daily receipt first, then each invoice receipt; a
+     part straddling a boundary splits across both receipts so every receipt
+     stays balanced and the parent sees one coherent method mix. ── */
   const splitSum = splits.reduce((s, x) => s + cent(x.amount), 0);
-  const splitRemaining = itemTotal - splitSum;
+  const splitRemaining = grandTotal - splitSum;
   const toggleSplit = (on: boolean) => {
     setSplitOn(on);
     if (on) {
-      setSplits([{ method: "CASH", amount: itemTotal > 0 ? (itemTotal / 100).toFixed(2) : "", reference: "" }]);
+      setSplits([{ method: "CASH", amount: grandTotal > 0 ? (grandTotal / 100).toFixed(2) : "", reference: "" }]);
       setMethod("CASH");
     } else {
       setSplits([]);
@@ -321,22 +325,39 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
       toast({ title: "Nothing to collect", description: "Tick Collect on at least one fee card, or pick a transport direction." });
       return;
     }
-    /* split mode: parts must cover the DAILY items total exactly (CI3 splits
-       live on the daily-fee transaction; invoice amounts take the 1st method) */
+    /* split mode: parts must cover the WHOLE collection exactly — daily items
+       + invoice bills (wave 59). The parts are then allocated across receipts
+       (daily first, then each invoice) so every receipt carries its own slice. */
     const cleanSplits = splits.filter((s) => cent(s.amount) > 0);
     if (splitOn) {
       if (cleanSplits.length < 2) {
         toast({ title: "Split needs two methods", description: "Add at least two payment parts, or turn Split off to pay with one method." });
         return;
       }
-      if (items.length && splitSum !== itemTotal) {
-        toast({ title: "Split does not balance", description: `The parts add up to ${fmt(splitSum)} but the fee items total ${fmt(itemTotal)} — adjust the parts so they match.` });
+      if (grandTotal > 0 && splitSum !== grandTotal) {
+        toast({ title: "Split does not balance", description: `The parts add up to ${fmt(splitSum)} but the collection totals ${fmt(grandTotal)} (fee items ${fmt(itemTotal)} + invoices ${fmt(invoiceTotal)}) — adjust the parts so they match.` });
         return;
       }
     }
     const methods = splitOn && cleanSplits.length >= 2
       ? cleanSplits.map((s) => ({ method: s.method, amountCents: cent(s.amount), reference: s.reference.trim() || null }))
       : undefined;
+    /* allocation: walk the parts, filling each receipt's total in order —
+       the daily receipt (items) first, then every invoice receipt. A part
+       crossing a boundary is divided between the two receipts. */
+    const allocateParts = (cents: number): { method: string; amountCents: number; reference: string | null }[] => {
+      const out: { method: string; amountCents: number; reference: string | null }[] = [];
+      let need = cents;
+      while (need > 0 && methods && methods.length) {
+        const head = methods[0];
+        const takeAmt = Math.min(head.amountCents, need);
+        out.push({ method: head.method, amountCents: takeAmt, reference: head.reference });
+        head.amountCents -= takeAmt;
+        need -= takeAmt;
+        if (head.amountCents <= 0) methods.shift();
+      }
+      return out;
+    };
     const invMethod = methods?.[0]?.method ?? method;
     setBusy(true);
     let firstReceipt: any = null;
@@ -348,12 +369,13 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
     try {
       if (items.length) {
         leaseTake = useStore.getState().online === false ? nextOfflineReceiptNo() : null;
+        const dailyParts = methods && methods.length ? allocateParts(itemTotal) : undefined;
         const res = await apiPostQueueable<any>(
           `/api/school/${S}/ops/daily`, "payment",
           {
             action: "pos-collect", studentId: info.student.id, items,
             method: invMethod, reference: reference.trim() || undefined,
-            ...(methods ? { methods } : {}),
+            ...(dailyParts?.length ? { methods: dailyParts } : {}),
             paidAt: date,
             transportUsage: usage || undefined,
             markPresent, date,
@@ -379,9 +401,14 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
         });
       }
       for (const inv of invoiceItems) {
+        // wave 59: each invoice receipt carries its own slice of the split —
+        // allocated from the same parts the desk entered, so the method mix
+        // the parent sees matches the tender across every receipt
+        const invParts = methods && methods.length ? allocateParts(inv.amountCents) : undefined;
         const r = await apiPost<any>(`/api/school/${S}/fees`, {
           action: "record-payment", invoiceId: inv.invoiceId, amountCents: inv.amountCents,
-          method: invMethod, reference: reference.trim() || undefined,
+          method: invParts?.length ? invParts[0].method : invMethod, reference: reference.trim() || undefined,
+          ...(invParts && invParts.length > 1 ? { methods: invParts } : {}),
         });
         firstReceipt = firstReceipt ?? r?.receipt ?? r?.payment;
       }
@@ -899,11 +926,11 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
                     <Label className="text-xs">Method</Label>
                     {/* split toggle (CI3 daily_fee_payment_splits) — online only:
                        the offline queue flush posts a single method */}
-                    <button type="button" onClick={() => toggleSplit(!splitOn)} disabled={!online || itemTotal <= 0}
+                    <button type="button" onClick={() => toggleSplit(!splitOn)} disabled={!online || grandTotal <= 0}
                       title={splitOn ? "Turn off split — pay with one method" : "Split across multiple methods (e.g. part cash + part MoMo)"}
                       className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold transition border",
                         splitOn ? "bg-primary text-primary-foreground border-primary" : "bg-secondary/60 text-secondary-foreground border-border hover:bg-secondary",
-                        (!online || itemTotal <= 0) && "opacity-40 cursor-not-allowed")}
+                        (!online || grandTotal <= 0) && "opacity-40 cursor-not-allowed")}
                       aria-pressed={splitOn}>
                       <SplitSquareHorizontal className="size-3" /> SPLIT
                     </button>
@@ -948,7 +975,7 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="text-xs font-semibold flex items-center gap-1.5"><SplitSquareHorizontal className="size-3.5 text-primary" /> Split payment — each part&apos;s method &amp; amount</div>
                     <div className="text-xs tabular-nums">
-                      parts <b className={splitSum === itemTotal ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}>{fmt(splitSum)}</b> of {fmt(itemTotal)}
+                      parts <b className={splitSum === grandTotal ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}>{fmt(splitSum)}</b> of {fmt(grandTotal)}
                       {splitRemaining !== 0 && <span className="text-amber-600 dark:text-amber-400"> · {splitRemaining > 0 ? "remaining" : "over"} {fmt(Math.abs(splitRemaining))}</span>}
                     </div>
                   </div>
@@ -984,7 +1011,7 @@ export function FeeCollectionPortal({ online, canInvoice, onDone }: { online: bo
                     </Button>
                   </div>
                   <p className="text-[10px] text-muted-foreground">
-                    The parts must add up to the fee items total {fmt(itemTotal)} — any invoice amount in this collection takes the first part&apos;s method.
+                    The parts must add up to the whole collection {fmt(grandTotal)} — fee items {fmt(itemTotal)} plus invoice bills {fmt(invoiceTotal)}. Each receipt (daily fees, each invoice) carries its own slice of the split.
                   </p>
                 </div>
               )}
