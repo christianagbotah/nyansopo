@@ -252,6 +252,9 @@ model School {
   sirenEvents           SirenEvent[]
   officeFiles           OfficeFile[]
   waecCentres           WaecCentre[]
+  cpdSetting            CpdSetting?
+  cpdActivities         CpdActivity[]
+  emisReturns           EmisReturn[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -453,6 +456,12 @@ model Staff {
   active         Boolean           @default(true)
   // CI3 teacher.show_on_website parity — appears on the public school website staff page
   showOnWebsite  Boolean           @default(false)
+  // NTC licensure (wave 58 — Ghana National Teaching Council): teaching staff
+  // hold a renewable licence; CPD points accrue over the licence cycle
+  ntcLicenceNo    String? // NTC licence number
+  ntcCategory     String? // Professional | Provisional | Non-professional
+  ntcIssued       DateTime?
+  ntcExpiry       DateTime?
   classrooms     Classroom[]
   payslips       Payslip[]
   timetableSlots TimetableSlot[]
@@ -466,6 +475,7 @@ model Staff {
   movements      StaffMovement[]
   coversMade     SubstitutionLog[] @relation("SubstituteStaff")
   coversReceived SubstitutionLog[] @relation("AbsentStaff")
+  cpdActivities  CpdActivity[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -2401,6 +2411,66 @@ model WaecMockResult {
   gradePoint  Float? // BECE aggregate weight (lower is better)
 
   @@unique([candidacyId, subjectName, mockNo])
+}
+
+// ─────────────────────────────────────────────────────────────
+// NTC CPD & LICENSURE (wave 58 — Ghana National Teaching Council)
+// Teaching staff hold a renewable NTC licence; renewal requires CPD
+// points over the licence cycle, split across NTC's programme
+// categories. The school keeps the register + verification trail.
+// ─────────────────────────────────────────────────────────────
+model CpdSetting {
+  id                 String  @id @default(cuid())
+  schoolId           String  @unique
+  school             School  @relation(fields: [schoolId], references: [id])
+  targetMandatory    Float   @default(20) // NTC mandatory programmes points per cycle
+  targetRank         Float   @default(40) // rank-based programmes points per cycle
+  targetRecommended  Float   @default(40) // recommended / school-based programmes points per cycle
+  cycleYears         Int     @default(3) // licence cycle length (rolling window when no licence dates)
+}
+
+model CpdActivity {
+  id              String    @id @default(cuid())
+  schoolId        String
+  school          School    @relation(fields: [schoolId], references: [id])
+  staffId         String
+  staff           Staff     @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  title           String // e.g. "GES National Standard-based Curriculum workshop"
+  provider        String? // NTC-accredited provider (CoE, GNAT, NTC itself…)
+  category        String    @default("RECOMMENDED") // MANDATORY | RANK | RECOMMENDED
+  activityDate    DateTime
+  points          Float     @default(0)
+  hours           Float? // contact hours
+  evidence        String? // certificate number / description of proof
+  status          String    @default("LOGGED") // LOGGED | VERIFIED | REJECTED
+  verifiedByName  String?
+  verifiedAt      DateTime?
+  note            String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([schoolId, activityDate])
+  @@index([staffId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// GES EMIS ANNUAL RETURN (wave 58 — the school census)
+// Every school files an EMIS-style data return each census year:
+// enrolment by class & gender, staffing, facilities, attendance and
+// finance. Filing snapshots the live figures so history is immutable.
+// ─────────────────────────────────────────────────────────────
+model EmisReturn {
+  id          String   @id @default(cuid())
+  schoolId    String
+  school      School   @relation(fields: [schoolId], references: [id])
+  year        Int // census year (e.g. 2026 for the 2025/26 return)
+  dataJson    String // computed snapshot at filing time
+  filedByName String
+  note        String?
+  createdAt   DateTime @default(now())
+
+  @@unique([schoolId, year])
+  @@index([schoolId])
 }
 
 // ─────────────────────────────────────────────────────────────

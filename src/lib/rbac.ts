@@ -21,6 +21,9 @@ export const PERMISSIONS: PermDef[] = [
   { id: "admissions.manage", label: "Admissions, transfers & billing wizard", group: "People" },
   { id: "staff.view", label: "View staff directory", group: "People" },
   { id: "staff.manage", label: "Manage staff records", group: "People" },
+  // NTC CPD & licensure (wave 58 — Ghana National Teaching Council register)
+  { id: "staffcpd.view", label: "View NTC licences & the CPD log", group: "People" },
+  { id: "staffcpd.manage", label: "Maintain licences, log & verify CPD activities", group: "People" },
   // Fees & money
   { id: "fees.view", label: "View invoices & ledgers", group: "Fees & Finance" },
   { id: "fees.manage", label: "Create / modify invoices & write-offs", group: "Fees & Finance" },
@@ -113,6 +116,8 @@ export const PERMISSIONS: PermDef[] = [
   { id: "sync.manage", label: "Register/revoke sync devices and resolve conflicts", group: "System" },
   // Siren & bells (wave 55 — the electronic school bell)
   { id: "siren.manage", label: "School siren & bells — schedules, live trigger & history", group: "System" },
+  // GES EMIS annual return (wave 58 — the school census)
+  { id: "emis.manage", label: "Compute & file the GES EMIS annual data return", group: "System" },
   // Nyansapo Office (wave 56 — Microsoft Office-like document portal)
   { id: "office.use", label: "Office suite — create & edit documents, spreadsheets & presentations", group: "System" },
   // Self-service portals
@@ -264,6 +269,7 @@ export const PERM_IMPLIES: Record<string, string[]> = {
   "health.manage": ["health.view"],
   "clubs.manage": ["clubs.view"],
   "staffduty.manage": ["staffduty.view"],
+  "staffcpd.manage": ["staffcpd.view"],
   "frontoffice.manage": ["frontoffice.view"],
   "certificates.manage": ["certificates.view"],
   "sms.send": ["sms.view"],
@@ -349,6 +355,8 @@ export const MODULE_PERMS: Record<string, string[]> = {
   health: ["health.view"],
   clubs: ["clubs.view"],
   staffduty: ["staffduty.view"],
+  staffcpd: ["staffcpd.view"],
+  emis: ["emis.manage"],
   frontoffice: ["frontoffice.view"],
   certificates: ["certificates.view"],
   curriculum: ["curriculum.view"],

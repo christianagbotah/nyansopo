@@ -83,6 +83,8 @@ const Website = dynamic(() => import("@/components/modules/website").then((m: an
 const Siren = dynamic(() => import("@/components/modules/siren").then((m: any) => m.Siren), { loading: () => <ModuleSkeleton /> });
 const SirenTicker = dynamic(() => import("@/components/modules/siren").then((m: any) => m.SirenTicker), { ssr: false });
 const Waec = dynamic(() => import("@/components/modules/waec").then((m: any) => m.Waec), { loading: () => <ModuleSkeleton /> });
+const StaffCpd = dynamic(() => import("@/components/modules/staff-cpd").then((m: any) => m.StaffCpd), { loading: () => <ModuleSkeleton /> });
+const Emis = dynamic(() => import("@/components/modules/emis").then((m: any) => m.Emis), { loading: () => <ModuleSkeleton /> });
 const Office = dynamic(() => import("@/components/modules/office").then((m: any) => m.Office), { loading: () => <ModuleSkeleton /> });
 import { applyThemeToDOM, type SchoolTheme } from "@/lib/theme";
 import { sortClassrooms } from "@/lib/classes";
@@ -94,7 +96,7 @@ import {
   QrCode, UserPlus, Printer, Wallet, BarChart3, CalendarDays, HandCoins, FileWarning, ListChecks, ScanLine, ClipboardPen, Percent,
   PanelLeftClose, PanelLeftOpen, Palette, SlidersHorizontal, Archive, FileText, BookMarked, Target, PiggyBank, Award, IdCard,
   MessagesSquare, Landmark as LedgerIcon, DatabaseBackup, Gavel, HeartPulse, Stethoscope, Ruler, Trophy, Footprints,
-  DoorOpen, CalendarClock, FileBadge, History, Truck, AlarmClock, Globe,
+  DoorOpen, CalendarClock, FileBadge, History, Truck, AlarmClock, Globe, BadgeCheck, ClipboardCheck,
 } from "lucide-react";
 
 type NavLeaf = { id: string; label: string; icon?: any; target?: NavTarget };
@@ -111,6 +113,7 @@ const SCHOOL_NAV: NavItem[] = [
   { id: "students", label: "Students", icon: Users, section: "People" },
   { id: "admissions", label: "Admissions & Transfers", icon: ArrowLeftRight, section: "People" },
   { id: "staffduty", label: "Staff Attendance & Duty", icon: Footprints, section: "People" },
+  { id: "staffcpd", label: "NTC Licences & CPD", icon: BadgeCheck, section: "People" },
   { id: "frontoffice", label: "Front Office", icon: DoorOpen, section: "People" },
   { id: "fees", label: "Fees & Billing", icon: Banknote, section: "Finance" },
   { id: "momo", label: "MoMo & Payment Links", icon: SmartphoneNfc, section: "Finance" },
@@ -145,6 +148,7 @@ const SCHOOL_NAV: NavItem[] = [
   { id: "settings", label: "Settings", icon: SettingsIcon, section: "Support" },
   { id: "rbac", label: "Users & Access", icon: ShieldCheck, section: "Support" },
   { id: "audit", label: "Audit Trail", icon: History, section: "Support" },
+  { id: "emis", label: "EMIS Returns", icon: ClipboardCheck, section: "Support" },
   { id: "sync", label: "Sync Center", icon: RefreshCcw, section: "Support" },
 ];
 
@@ -544,6 +548,19 @@ export function AppShell() {
       { id: "waec-analysis", label: "Analysis", target: { tab: "analysis" } },
     ];
 
+    // NTC licences & CPD (wave 58 — Ghana National Teaching Council)
+    const staffcpdChildren: NavChild[] = [
+      { id: "staffcpd-licences", label: "Licence register", target: { tab: "licences" } },
+      { id: "staffcpd-log", label: "CPD log", target: { tab: "log" } },
+      { id: "staffcpd-board", label: "Points board", target: { tab: "board" } },
+    ];
+
+    // GES EMIS annual return (wave 58 — the school census)
+    const emisChildren: NavChild[] = [
+      { id: "emis-preview", label: "Census preview", target: { tab: "preview" } },
+      { id: "emis-archive", label: "Filed returns", target: { tab: "archive" } },
+    ];
+
     // permission-gated school modules
     for (const item of SCHOOL_NAV) {
       if (item.id === "branches") continue;
@@ -569,6 +586,8 @@ export function AppShell() {
       if (item.id === "siren") enriched.children = sirenChildren;
       if (item.id === "office") enriched.children = officeChildren;
       if (item.id === "waec") enriched.children = waecChildren;
+      if (item.id === "staffcpd") enriched.children = staffcpdChildren;
+      if (item.id === "emis") enriched.children = emisChildren;
       items.push(enriched);
     }
     // proprietor branch console
@@ -645,6 +664,7 @@ export function AppShell() {
           { key: "m-rbac", label: "Users & Access", icon: ShieldCheck, module: "rbac", color: C.red, when: open("rbac") },
           { key: "m-classes", label: "Classes", icon: LayoutList, module: "classes", color: C.teal, when: open("classes") },
           { key: "m-payroll", label: "HR & Payroll", icon: Calculator, module: "payroll", color: C.violet, when: open("payroll") },
+          { key: "m-cpd", label: "NTC & CPD", icon: BadgeCheck, module: "staffcpd", color: C.green, when: open("staffcpd") },
           { key: "m-notes", label: "Lesson Notes", icon: NotebookPen, module: "curriculum", target: { tab: "notes" }, color: C.cyan, when: open("curriculum") },
           { key: "m-monthly", label: "Monthly Register", icon: CalendarDays, module: "attendance", target: { tab: "monthly" }, color: C.amber, when: open("attendance") },
         ],
@@ -700,6 +720,7 @@ export function AppShell() {
           { key: "m-screenings", label: "Screenings", icon: Ruler, module: "health", target: { tab: "screenings" }, color: C.teal, when: open("health") },
           { key: "m-exams", label: "Online Exams", icon: Laptop, module: "exams", color: C.teal, when: open("exams") },
           { key: "m-waec", label: "WAEC Candidacy", icon: IdCard, module: "waec", color: C.amber, when: open("waec") },
+          { key: "m-emis", label: "EMIS Census", icon: ClipboardCheck, module: "emis", color: C.gray, when: open("emis") },
           { key: "m-library", label: "Library", icon: BookOpen, module: "library", color: C.orange, when: open("library") },
           { key: "m-tt", label: "Timetable", icon: CalendarDays, module: "classes", target: { tab: "timetable" }, color: C.cyan, when: open("classes") },
           { key: "m-syll", label: "Syllabus", icon: BookOpen, module: "curriculum", target: { tab: "syllabus" }, color: C.pink, when: open("curriculum") },
@@ -1020,6 +1041,8 @@ export function AppShell() {
              module === "reports" && show("reports") ? <Reports /> :
              module === "exams" && show("exams") ? <OnlineExams /> :
              module === "waec" && show("waec") ? <Waec /> :
+             module === "staffcpd" && show("staffcpd") ? <StaffCpd /> :
+             module === "emis" && show("emis") ? <Emis /> :
              module === "library" && show("library") ? <LibraryPortal /> :
              module === "boarding" && show("boarding") ? <Boarding /> :
              module === "rbac" && show("rbac") ? <RbacConsole /> :

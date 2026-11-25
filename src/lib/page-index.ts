@@ -186,6 +186,13 @@ export const PAGE_INDEX: PageEntry[] = [
   { id: "pg-waec", label: "WAEC Candidacy", section: S.academic, module: "waec", target: { tab: "candidates" }, perm: ["exams.waec"], icon: IdCard, keywords: ["bece", "wassce", "index number", "centre", "candidate", "registration"] },
   { id: "pg-waec-mocks", label: "WAEC Mock Results", section: S.academic, module: "waec", target: { tab: "mocks" }, perm: ["exams.waec"], icon: IdCard, keywords: ["mock", "trial exam", "objective", "theory"] },
   { id: "pg-waec-analysis", label: "WAEC Mock Analysis", section: S.academic, module: "waec", target: { tab: "analysis" }, perm: ["exams.waec"], icon: IdCard, keywords: ["aggregate", "best six", "subject pass rate", "progression"] },
+  // NTC CPD & licensure (wave 58 — Ghana National Teaching Council)
+  { id: "pg-ntc-licences", label: "NTC Licences", section: S.people, module: "staffcpd", target: { tab: "licences" }, perm: ["staffcpd.view"], icon: BadgeCheck, keywords: ["ntc", "national teaching council", "teacher licence", "license", "renewal", "expiry", "professional", "provisional"] },
+  { id: "pg-cpd-log", label: "CPD Log", section: S.people, module: "staffcpd", target: { tab: "log" }, perm: ["staffcpd.view"], icon: NotebookPen, keywords: ["cpd", "continuous professional development", "in-service training", "workshop", "points", "verify", "certificate"] },
+  { id: "pg-cpd-board", label: "CPD Points Board", section: S.people, module: "staffcpd", target: { tab: "board" }, perm: ["staffcpd.view"], icon: Target, keywords: ["cpd points", "target", "cycle", "mandatory", "rank based", "recommended", "on track"] },
+  // GES EMIS annual return (wave 58 — the school census)
+  { id: "pg-emis-preview", label: "EMIS Census Preview", section: S.system, module: "emis", target: { tab: "preview" }, perm: ["emis.manage"], icon: FileSpreadsheet, keywords: ["emis", "census", "annual return", "ges", "enrolment statistics", "school data", "filing"] },
+  { id: "pg-emis-archive", label: "EMIS Archive", section: S.system, module: "emis", target: { tab: "archive" }, perm: ["emis.manage"], icon: FileSpreadsheet, keywords: ["filed returns", "census history", "emis archive", "snapshot"] },
   { id: "pg-library", label: "Library", section: S.academic, module: "library", perm: ["library.view"], icon: BookOpen, keywords: ["books", "catalogue", "borrow", "return"] },
 
   // ── Finance & Communication ──
