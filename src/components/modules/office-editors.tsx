@@ -68,7 +68,10 @@ function useAutosave(file: OfficeFileLike, build: () => string, onSaved?: () => 
     dirtyRef.current = true;
     onDirtyChange?.(true);
     if (timerRef.current) window.clearTimeout(timerRef.current);
-    timerRef.current = window.setTimeout(() => void doSave(), delay);
+    // latest.current.doSave (not the closure's doSave) — state updates are
+    // async, so the doSave captured in THIS render would build stale content
+    // for the very edit that scheduled the save (wave 60 fix).
+    timerRef.current = window.setTimeout(() => void latest.current.doSave(), delay);
   };
 
   const latest = useRef({ doSave });
@@ -695,7 +698,10 @@ function DocEditor({ file, onSaved, onDirtyChange }: EditorProps) {
       {/* ── insert table dialog ── */}
       <Dialog open={tableOpen} onOpenChange={setTableOpen}>
         <DialogContent className="sm:max-w-xs">
-          <DialogHeader><DialogTitle>Insert a table</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Insert a table</DialogTitle>
+            <DialogDescription>Drops a bordered table at the cursor — type into the cells directly.</DialogDescription>
+          </DialogHeader>
           <div className="grid grid-cols-2 gap-3 py-1">
             <div>
               <Label className="text-xs">Rows</Label>

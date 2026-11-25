@@ -120,6 +120,16 @@ for i in $(seq 1 40); do
 done
 case "$code" in 200) SERVER=up ;; *) SERVER="down($code)"; tail -5 dev.log 2>/dev/null ;; esac
 
+# --- 6. persistent watchdog loop (wave 60) --------------------------------------------
+# The Turbopack dev server gets OOM-killed (~2.2 GB on this 4 GB sandbox) after
+# ~30-40 min of active compilation. This tiny loop revives it within 2 minutes
+# and survives the kills itself (the OOM killer only targets the big process).
+chmod +x "$ROOT/.zscripts/watchdog-loop.sh" 2>/dev/null || true
+if ! pgrep -f "watchdog-loop.sh" >/dev/null 2>&1; then
+  setsid nohup bash "$ROOT/.zscripts/watchdog-loop.sh" >/dev/null 2>&1 &
+  echo "watchdog loop started"
+fi
+
 echo "REPORT $(date '+%F %T') PG=$PG DEPS=$DEPS SEEDED=$SEEDED BK=$BK COMMIT=$COMMIT PUSH=$PUSH LOCAL=$LOCAL ORIGIN=$ORIGIN SERVER=$SERVER"
 if [ "$PG" = "up" ] && [ "$SERVER" = "up" ] && [ "$LOCAL" = "$ORIGIN" ]; then
   echo "=== safety-net OK ==="
