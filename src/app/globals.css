@@ -359,7 +359,41 @@ input[type="url"], input[type="search"], input[type="password"], textarea { curs
   border-right-width: 4px;
   border-right-color: var(--stat-accent, var(--theme-primary));
   border-radius: 0.75rem;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+  transition: border-color 0.15s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
-.stat-card:hover { box-shadow: 0 3px 10px color-mix(in srgb, var(--stat-accent, var(--theme-primary)) 22%, transparent); }
+.stat-card:hover {
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--stat-accent, var(--theme-primary)) 24%, transparent);
+  transform: translateY(-2px);
+}
 .stat-card [data-slot="card-content"] { padding-inline: 1rem !important; }
+
+/* ── wave 61 — app-wide modern feel ─────────────────────────────
+   Smooth scrolling, a consistent focus ring for keyboard users,
+   tactile button presses, gentle table-row feedback and a global
+   reduced-motion escape hatch (framer-motion checks its own flag;
+   this covers everything CSS drives). */
+html { scroll-behavior: smooth; }
+
+:focus-visible {
+  outline: 2px solid var(--ring, var(--theme-primary));
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* tactile presses — buttons feel physical instead of dead */
+[data-slot="button"]:active:not(:disabled) { transform: scale(0.975); }
+[data-slot="button"] { transition: transform 0.08s ease, background-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease; }
+
+/* table rows breathe — hover feedback on every data table */
+table tbody tr { transition: background-color 0.12s ease; }
+table tbody tr:hover { background: color-mix(in srgb, var(--theme-primary) 3.5%, transparent); }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .stat-card:hover { transform: none; }
+}

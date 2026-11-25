@@ -9,11 +9,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { STATUS_COLORS } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Filter, Search, X } from "lucide-react";
+import { CountUp } from "@/components/motion";
 
 /* CI3 stat-tile parity: compact card with a coloured right rail (wave 11 —
    "make all the cards like the second row with a touch of coloured right
    border"). The rail hue follows the card tone; the theme rail defaults to
-   the school's primary colour. */
+   the school's primary colour. wave 61 — numeric values count up on mount
+   and the card lifts gently on hover. */
 export function StatCard({ icon, label, value, sub, tone = "default" }: { icon?: ReactNode; label: string; value: ReactNode; sub?: ReactNode; tone?: "default" | "primary" | "gold" | "danger" }) {
   const tones = {
     default: { value: "text-foreground", rail: "color-mix(in srgb, var(--theme-primary) 55%, var(--border))" },
@@ -29,7 +31,9 @@ export function StatCard({ icon, label, value, sub, tone = "default" }: { icon?:
           <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</span>
           {icon && <span className="text-muted-foreground">{icon}</span>}
         </div>
-        <div className={cn("mt-1.5 text-2xl font-bold tabular-nums", t.value)}>{value}</div>
+        <div className={cn("mt-1.5 text-2xl font-bold tabular-nums", t.value)}>
+          {typeof value === "number" && Number.isFinite(value) ? <CountUp value={value} /> : value}
+        </div>
         {sub && <div className="mt-0.5 text-[11px] text-muted-foreground">{sub}</div>}
       </CardContent>
     </Card>

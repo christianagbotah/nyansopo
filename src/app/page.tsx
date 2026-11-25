@@ -14,6 +14,10 @@ const DEEPLINK_MODULES = [
   "reports", "results", "exams", "branches", "ai", "association", "settings", "daily", "transport",
   "payroll", "inventory", "finance", "classes", "library", "rbac", "cashier",
   "conductor", "staffhub", "portal", "campus", "sms", "accounts", "messages",
+  // wave 61 — deep links now cover every module page in the index
+  "siren", "office", "waec", "staffcpd", "emis", "health", "clubs", "discipline",
+  "staffduty", "frontoffice", "certificates", "audit", "sync", "website", "curriculum",
+  "momo", "budget", "boarding",
 ];
 
 export default function Home() {

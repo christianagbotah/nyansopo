@@ -3407,23 +3407,36 @@ model SiteContactMessage {
   @@index([schoolId, createdAt])
 }
 
-// ── wave 55 — school siren & bell management ──
+// ── wave 55 — school siren & bell management · wave 61 Siren Pro ──
 // The electronic substitute for the hand bell: timetabled rings (assembly,
 // change of lesson, break, closing) plus a live console for manual rings —
 // with a full firing history. Schedules fire from any open console client.
+// wave 61 adds the features schools buy standalone bell systems for:
+//   • day PROFILES — separate Normal / Exam / Event day timetables, one-tap switch
+//   • ZONES — tag rings to campus areas; each console device picks its zone
+//   • per-ring VOLUME and FADE-IN (gentle starts for assemblies)
+//   • PERIOD BELLS — repeat every N minutes until an end time
+//   • vacation awareness — rings can auto-pause outside the active term
 model SirenSchedule {
-  id          String   @id @default(cuid())
-  schoolId    String
-  school      School   @relation(fields: [schoolId], references: [id])
-  label       String   // e.g. "Morning assembly", "End of break"
-  time        String   // "HH:MM" 24-hour
-  daysJson    String   @default("[1,2,3,4,5]") // weekday indices 0=Sun..6=Sat
-  sound       String   @default("BELL") // BELL | SIREN | CHIME | KLAXON | BUGLE
-  durationSec Int      @default(10)
-  enabled     Boolean  @default(true)
-  note        String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id             String   @id @default(cuid())
+  schoolId       String
+  school         School   @relation(fields: [schoolId], references: [id])
+  label          String   // e.g. "Morning assembly", "End of break"
+  time           String   // "HH:MM" 24-hour
+  daysJson       String   @default("[1,2,3,4,5]") // weekday indices 0=Sun..6=Sat
+  sound          String   @default("BELL") // BELL | SIREN | CHIME | KLAXON | BUGLE | "CUSTOM:<toneId>"
+  durationSec    Int      @default(10)
+  enabled        Boolean  @default(true)
+  profile        String   @default("Normal Day") // day-profile grouping (Normal Day | Exam Day | …)
+  zone           String   @default("All Campus") // campus zone the ring targets
+  volume         Int      @default(100) // 10..100 — ring loudness on this device
+  fadeIn         Int      @default(0) // 0..5 seconds gentle ramp-up
+  repeatEveryMin Int?     // period bells: repeat every N minutes from `time`
+  endTime        String?  // "HH:MM" — last repeat occurrence (with repeatEveryMin)
+  skipVacation   Boolean  @default(true) // auto-pause outside the active term
+  note           String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   @@index([schoolId, time])
 }
@@ -3436,7 +3449,7 @@ model SirenEvent {
   label       String
   sound       String
   durationSec Int
-  kind        String   @default("MANUAL") // MANUAL | SCHEDULED | TEST
+  kind        String   @default("MANUAL") // MANUAL | SCHEDULED | TEST | ANNOUNCEMENT
   byName      String
   byRole      String?
   note        String?

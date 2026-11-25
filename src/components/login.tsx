@@ -1,10 +1,11 @@
 "use client";
 import { useState } from "react";
+import { motion, MotionConfig, useReducedMotion, type Variants } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { BrandWord, KenteStrip } from "@/components/brand";
+import { BrandWord, KenteStrip, LogoMark } from "@/components/brand";
 import { useStore, ROLE_LABELS, ModuleId } from "@/lib/store";
 import { apiGet, apiPost } from "@/lib/api";
 import { toast } from "@/hooks/use-toast";
@@ -52,8 +53,20 @@ const QUICK_GROUPS: { group: string; accounts: { email: string; who: string }[] 
   },
 ];
 
+// transform/opacity-only motion — every reveal is a soft rise
+const fadeRise: Variants = {
+  hidden: { opacity: 0, y: 10 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: "easeOut" } },
+};
+
+const panelStagger: Variants = {
+  hidden: {},
+  visible: { transition: { staggerChildren: 0.08, delayChildren: 0.1 } },
+};
+
 export function Login() {
   const { setSession, setSchools, setScreen } = useStore();
+  const prefersReduced = useReducedMotion();
   const [email, setEmail] = useState("super@nyansapo.gh");
   const [password, setPassword] = useState("nyansapo");
   const [busy, setBusy] = useState(false);
@@ -78,33 +91,41 @@ export function Login() {
   }
 
   return (
+    <MotionConfig reducedMotion="user">
     <div className="min-h-screen grid lg:grid-cols-2">
       {/* left panel */}
       <div className="hidden lg:flex flex-col adinkra-bg text-white p-10 relative overflow-hidden">
-        <BrandWord className="[&_span]:text-white" />
-        <div className="my-auto max-w-md">
-          <h1 className="text-3xl font-bold leading-snug">One login. <span className="text-[#e5b83b]">The whole ecosystem.</span></h1>
-          <p className="mt-4 text-white/80 leading-relaxed">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.88, y: -6 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          transition={{ type: "spring", stiffness: 300, damping: 22 }}
+          className="origin-left"
+        >
+          <BrandWord className="[&_span]:text-white" />
+        </motion.div>
+        <motion.div variants={panelStagger} initial="hidden" animate="visible" className="my-auto max-w-md">
+          <motion.h1 variants={fadeRise} className="text-3xl font-bold leading-snug">One login. <span className="text-[#e5b83b]">The whole ecosystem.</span></motion.h1>
+          <motion.p variants={fadeRise} className="mt-4 text-white/80 leading-relaxed">
             Five admin levels — Super Admin, Administrator, Accountant, Cashier, Bus Conductor — plus teachers,
             non-teaching staff, librarians, parents and learners. Every portal is permission-based: you see exactly
             what your role allows, nothing more.
-          </p>
+          </motion.p>
           <div className="mt-8 space-y-3">
             {[
               { icon: ShieldCheck, t: "Level-based RBAC", d: "iEduPro-style admin ladder with per-user permission overrides." },
               { icon: Users, t: "A portal for everyone", d: "Library circulation, bus manifests, payslips, fee statements — scoped to each account." },
               { icon: KeyRound, t: "Nyansapo Index", d: "Every learner gets a national index that follows them school to school." },
             ].map((x) => (
-              <div key={x.t} className="flex gap-3 items-start rounded-xl bg-white/10 border border-white/15 p-3">
+              <motion.div key={x.t} variants={fadeRise} className="flex gap-3 items-start rounded-xl bg-white/10 border border-white/15 p-3">
                 <x.icon className="size-5 text-[#e5b83b] mt-0.5" />
                 <div>
                   <div className="text-sm font-medium">{x.t}</div>
                   <div className="text-xs text-white/70">{x.d}</div>
                 </div>
-              </div>
+              </motion.div>
             ))}
           </div>
-        </div>
+        </motion.div>
         <div className="text-xs text-white/50">Demo environment · seeded with realistic Ghanaian data</div>
       </div>
 
@@ -115,9 +136,23 @@ export function Login() {
           <span className="text-xs text-muted-foreground">All demo passwords: <code className="bg-muted px-1.5 py-0.5 rounded">nyansapo</code></span>
         </div>
         <div className="flex-1 flex items-center justify-center p-6 pt-0">
-          <Card className="w-full max-w-md">
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, ease: "easeOut" }}
+            className="w-full max-w-md"
+          >
+          <Card>
             <KenteStrip className="rounded-t-lg" />
             <CardHeader>
+              <motion.div
+                initial={{ opacity: 0, scale: 0.6 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ type: "spring", stiffness: 320, damping: 20, delay: 0.15 }}
+                className="pb-1"
+              >
+                <LogoMark size={44} />
+              </motion.div>
               <CardTitle>Sign in to Nyansapo</CardTitle>
               <CardDescription>Choose a demo account or enter credentials.</CardDescription>
             </CardHeader>
@@ -137,9 +172,14 @@ export function Login() {
                 <div className="absolute inset-0 flex items-center"><span className="w-full border-t" /></div>
                 <div className="relative flex justify-center text-xs uppercase"><span className="bg-card px-2 text-muted-foreground">One-click demo portals</span></div>
               </div>
-              <div className="max-h-80 overflow-y-auto nice-scroll pr-1 space-y-3">
+              <motion.div
+                initial="hidden"
+                animate="visible"
+                variants={{ hidden: {}, visible: { transition: { staggerChildren: 0.06, delayChildren: prefersReduced ? 0 : 0.3 } } }}
+                className="max-h-80 overflow-y-auto nice-scroll pr-1 space-y-3"
+              >
                 {QUICK_GROUPS.map((g) => (
-                  <div key={g.group}>
+                  <motion.div key={g.group} variants={fadeRise}>
                     <div className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">{g.group}</div>
                     <div className="space-y-1.5">
                       {g.accounts.map((q) => (
@@ -154,13 +194,15 @@ export function Login() {
                         </button>
                       ))}
                     </div>
-                  </div>
+                  </motion.div>
                 ))}
-              </div>
+              </motion.div>
             </CardContent>
           </Card>
+          </motion.div>
         </div>
       </div>
     </div>
+    </MotionConfig>
   );
 }

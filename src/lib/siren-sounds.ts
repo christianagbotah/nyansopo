@@ -1,4 +1,4 @@
-// ── Siren & bell sound engine (wave 55 · wave 60 custom tones) ──
+// ── Siren & bell sound engine (wave 55 · wave 60 custom tones · wave 61 Pro) ──
 // School-bell sounds synthesised live in the browser with the Web Audio API —
 // no audio files to host, every console (front desk, staff room, head's
 // office) can ring them. Used by the Siren module's live console and by the
@@ -8,11 +8,20 @@
 // recorded hand bell, gospel track …). They are stored per school as bytes
 // and referenced with the "CUSTOM:<toneId>" sound id; playTone() streams the
 // bytes and loops them for the ring duration, stoppable like any synth sound.
+//
+// wave 61 — per-ring VOLUME and FADE-IN (the features standalone bell
+// systems sell): every play entry point accepts { volume, fadeInSec } so
+// assemblies can start gently and exam sirens can run at full wail.
 
 export type SirenSound = "BELL" | "SIREN" | "CHIME" | "KLAXON" | "BUGLE";
 export const CUSTOM_PREFIX = "CUSTOM:";
 export const isCustomToneId = (sound: string): boolean => sound.startsWith(CUSTOM_PREFIX);
 export const customToneKey = (sound: string): string => sound.slice(CUSTOM_PREFIX.length);
+
+/** Playback options — volume 10..100 (default 100), fadeInSec 0..5 gentle ramp-up. */
+export type PlayOpts = { volume?: number; fadeInSec?: number };
+const clampVol = (v: unknown) => (Number.isFinite(Number(v)) ? Math.min(100, Math.max(10, Number(v))) : 100);
+const clampFade = (v: unknown) => (Number.isFinite(Number(v)) ? Math.min(5, Math.max(0, Number(v))) : 0);
 
 export const SIREN_SOUNDS: { id: SirenSound; label: string; hint: string }[] = [
   { id: "BELL", label: "School bell", hint: "Classic hand-bell ring — change of lesson, breaks" },
@@ -48,11 +57,18 @@ function stopAllInternal() {
  * Play a synthesised school sound for `durationSec` seconds.
  * Returns a stop() handle. Safe to call repeatedly — previous sounds stop first.
  */
-export function playSirenSound(sound: SirenSound, durationSec = 10): () => void {
+export function playSirenSound(sound: SirenSound, durationSec = 10, opts: PlayOpts = {}): () => void {
   stopAllInternal();
   const ac = audioCtx();
   const master = ac.createGain();
-  master.gain.value = 0.9;
+  const target = 0.9 * (clampVol(opts.volume) / 100);
+  const fade = clampFade(opts.fadeInSec);
+  master.gain.value = target;
+  if (fade > 0) {
+    // gentle start — ramp from silence so assemblies don't jolt the compound
+    master.gain.setValueAtTime(0.0001, ac.currentTime);
+    master.gain.linearRampToValueAtTime(target, ac.currentTime + fade);
+  }
   master.connect(ac.destination);
   active.master = master;
   const t0 = ac.currentTime;
@@ -123,32 +139,39 @@ export const sirenSoundLabel = (id: string, tones: { id: string; label: string }
  * CUSTOM:<id> sound id; built-in sounds fall through to the synthesiser so
  * callers have one entry point. Returns a stop handle.
  */
-export async function playSchoolSound(sound: string, durationSec = 10, fetchBytes?: (toneId: string) => Promise<ArrayBuffer>): Promise<() => void> {
+export async function playSchoolSound(sound: string, durationSec = 10, fetchBytes?: (toneId: string) => Promise<ArrayBuffer>, opts: PlayOpts = {}): Promise<() => void> {
   if (isCustomToneId(sound) && fetchBytes) {
     try {
       const buf = await fetchBytes(customToneKey(sound));
-      return playToneBuffer(buf, durationSec);
+      return playToneBuffer(buf, durationSec, opts);
     } catch {
       // tone missing / unreadable → fall back to the classic bell so a
       // timetabled ring never silently fails
-      return playSirenSound("BELL", durationSec);
+      return playSirenSound("BELL", durationSec, opts);
     }
   }
-  return playSirenSound(sound as SirenSound, durationSec);
+  return playSirenSound(sound as SirenSound, durationSec, opts);
 }
 
 /** Decode uploaded audio and loop it for `durationSec` seconds. */
-export function playToneBuffer(buffer: ArrayBuffer, durationSec = 10): () => void {
+export function playToneBuffer(buffer: ArrayBuffer, durationSec = 10, opts: PlayOpts = {}): () => void {
   stopAllInternal();
   const ac = audioCtx();
   const master = ac.createGain();
-  master.gain.value = 0.95;
+  const target = 0.95 * (clampVol(opts.volume) / 100);
+  const fade = clampFade(opts.fadeInSec);
+  const dur = Math.max(1, durationSec);
+  master.gain.value = target;
   master.connect(ac.destination);
   active.master = master;
 
+  if (fade > 0) {
+    master.gain.setValueAtTime(0.0001, ac.currentTime);
+    master.gain.linearRampToValueAtTime(target, ac.currentTime + fade);
+  }
   // fade the tail out so a cut-off song doesn't click
-  master.gain.setValueAtTime(0.95, ac.currentTime + Math.max(1, durationSec) - 0.4);
-  master.gain.linearRampToValueAtTime(0.0001, ac.currentTime + Math.max(1, durationSec));
+  master.gain.setValueAtTime(target, ac.currentTime + dur - 0.4);
+  master.gain.linearRampToValueAtTime(0.0001, ac.currentTime + dur);
 
   const stop = () => stopAllInternal();
   ac.decodeAudioData(buffer).then((decoded) => {
@@ -159,7 +182,7 @@ export function playToneBuffer(buffer: ArrayBuffer, durationSec = 10): () => voi
     src.connect(master);
     src.start();
     active.nodes.push(src);
-    const timer = window.setTimeout(stop, Math.max(1, durationSec) * 1000);
+    const timer = window.setTimeout(stop, dur * 1000);
     active.timers.push(timer);
   }).catch(() => { /* unreadable audio — silent */ });
   return stop;

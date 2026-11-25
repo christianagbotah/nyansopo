@@ -3,13 +3,18 @@ import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
 import { audit } from "@/lib/audit";
 
-// ── School siren & bell management (wave 55 · wave 60 custom tones) ──
+// ── School siren & bell management (wave 55 · 60 custom tones · 61 Siren Pro) ──
 // Timetabled rings (assembly, change of lesson, break, closing) plus a live
 // console for manual / emergency rings, with a full firing history. Built-in
-// sounds are synthesised in the browser (Web Audio); wave 60 adds UPLOADED
-// TONES — the school's own songs / sounds, stored as bytes and referenced
-// with the "CUSTOM:<toneId>" sound id from the console, the timetable and
-// the ticker.
+// sounds are synthesised in the browser (Web Audio); wave 60 added UPLOADED
+// TONES ("CUSTOM:<toneId>"). wave 61 rounds it into a system schools will
+// drop a standalone bell box for:
+//   • day PROFILES — Normal / Exam / Event day timetables, one-tap activate
+//   • ZONES — tag rings to campus areas; each device picks the zone it serves
+//   • per-ring VOLUME + FADE-IN, PERIOD BELLS (repeat every N minutes)
+//   • vacation awareness — rings can auto-pause outside the active term
+//   • PA announcements (spoken + logged) and AI helpers: build a timetable
+//     from a plain-English description, polish announcements, ring insights
 //
 // Scheduled rings are fired by any open console client (front-desk machine);
 // the server de-duplicates SCHEDULED fires per schedule+minute so several
@@ -61,7 +66,92 @@ const optStr = (v: unknown, max = 300): string | null => {
   return t.length ? t.slice(0, max) : null;
 };
 
+/** profile / zone names — printable, short, single-line. */
+const name40 = (v: unknown, fallback: string): string => optStr(v, 40)?.replace(/[\r\n]/g, " ") ?? fallback;
+
+const clampVolume = (v: unknown): number => {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) ? Math.min(100, Math.max(10, n)) : 100;
+};
+const clampFadeIn = (v: unknown): number => {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) ? Math.min(5, Math.max(0, n)) : 0;
+};
+/** period-bell repeat interval — 5..120 minutes or null. */
+const parseRepeat = (v: unknown): number | null => {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) && n >= 5 && n <= 120 ? n : null;
+};
+
 const TONE_COLS = { id: true, label: true, mimeType: true, sizeBytes: true, durationSec: true, createdByName: true, createdAt: true };
+const SETTING_PROFILE = "siren.activeProfile";
+const SETTING_PROFILES = "siren.profiles";
+const SETTING_ZONES = "siren.zones";
+const DEFAULT_ZONES = ["All Campus", "KG & Creche Block", "Primary Block", "JHS Block", "Administration"];
+
+/** KV read/write for siren settings (active profile, campus zones). */
+async function getSetting(schoolId: string, key: string): Promise<string | null> {
+  const row = await db.schoolSetting.findUnique({ where: { schoolId_key: { schoolId, key } }, select: { value: true } });
+  return row?.value ?? null;
+}
+async function putSetting(schoolId: string, key: string, value: string) {
+  await db.schoolSetting.upsert({
+    where: { schoolId_key: { schoolId, key } },
+    create: { schoolId, key, value },
+    update: { value },
+  });
+}
+
+async function readZones(schoolId: string): Promise<string[]> {
+  try {
+    const raw = await getSetting(schoolId, SETTING_ZONES);
+    const arr = raw ? (JSON.parse(raw) as unknown) : null;
+    if (Array.isArray(arr)) {
+      const zones = arr.map((z) => String(z).trim().slice(0, 40)).filter(Boolean);
+      if (zones.length) return ["All Campus", ...zones.filter((z) => z !== "All Campus")];
+    }
+  } catch { /* fall through to defaults */ }
+  return DEFAULT_ZONES;
+}
+
+async function readActiveProfile(schoolId: string, schedules: { profile: string }[]): Promise<string> {
+  const saved = optStr(await getSetting(schoolId, SETTING_PROFILE), 40);
+  if (saved) return saved;
+  return schedules[0]?.profile ?? "Normal Day";
+}
+
+/** Saved custom day-profiles (persisted even while empty) + defaults + any profile in use. */
+async function readProfiles(schoolId: string, schedules: { profile: string }[]): Promise<string[]> {
+  const raw = await getSetting(schoolId, SETTING_PROFILES);
+  let saved: string[] = [];
+  try { const arr = raw ? JSON.parse(raw) : []; if (Array.isArray(arr)) saved = arr.map((p) => name40(p, "")).filter(Boolean); } catch { /* defaults */ }
+  return [...new Set(["Normal Day", "Exam Day", ...saved, ...schedules.map((s) => s.profile)])];
+}
+async function putProfiles(schoolId: string, profiles: string[]) {
+  await putSetting(schoolId, SETTING_PROFILES, JSON.stringify([...new Set(profiles)].slice(0, 12)));
+}
+
+/** Today inside the active term? (vacation awareness for skipVacation rings). */
+async function termStatus(schoolId: string): Promise<{ inTerm: boolean; termName: string | null }> {
+  const term = await db.term.findFirst({
+    where: { isCurrent: true, academicYear: { schoolId } },
+    select: { name: true, startsAt: true, endsAt: true },
+  });
+  if (!term) return { inTerm: false, termName: null };
+  const now = new Date();
+  return { inTerm: now >= term.startsAt && now <= term.endsAt, termName: term.name };
+}
+
+/** Expand a schedule into its occurrence minutes for one day (period bells). */
+function occurrencesOf(s: { time: string; repeatEveryMin: number | null; endTime: string | null }): number[] {
+  const start = Number(s.time.slice(0, 2)) * 60 + Number(s.time.slice(3, 5));
+  const rep = s.repeatEveryMin;
+  if (!rep) return [start];
+  const limit = s.endTime && isTime(s.endTime) ? Number(s.endTime.slice(0, 2)) * 60 + Number(s.endTime.slice(3, 5)) : 24 * 60 - 1;
+  const out: number[] = [];
+  for (let m = start; m <= limit && out.length < 60; m += rep) out.push(m);
+  return out;
+}
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: schoolId } = await params;
@@ -85,21 +175,25 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     });
   }
 
-  const [schedules, events, tones] = await Promise.all([
+  const [schedules, events, tones, zones, term] = await Promise.all([
     db.sirenSchedule.findMany({ where: { schoolId }, orderBy: { time: "asc" } }),
     db.sirenEvent.findMany({ where: { schoolId }, orderBy: { createdAt: "desc" }, take: 120 }),
     db.sirenTone.findMany({ where: { schoolId }, orderBy: { createdAt: "desc" }, select: TONE_COLS }),
+    readZones(schoolId),
+    termStatus(schoolId),
   ]);
+  const activeProfile = await readActiveProfile(schoolId, schedules);
+  const profiles = await readProfiles(schoolId, schedules);
 
   const now = new Date();
   const minuteNow = now.getHours() * 60 + now.getMinutes();
   const todayIdx = now.getDay();
   const upcoming = schedules
     .filter((s) => {
-      if (!s.enabled) return false;
+      if (!s.enabled || s.profile !== activeProfile) return false;
       try { return (JSON.parse(s.daysJson) as number[]).includes(todayIdx); } catch { return false; }
     })
-    .map((s) => ({ id: s.id, label: s.label, time: s.time, sound: s.sound, mins: Number(s.time.slice(0, 2)) * 60 + Number(s.time.slice(3, 5)) }))
+    .flatMap((s) => occurrencesOf(s).map((m) => ({ id: s.id, label: s.label, time: s.time, sound: s.sound, mins: m })))
     .filter((s) => s.mins >= minuteNow)
     .sort((a, b) => a.mins - b.mins);
 
@@ -108,6 +202,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     schedules: schedules.map((s) => ({ ...s, days: parseDays(s.daysJson), daysJson: undefined })),
     events,
     tones,
+    activeProfile,
+    profiles,
+    zones,
+    term: { inTerm: term.inTerm, name: term.termName },
     stats: {
       totalSchedules: schedules.length,
       enabledSchedules: schedules.filter((s) => s.enabled).length,
@@ -176,6 +274,49 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ ok: true });
   }
 
+  // ── zones.save ── manage the campus zone list (speaker groups)
+  if (action === "zones.save") {
+    const arr = Array.isArray(body.zones) ? body.zones : [];
+    const zones = [...new Set(arr.map((z: unknown) => name40(z, "")).filter(Boolean))].slice(0, 12) as string[];
+    if (!zones.length) return bad("Give the campus at least one zone");
+    const list = ["All Campus", ...zones.filter((z) => z !== "All Campus")];
+    await putSetting(schoolId, SETTING_ZONES, JSON.stringify(list));
+    await audit({ schoolId, actor, action: "UPDATE", entityType: "SchoolSetting", entityId: SETTING_ZONES, entityLabel: "Siren zones", summary: `Siren campus zones updated: ${list.join(", ")}`, req });
+    return NextResponse.json({ ok: true, zones: list });
+  }
+
+  // ── profile.activate ── one-tap switch of the running day profile
+  if (action === "profile.activate") {
+    const profile = name40(body.profile, "");
+    if (!profile) return bad("A profile name is required");
+    await putSetting(schoolId, SETTING_PROFILE, profile);
+    await audit({ schoolId, actor, action: "UPDATE", entityType: "SchoolSetting", entityId: SETTING_PROFILE, entityLabel: "Siren active profile", summary: `Siren day profile activated: ${profile}`, req });
+    return NextResponse.json({ ok: true, activeProfile: profile });
+  }
+
+  // ── profile.create / profile.remove ── persist custom day-profiles
+  if (action === "profile.create" || action === "profile.remove") {
+    const schedules = await db.sirenSchedule.findMany({ where: { schoolId }, select: { profile: true } });
+    const current = await readProfiles(schoolId, schedules);
+    if (action === "profile.create") {
+      const profile = name40(body.profile, "");
+      if (!profile) return bad("A profile name is required");
+      if (["Normal Day", "Exam Day"].includes(profile) || current.includes(profile)) return bad("That profile already exists");
+      await putProfiles(schoolId, [...current, profile]);
+      await audit({ schoolId, actor, action: "CREATE", entityType: "SchoolSetting", entityId: SETTING_PROFILES, entityLabel: profile, summary: `Siren day profile created: ${profile}`, req });
+      return NextResponse.json({ ok: true, profile });
+    }
+    const profile = name40(body.profile, "");
+    if (["Normal Day", "Exam Day"].includes(profile)) return bad("The built-in profiles cannot be removed");
+    if (schedules.some((s) => s.profile === profile)) return bad("That profile still has rings on it — delete or move them first");
+    const saved = current.filter((p) => p !== profile);
+    await putProfiles(schoolId, saved);
+    const active = await readActiveProfile(schoolId, schedules);
+    if (active === profile) await putSetting(schoolId, SETTING_PROFILE, "Normal Day");
+    await audit({ schoolId, actor, action: "DELETE", entityType: "SchoolSetting", entityId: SETTING_PROFILES, entityLabel: profile, summary: `Siren day profile removed: ${profile}`, req });
+    return NextResponse.json({ ok: true });
+  }
+
   // ── schedule.save ── create or update a ring on the timetable
   if (action === "schedule.save") {
     const label = optStr(body.label, 80);
@@ -190,22 +331,68 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const durationSec = clampDuration(body.durationSec);
     const days = parseDays(body.days);
     const note = optStr(body.note, 300);
+    const profile = name40(body.profile, "Normal Day");
+    const zones = await readZones(schoolId);
+    const zone = zones.includes(String(body.zone)) ? String(body.zone) : "All Campus";
+    const volume = clampVolume(body.volume);
+    const fadeIn = clampFadeIn(body.fadeIn);
+    const repeatEveryMin = parseRepeat(body.repeatEveryMin);
+    const endTime = isTime(body.endTime) ? (body.endTime as string) : null;
+    const skipVacation = body.skipVacation === false ? false : true;
 
     if (body.id) {
       const existing = await db.sirenSchedule.findFirst({ where: { id: String(body.id), schoolId } });
       if (!existing) return bad("Schedule not found", 404);
       const row = await db.sirenSchedule.update({
         where: { id: existing.id },
-        data: { label, time: body.time, sound, durationSec, daysJson: JSON.stringify(days), note, enabled: body.enabled === false ? false : true },
+        data: { label, time: body.time, sound, durationSec, daysJson: JSON.stringify(days), note, profile, zone, volume, fadeIn, repeatEveryMin, endTime, skipVacation, enabled: body.enabled === false ? false : true },
       });
-      await audit({ schoolId, actor, action: "UPDATE", entityType: "SirenSchedule", entityId: row.id, entityLabel: label, summary: `Siren schedule updated: ${label} at ${row.time}`, req });
+      await audit({ schoolId, actor, action: "UPDATE", entityType: "SirenSchedule", entityId: row.id, entityLabel: label, summary: `Siren schedule updated: ${label} at ${row.time} (${profile})`, req });
       return NextResponse.json({ ok: true, schedule: row });
     }
     const row = await db.sirenSchedule.create({
-      data: { schoolId, label, time: body.time, sound, durationSec, daysJson: JSON.stringify(days), note, enabled: body.enabled === false ? false : true },
+      data: { schoolId, label, time: body.time, sound, durationSec, daysJson: JSON.stringify(days), note, profile, zone, volume, fadeIn, repeatEveryMin, endTime, skipVacation, enabled: body.enabled === false ? false : true },
     });
-    await audit({ schoolId, actor, action: "CREATE", entityType: "SirenSchedule", entityId: row.id, entityLabel: label, summary: `Siren schedule created: ${label} at ${row.time} (${await soundLabel(schoolId, sound)})`, req });
+    await audit({ schoolId, actor, action: "CREATE", entityType: "SirenSchedule", entityId: row.id, entityLabel: label, summary: `Siren schedule created: ${label} at ${row.time} (${profile}, ${await soundLabel(schoolId, sound)})`, req });
     return NextResponse.json({ ok: true, schedule: row });
+  }
+
+  // ── bulk.apply ── create many rings at once (AI timetable builder, presets).
+  // { rings: [{label,time,sound,durationSec,days,note?,repeatEveryMin?,endTime?,volume?,fadeIn?}], profile, replace? }
+  if (action === "bulk.apply") {
+    const profile = name40(body.profile, "Normal Day");
+    const rings = Array.isArray(body.rings) ? body.rings.slice(0, 40) : [];
+    if (!rings.length) return bad("No rings to add");
+    const tones = await db.sirenTone.findMany({ where: { schoolId }, select: { id: true } });
+    const toneIds = new Set(tones.map((t) => t.id));
+    const clean = rings
+      .map((r: any) => ({
+        label: optStr(r?.label, 80),
+        time: isTime(r?.time) ? r.time : null,
+        sound: isSound(r?.sound) ? r.sound : customToneId(r?.sound) && toneIds.has(customToneId(r?.sound)!) ? r.sound : null,
+        durationSec: clampDuration(r?.durationSec),
+        days: parseDays(r?.days),
+        note: optStr(r?.note, 300),
+        repeatEveryMin: parseRepeat(r?.repeatEveryMin),
+        endTime: isTime(r?.endTime) ? r.endTime : null,
+        volume: clampVolume(r?.volume),
+        fadeIn: clampFadeIn(r?.fadeIn),
+      }))
+      .filter((r: any) => r.label && r.time && r.sound);
+    if (!clean.length) return bad("None of the rings were valid — check the times and sounds");
+
+    const created = await db.$transaction(async (tx) => {
+      if (body.replace) await tx.sirenSchedule.deleteMany({ where: { schoolId, profile } });
+      const rows = [];
+      for (const r of clean) {
+        rows.push(await tx.sirenSchedule.create({
+          data: { schoolId, profile, label: r.label!, time: r.time!, sound: r.sound!, durationSec: r.durationSec, daysJson: JSON.stringify(r.days), note: r.note, repeatEveryMin: r.repeatEveryMin, endTime: r.endTime, volume: r.volume, fadeIn: r.fadeIn },
+        }));
+      }
+      return rows.length;
+    });
+    await audit({ schoolId, actor, action: "CREATE", entityType: "SirenSchedule", entityId: "bulk", entityLabel: profile, summary: `Siren timetable applied: ${created} rings on "${profile}"${body.replace ? " (replaced)" : ""}`, req });
+    return NextResponse.json({ ok: true, created });
   }
 
   // ── schedule.toggle ── enable/disable without editing
@@ -264,11 +451,150 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ ok: true, event: row });
   }
 
+  // ── announce ── log a spoken PA announcement (the browser speaks it)
+  if (action === "announce") {
+    const text = optStr(body.text, 600);
+    if (!text) return bad("Announcement text is required");
+    const row = await db.sirenEvent.create({
+      data: { schoolId, label: "PA announcement", sound: "VOICE", durationSec: Math.min(120, Math.max(5, Math.round(text.split(/\s+/).length / 2.2))), kind: "ANNOUNCEMENT", byName: actorName, byRole: actor.role, note: text },
+    });
+    await audit({ schoolId, actor, action: "CREATE", entityType: "SirenEvent", entityId: row.id, entityLabel: "PA announcement", summary: `PA announcement broadcast: "${text.slice(0, 120)}"`, req });
+    return NextResponse.json({ ok: true, event: row });
+  }
+
   // ── history.clear ── wipe the firing history (keeps schedules)
   if (action === "history.clear") {
     const gone = await db.sirenEvent.deleteMany({ where: { schoolId } });
     await audit({ schoolId, actor, action: "DELETE", entityType: "SirenEvent", entityId: "bulk", entityLabel: "Siren history", summary: `Siren firing history cleared (${gone.count} rows)`, req });
     return NextResponse.json({ ok: true, removed: gone.count });
+  }
+
+  /* ── AI: build a ring timetable from a plain-English description.
+     { prompt, profile? } → proposed rings for preview (nothing saved). ── */
+  if (action === "ai.timetable") {
+    const prompt = optStr(body.prompt, 1200);
+    if (!prompt) return bad("Describe the school day first (e.g. 'assembly 7:30, lessons 40 minutes, lunch 12:30, closing 14:30')");
+    const profile = name40(body.profile, "Normal Day");
+    const school = await db.school.findUnique({ where: { id: schoolId }, select: { name: true } });
+    const { default: ZAI } = await import("z-ai-web-dev-sdk");
+    const client = await ZAI.create();
+    const completion = await client.chat.completions.create({
+      messages: [
+        {
+          role: "system",
+          content: `You design bell timetables for Ghanaian basic schools. Convert the headteacher's description into ring rows. Sounds: BELL (change of lesson, breaks), CHIME (assembly, devotion), SIREN (closing, emergencies), KLAXON (attention), BUGLE (sports, cadets). Rules: times are "HH:MM" 24-hour; days are weekday numbers (0=Sun..6=Sat, school days usually [1,2,3,4,5]); durationSec 5..60; for repeating lesson periods emit ONE row with repeatEveryMin (5..120) and endTime "HH:MM" instead of many rows; volume 10..100 ( assemblies lower, closing full); fadeIn 0..5 (gentle start for assemblies/chapel). Keep labels short and Ghanaian ("Assembly", "Break", "Change of lesson", "Lunch break", "Closing"). Return STRICT JSON only: {"rings":[{"label":"","time":"","sound":"BELL","durationSec":10,"days":[1,2,3,4,5],"repeatEveryMin":null,"endTime":null,"volume":100,"fadeIn":0,"note":""}]} — no markdown fences.`,
+        },
+        { role: "user", content: `School: ${school?.name ?? "the school"}. Day profile: "${profile}". Description: ${prompt}` },
+      ],
+      thinking: { type: "disabled" },
+    });
+    let parsed: any = {};
+    const raw = (completion.choices[0]?.message?.content ?? "").replace(/```json|```/gi, "").trim();
+    try { parsed = JSON.parse(raw); } catch {
+      const first = raw.indexOf("{"), last = raw.lastIndexOf("}");
+      try { parsed = JSON.parse(raw.slice(first, last + 1)); } catch { parsed = {}; }
+    }
+    const rings = Array.isArray(parsed?.rings)
+      ? parsed.rings
+          .filter((r: any) => r && typeof r === "object" && isTime(r.time) && isAnySound(r.sound))
+          .slice(0, 40)
+          .map((r: any) => ({
+            label: optStr(r.label, 80) ?? "Ring",
+            time: r.time,
+            sound: String(r.sound),
+            durationSec: clampDuration(r.durationSec),
+            days: parseDays(r.days),
+            note: optStr(r.note, 300),
+            repeatEveryMin: parseRepeat(r.repeatEveryMin),
+            endTime: isTime(r.endTime) ? r.endTime : null,
+            volume: clampVolume(r.volume),
+            fadeIn: clampFadeIn(r.fadeIn),
+          }))
+      : [];
+    if (!rings.length) return bad("The AI could not read that description — try naming the times explicitly, e.g. 'assembly 7:30, break 10:00, closing 14:30'", 502);
+    return NextResponse.json({ ok: true, rings, profile });
+  }
+
+  /* ── AI: polish a PA announcement. { occasion, details } → { text } ── */
+  if (action === "ai.announce") {
+    const occasion = optStr(body.occasion, 60) ?? "general";
+    const details = optStr(body.details, 600) ?? "";
+    const school = await db.school.findUnique({ where: { id: schoolId }, select: { name: true } });
+    const { default: ZAI } = await import("z-ai-web-dev-sdk");
+    const client = await ZAI.create();
+    const completion = await client.chat.completions.create({
+      messages: [
+        {
+          role: "system",
+          content: `You write public-address (PA) announcements for a Ghanaian basic school. They are SPOKEN over the compound speakers by the siren console — so: 2-4 short sentences, simple warm English a child follows, no headings, no lists, no emoji, no quotes around the whole text. Address "teachers and learners" or "the whole school". Occasion: ${occasion}. Keep under 60 words. Return STRICT JSON only: {"text":"..."}.`,
+        },
+        { role: "user", content: `School: ${school?.name ?? "the school"}. Details to include: ${details || "(none — draft a suitable announcement)"}` },
+      ],
+      thinking: { type: "disabled" },
+    });
+    const raw = (completion.choices[0]?.message?.content ?? "").replace(/```json|```/gi, "").trim();
+    let text = "";
+    try { text = String(JSON.parse(raw).text ?? ""); } catch {
+      const first = raw.indexOf("{"), last = raw.lastIndexOf("}");
+      try { text = String(JSON.parse(raw.slice(first, last + 1)).text ?? ""); } catch { text = ""; }
+    }
+    if (!text.trim()) return bad("The AI could not draft that announcement — try again with a few more details", 502);
+    return NextResponse.json({ ok: true, text: text.trim().slice(0, 600) });
+  }
+
+  /* ── AI: ring reliability insights — computes missed rings for the last 7
+     days, then narrates. { } → { expected, fired, missed[], narrative, tips } ── */
+  if (action === "ai.insights") {
+    const since = new Date(Date.now() - 7 * 24 * 3600_000);
+    const [schedules, events] = await Promise.all([
+      db.sirenSchedule.findMany({ where: { schoolId, createdAt: { lte: new Date() } } }),
+      db.sirenEvent.findMany({ where: { schoolId, kind: "SCHEDULED", createdAt: { gte: since } }, select: { scheduleId: true, createdAt: true } }),
+    ]);
+    const firedByKey = new Set(events.map((e) => `${e.scheduleId}:${new Date(e.createdAt).toDateString()}:${Math.floor(new Date(e.createdAt).getHours() * 60 + new Date(e.createdAt).getMinutes() / 10)}`));
+    const missed: { date: string; time: string; label: string }[] = [];
+    let expected = 0, fired = 0;
+    for (let d = 0; d < 7; d++) {
+      const day = new Date(Date.now() - d * 24 * 3600_000);
+      const dayIdx = day.getDay();
+      for (const s of schedules) {
+        if (!s.enabled || s.skipVacation) continue; // vacation-skipped rings aren't "missed"
+        try { if (!(JSON.parse(s.daysJson) as number[]).includes(dayIdx)) continue; } catch { continue; }
+        for (const m of occurrencesOf(s)) {
+          expected++;
+          const hh = String(Math.floor(m / 60)).padStart(2, "0"), mm = String(m % 60).padStart(2, "0");
+          const key = `${s.id}:${day.toDateString()}:${Math.floor(m / 10)}`;
+          if (firedByKey.has(key)) fired++;
+          else if (d > 0 || m <= new Date().getHours() * 60 + new Date().getMinutes())
+            missed.push({ date: day.toISOString().slice(0, 10), time: `${hh}:${mm}`, label: s.label });
+        }
+      }
+    }
+    const missedTop = missed.slice(0, 12);
+    let narrative = "";
+    let tips: string[] = [];
+    try {
+      const { default: ZAI } = await import("z-ai-web-dev-sdk");
+      const client = await ZAI.create();
+      const completion = await client.chat.completions.create({
+        messages: [
+          {
+            role: "system",
+          content: `You are a school-operations advisor for Ghanaian basic schools. Given siren reliability data for the last 7 days, write a 2-3 sentence plain assessment of how the bell system is doing, then 2-4 short practical tips (keep a console open at the front desk, activate the right day profile, check zones, enable vacation skip…). Missed rings usually mean no console (front-desk machine) was open at that minute. Return STRICT JSON only: {"narrative":"...","tips":["...","..."]}.`,
+          },
+          { role: "user", content: JSON.stringify({ expected, fired, missedCount: missed.length, missed: missedTop }) },
+        ],
+        thinking: { type: "disabled" },
+      });
+      const raw = (completion.choices[0]?.message?.content ?? "").replace(/```json|```/gi, "").trim();
+      let parsed: any = {};
+      try { parsed = JSON.parse(raw); } catch {
+        const first = raw.indexOf("{"), last = raw.lastIndexOf("}");
+        try { parsed = JSON.parse(raw.slice(first, last + 1)); } catch { parsed = {}; }
+      }
+      narrative = typeof parsed.narrative === "string" ? parsed.narrative.slice(0, 500) : "";
+      if (Array.isArray(parsed.tips)) tips = parsed.tips.filter((t: unknown) => typeof t === "string" && t).slice(0, 4).map((t: string) => t.slice(0, 160));
+    } catch { /* narrative optional — computed stats still returned */ }
+    return NextResponse.json({ ok: true, expected, fired, missedCount: missed.length, missed: missedTop, narrative, tips });
   }
 
   return bad("Unknown action");

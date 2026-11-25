@@ -18,7 +18,7 @@ import {
   DatabaseBackup, PiggyBank, Award, Gavel, Ruler, Activity, Home as HomeIcon, Hospital, Thermometer,
   Trophy, Medal, BookUser, Footprints, Truck, AlarmClock, Target,
   DoorOpen, CalendarClock, PhoneCall, Mailbox, CalendarRange, BellRing, FileBadge, Stamp, Gauge, GitMerge, History,
-  Table2, Database, Globe, Newspaper, Image, Inbox, FileText, IdCard,
+  Table2, Database, Globe, Newspaper, Image, Inbox, FileText, IdCard, Megaphone,
 } from "lucide-react";
 
 export type PageEntry = {
@@ -89,10 +89,11 @@ export const PAGE_INDEX: PageEntry[] = [
   { id: "pg-website-pages", label: "Website — Pages", section: S.system, module: "website", target: { tab: "pages" }, perm: ["website.manage"], icon: FileText, keywords: ["about us", "terms", "privacy policy", "contact email", "static pages"] },
   { id: "pg-website-staff", label: "Website — Staff Showcase", section: S.system, module: "website", target: { tab: "staff" }, perm: ["website.manage"], icon: UsersRound, keywords: ["staff page", "teachers on website", "show staff", "profiles"] },
   { id: "pg-website-inbox", label: "Website — Contact Inbox", section: S.system, module: "website", target: { tab: "inbox" }, perm: ["website.manage"], icon: Inbox, keywords: ["contact form", "messages", "enquiries", "inbox", "admission enquiry"] },
-  // wave 55 — siren & bells
-  { id: "pg-siren-live", label: "Siren — Live Console", section: S.system, module: "siren", target: { tab: "live" }, perm: ["siren.manage"], icon: AlarmClock, keywords: ["siren", "bell", "ring", "assembly", "emergency", "alarm", "sound", "gong"] },
-  { id: "pg-siren-schedule", label: "Siren — Ring Timetable", section: S.system, module: "siren", target: { tab: "schedule" }, perm: ["siren.manage"], icon: CalendarClock, keywords: ["siren schedule", "bell timetable", "periods", "break", "closing time", "rings"] },
-  { id: "pg-siren-history", label: "Siren — Firing History", section: S.system, module: "siren", target: { tab: "history" }, perm: ["siren.manage"], icon: History, keywords: ["siren log", "bell history", "firings", "who rang"] },
+  // wave 55 — siren & bells · wave 61 Siren Pro
+  { id: "pg-siren-live", label: "Siren — Live Console", section: S.system, module: "siren", target: { tab: "live" }, perm: ["siren.manage"], icon: AlarmClock, keywords: ["siren", "bell", "ring", "assembly", "emergency", "alarm", "sound", "gong", "exam timer", "countdown"] },
+  { id: "pg-siren-schedule", label: "Siren — Ring Timetable", section: S.system, module: "siren", target: { tab: "schedule" }, perm: ["siren.manage"], icon: CalendarClock, keywords: ["siren schedule", "bell timetable", "periods", "break", "closing time", "rings", "day profile", "exam day", "normal day", "zones", "campus zones", "ai timetable"] },
+  { id: "pg-siren-pa", label: "Siren — PA Announcements", section: S.system, module: "siren", target: { tab: "live" }, perm: ["siren.manage"], icon: Megaphone, keywords: ["announcement", "public address", "pa system", "speak", "voice", "intercom", "early closing", "broadcast"] },
+  { id: "pg-siren-history", label: "Siren — Firing History", section: S.system, module: "siren", target: { tab: "history" }, perm: ["siren.manage"], icon: History, keywords: ["siren log", "bell history", "firings", "who rang", "reliability", "missed rings"] },
   // wave 56 — Nyansapo Office
   { id: "pg-office-files", label: "Office — My Files", section: S.system, module: "office", target: { tab: "all" }, perm: ["office.use"], icon: FileText, keywords: ["office", "documents", "word", "excel", "powerpoint", "type", "editor", "write", "spreadsheet", "slides", "presentation"] },
   { id: "pg-office-docs", label: "Office — Documents", section: S.system, module: "office", target: { tab: "DOC" }, perm: ["office.use"], icon: FileText, keywords: ["word processor", "letter", "report writing", "docs"] },

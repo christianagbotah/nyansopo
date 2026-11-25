@@ -22,6 +22,7 @@ import { NotificationBell } from "@/components/notification-bell";
 import { CommandPalette } from "@/components/command-palette";
 import { MetroMenu, MetroEdgeTrigger } from "@/components/metro-menu";
 import { PAGE_INDEX, type PageEntry } from "@/lib/page-index";
+import { PageTransition } from "@/components/motion";
 
 /* Wave 33 — modules lazy-load (next/dynamic): only the active module's chunk
    compiles in dev (the 4 GB sandbox OOM-killed next-server when the whole
@@ -230,14 +231,22 @@ function NavNode({ item, current, target, onSelect }: { item: NavItem; current: 
         onClick={() => (isPlainLink ? onSelect(item.id) : setOpen(!expanded))}
         aria-expanded={isPlainLink ? undefined : expanded}
         className={cn(
-          "w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-left",
+          "group relative w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all text-left",
           current === item.id && (!target || !item.children?.some((c) => c.target?.tab || c.target?.classroomId) || branchContainsActive === false && isPlainLink)
             ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm"
-            : "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
+            : "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground hover:translate-x-0.5",
           current === item.id && isPlainLink && "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm",
         )}
       >
-        <item.icon className="size-4.5 shrink-0" />
+        <span
+          aria-hidden
+          className={cn(
+            "absolute left-0 top-1/2 -translate-y-1/2 h-0 w-[3px] rounded-full transition-all duration-200",
+            current === item.id && isPlainLink ? "h-5 opacity-100" : "opacity-0 group-hover:h-3 group-hover:opacity-60",
+          )}
+          style={{ background: "linear-gradient(180deg, var(--theme-primary), var(--theme-accent))" }}
+        />
+        <item.icon className="size-4.5 shrink-0 transition-transform duration-200 group-hover:scale-110" />
         <span className="truncate">{item.label}</span>
         {item.id === "admissions" && <Badge className="ml-auto bg-red-600 text-[10px] px-1.5">demo</Badge>}
         {!isPlainLink && (
@@ -786,6 +795,10 @@ export function AppShell() {
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
+      {/* accessibility — keyboard users can jump straight to the module content */}
+      <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:z-[100] focus:top-2 focus:left-2 focus:rounded-md focus:bg-primary focus:text-primary-foreground focus:px-3 focus:py-2 focus:text-sm focus:shadow-lg">
+        Skip to main content
+      </a>
       {/* ── top bar ── */}
       <header className="theme-topbar sticky top-0 z-40 bg-card border-b border-border">
         <div className="h-14 px-3 sm:px-5 flex items-center gap-3">
@@ -1005,9 +1018,10 @@ export function AppShell() {
           )}
         </aside>
 
-        {/* module content — permission-guarded */}
-        <main className="flex-1 min-w-0 p-4 sm:p-6">
+        {/* module content — permission-guarded (wave 61: fades/rises in on every switch) */}
+        <main id="main-content" className="flex-1 min-w-0 p-4 sm:p-6">
           <div className="mx-auto max-w-7xl">
+            <PageTransition moduleKey={module}>
             {module === "association" && assocScope ? <AssociationPortal /> :
              module === "students" && show("students") ? <Students /> :
              module === "admissions" && show("admissions") ? <Admissions /> :
@@ -1066,6 +1080,7 @@ export function AppShell() {
                    First.id === "library" ? <LibraryPortal /> : <Dashboard />;
                })()
              ) : <Dashboard />}
+            </PageTransition>
           </div>
         </main>
       </div>
