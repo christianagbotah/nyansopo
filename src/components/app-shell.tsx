@@ -83,6 +83,7 @@ const SyncCenter = dynamic(() => import("@/components/modules/sync-center").then
 const Website = dynamic(() => import("@/components/modules/website").then((m: any) => m.Website), { loading: () => <ModuleSkeleton /> });
 const Siren = dynamic(() => import("@/components/modules/siren").then((m: any) => m.Siren), { loading: () => <ModuleSkeleton /> });
 const SirenTicker = dynamic(() => import("@/components/modules/siren").then((m: any) => m.SirenTicker), { ssr: false });
+const AiCopilot = dynamic(() => import("@/components/owner-assistant").then((m: any) => m.AiCopilot), { ssr: false });
 const Waec = dynamic(() => import("@/components/modules/waec").then((m: any) => m.Waec), { loading: () => <ModuleSkeleton /> });
 const StaffCpd = dynamic(() => import("@/components/modules/staff-cpd").then((m: any) => m.StaffCpd), { loading: () => <ModuleSkeleton /> });
 const Emis = dynamic(() => import("@/components/modules/emis").then((m: any) => m.Emis), { loading: () => <ModuleSkeleton /> });
@@ -91,7 +92,7 @@ import { applyThemeToDOM, type SchoolTheme } from "@/lib/theme";
 import { sortClassrooms } from "@/lib/classes";
 import {
   LayoutDashboard, Users, Banknote, CalendarCheck, ClipboardList, GraduationCap, ArrowLeftRight, Building2,
-  BrainCircuit, Settings as SettingsIcon, Landmark, Menu, CloudOff, Cloud, RefreshCcw, LogOut, Moon, Sun,
+  BrainCircuit, Settings as SettingsIcon, Landmark, Menu, CloudOff, Cloud, RefreshCcw, LogOut, Moon, Sun, Sparkles,
   Download, ChevronDown, ChevronRight, School, MessageSquareText, UtensilsCrossed, Bus, Smartphone, Calculator, Package, PieChart, LayoutList,
   BookOpen, ShieldCheck, Receipt, Route, UserRound, Home, Backpack, Laptop, BedDouble, NotebookPen, Search, LayoutGrid, SmartphoneNfc,
   QrCode, UserPlus, Printer, Wallet, BarChart3, CalendarDays, HandCoins, FileWarning, ListChecks, ScanLine, ClipboardPen, Percent,
@@ -927,6 +928,11 @@ export function AppShell() {
               </Button>
             )}
 
+            {/* wave 63 — Ask Nyansapo copilot (summons the floating panel) */}
+            <Button size="sm" variant="ghost" className="size-8 p-0" title="Ask Nyansapo — AI copilot" onClick={() => setAiOpen(true)}>
+              <Sparkles className="size-4.5 text-primary" />
+            </Button>
+
             {/* theme */}
             <Button size="sm" variant="ghost" className="size-8 p-0" onClick={toggleTheme} title="Toggle theme">
               {theme === "light" ? <Moon className="size-4.5" /> : <Sun className="size-4.5" />}
@@ -1097,6 +1103,10 @@ export function AppShell() {
       {/* wave 55 — the machine is the school bell: fire timetabled siren rings
           from any page while a siren-enabled user is signed in */}
       <SirenTicker schoolId={canAny(session?.permissions, ["siren.manage"]) ? currentSchoolId : null} />
+
+      {/* wave 63 — Ask Nyansapo: the school-wide AI copilot on every page
+          (open state lives in the store so any surface can summon it) */}
+      <AiCopilot />
 
       {/* Metro Start screen (iEduPro metro_menu parity) — colorful tile grid of
           every module the session may open, with live search. Conditionally

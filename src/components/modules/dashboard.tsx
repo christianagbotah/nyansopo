@@ -13,7 +13,6 @@ import { StatCard, ModuleHeader, LoadingBlock, SeverityBadge, StatusBadge, Empty
 import { fmtCedi, fmtDate, PAYMENT_LABELS, FLAG_LABELS, fmtDateShort } from "@/lib/format";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell } from "recharts";
 import { Banknote, CalendarCheck, Flag, TrendingUp, Users, AlertTriangle, ArrowLeftRight, Inbox, UtensilsCrossed, Calculator, Package, Smartphone, Bus, Droplets, BookOpen, Baby, UserPlus, ClipboardList, MessageSquareText, BellRing, HandCoins, PiggyBank, Receipt, LayoutList, Filter } from "lucide-react";
-import { OwnerAssistant } from "@/components/owner-assistant";
 
 type Dash = {
   school: any; year: { name: string } | null; term: any;
@@ -504,8 +503,7 @@ export function Dashboard() {
         />
       )}
 
-      {/* school-owner AI assistant — typed + voice */}
-      {!isTeacher && <OwnerAssistant />}
+      {/* Ask Nyansapo copilot now mounts globally in AppShell (wave 63) */}
     </div>
   );
 }
