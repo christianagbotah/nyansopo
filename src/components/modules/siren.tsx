@@ -25,19 +25,32 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { ModuleHeader, LoadingBlock, EmptyState, StatCard, FormGrid, FormField } from "@/components/ui-helpers";
 import { fmtDateTime } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
-import { DAY_NAMES, SIREN_SOUNDS, playSirenSound, sirenSoundLabel, type SirenSound } from "@/lib/siren-sounds";
+import { DAY_NAMES, SIREN_SOUNDS, playSchoolSound, sirenSoundLabel, CUSTOM_PREFIX, type SirenSound } from "@/lib/siren-sounds";
 import { cn } from "@/lib/utils";
+import { getHeaders } from "@/lib/api";
 import {
   AlarmClock, Bell, Siren as SirenIcon, History, Play, Square, Plus, Pencil, Trash2, Zap,
-  Clock3, CalendarDays, Volume2, TriangleAlert, CircleCheck, Timer,
+  Clock3, CalendarDays, Volume2, TriangleAlert, CircleCheck, Timer, Music, Upload, FileAudio, Loader2,
 } from "lucide-react";
 
 const OPS = "/ops/siren";
 const KIND_LABEL: Record<string, string> = { MANUAL: "Manual", SCHEDULED: "Timetable", TEST: "Sound test" };
+const fmtMB = (b: number) => `${(b / 1024 / 1024).toFixed(1)} MB`;
+
+/** fetch a custom tone's bytes for playback (session header + school scope). */
+const toneFetcher = (schoolId: string) => async (toneId: string): Promise<ArrayBuffer> => {
+  const res = await fetch(`/api/school/${schoolId}${OPS}?tone=${toneId}`, { headers: { ...getHeaders() }, cache: "force-cache" });
+  if (!res.ok) throw new Error("tone unavailable");
+  return res.arrayBuffer();
+};
 
 type Schedule = {
   id: string; label: string; time: string; days: number[]; sound: string;
   durationSec: number; enabled: boolean; note: string | null;
+};
+type Tone = {
+  id: string; label: string; mimeType: string; sizeBytes: number;
+  durationSec: number; createdByName: string; createdAt: string;
 };
 type SirenEventRow = {
   id: string; scheduleId: string | null; label: string; sound: string; durationSec: number;
@@ -47,6 +60,7 @@ type SirenData = {
   ok: boolean;
   schedules: Schedule[];
   events: SirenEventRow[];
+  tones: Tone[];
   stats: { totalSchedules: number; enabledSchedules: number; nextRing: { id: string; label: string; time: string; sound: string } | null; firedToday: number; firedTotal: number };
 };
 
@@ -64,7 +78,7 @@ const PRESETS: { label: string; time: string; days: number[]; sound: SirenSound;
   { label: "Closing time", time: "15:00", days: [1, 2, 3, 4, 5], sound: "SIREN", durationSec: 20 },
 ];
 
-const emptyForm = { id: "", label: "", time: "07:45", days: [1, 2, 3, 4, 5] as number[], sound: "BELL" as SirenSound, durationSec: 10, note: "", enabled: true };
+const emptyForm = { id: "", label: "", time: "07:45", days: [1, 2, 3, 4, 5] as number[], sound: "BELL", durationSec: 10, note: "", enabled: true };
 
 export function Siren() {
   const { currentSchoolId, navTarget } = useStore();
@@ -75,7 +89,7 @@ export function Siren() {
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState("live");
   const [now, setNow] = useState(new Date());
-  const [playing, setPlaying] = useState<SirenSound | null>(null);
+  const [playing, setPlaying] = useState<string | null>(null);
   const [playKind, setPlayKind] = useState<"MANUAL" | "TEST">("MANUAL");
   const [duration, setDuration] = useState(10);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -83,7 +97,17 @@ export function Siren() {
   const [confirmDelete, setConfirmDelete] = useState<Schedule | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
   const [kindFilter, setKindFilter] = useState("ALL");
+  const [toneLabel, setToneLabel] = useState("");
+  const [toneFile, setToneFile] = useState<File | null>(null);
+  const [toneDuration, setToneDuration] = useState(15);
+  const [toneUploading, setToneUploading] = useState(false);
+  const [toneEdit, setToneEdit] = useState<Tone | null>(null);
+  const [toneEditLabel, setToneEditLabel] = useState("");
+  const [toneEditDur, setToneEditDur] = useState(15);
+  const [confirmToneDelete, setConfirmToneDelete] = useState<Tone | null>(null);
   const stopRef = useRef<(() => void) | null>(null);
+  const tones = data?.tones ?? [];
+  const label = (sound: string) => sirenSoundLabel(sound, tones);
 
   useEffect(() => {
     if (navTarget?.tab) setTab(navTarget.tab);
@@ -115,15 +139,15 @@ export function Siren() {
     } finally { setBusy(false); }
   }, [schoolId, load, toast]);
 
-  /** Play a sound through the speaker and log the firing. */
-  const ring = useCallback(async (sound: SirenSound, dur: number, kind: "MANUAL" | "TEST", label?: string) => {
+  /** Play a sound (built-in or uploaded tone) and log the firing. */
+  const ring = useCallback(async (sound: string, dur: number, kind: "MANUAL" | "TEST", labelOverride?: string) => {
     if (playing) return;
     setPlaying(sound);
     setPlayKind(kind);
-    stopRef.current = playSirenSound(sound, dur);
+    stopRef.current = await playSchoolSound(sound, dur, schoolId ? toneFetcher(schoolId) : undefined);
     window.setTimeout(() => { setPlaying(null); stopRef.current = null; }, dur * 1000);
     if (!schoolId) return;
-    try { await apiPost(`/api/school/${schoolId}${OPS}`, { action: "ring", sound, durationSec: dur, kind, label }); await load(); }
+    try { await apiPost(`/api/school/${schoolId}${OPS}`, { action: "ring", sound, durationSec: dur, kind, label: labelOverride }); await load(); }
     catch { /* sound still played; log failed silently */ }
   }, [playing, schoolId, load]);
 
@@ -137,6 +161,7 @@ export function Siren() {
   const schedules = data?.schedules ?? [];
   useEffect(() => {
     if (!schoolId || !schedules.length) return;
+    const fetchBytes = toneFetcher(schoolId);
     const tick = () => {
       const d = new Date();
       const hhmm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
@@ -146,7 +171,7 @@ export function Siren() {
         const guardKey = `siren-fired-${s.id}-${keyBase}-${hhmm}`;
         if (localStorage.getItem(guardKey)) continue;
         localStorage.setItem(guardKey, "1");
-        playSirenSound(s.sound as SirenSound, s.durationSec);
+        void playSchoolSound(s.sound, s.durationSec, fetchBytes);
         void apiPost(`/api/school/${schoolId}${OPS}`, { action: "ring", scheduleId: s.id, sound: s.sound, durationSec: s.durationSec, kind: "SCHEDULED", label: s.label }).catch(() => {});
       }
     };
@@ -157,7 +182,7 @@ export function Siren() {
 
   const openNew = () => { setForm(emptyForm); setDialogOpen(true); };
   const openEdit = (s: Schedule) => {
-    setForm({ id: s.id, label: s.label, time: s.time, days: s.days, sound: s.sound as SirenSound, durationSec: s.durationSec, note: s.note ?? "", enabled: s.enabled });
+    setForm({ id: s.id, label: s.label, time: s.time, days: s.days, sound: s.sound, durationSec: s.durationSec, note: s.note ?? "", enabled: s.enabled });
     setDialogOpen(true);
   };
   const saveSchedule = async () => {
@@ -182,6 +207,28 @@ export function Siren() {
     } finally { setBusy(false); }
   };
 
+  /** Upload a custom tone (multipart — the song / sound file itself). */
+  const uploadTone = async () => {
+    if (!schoolId) return;
+    if (!toneFile) { toast({ title: "Choose an audio file first", variant: "destructive" }); return; }
+    setToneUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("action", "tone.upload");
+      fd.append("label", toneLabel.trim() || toneFile.name.replace(/\.[^.]+$/, ""));
+      fd.append("durationSec", String(toneDuration));
+      fd.append("file", toneFile);
+      const res = await fetch(`/api/school/${schoolId}${OPS}`, { method: "POST", headers: { ...getHeaders() }, body: fd });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error ?? `Upload failed (${res.status})`);
+      toast({ title: "Tone uploaded", description: `“${d.tone.label}” is ready to ring from the console or timetable.` });
+      setToneFile(null); setToneLabel("");
+      await load();
+    } catch (e: any) {
+      toast({ title: "Upload failed", description: e.message, variant: "destructive" });
+    } finally { setToneUploading(false); }
+  };
+
   const clock = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
   const todaySchedule = useMemo(() => {
     const idx = now.getDay();
@@ -203,7 +250,7 @@ export function Siren() {
           <div className="flex items-center gap-2">
             <Badge className={cn("gap-1 text-white", playing ? "bg-amber-600" : "bg-emerald-600")}>
               {playing ? <Volume2 className="size-3 animate-pulse" /> : <CircleCheck className="size-3" />}
-              {playing ? `Ringing — ${sirenSoundLabel(playing)}` : "Console armed"}
+              {playing ? `Ringing — ${label(playing)}` : "Console armed"}
             </Badge>
             {playing && (
               <Button size="sm" variant="destructive" onClick={stopAll}><Square className="size-3 mr-1" /> Stop sound</Button>
@@ -223,6 +270,7 @@ export function Siren() {
         <TabsList className="flex flex-wrap h-auto gap-1">
           <TabsTrigger value="live">Live console</TabsTrigger>
           <TabsTrigger value="schedule">Timetable ({schedules.length})</TabsTrigger>
+          <TabsTrigger value="tones">My tones ({tones.length})</TabsTrigger>
           <TabsTrigger value="history">History ({data.stats.firedTotal})</TabsTrigger>
         </TabsList>
 
@@ -240,7 +288,7 @@ export function Siren() {
                     <div className="text-xs uppercase tracking-wide text-muted-foreground">Next ring</div>
                     <div className="text-lg font-semibold">{nextLocal.time} — {nextLocal.label}</div>
                     <div className="text-xs text-muted-foreground">
-                      in {Math.max(0, timeToMins(nextLocal.time) - nowMins)} min · {sirenSoundLabel(nextLocal.sound)}
+                      in {Math.max(0, timeToMins(nextLocal.time) - nowMins)} min · {label(nextLocal.sound)}
                     </div>
                   </div>
                 ) : (
@@ -290,7 +338,7 @@ export function Siren() {
                   </div>
                 </div>
               </div>
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+              <div className={cn("grid gap-3", tones.length ? "sm:grid-cols-2 lg:grid-cols-3" : "sm:grid-cols-2 lg:grid-cols-5")}>
                 {SIREN_SOUNDS.map((s) => (
                   <button
                     key={s.id}
@@ -314,11 +362,40 @@ export function Siren() {
                     </div>
                   </button>
                 ))}
+                {tones.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    disabled={!!playing}
+                    onClick={() => ring(`${CUSTOM_PREFIX}${t.id}`, duration, playKind)}
+                    className={cn(
+                      "group rounded-lg border p-4 text-left transition-all hover:shadow-md hover:border-primary/40 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-primary",
+                      playing === `${CUSTOM_PREFIX}${t.id}` && "border-primary bg-primary/5 shadow-md",
+                    )}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex size-9 items-center justify-center rounded-full bg-amber-500/15 text-amber-600">
+                        <Music className="size-4" />
+                      </span>
+                      <div className="min-w-0">
+                        <div className="truncate font-medium text-sm">{t.label}</div>
+                        <div className="text-[10px] text-muted-foreground">uploaded · {fmtMB(t.sizeBytes)}</div>
+                      </div>
+                    </div>
+                    <p className="mt-2 text-xs text-muted-foreground leading-relaxed">Your own song or sound — loops over the speakers for the whole ring.</p>
+                    <div className="mt-3 flex items-center gap-1 text-xs text-primary font-medium">
+                      <Play className="size-3" /> Ring {duration}s
+                    </div>
+                  </button>
+                ))}
               </div>
+              {tones.length > 0 && (
+                <p className="text-xs text-muted-foreground">Uploaded tones loop until the ring ends — manage them on the <button className="underline" onClick={() => setTab("tones")}>My tones</button> tab.</p>
+              )}
               {playing && (
                 <div className="flex items-center gap-2 rounded-md bg-amber-500/10 border border-amber-500/30 px-3 py-2 text-sm">
                   <Volume2 className="size-4 text-amber-600 animate-pulse" />
-                  Ringing <b>{sirenSoundLabel(playing)}</b> as {KIND_LABEL[playKind]} — <button className="underline" onClick={stopAll}>stop now</button>
+                  Ringing <b>{label(playing)}</b> as {KIND_LABEL[playKind]} — <button className="underline" onClick={stopAll}>stop now</button>
                 </div>
               )}
             </CardContent>
@@ -369,7 +446,7 @@ export function Siren() {
                               {s.days.map((d) => <Badge key={d} variant="outline" className="text-[10px] px-1.5">{DAY_NAMES[d]}</Badge>)}
                             </div>
                           </td>
-                          <td className="px-4 py-2.5">{sirenSoundLabel(s.sound)}<span className="text-xs text-muted-foreground"> · {s.durationSec}s</span></td>
+                          <td className="px-4 py-2.5">{label(s.sound)}<span className="text-xs text-muted-foreground"> · {s.durationSec}s</span></td>
                           <td className="px-4 py-2.5">
                             <Switch checked={s.enabled} onCheckedChange={(v) => act({ action: "schedule.toggle", id: s.id, enabled: v }, v ? "Ring enabled" : "Ring disabled")} />
                           </td>
@@ -387,6 +464,114 @@ export function Siren() {
               </CardContent>
             </Card>
           )}
+        </TabsContent>
+
+        {/* ── MY TONES (uploaded songs / sounds) ── */}
+        <TabsContent value="tones" className="space-y-4 mt-4">
+          <div className="grid gap-4 lg:grid-cols-3">
+            <Card className="lg:col-span-1">
+              <CardContent className="p-6 space-y-4">
+                <div className="flex items-center gap-2 font-semibold">
+                  <Upload className="size-4 text-primary" /> Upload a song or sound
+                </div>
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  Your school song, anthem, a recorded hand bell, a gospel track — anything the school should
+                  hear at assembly or closing. It rings from the console and can be hung on the timetable like
+                  any built-in sound.
+                </p>
+                <FormField label="Tone name">
+                  <Input value={toneLabel} onChange={(e) => setToneLabel(e.target.value)} placeholder="e.g. School anthem, Closing song" maxLength={80} />
+                </FormField>
+                <FormField label="Audio file (MP3, WAV, OGG, M4A — max 12 MB)">
+                  <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-dashed p-4 transition-colors hover:border-primary/50 hover:bg-primary/5">
+                    <FileAudio className="size-8 shrink-0 text-primary" />
+                    <div className="min-w-0 flex-1 text-sm">
+                      {toneFile ? (
+                        <>
+                          <div className="truncate font-medium">{toneFile.name}</div>
+                          <div className="text-xs text-muted-foreground">{fmtMB(toneFile.size)}</div>
+                        </>
+                      ) : (
+                        <div className="text-muted-foreground">Click to choose an audio file from this machine</div>
+                      )}
+                    </div>
+                    <input
+                      type="file" accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.webm" className="hidden"
+                      onChange={(e) => setToneFile(e.target.files?.[0] ?? null)}
+                    />
+                  </label>
+                </FormField>
+                <FormField label="Default ring length">
+                  <Select value={String(toneDuration)} onValueChange={(v) => setToneDuration(Number(v))}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>{[10, 15, 20, 30, 45, 60, 90, 120].map((d) => <SelectItem key={d} value={String(d)}>{d} seconds</SelectItem>)}</SelectContent>
+                  </Select>
+                </FormField>
+                <Button className="w-full" onClick={uploadTone} disabled={toneUploading || !toneFile}>
+                  {toneUploading ? <><Loader2 className="size-4 mr-1 animate-spin" /> Uploading…</> : <><Upload className="size-4 mr-1" /> Upload tone</>}
+                </Button>
+              </CardContent>
+            </Card>
+
+            <div className="space-y-3 lg:col-span-2">
+              {tones.length === 0 ? (
+                <EmptyState
+                  icon={<Music />}
+                  title="No uploaded tones yet"
+                  hint="Upload the school anthem or any song — it becomes a first-class sound on the console and the timetable."
+                />
+              ) : (
+                <Card>
+                  <CardContent className="p-0">
+                    <div className="max-h-[540px] overflow-y-auto">
+                      <table className="w-full text-sm">
+                        <thead className="sticky top-0 bg-muted/90 backdrop-blur">
+                          <tr className="text-left text-muted-foreground">
+                            <th className="px-4 py-2.5 font-medium">Tone</th>
+                            <th className="px-4 py-2.5 font-medium">Size</th>
+                            <th className="px-4 py-2.5 font-medium">Default</th>
+                            <th className="px-4 py-2.5 font-medium">Uploaded</th>
+                            <th className="px-4 py-2.5 font-medium text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {tones.map((t) => (
+                            <tr key={t.id} className="border-t">
+                              <td className="px-4 py-2.5">
+                                <div className="flex items-center gap-2">
+                                  <span className="inline-flex size-8 items-center justify-center rounded-full bg-amber-500/15 text-amber-600"><Music className="size-4" /></span>
+                                  <div>
+                                    <div className="font-medium">{t.label}</div>
+                                    <div className="text-xs text-muted-foreground">{t.mimeType.replace("audio/", "").toUpperCase()}</div>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="px-4 py-2.5 text-muted-foreground">{fmtMB(t.sizeBytes)}</td>
+                              <td className="px-4 py-2.5 tabular-nums">{t.durationSec}s</td>
+                              <td className="px-4 py-2.5 text-muted-foreground">{fmtDateTime(t.createdAt)}<div className="text-xs">by {t.createdByName}</div></td>
+                              <td className="px-4 py-2.5 text-right">
+                                <div className="flex justify-end gap-1">
+                                  <Button variant="ghost" size="icon" className="size-7" disabled={!!playing} onClick={() => ring(`${CUSTOM_PREFIX}${t.id}`, t.durationSec, "TEST")} aria-label={`Test ${t.label}`}>
+                                    <Play className="size-3.5" />
+                                  </Button>
+                                  <Button variant="ghost" size="icon" className="size-7" onClick={() => { setToneEdit(t); setToneEditLabel(t.label); setToneEditDur(t.durationSec); }} aria-label={`Edit ${t.label}`}>
+                                    <Pencil className="size-3.5" />
+                                  </Button>
+                                  <Button variant="ghost" size="icon" className="size-7 text-destructive" onClick={() => setConfirmToneDelete(t)} aria-label={`Delete ${t.label}`}>
+                                    <Trash2 className="size-3.5" />
+                                  </Button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+          </div>
         </TabsContent>
 
         {/* ── HISTORY ── */}
@@ -431,7 +616,7 @@ export function Siren() {
                             {e.label}
                             {e.note && <div className="text-xs text-muted-foreground">{e.note}</div>}
                           </td>
-                          <td className="px-4 py-2.5">{sirenSoundLabel(e.sound)}<span className="text-xs text-muted-foreground"> · {e.durationSec}s</span></td>
+                          <td className="px-4 py-2.5">{label(e.sound)}<span className="text-xs text-muted-foreground"> · {e.durationSec}s</span></td>
                           <td className="px-4 py-2.5">
                             <Badge variant="outline" className={cn(
                               "text-[10px]",
@@ -470,9 +655,19 @@ export function Siren() {
                 <Input type="time" value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} />
               </FormField>
               <FormField label="Sound">
-                <Select value={form.sound} onValueChange={(v) => setForm({ ...form, sound: v as SirenSound })}>
+                <Select value={form.sound} onValueChange={(v) => setForm({ ...form, sound: v })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>{SIREN_SOUNDS.map((s) => <SelectItem key={s.id} value={s.id}>{s.label}</SelectItem>)}</SelectContent>
+                  <SelectContent>
+                    {SIREN_SOUNDS.map((s) => <SelectItem key={s.id} value={s.id}>{s.label}</SelectItem>)}
+                    {tones.length > 0 && (
+                      <SelectItem value="__tones__" disabled className="text-[10px] uppercase tracking-wide text-muted-foreground">— uploaded tones —</SelectItem>
+                    )}
+                    {tones.map((t) => (
+                      <SelectItem key={t.id} value={`${CUSTOM_PREFIX}${t.id}`}>
+                        <span className="inline-flex items-center gap-1.5"><Music className="size-3 text-amber-500" /> {t.label}</span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
                 </Select>
               </FormField>
               <FormField label="Duration">
@@ -556,6 +751,49 @@ export function Siren() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* ── tone edit dialog ── */}
+      <Dialog open={!!toneEdit} onOpenChange={(v) => !v && setToneEdit(null)}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader><DialogTitle>Edit tone</DialogTitle><DialogDescription>Rename the tone or change how long it rings by default.</DialogDescription></DialogHeader>
+          <div className="space-y-4 py-1">
+            <FormField label="Tone name" required>
+              <Input value={toneEditLabel} onChange={(e) => setToneEditLabel(e.target.value)} maxLength={80} />
+            </FormField>
+            <FormField label="Default ring length">
+              <Select value={String(toneEditDur)} onValueChange={(v) => setToneEditDur(Number(v))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>{[10, 15, 20, 30, 45, 60, 90, 120].map((d) => <SelectItem key={d} value={String(d)}>{d} seconds</SelectItem>)}</SelectContent>
+              </Select>
+            </FormField>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setToneEdit(null)}>Cancel</Button>
+            <Button onClick={() => { if (toneEdit && toneEditLabel.trim()) act({ action: "tone.update", id: toneEdit.id, label: toneEditLabel, durationSec: toneEditDur }, "Tone updated"); setToneEdit(null); }} disabled={busy}>Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── tone delete confirm ── */}
+      <AlertDialog open={!!confirmToneDelete} onOpenChange={(v) => !v && setConfirmToneDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this tone?</AlertDialogTitle>
+            <AlertDialogDescription>
+              “{confirmToneDelete?.label}” will be removed. Rings and timetabled schedules using it will fall back to the classic school bell.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep tone</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => { if (confirmToneDelete) act({ action: "tone.delete", id: confirmToneDelete.id }, "Tone deleted"); setConfirmToneDelete(null); }}
+            >
+              Delete tone
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -581,7 +819,7 @@ export function SirenTicker({ schoolId }: { schoolId: string | null | undefined 
         const guardKey = `siren-fired-${s.id}-${keyBase}-${hhmm}`;
         if (localStorage.getItem(guardKey)) continue;
         localStorage.setItem(guardKey, "1");
-        playSirenSound(s.sound as SirenSound, s.durationSec);
+        void playSchoolSound(s.sound, s.durationSec, toneFetcher(schoolId));
         void apiPost(`/api/school/${schoolId}${OPS}`, { action: "ring", scheduleId: s.id, sound: s.sound, durationSec: s.durationSec, kind: "SCHEDULED", label: s.label }).catch(() => {});
       }
     };

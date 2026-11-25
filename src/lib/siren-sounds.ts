@@ -1,10 +1,18 @@
-// ── Siren & bell sound engine (wave 55) ──
+// ── Siren & bell sound engine (wave 55 · wave 60 custom tones) ──
 // School-bell sounds synthesised live in the browser with the Web Audio API —
 // no audio files to host, every console (front desk, staff room, head's
 // office) can ring them. Used by the Siren module's live console and by the
 // global <SirenTicker /> that fires timetabled rings anywhere in the app.
+//
+// wave 60 — schools can also UPLOAD their own songs / sounds (school anthem,
+// recorded hand bell, gospel track …). They are stored per school as bytes
+// and referenced with the "CUSTOM:<toneId>" sound id; playTone() streams the
+// bytes and loops them for the ring duration, stoppable like any synth sound.
 
 export type SirenSound = "BELL" | "SIREN" | "CHIME" | "KLAXON" | "BUGLE";
+export const CUSTOM_PREFIX = "CUSTOM:";
+export const isCustomToneId = (sound: string): boolean => sound.startsWith(CUSTOM_PREFIX);
+export const customToneKey = (sound: string): string => sound.slice(CUSTOM_PREFIX.length);
 
 export const SIREN_SOUNDS: { id: SirenSound; label: string; hint: string }[] = [
   { id: "BELL", label: "School bell", hint: "Classic hand-bell ring — change of lesson, breaks" },
@@ -15,7 +23,7 @@ export const SIREN_SOUNDS: { id: SirenSound; label: string; hint: string }[] = [
 ];
 
 let ctx: AudioContext | null = null;
-const active: { oscs: OscillatorNode[]; timers: number[]; master: GainNode | null } = { oscs: [], timers: [], master: null };
+const active: { oscs: OscillatorNode[]; nodes: AudioScheduledSourceNode[]; timers: number[]; master: GainNode | null } = { oscs: [], nodes: [], timers: [], master: null };
 
 function audioCtx(): AudioContext {
   if (!ctx) {
@@ -31,6 +39,8 @@ function stopAllInternal() {
   active.timers = [];
   for (const o of active.oscs) { try { o.stop(); } catch { /* already stopped */ } }
   active.oscs = [];
+  for (const n of active.nodes) { try { n.stop(); } catch { /* already stopped */ } }
+  active.nodes = [];
   if (active.master) { try { active.master.disconnect(); } catch { /* noop */ } active.master = null; }
 }
 
@@ -104,7 +114,55 @@ export function playSirenSound(sound: SirenSound, durationSec = 10): () => void 
   return stop;
 }
 
-/** Friendly label for a stored sound id. */
-export const sirenSoundLabel = (id: string): string => SIREN_SOUNDS.find((s) => s.id === id)?.label ?? id;
+/** Friendly label for a stored sound id (built-in, or an uploaded tone). */
+export const sirenSoundLabel = (id: string, tones: { id: string; label: string }[] = []): string =>
+  isCustomToneId(id) ? tones.find((t) => t.id === customToneKey(id))?.label ?? "Custom tone" : SIREN_SOUNDS.find((s) => s.id === id)?.label ?? id;
+
+/**
+ * Play an uploaded tone (wave 60). `fetchBytes` streams the audio for a
+ * CUSTOM:<id> sound id; built-in sounds fall through to the synthesiser so
+ * callers have one entry point. Returns a stop handle.
+ */
+export async function playSchoolSound(sound: string, durationSec = 10, fetchBytes?: (toneId: string) => Promise<ArrayBuffer>): Promise<() => void> {
+  if (isCustomToneId(sound) && fetchBytes) {
+    try {
+      const buf = await fetchBytes(customToneKey(sound));
+      return playToneBuffer(buf, durationSec);
+    } catch {
+      // tone missing / unreadable → fall back to the classic bell so a
+      // timetabled ring never silently fails
+      return playSirenSound("BELL", durationSec);
+    }
+  }
+  return playSirenSound(sound as SirenSound, durationSec);
+}
+
+/** Decode uploaded audio and loop it for `durationSec` seconds. */
+export function playToneBuffer(buffer: ArrayBuffer, durationSec = 10): () => void {
+  stopAllInternal();
+  const ac = audioCtx();
+  const master = ac.createGain();
+  master.gain.value = 0.95;
+  master.connect(ac.destination);
+  active.master = master;
+
+  // fade the tail out so a cut-off song doesn't click
+  master.gain.setValueAtTime(0.95, ac.currentTime + Math.max(1, durationSec) - 0.4);
+  master.gain.linearRampToValueAtTime(0.0001, ac.currentTime + Math.max(1, durationSec));
+
+  const stop = () => stopAllInternal();
+  ac.decodeAudioData(buffer).then((decoded) => {
+    if (!active.master) return; // stopped before decode finished
+    const src = ac.createBufferSource();
+    src.buffer = decoded;
+    src.loop = true;
+    src.connect(master);
+    src.start();
+    active.nodes.push(src);
+    const timer = window.setTimeout(stop, Math.max(1, durationSec) * 1000);
+    active.timers.push(timer);
+  }).catch(() => { /* unreadable audio — silent */ });
+  return stop;
+}
 
 export const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];

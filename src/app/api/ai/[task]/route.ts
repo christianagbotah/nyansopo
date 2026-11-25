@@ -390,6 +390,127 @@ Return STRICT JSON only — no markdown fences, no commentary. Exact shape:
       });
     }
 
+    /* ── Nyansapo Office AI writing assistant (wave 60).
+       Fully AI-assisted writing & corrections inside the office portal:
+         DOC    → continue | improve | fix | summarize | instruction
+         SLIDE  → deck (generate a teaching deck from a topic)
+         SHEET  → formula (natural language → formula) | explain (formula → plain English)
+       Body { schoolId, mode, text?, title?, instruction?, topic?, audience?, slideCount?, formula? }.
+       Nothing is saved server-side — the editor applies what it keeps. ── */
+    if (task === "office-assist") {
+      const schoolId = body.schoolId;
+      if (!schoolId || !canOperateSchool(user, schoolId)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      const mode = String(body.mode ?? "");
+      const text = typeof body.text === "string" ? body.text.slice(0, 12000) : "";
+      const title = typeof body.title === "string" ? body.title.slice(0, 120) : "";
+      const instruction = typeof body.instruction === "string" ? body.instruction.slice(0, 600) : "";
+      const client = await zai();
+
+      if (mode === "continue") {
+        if (text.length < 20) return NextResponse.json({ error: "Write a few sentences first — the AI continues from your text" }, { status: 400 });
+        const completion = await client.chat.completions.create({
+          messages: [
+            { role: "system", content: "You continue documents written by Ghanaian school staff (headteachers, teachers, bursars). Match the author's language (English, or Ghanaian English/Pidgin if written that way), tone and register. Continue naturally from where the text stops — no repetition, no meta commentary, no headings unless the document already uses them. 120-220 words. Return STRICT JSON only: {\"text\":\"the continuation as plain text with \\n\\n between paragraphs\"}" },
+            { role: "user", content: `Document title: ${title || "(untitled)"}\n\n${text}` },
+          ],
+          thinking: { type: "disabled" },
+        });
+        const parsed = parseJsonBlock(completion.choices[0]?.message?.content ?? "");
+        if (!parsed?.text) return NextResponse.json({ error: "The AI returned an unreadable continuation — please try again" }, { status: 502 });
+        return NextResponse.json({ text: String(parsed.text).slice(0, 6000) });
+      }
+
+      if (mode === "improve" || mode === "summarize" || mode === "instruction") {
+        if (!text.trim()) return NextResponse.json({ error: "The document is empty" }, { status: 400 });
+        const goal = mode === "improve"
+          ? "Rewrite the document to be clearer, better organised and more professional while preserving its meaning, facts and approximate length."
+          : mode === "summarize"
+            ? "Summarise the document into 3-6 short paragraphs (or a titled bullet list if it suits the content) that a busy headteacher can read in thirty seconds."
+            : `Rewrite the document applying this instruction faithfully: "${instruction}".`;
+        const completion = await client.chat.completions.create({
+          messages: [
+            { role: "system", content: `You edit documents for Ghanaian school staff. ${goal} Keep Ghanaian English conventions and ₵ for money. Return simple HTML only (tags: p, b, i, u, ul, ol, li, br, h1-h3) — no markdown, no fences, no commentary. Return STRICT JSON: {\"html\":\"the rewritten document as HTML\"}` },
+            { role: "user", content: `Document title: ${title || "(untitled)"}\n\n${text}` },
+          ],
+          thinking: { type: "disabled" },
+        });
+        const parsed = parseJsonBlock(completion.choices[0]?.message?.content ?? "");
+        if (!parsed?.html) return NextResponse.json({ error: "The AI returned an unreadable rewrite — please try again" }, { status: 502 });
+        return NextResponse.json({ html: String(parsed.html).slice(0, 20000) });
+      }
+
+      if (mode === "fix") {
+        if (!text.trim()) return NextResponse.json({ error: "The document is empty" }, { status: 400 });
+        const completion = await client.chat.completions.create({
+          messages: [
+            { role: "system", content: "You are a meticulous copy editor for Ghanaian school documents. Correct grammar, spelling, punctuation and obvious typos ONLY — do not rephrase, restyle or reorganise. Return STRICT JSON: {\"changes\":[{\"from\":\"an exact substring of the original text containing the error (shortest unique span)\",\"to\":\"the corrected version\"}]}. List every correction, maximum 25. If the text is already clean return {\"changes\":[]}. No markdown fences." },
+            { role: "user", content: text },
+          ],
+          thinking: { type: "disabled" },
+        });
+        const parsed = parseJsonBlock(completion.choices[0]?.message?.content ?? "");
+        const changes = Array.isArray(parsed?.changes)
+          ? parsed.changes
+              .filter((c: any) => c && typeof c.from === "string" && typeof c.to === "string" && c.from && c.from !== c.to)
+              .slice(0, 25)
+              .map((c: any) => ({ from: String(c.from).slice(0, 300), to: String(c.to).slice(0, 300) }))
+          : [];
+        return NextResponse.json({ changes });
+      }
+
+      if (mode === "deck") {
+        const topic = typeof body.topic === "string" ? body.topic.slice(0, 300) : "";
+        if (!topic.trim()) return NextResponse.json({ error: "A topic is required" }, { status: 400 });
+        const audience = typeof body.audience === "string" && body.audience.trim() ? body.audience.slice(0, 120) : "learners";
+        const slideCount = Math.min(12, Math.max(3, Number(body.slideCount) || 6));
+        const completion = await client.chat.completions.create({
+          messages: [
+            { role: "system", content: `You design teaching slide decks for Ghanaian schools (GES curriculum-aware). Create a ${slideCount}-slide deck on the given topic for the stated audience. Slide 1 is a title slide. Each body slide: a punchy title, 3-5 short bullet lines (one per \\n), and 1-2 sentences of private speaker notes with a Ghanaian classroom touch (TLMs, local examples). Return STRICT JSON only: {"slides":[{"title":"...","body":"bullet\\nbullet\\nbullet","notes":"..."}]}` },
+            { role: "user", content: `Topic: ${topic}\nAudience: ${audience}` },
+          ],
+          thinking: { type: "disabled" },
+        });
+        const parsed = parseJsonBlock(completion.choices[0]?.message?.content ?? "");
+        const slides = Array.isArray(parsed?.slides)
+          ? parsed.slides
+              .filter((s: any) => s && typeof s === "object")
+              .slice(0, 12)
+              .map((s: any) => ({ title: String(s.title ?? "").slice(0, 120), body: String(s.body ?? "").slice(0, 800), notes: String(s.notes ?? "").slice(0, 600) }))
+          : [];
+        if (!slides.length) return NextResponse.json({ error: "The AI returned an empty deck — try a more specific topic" }, { status: 502 });
+        return NextResponse.json({ slides });
+      }
+
+      if (mode === "formula" || mode === "explain") {
+        const formula = typeof body.formula === "string" ? body.formula.slice(0, 200) : "";
+        if (mode === "formula") {
+          if (!instruction.trim()) return NextResponse.json({ error: "Describe what you want to calculate" }, { status: 400 });
+          const completion = await client.chat.completions.create({
+            messages: [
+              { role: "system", content: "You write spreadsheet formulas for a simple school workbook that supports ONLY: =SUM(range), =AVERAGE(range), =MIN(range), =MAX(range), =COUNT(range), cell references like B2, ranges like B2:B40, and + - * / arithmetic. Money is Ghana cedis. Return STRICT JSON: {\"formula\":\"=...\"} — or {\"formula\":\"\"} when the request cannot be expressed with those functions. No markdown fences." },
+              { role: "user", content: `Workbook context: ${text}\n\nRequested calculation: ${instruction}` },
+            ],
+            thinking: { type: "disabled" },
+          });
+          const parsed = parseJsonBlock(completion.choices[0]?.message?.content ?? "");
+          const f = typeof parsed?.formula === "string" ? parsed.formula.trim() : "";
+          return NextResponse.json({ formula: f.startsWith("=") ? f.slice(0, 200) : "", explanation: typeof parsed?.explanation === "string" ? parsed.explanation.slice(0, 500) : "" });
+        }
+        if (!formula) return NextResponse.json({ error: "No formula given" }, { status: 400 });
+        const completion = await client.chat.completions.create({
+          messages: [
+            { role: "system", content: "Explain this spreadsheet formula to a Ghanaian teacher in 2-3 plain-English sentences: what it calculates, which cells it reads, and any watch-outs (empty cells, ranges). Return STRICT JSON: {\"explanation\":\"...\"}. No markdown fences." },
+            { role: "user", content: `Workbook context: ${text}\n\nFormula: ${formula}` },
+          ],
+          thinking: { type: "disabled" },
+        });
+        const parsed = parseJsonBlock(completion.choices[0]?.message?.content ?? "");
+        return NextResponse.json({ explanation: typeof parsed?.explanation === "string" ? parsed.explanation.slice(0, 600) : "Could not explain that formula." });
+      }
+
+      return NextResponse.json({ error: "Unknown office-assist mode" }, { status: 400 });
+    }
+
     return NextResponse.json({ error: "Unknown AI task" }, { status: 404 });
   } catch (e: any) {
     return NextResponse.json({ error: `AI service error: ${e?.message ?? "unknown"}` }, { status: 500 });

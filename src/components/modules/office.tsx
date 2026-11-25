@@ -21,11 +21,11 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { ModuleHeader, LoadingBlock, EmptyState, StatCard, FormField, FilterSearch } from "@/components/ui-helpers";
 import { fmtAgo } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
-import { setOfficeSchoolId, DocEditor, SheetEditor, SlideEditor } from "@/components/modules/office-editors";
+import { setOfficeSchoolId, DocEditor, SheetEditor, SlideEditor, exportOfficeFile } from "@/components/modules/office-editors";
 import { cn } from "@/lib/utils";
 import {
   FileText, FileSpreadsheet, GalleryHorizontal, Plus, MoreHorizontal, Pencil, Copy, FolderInput,
-  Star, Trash2, ArrowLeft, Folder, Loader2, CloudUpload,
+  Star, Trash2, ArrowLeft, Folder, Loader2, CloudUpload, Download,
 } from "lucide-react";
 
 const OPS = "/ops/office";
@@ -94,6 +94,16 @@ export function Office() {
       toast({ title: "Could not open file", description: e.message, variant: "destructive" });
       setOpenId(null);
     } finally { setOpenLoading(false); }
+  }, [schoolId, toast]);
+
+  /** download a file in its native format (.doc/.html/.csv) without opening it */
+  const downloadFile = useCallback(async (f: FileRow) => {
+    try {
+      const d = await apiGet<{ ok: boolean; file: FullFile }>(`/api/school/${schoolId}${OPS}?id=${f.id}`);
+      exportOfficeFile(d.file);
+    } catch (e: any) {
+      toast({ title: "Could not download file", description: e.message, variant: "destructive" });
+    }
   }, [schoolId, toast]);
 
   const act = useCallback(async (body: Record<string, unknown>, successMsg: string, opts?: { silent?: boolean }) => {
@@ -223,14 +233,14 @@ export function Office() {
           {starred.length > 0 && folder === "all" && !search && (
             <div>
               <div className="mb-1.5 text-xs font-medium text-muted-foreground">Starred</div>
-              <FileGrid files={starred} onOpen={openFileById} onAct={act} setRenameRow={setRenameRow} setRenameVal={setRenameVal} setMoveRow={setMoveRow} setMoveVal={setMoveVal} setDeleteRow={setDeleteRow} busy={busy} />
+              <FileGrid files={starred} onOpen={openFileById} onAct={act} onDownload={downloadFile} setRenameRow={setRenameRow} setRenameVal={setRenameVal} setMoveRow={setMoveRow} setMoveVal={setMoveVal} setDeleteRow={setDeleteRow} busy={busy} />
             </div>
           )}
           <div>
             {(starred.length > 0 && folder === "all" && !search) && <div className="mb-1.5 text-xs font-medium text-muted-foreground">Recent files</div>}
             <FileGrid
               files={starred.length > 0 && folder === "all" && !search ? shown.filter((f) => !f.starred) : shown}
-              onOpen={openFileById} onAct={act} setRenameRow={setRenameRow} setRenameVal={setRenameVal} setMoveRow={setMoveRow} setMoveVal={setMoveVal} setDeleteRow={setDeleteRow} busy={busy}
+              onOpen={openFileById} onAct={act} onDownload={downloadFile} setRenameRow={setRenameRow} setRenameVal={setRenameVal} setMoveRow={setMoveRow} setMoveVal={setMoveVal} setDeleteRow={setDeleteRow} busy={busy}
             />
           </div>
         </div>
@@ -332,10 +342,11 @@ export function Office() {
 }
 
 /* file card grid with per-file actions */
-function FileGrid({ files, onOpen, onAct, setRenameRow, setRenameVal, setMoveRow, setMoveVal, setDeleteRow, busy }: {
+function FileGrid({ files, onOpen, onAct, onDownload, setRenameRow, setRenameVal, setMoveRow, setMoveVal, setDeleteRow, busy }: {
   files: FileRow[];
   onOpen: (id: string) => void;
   onAct: (body: Record<string, unknown>, msg: string) => void;
+  onDownload: (f: FileRow) => void;
   setRenameRow: (f: FileRow) => void; setRenameVal: (v: string) => void;
   setMoveRow: (f: FileRow) => void; setMoveVal: (v: string) => void;
   setDeleteRow: (f: FileRow) => void; busy: boolean;
@@ -344,6 +355,7 @@ function FileGrid({ files, onOpen, onAct, setRenameRow, setRenameVal, setMoveRow
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
       {files.map((f) => {
         const m = KIND_META[f.kind];
+        const dlHint = f.kind === "DOC" ? "Word document (.doc)" : f.kind === "SHEET" ? "CSV (.csv)" : "Deck (.html)";
         return (
           <Card key={f.id} className="group cursor-pointer transition-all hover:shadow-md hover:border-primary/40" onClick={() => onOpen(f.id)}>
             <CardContent className="p-4">
@@ -359,24 +371,32 @@ function FileGrid({ files, onOpen, onAct, setRenameRow, setRenameVal, setMoveRow
                   <div className="text-xs text-muted-foreground">{m.label} · {f.folder}</div>
                   <div className="mt-1 text-[11px] text-muted-foreground">Edited {fmtAgo(f.updatedAt)} by {f.updatedByName}</div>
                 </div>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                    <Button size="icon" variant="ghost" className="size-7 opacity-0 transition-opacity group-hover:opacity-100" aria-label={`Actions for ${f.title}`}>
-                      <MoreHorizontal className="size-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-                    <DropdownMenuItem onClick={() => onOpen(f.id)}><Pencil className="size-3.5 mr-1.5" /> Open</DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => onAct({ action: "star", id: f.id, starred: !f.starred }, f.starred ? "Star removed" : "Starred")} disabled={busy}>
-                      <Star className={cn("size-3.5 mr-1.5", f.starred && "fill-amber-400 text-amber-400")} /> {f.starred ? "Remove star" : "Star"}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => { setRenameRow(f); setRenameVal(f.title); }}><Pencil className="size-3.5 mr-1.5" /> Rename</DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => onAct({ action: "duplicate", id: f.id }, "Copy created")} disabled={busy}><Copy className="size-3.5 mr-1.5" /> Duplicate</DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => { setMoveRow(f); setMoveVal(f.folder); }}><FolderInput className="size-3.5 mr-1.5" /> Move to folder</DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDeleteRow(f)}><Trash2 className="size-3.5 mr-1.5" /> Delete</DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                <div className="flex shrink-0 items-center gap-0.5">
+                  <Button size="icon" variant="ghost" className="size-7 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100" title={`Download — ${dlHint}`}
+                    aria-label={`Download ${f.title}`}
+                    onClick={(e) => { e.stopPropagation(); onDownload(f); }}>
+                    <Download className="size-4" />
+                  </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                      <Button size="icon" variant="ghost" className="size-7 opacity-0 transition-opacity group-hover:opacity-100" aria-label={`Actions for ${f.title}`}>
+                        <MoreHorizontal className="size-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                      <DropdownMenuItem onClick={() => onOpen(f.id)}><Pencil className="size-3.5 mr-1.5" /> Open</DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => onDownload(f)}><Download className="size-3.5 mr-1.5" /> Download ({dlHint})</DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => onAct({ action: "star", id: f.id, starred: !f.starred }, f.starred ? "Star removed" : "Starred")} disabled={busy}>
+                        <Star className={cn("size-3.5 mr-1.5", f.starred && "fill-amber-400 text-amber-400")} /> {f.starred ? "Remove star" : "Star"}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => { setRenameRow(f); setRenameVal(f.title); }}><Pencil className="size-3.5 mr-1.5" /> Rename</DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => onAct({ action: "duplicate", id: f.id }, "Copy created")} disabled={busy}><Copy className="size-3.5 mr-1.5" /> Duplicate</DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => { setMoveRow(f); setMoveVal(f.folder); }}><FolderInput className="size-3.5 mr-1.5" /> Move to folder</DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDeleteRow(f)}><Trash2 className="size-3.5 mr-1.5" /> Delete</DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
               </div>
             </CardContent>
           </Card>

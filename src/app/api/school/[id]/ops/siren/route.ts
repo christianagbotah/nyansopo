@@ -3,10 +3,13 @@ import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
 import { audit } from "@/lib/audit";
 
-// ── School siren & bell management (wave 55) ──
+// ── School siren & bell management (wave 55 · wave 60 custom tones) ──
 // Timetabled rings (assembly, change of lesson, break, closing) plus a live
-// console for manual / emergency rings, with a full firing history. Sounds
-// are synthesised in the browser (Web Audio) — no audio files needed.
+// console for manual / emergency rings, with a full firing history. Built-in
+// sounds are synthesised in the browser (Web Audio); wave 60 adds UPLOADED
+// TONES — the school's own songs / sounds, stored as bytes and referenced
+// with the "CUSTOM:<toneId>" sound id from the console, the timetable and
+// the ticker.
 //
 // Scheduled rings are fired by any open console client (front-desk machine);
 // the server de-duplicates SCHEDULED fires per schedule+minute so several
@@ -16,10 +19,29 @@ const bad = (error: string, status = 400) => NextResponse.json({ error }, { stat
 
 const SOUNDS = ["BELL", "SIREN", "CHIME", "KLAXON", "BUGLE"] as const;
 const isSound = (v: unknown): v is (typeof SOUNDS)[number] => typeof v === "string" && (SOUNDS as readonly string[]).includes(v);
+
+/** "CUSTOM:<cuid>" — an uploaded tone id (existence checked where needed). */
+const customToneId = (v: unknown): string | null => {
+  if (typeof v !== "string" || !v.startsWith("CUSTOM:")) return null;
+  const id = v.slice(7);
+  return /^[A-Za-z0-9]{20,}$/.test(id) ? id : null;
+};
+
+/** Any playable sound id — built-in or uploaded tone. */
+const isAnySound = (v: unknown): boolean => isSound(v) || customToneId(v) !== null;
+
+/** Resolve a sound id to a printable label ("School bell" / tone label). */
+async function soundLabel(schoolId: string, sound: string): Promise<string> {
+  const toneId = customToneId(sound);
+  if (!toneId) return sound;
+  const tone = await db.sirenTone.findFirst({ where: { id: toneId, schoolId }, select: { label: true } });
+  return tone?.label ?? "Custom tone";
+}
+
 const clampDuration = (v: unknown): number => {
   const n = Math.round(Number(v));
   if (!isFinite(n)) return 10;
-  return Math.min(120, Math.max(2, n));
+  return Math.min(300, Math.max(2, n));
 };
 
 /** "HH:MM" 24-hour — strict. */
@@ -39,14 +61,34 @@ const optStr = (v: unknown, max = 300): string | null => {
   return t.length ? t.slice(0, max) : null;
 };
 
+const TONE_COLS = { id: true, label: true, mimeType: true, sizeBytes: true, durationSec: true, createdByName: true, createdAt: true };
+
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: schoolId } = await params;
   const auth = await opsAuth(req, schoolId, "GET", { perms: ["siren.manage"] });
   if (!auth.ok) return auth.res;
 
-  const [schedules, events] = await Promise.all([
+  // ── stream an uploaded tone's bytes (console / ticker playback) ──
+  const toneId = new URL(req.url).searchParams.get("tone");
+  if (toneId) {
+    if (!/^[A-Za-z0-9]{20,}$/.test(toneId)) return bad("Not found", 404);
+    const tone = await db.sirenTone.findFirst({ where: { id: toneId, schoolId } });
+    if (!tone) return bad("Tone not found", 404);
+    const bytes = new Uint8Array(tone.data);
+    return new NextResponse(bytes, {
+      status: 200,
+      headers: {
+        "content-type": tone.mimeType,
+        "content-length": String(bytes.byteLength),
+        "cache-control": "private, max-age=86400",
+      },
+    });
+  }
+
+  const [schedules, events, tones] = await Promise.all([
     db.sirenSchedule.findMany({ where: { schoolId }, orderBy: { time: "asc" } }),
     db.sirenEvent.findMany({ where: { schoolId }, orderBy: { createdAt: "desc" }, take: 120 }),
+    db.sirenTone.findMany({ where: { schoolId }, orderBy: { createdAt: "desc" }, select: TONE_COLS }),
   ]);
 
   const now = new Date();
@@ -65,6 +107,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     ok: true,
     schedules: schedules.map((s) => ({ ...s, days: parseDays(s.daysJson), daysJson: undefined })),
     events,
+    tones,
     stats: {
       totalSchedules: schedules.length,
       enabledSchedules: schedules.filter((s) => s.enabled).length,
@@ -81,17 +124,69 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!auth.ok) return auth.res;
   const actor = { id: auth.user.id, fullName: auth.user.fullName ?? "Siren operator", role: auth.user.role };
 
+  /* ── multipart branch — tone.upload (the song / sound file itself) ── */
+  const contentType = req.headers.get("content-type") ?? "";
+  if (contentType.includes("multipart/form-data")) {
+    const form = await req.formData().catch(() => null);
+    if (!form) return bad("Invalid upload");
+    if (form.get("action") !== "tone.upload") return bad("Unknown upload action");
+
+    const label = optStr(form.get("label"), 80) ?? "Custom tone";
+    const durationSec = clampDuration(form.get("durationSec"));
+    const file = form.get("file");
+    if (!(file instanceof File)) return bad("An audio file is required");
+    const MAX_TONE = 12 * 1024 * 1024; // 12 MB per tone
+    if (file.size === 0) return bad("The file is empty");
+    if (file.size > MAX_TONE) return bad("Audio too large — keep tones under 12 MB (trim the song first)");
+    const mime = file.type || "audio/mpeg";
+    if (!/^(audio|video)\//.test(mime) && !/\.(mp3|wav|ogg|m4a|aac|webm|opus)$/i.test(file.name))
+      return bad("That doesn't look like an audio file — upload MP3, WAV, OGG, M4A or WebM");
+
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const row = await db.sirenTone.create({
+      data: { schoolId, label, mimeType: mime, sizeBytes: bytes.byteLength, durationSec, data: bytes, createdByName: actor.fullName },
+    });
+    await audit({ schoolId, actor, action: "CREATE", entityType: "SirenTone", entityId: row.id, entityLabel: label, summary: `Siren tone uploaded: ${label} (${(bytes.byteLength / 1024 / 1024).toFixed(1)} MB, ${durationSec}s default ring)`, req });
+    return NextResponse.json({ ok: true, tone: { id: row.id, label: row.label, mimeType: row.mimeType, sizeBytes: row.sizeBytes, durationSec: row.durationSec, createdByName: row.createdByName, createdAt: row.createdAt } });
+  }
+
   let body: any;
   try { body = await req.json(); } catch { return bad("Invalid JSON body"); }
   const action = body?.action;
   const actorName = actor.fullName;
+
+  // ── tone.update ── rename a tone / change its default ring length
+  if (action === "tone.update") {
+    const tone = await db.sirenTone.findFirst({ where: { id: String(body?.id ?? ""), schoolId } });
+    if (!tone) return bad("Tone not found", 404);
+    const label = optStr(body.label, 80) ?? tone.label;
+    const durationSec = clampDuration(body.durationSec ?? tone.durationSec);
+    const row = await db.sirenTone.update({ where: { id: tone.id }, data: { label, durationSec } });
+    await audit({ schoolId, actor, action: "UPDATE", entityType: "SirenTone", entityId: row.id, entityLabel: label, summary: `Siren tone updated: ${label} (default ${durationSec}s)`, req });
+    return NextResponse.json({ ok: true, tone: { id: row.id, label: row.label, durationSec: row.durationSec } });
+  }
+
+  // ── tone.delete ── remove a tone; schedules still pointing at it fall back
+  // to the classic bell at ring time (client-side) and show "missing tone"
+  if (action === "tone.delete") {
+    const tone = await db.sirenTone.findFirst({ where: { id: String(body?.id ?? ""), schoolId } });
+    if (!tone) return bad("Tone not found", 404);
+    await db.sirenTone.delete({ where: { id: tone.id } });
+    await audit({ schoolId, actor, action: "DELETE", entityType: "SirenTone", entityId: tone.id, entityLabel: tone.label, summary: `Siren tone deleted: ${tone.label} (schedules using it fall back to the school bell)`, req });
+    return NextResponse.json({ ok: true });
+  }
 
   // ── schedule.save ── create or update a ring on the timetable
   if (action === "schedule.save") {
     const label = optStr(body.label, 80);
     if (!label) return bad("A label is required (e.g. 'Morning assembly')");
     if (!isTime(body.time)) return bad("Time must be HH:MM (24-hour), e.g. 07:45");
-    const sound = isSound(body.sound) ? body.sound : "BELL";
+    if (!isAnySound(body.sound)) return bad("Unknown sound");
+    if (customToneId(body.sound)) {
+      const tone = await db.sirenTone.findFirst({ where: { id: customToneId(body.sound)!, schoolId } });
+      if (!tone) return bad("That uploaded tone no longer exists — pick another sound");
+    }
+    const sound = String(body.sound);
     const durationSec = clampDuration(body.durationSec);
     const days = parseDays(body.days);
     const note = optStr(body.note, 300);
@@ -109,7 +204,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const row = await db.sirenSchedule.create({
       data: { schoolId, label, time: body.time, sound, durationSec, daysJson: JSON.stringify(days), note, enabled: body.enabled === false ? false : true },
     });
-    await audit({ schoolId, actor, action: "CREATE", entityType: "SirenSchedule", entityId: row.id, entityLabel: label, summary: `Siren schedule created: ${label} at ${row.time} (${sound})`, req });
+    await audit({ schoolId, actor, action: "CREATE", entityType: "SirenSchedule", entityId: row.id, entityLabel: label, summary: `Siren schedule created: ${label} at ${row.time} (${await soundLabel(schoolId, sound)})`, req });
     return NextResponse.json({ ok: true, schedule: row });
   }
 
@@ -133,7 +228,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   // ── ring ── record a manual / scheduled / test firing (the browser plays the sound)
   if (action === "ring") {
-    const sound = isSound(body.sound) ? body.sound : "BELL";
+    const sound = isAnySound(body.sound) ? String(body.sound) : "BELL";
+    if (customToneId(sound)) {
+      const tone = await db.sirenTone.findFirst({ where: { id: customToneId(sound)!, schoolId } });
+      if (!tone) return bad("That uploaded tone no longer exists", 404);
+    }
     const durationSec = clampDuration(body.durationSec);
     const kind = body.kind === "SCHEDULED" || body.kind === "TEST" ? body.kind : "MANUAL";
     let label = optStr(body.label, 80);
@@ -151,14 +250,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       });
       if (dup) return NextResponse.json({ ok: true, duplicate: true, event: dup });
     }
-    if (!label) label = sound === "SIREN" ? "Emergency siren" : kind === "TEST" ? `Sound test — ${sound}` : `Manual ring — ${sound}`;
+    const soundName = await soundLabel(schoolId, sound);
+    if (!label) label = sound === "SIREN" ? "Emergency siren" : kind === "TEST" ? `Sound test — ${soundName}` : `Manual ring — ${soundName}`;
 
     const row = await db.sirenEvent.create({
       data: { schoolId, scheduleId, label, sound, durationSec, kind, byName: actorName, byRole: actor.role, note: optStr(body.note, 300) },
     });
     await audit({
       schoolId, actor, action: "CREATE", entityType: "SirenEvent", entityId: row.id, entityLabel: label,
-      summary: kind === "SCHEDULED" ? `Siren rang on schedule: ${label} (${sound} ${durationSec}s)` : `Siren ring (${kind.toLowerCase()}): ${label} (${sound} ${durationSec}s)`,
+      summary: kind === "SCHEDULED" ? `Siren rang on schedule: ${label} (${soundName} ${durationSec}s)` : `Siren ring (${kind.toLowerCase()}): ${label} (${soundName} ${durationSec}s)`,
       req,
     });
     return NextResponse.json({ ok: true, event: row });

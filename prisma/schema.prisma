@@ -250,6 +250,7 @@ model School {
   reminderTemplates     ReminderTemplate[]
   sirenSchedules        SirenSchedule[]
   sirenEvents           SirenEvent[]
+  sirenTones            SirenTone[]
   officeFiles           OfficeFile[]
   waecCentres           WaecCentre[]
   cpdSetting            CpdSetting?
@@ -1733,6 +1734,26 @@ model MediaAsset {
   // unauthenticated via /api/media/{id}?t={publicToken}; null stays private
   publicToken String?  @unique
   createdAt   DateTime @default(now())
+}
+
+// ── wave 60 — siren custom tones (uploaded songs / sounds) ──
+// Schools upload their own audio (school song, anthem, hymn, recorded bell,
+// gospel track …) and ring it from the console or hang it on the timetable
+// like any built-in synthesised sound. Bytes live in Postgres alongside
+// portraits & logos; sounds are referenced as "CUSTOM:<toneId>".
+model SirenTone {
+  id            String   @id @default(cuid())
+  schoolId      String
+  school        School   @relation(fields: [schoolId], references: [id])
+  label         String
+  mimeType      String // audio/mpeg | audio/wav | audio/ogg | audio/mp4 | audio/webm
+  sizeBytes     Int
+  durationSec   Int      @default(15) // default ring length when this tone is used
+  data          Bytes
+  createdByName String
+  createdAt     DateTime @default(now())
+
+  @@index([schoolId])
 }
 
 // ─────────────────────────────────────────────────────────────
