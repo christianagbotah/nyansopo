@@ -159,6 +159,39 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // 7 — NTC licence renewal alerts (wave 58 — expiring / expired licences
+  //     among active teaching staff, for whoever keeps the register)
+  if (can("staffcpd.view")) {
+    const DAY = 864e5;
+    const teachers = await db.staff.findMany({
+      where: { schoolId, active: true, category: "TEACHING", ntcExpiry: { not: null } },
+      select: { fullName: true, ntcExpiry: true },
+    });
+    const now = Date.now();
+    const expired = teachers.filter((t) => new Date(t.ntcExpiry!).getTime() < now);
+    const critical = teachers.filter((t) => {
+      const days = Math.floor((new Date(t.ntcExpiry!).getTime() - now) / DAY);
+      return days >= 0 && days <= 30;
+    });
+    const expiring = teachers.filter((t) => {
+      const days = Math.floor((new Date(t.ntcExpiry!).getTime() - now) / DAY);
+      return days > 30 && days <= 90;
+    });
+    if (expired.length || critical.length || expiring.length) {
+      items.push({
+        id: "ntc-licences", kind: "ntc", severity: expired.length || critical.length ? "danger" : "warning",
+        count: expired.length + critical.length + expiring.length,
+        title: expired.length
+          ? `${expired.length} NTC licence${expired.length > 1 ? "s" : ""} expired`
+          : critical.length
+            ? `${critical.length} NTC licence${critical.length > 1 ? "s" : ""} expiring within 30 days`
+            : `${expiring.length} NTC licence${expiring.length > 1 ? "s" : ""} expiring this term`,
+        detail: `e.g. ${expired[0]?.fullName ?? critical[0]?.fullName ?? expiring[0]?.fullName} — renewals needed`,
+        module: "staffcpd", tab: "licences", at: new Date(),
+      });
+    }
+  }
+
   // most recent first; severities weighted so danger leads ties
   const rank: Record<string, number> = { danger: 0, warning: 1, info: 2 };
   items.sort((a, b) => (rank[a.severity] - rank[b.severity]) || ((b.at?.getTime?.() ?? 0) - (a.at?.getTime?.() ?? 0)));

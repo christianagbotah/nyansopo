@@ -16,7 +16,7 @@ import {
   Armchair, BookMarked, Network, UsersRound, HeartPulse, ScrollText, Wrench, Timer, Stethoscope,
   Flag, Trees, Sparkles, Scale, FileSearch, ShoppingBasket, GalleryHorizontal, Rows3, Banknote as Bank, Palette,
   DatabaseBackup, PiggyBank, Award, Gavel, Ruler, Activity, Home as HomeIcon, Hospital, Thermometer,
-  Trophy, Medal, BookUser, Footprints, Truck, AlarmClock,
+  Trophy, Medal, BookUser, Footprints, Truck, AlarmClock, Target,
   DoorOpen, CalendarClock, PhoneCall, Mailbox, CalendarRange, BellRing, FileBadge, Stamp, Gauge, GitMerge, History,
   Table2, Database, Globe, Newspaper, Image, Inbox, FileText, IdCard,
 } from "lucide-react";

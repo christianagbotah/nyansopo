@@ -20,7 +20,7 @@ const num = (v: unknown, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 const DAY = 864e5;
 
 /** Licence status bucket from today's date. */
-export function licenceStatus(expiry: Date | null | undefined): "VALID" | "EXPIRING" | "CRITICAL" | "EXPIRED" | "NONE" {
+function licenceStatus(expiry: Date | null | undefined): "VALID" | "EXPIRING" | "CRITICAL" | "EXPIRED" | "NONE" {
   if (!expiry) return "NONE";
   const days = Math.floor((new Date(expiry).getTime() - Date.now()) / DAY);
   if (days < 0) return "EXPIRED";
