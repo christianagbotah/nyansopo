@@ -218,6 +218,26 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // 9 — LIVE EMERGENCY (wave 62 AI Emergency Command). Any EMERGENCY siren
+  //     event in the last 20 minutes shows a danger item to EVERY user of the
+  //     school — the in-app leg of the escalation alongside the SMS fan-out.
+  {
+    const since = new Date(Date.now() - 20 * 60_000);
+    const live = await db.sirenEvent.findFirst({
+      where: { schoolId, kind: "EMERGENCY", createdAt: { gte: since } },
+      orderBy: { createdAt: "desc" },
+    });
+    if (live) {
+      const minsAgo = Math.max(0, Math.round((Date.now() - new Date(live.createdAt).getTime()) / 60_000));
+      items.push({
+        id: "live-emergency", kind: "siren", severity: "danger", count: 1,
+        title: `EMERGENCY sounded ${minsAgo === 0 ? "just now" : `${minsAgo} min ago`} — ${live.label.replace("EMERGENCY — ", "")}`,
+        detail: `${live.note ?? "Follow the directions of your teachers immediately."} — declared by ${live.byName}.`,
+        module: "siren", tab: "live", at: live.createdAt,
+      });
+    }
+  }
+
   // most recent first; severities weighted so danger leads ties
   const rank: Record<string, number> = { danger: 0, warning: 1, info: 2 };
   items.sort((a, b) => (rank[a.severity] - rank[b.severity]) || ((b.at?.getTime?.() ?? 0) - (a.at?.getTime?.() ?? 0)));

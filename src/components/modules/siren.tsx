@@ -28,7 +28,7 @@ import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { ModuleHeader, LoadingBlock, EmptyState, StatCard, FormGrid, FormField } from "@/components/ui-helpers";
 import { fmtDateTime } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
@@ -38,11 +38,28 @@ import { getHeaders } from "@/lib/api";
 import {
   AlarmClock, Bell, Siren as SirenIcon, History, Play, Square, Plus, Pencil, Trash2, Zap,
   Clock3, CalendarDays, Volume2, TriangleAlert, CircleCheck, Timer, Music, Upload, FileAudio, Loader2,
-  Sparkles, Megaphone, Hourglass, MapPin, Pause, RotateCcw, Check, X,
+  Sparkles, Megaphone, Hourglass, MapPin, Pause, RotateCcw, Check, X, Languages, ShieldAlert,
 } from "lucide-react";
 
 const OPS = "/ops/siren";
-const KIND_LABEL: Record<string, string> = { MANUAL: "Manual", SCHEDULED: "Timetable", TEST: "Sound test", ANNOUNCEMENT: "PA announcement" };
+const KIND_LABEL: Record<string, string> = { MANUAL: "Manual", SCHEDULED: "Timetable", TEST: "Sound test", ANNOUNCEMENT: "PA announcement", EMERGENCY: "Emergency" };
+
+/* wave 62 · AI Emergency Command — incident kinds + how long the wail blares */
+const EM_KINDS = [
+  { value: "FIRE", label: "Fire", hint: "Evacuate to the assembly point" },
+  { value: "EVACUATION", label: "Evacuation", hint: "Move everyone out now" },
+  { value: "LOCKDOWN", label: "Lockdown", hint: "Secure classrooms, keep learners inside" },
+  { value: "MEDICAL", label: "Medical", hint: "Call first-aid trained staff to the desk" },
+  { value: "CUSTOM", label: "Custom", hint: "Describe the incident below" },
+];
+const PA_LANGS = [
+  { value: "twi", label: "Twi" },
+  { value: "ewe", label: "Ewe" },
+  { value: "ga", label: "Ga" },
+  { value: "hausa", label: "Hausa" },
+  { value: "dagbani", label: "Dagbani" },
+  { value: "pidgin", label: "Ghanaian Pidgin" },
+];
 const fmtMB = (b: number) => `${(b / 1024 / 1024).toFixed(1)} MB`;
 const DEVICE_ZONE_KEY = "siren-device-zone";
 
@@ -227,6 +244,18 @@ export function Siren() {
   // ── Siren Pro: AI reliability report ──
   const [insBusy, setInsBusy] = useState(false);
   const [insights, setInsights] = useState<Insights | null>(null);
+
+  // ── wave 62: AI Emergency Command ──
+  const [emKind, setEmKind] = useState("FIRE");
+  const [emNote, setEmNote] = useState("");
+  const [emDur, setEmDur] = useState(60);
+  const [emBusy, setEmBusy] = useState(false);
+  const [emConfirm, setEmConfirm] = useState(false);
+  const [emResult, setEmResult] = useState<{ label: string; message: string; smsSent: number; smsTotal: number } | null>(null);
+
+  // ── wave 62: AI PA translation (compound announcements in local languages) ──
+  const [paLang, setPaLang] = useState("twi");
+  const [paTransBusy, setPaTransBusy] = useState(false);
 
   const tones = data?.tones ?? [];
   const label = (sound: string) => (sound === "VOICE" ? "Spoken announcement" : sirenSoundLabel(sound, tones));
@@ -496,6 +525,53 @@ export function Siren() {
     finally { setInsBusy(false); }
   };
 
+  // ── wave 62: AI Emergency Command — the wail sounds NOW from this console
+  // while the server drafts the announcement (AI), logs the incident and fans
+  // the SMS alert out to every staff member with a phone on file. ──
+  const declareEmergency = async () => {
+    if (!schoolId || emBusy) return;
+    setEmConfirm(false);
+    setEmBusy(true);
+    setEmResult(null);
+    stopSpeaking();
+    try {
+      // 1 — blast the siren locally, immediately, full volume
+      stopRef.current?.();
+      stopRef.current = await playSchoolSound("SIREN", emDur, toneFetcher(schoolId), { volume: 100 });
+      setPlaying("SIREN");
+      setPlayKind("MANUAL");
+      window.setTimeout(() => { setPlaying(null); stopRef.current = null; }, emDur * 1000);
+      // 2 — escalate: AI announcement + EMERGENCY log + staff SMS fan-out
+      const d = await apiPost<{ label: string; message: string; staffAlerted: { total: number; smsSent: number; smsFailed: number } }>(
+        `/api/school/${schoolId}${OPS}`,
+        { action: "emergency", kind: emKind, note: emNote.trim() || undefined, durationSec: emDur },
+      );
+      setEmResult({ label: d.label, message: d.message, smsSent: d.staffAlerted.smsSent, smsTotal: d.staffAlerted.total });
+      toast({
+        title: `${d.label} — siren sounding`,
+        description: `AI announcement drafted · ${d.staffAlerted.smsSent} staff SMS alert${d.staffAlerted.smsSent === 1 ? "" : "s"} dispatched${d.staffAlerted.smsFailed ? ` (${d.staffAlerted.smsFailed} failed)` : ""} · every console rings along.`,
+        variant: "destructive",
+      });
+      await load();
+    } catch (e: any) {
+      toast({ title: "Escalation failed", description: `${e.message} The local siren is still sounding — alert staff directly.`, variant: "destructive" });
+    } finally { setEmBusy(false); }
+  };
+
+  // ── wave 62: AI PA translation — Twi / Ewe / Ga / Hausa / Dagbani / Pidgin ──
+  const translatePa = async () => {
+    if (!schoolId) return;
+    if (!paText.trim()) { toast({ title: "Write or draft the announcement first", variant: "destructive" }); return; }
+    setPaTransBusy(true);
+    try {
+      const d = await apiPost<{ text: string }>(`/api/school/${schoolId}${OPS}`, { action: "ai.translate", text: paText, language: paLang });
+      setPaText(d.text);
+      toast({ title: "Announcement translated", description: "Check it, then speak it over the PA." });
+    } catch (e: any) {
+      toast({ title: "Translation failed", description: e.message, variant: "destructive" });
+    } finally { setPaTransBusy(false); }
+  };
+
   const clock = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
   const todayKey = now.toDateString();
   const todayOccurrences = useMemo(() => {
@@ -525,7 +601,7 @@ export function Siren() {
     <div className="space-y-4">
       <ModuleHeader
         title="Siren &amp; Bells"
-        description="The complete electronic school bell — day profiles, campus zones, period bells, spoken PA announcements and an AI that builds the timetable from a plain-English description."
+        description="The complete electronic school bell — day profiles, campus zones, period bells, spoken PA announcements in Ghanaian languages, an AI Emergency Command that alerts every staff member by SMS, and an AI that builds the timetable from a plain-English description."
         actions={
           <div className="flex items-center gap-2">
             <Badge variant="outline" className="gap-1"><MapPin className="size-3" /> This device: {deviceZone}</Badge>
@@ -632,23 +708,82 @@ export function Siren() {
               </CardContent>
             </Card>
 
-            <Card className="border-destructive/40">
+            <Card className="border-destructive/50 shadow-[0_0_0_1px_rgba(239,68,68,0.15)]">
               <CardContent className="p-6 space-y-3">
                 <div className="flex items-center gap-2">
-                  <TriangleAlert className="size-4 text-destructive" />
-                  <div className="font-semibold">Emergency siren</div>
-                  <Badge variant="outline" className="ml-auto text-xs">rings instantly &amp; is logged</Badge>
+                  <ShieldAlert className="size-4 text-destructive" />
+                  <div className="font-semibold">AI Emergency Command</div>
+                  <Badge variant="outline" className="ml-auto text-xs border-destructive/40 text-destructive">siren · AI announcement · staff SMS · in-app</Badge>
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  Fire-and-forget: every open console speaker sounds the wail for the full duration. Use for
-                  emergencies, fire drills and closing time.
+                  One confirmed tap escalates like no bell box can: the wail blares from every open console, the AI drafts a calm
+                  announcement, and <b>every staff member with a phone on file</b> gets an SMS at once. The whole school sees the
+                  alert in the notification bell for 20 minutes.
                 </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {EM_KINDS.map((k) => (
+                    <button key={k.value} type="button" disabled={emBusy}
+                      onClick={() => setEmKind(k.value)}
+                      title={k.hint}
+                      className={cn(
+                        "rounded-full border px-3 py-1 text-xs font-medium transition-all disabled:opacity-50",
+                        emKind === k.value ? "border-destructive bg-destructive text-white shadow-sm" : "bg-background hover:bg-muted",
+                      )}>
+                      {k.label}
+                    </button>
+                  ))}
+                </div>
+                <Input value={emNote} onChange={(e) => setEmNote(e.target.value)} disabled={emBusy}
+                  placeholder={emKind === "CUSTOM" ? "Describe the incident (e.g. fallen tree blocking the gate)…" : "Optional details — the AI weaves them into the announcement"}
+                  maxLength={300} aria-label="Emergency details" />
                 <div className="flex flex-wrap items-center gap-2">
-                  <Button variant="destructive" size="lg" className="h-12 px-6 text-base" disabled={!!playing}
+                  <Label className="text-xs text-muted-foreground">Wail for</Label>
+                  <Select value={String(emDur)} onValueChange={(v) => setEmDur(Number(v))}>
+                    <SelectTrigger className="w-24 h-8"><SelectValue /></SelectTrigger>
+                    <SelectContent>{[30, 60, 90, 120].map((d) => <SelectItem key={d} value={String(d)}>{d}s</SelectItem>)}</SelectContent>
+                  </Select>
+                  <AlertDialog open={emConfirm} onOpenChange={setEmConfirm}>
+                    <AlertDialogTrigger asChild>
+                      <Button variant="destructive" size="lg" className="h-12 px-6 text-base font-bold tracking-wide" disabled={emBusy}>
+                        {emBusy ? <><Loader2 className="size-5 mr-2 animate-spin" /> Escalating…</> : <><SirenIcon className="size-5 mr-2" /> Declare {EM_KINDS.find((k) => k.value === emKind)?.label} emergency</>}
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle className="flex items-center gap-2 text-destructive"><SirenIcon className="size-5" /> Declare a {EM_KINDS.find((k) => k.value === emKind)?.label.toLowerCase()} emergency?</AlertDialogTitle>
+                        <AlertDialogDescription asChild>
+                          <div className="space-y-1.5">
+                            <span className="block">The siren blares at full volume for {emDur}s from every open console — the whole compound hears it.</span>
+                            <span className="block">An AI-drafted announcement is prepared for the PA, and every staff member with a phone on file is alerted by SMS immediately (emergency overrides quiet-hours opt-outs).</span>
+                            <span className="block font-medium text-destructive">Only confirm if this is a real emergency or an announced drill.</span>
+                          </div>
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction className="bg-destructive text-white hover:bg-destructive/90" onClick={declareEmergency}>
+                          <SirenIcon className="size-4 mr-1.5" /> Sound it now
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                </div>
+                {emResult && (
+                  <div className="space-y-1.5 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-sm">
+                    <div className="font-semibold text-destructive flex items-center gap-1.5"><TriangleAlert className="size-3.5" /> {emResult.label} — escalated</div>
+                    <div className="text-xs leading-relaxed text-muted-foreground">&ldquo;{emResult.message}&rdquo;</div>
+                    <div className="text-xs font-medium">
+                      {emResult.smsSent} staff SMS alert{emResult.smsSent === 1 ? "" : "s"} dispatched{emResult.smsTotal > 0 ? ` (of ${emResult.smsTotal} on file)` : ""} · announcement ready on the PA panel · live alert in the notification bell
+                    </div>
+                  </div>
+                )}
+                <div className="flex flex-wrap items-center gap-2 pt-1 border-t">
+                  <span className="text-xs text-muted-foreground">Quick, no-escalation rings:</span>
+                  <Button variant="outline" size="sm" disabled={!!playing || emBusy}
                     onClick={() => ring("SIREN", 30, "MANUAL", "Emergency siren", 100)}>
-                    <SirenIcon className="size-5 mr-2" /> Sound the siren (30s)
+                    <SirenIcon className="size-3.5 mr-1" /> Siren (30s)
                   </Button>
-                  <Button variant="outline" size="lg" className="h-12" disabled={!!playing}
+                  <Button variant="outline" size="sm" disabled={!!playing || emBusy}
                     onClick={() => ring("KLAXON", 15, "MANUAL", "Attention klaxon", 100)}>
                     Klaxon (15s)
                   </Button>
@@ -690,6 +825,20 @@ export function Siren() {
               <FormField label="Announcement to speak">
                 <Textarea rows={3} value={paText} onChange={(e) => setPaText(e.target.value)} placeholder="Write it yourself, or let the AI draft it above." maxLength={600} />
               </FormField>
+              {/* wave 62: compound-wide comprehension — say it in the languages
+                  the school community speaks, translated by the AI */}
+              <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-secondary/30 p-2.5">
+                <Languages className="size-4 text-primary shrink-0" />
+                <span className="text-xs font-medium">Say it in the language the compound understands:</span>
+                <Select value={paLang} onValueChange={setPaLang}>
+                  <SelectTrigger className="w-40 h-8"><SelectValue /></SelectTrigger>
+                  <SelectContent>{PA_LANGS.map((l) => <SelectItem key={l.value} value={l.value}>{l.label}</SelectItem>)}</SelectContent>
+                </Select>
+                <Button size="sm" variant="outline" onClick={translatePa} disabled={paTransBusy || !paText.trim()}>
+                  {paTransBusy ? <><Loader2 className="size-3.5 mr-1 animate-spin" /> Translating…</> : <><Sparkles className="size-3.5 mr-1" /> Translate</>}
+                </Button>
+                <span className="text-[11px] text-muted-foreground">replaces the text above — re-draft to start over</span>
+              </div>
               <div className="flex flex-wrap items-center gap-2">
                 <Button onClick={speakNow} disabled={speaking}><Megaphone className="size-4 mr-1" /> Speak over the PA</Button>
                 {speaking && <Button variant="destructive" onClick={stopSpeaking}><Square className="size-4 mr-1" /> Stop speaking</Button>}
@@ -1213,6 +1362,7 @@ export function Siren() {
                 <SelectItem value="SCHEDULED">Timetable rings</SelectItem>
                 <SelectItem value="MANUAL">Manual rings</SelectItem>
                 <SelectItem value="ANNOUNCEMENT">PA announcements</SelectItem>
+                <SelectItem value="EMERGENCY">Emergencies</SelectItem>
                 <SelectItem value="TEST">Sound tests</SelectItem>
               </SelectContent>
             </Select>
@@ -1254,6 +1404,7 @@ export function Siren() {
                               e.kind === "MANUAL" && "border-amber-300 text-amber-700",
                               e.kind === "TEST" && "border-slate-300 text-slate-600",
                               e.kind === "ANNOUNCEMENT" && "border-purple-300 text-purple-700 dark:border-purple-800 dark:text-purple-300",
+                              e.kind === "EMERGENCY" && "border-destructive bg-destructive/10 text-destructive font-semibold",
                             )}>
                               {KIND_LABEL[e.kind] ?? e.kind}
                             </Badge>

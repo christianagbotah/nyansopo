@@ -372,10 +372,10 @@ function FileGrid({ files, onOpen, onAct, onDownload, setRenameRow, setRenameVal
                   <div className="mt-1 text-[11px] text-muted-foreground">Edited {fmtAgo(f.updatedAt)} by {f.updatedByName}</div>
                 </div>
                 <div className="flex shrink-0 items-center gap-0.5">
-                  <Button size="icon" variant="ghost" className="size-7 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100" title={`Download — ${dlHint}`}
+                  <Button size="sm" variant="outline" className="h-7 gap-1 px-2 text-[11px] font-medium" title={`Download — ${dlHint}`}
                     aria-label={`Download ${f.title}`}
                     onClick={(e) => { e.stopPropagation(); onDownload(f); }}>
-                    <Download className="size-4" />
+                    <Download className="size-3.5" /> Download
                   </Button>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>

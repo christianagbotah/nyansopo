@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
 import { audit } from "@/lib/audit";
+import { sendSms } from "@/lib/sms";
 
 // ── School siren & bell management (wave 55 · 60 custom tones · 61 Siren Pro) ──
 // Timetabled rings (assembly, change of lesson, break, closing) plus a live
@@ -460,6 +461,122 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     });
     await audit({ schoolId, actor, action: "CREATE", entityType: "SirenEvent", entityId: row.id, entityLabel: "PA announcement", summary: `PA announcement broadcast: "${text.slice(0, 120)}"`, req });
     return NextResponse.json({ ok: true, event: row });
+  }
+
+  /* ── wave 62 · AI EMERGENCY COMMAND ─────────────────────────────────────
+     One confirmed tap escalates a real emergency the way no standalone bell
+     box can: the wail sounds from every open console, the incident is logged
+     as kind=EMERGENCY, an announcement text is drafted (AI when available)
+     and EVERY staff member with a phone on file is alerted by SMS at once —
+     emergencies override the per-staff quiet-hours opt-out. In-app, the
+     notification bell picks the live emergency up for the whole school. */
+  if (action === "emergency") {
+    const KINDS: Record<string, { label: string; text: string }> = {
+      FIRE: { label: "Fire", text: "FIRE! Please evacuate the buildings calmly and move to the assembly point. Teachers lead your class and take the register." },
+      EVACUATION: { label: "Evacuation", text: "Everyone should move out of the buildings now and gather at the assembly point, following your teachers." },
+      LOCKDOWN: { label: "Lockdown", text: "Lockdown! Teachers should secure their classrooms, keep everyone inside and away from doors and windows until further notice." },
+      MEDICAL: { label: "Medical emergency", text: "There is a medical emergency on the compound. Any staff member with first-aid training, please report to the front desk now." },
+      CUSTOM: { label: "Emergency", text: "Attention please — this is an emergency announcement. Follow the directions of your teachers immediately." },
+    };
+    const kind = typeof body?.kind === "string" && KINDS[body.kind] ? body.kind : "CUSTOM";
+    const note = optStr(body.note, 300);
+    const durationSec = clampDuration(body.durationSec ?? 60);
+    const meta = KINDS[kind];
+    const school = await db.school.findUnique({ where: { id: schoolId }, select: { name: true, town: true } });
+
+    // 1 — the announcement text: deterministic template first (fast + reliable),
+    //     then the AI rewrites it into a calm, clear compound announcement that
+    //     includes the operator's note. If the AI is unreachable the template stands.
+    let message = meta.text;
+    if (note) message = `${message} (${note})`;
+    try {
+      const { default: ZAI } = await import("z-ai-web-dev-sdk");
+      const client = await ZAI.create();
+      const completion = await client.chat.completions.create({
+        messages: [
+          {
+            role: "system",
+            content: `You draft EMERGENCY announcements for a Ghanaian basic school. They are spoken over the compound PA while the siren is sounding. 2-3 short sentences, calm and commanding, simple English, no headings, no lists, no emoji, no quotes. Occasion: ${meta.label}. Include the operator's details if given. Keep under 55 words. Return STRICT JSON only: {"text":"..."}.`,
+          },
+          { role: "user", content: `School: ${school?.name ?? "the school"}${school?.town ? ` (${school.town})` : ""}. Incident: ${meta.label}. Details from the operator: ${note ?? "(none)"}` },
+        ],
+        thinking: { type: "disabled" },
+      });
+      const raw = (completion.choices[0]?.message?.content ?? "").replace(/```json|```/gi, "").trim();
+      let parsed: any = {};
+      try { parsed = JSON.parse(raw); } catch {
+        const first = raw.indexOf("{"), last = raw.lastIndexOf("}");
+        try { parsed = JSON.parse(raw.slice(first, last + 1)); } catch { /* keep template */ }
+      }
+      if (typeof parsed?.text === "string" && parsed.text.trim().length > 10) message = parsed.text.trim().slice(0, 500);
+    } catch { /* AI optional — template stands */ }
+
+    // 2 — log the emergency as a first-class siren event (drives the in-app alert)
+    const label = `EMERGENCY — ${meta.label}`;
+    const event = await db.sirenEvent.create({
+      data: { schoolId, label, sound: "SIREN", durationSec, kind: "EMERGENCY", byName: actorName, byRole: actor.role, note: `${message}${note ? ` — ${note}` : ""}` },
+    });
+    await audit({ schoolId, actor, action: "CREATE", entityType: "SirenEvent", entityId: event.id, entityLabel: label, summary: `EMERGENCY declared (${meta.label}) — siren ${durationSec}s, staff alerted: "${message.slice(0, 120)}"`, req });
+
+    // 3 — SMS fan-out to EVERY staff member with a phone (emergency overrides opt-out)
+    const staff = await db.staff.findMany({
+      where: { schoolId, phone: { not: null } },
+      select: { fullName: true, phone: true, role: true },
+      orderBy: { fullName: "asc" },
+    });
+    const smsBody = `EMERGENCY at ${school?.name ?? "school"}: ${message} — declared by ${actorName}.`.slice(0, 480);
+    let sent = 0, failed = 0;
+    for (const s of staff) {
+      try {
+        const msg = await sendSms({
+          db, schoolId,
+          recipientName: s.fullName, recipientPhone: s.phone!,
+          body: smsBody, category: "EMERGENCY", sentByName: actorName,
+        });
+        if (msg.status === "SENT" || msg.status === "SIMULATED") sent++; else failed++;
+      } catch { failed++; }
+    }
+
+    return NextResponse.json({
+      ok: true, event, message, label,
+      staffAlerted: { total: staff.length, smsSent: sent, smsFailed: failed },
+    });
+  }
+
+  /* ── wave 62 · AI PA TRANSLATION — compound announcements in the languages
+     the school community actually speaks (Twi, Ewe, Ga, Hausa, Dagbani, Pidgin). ── */
+  if (action === "ai.translate") {
+    const text = optStr(body.text, 600);
+    if (!text) return bad("Write the announcement first");
+    const LANGS: Record<string, string> = {
+      twi: "Ghanaian Twi (Asante Twi, written in the standard orthography, also give a common English-lite reading if a word is untranslatable)",
+      ewe: "Ewe (written in the standard orthography)",
+      ga: "Ga (written in the standard orthography)",
+      hausa: "Hausa (written in standard Hausa orthography, Boko script)",
+      dagbani: "Dagbani (written in the standard orthography)",
+      pidgin: "Ghanaian Pidgin English (the everyday spoken variety)",
+    };
+    const lang = typeof body?.language === "string" && LANGS[body.language] ? body.language : "twi";
+    const { default: ZAI } = await import("z-ai-web-dev-sdk");
+    const client = await ZAI.create();
+    const completion = await client.chat.completions.create({
+      messages: [
+        {
+          role: "system",
+          content: `You translate school PA announcements for Ghanaian schools. Translate the announcement into ${LANGS[lang]}. Keep it spoken-word friendly: same meaning, natural and warm, no headings, no notes, no quotes, no explanations — ONLY the translated announcement text. Return STRICT JSON: {"text":"..."}.`,
+        },
+        { role: "user", content: text },
+      ],
+      thinking: { type: "disabled" },
+    });
+    const raw = (completion.choices[0]?.message?.content ?? "").replace(/```json|```/gi, "").trim();
+    let out = "";
+    try { out = String(JSON.parse(raw).text ?? ""); } catch {
+      const first = raw.indexOf("{"), last = raw.lastIndexOf("}");
+      try { out = String(JSON.parse(raw.slice(first, last + 1)).text ?? ""); } catch { out = ""; }
+    }
+    if (!out.trim()) return bad("The AI could not translate that — try simpler English", 502);
+    return NextResponse.json({ ok: true, text: out.trim().slice(0, 600), language: lang });
   }
 
   // ── history.clear ── wipe the firing history (keeps schedules)
