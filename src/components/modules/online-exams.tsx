@@ -17,7 +17,8 @@ import { cn } from "@/lib/utils";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import { Laptop, Plus, Send, Lock, Trash2, PencilLine, Users, Trophy, Clock, CheckCircle2, Printer, Radio, Eye, EyeOff, Sparkles, FileText, Loader2, ScrollText, Grid3x3, Shuffle, Rows3 } from "lucide-react";
+import { Laptop, Plus, Send, Lock, Trash2, PencilLine, Users, Trophy, Clock, CheckCircle2, Printer, Radio, Eye, EyeOff, Sparkles, FileText, Loader2, ScrollText, Grid3x3, Shuffle, Rows3, CalendarClock } from "lucide-react";
+import { ExamTimetable } from "@/components/modules/exam-timetable";
 
 type Question = {
   id?: string; type: string; prompt: string;
@@ -49,7 +50,7 @@ export function OnlineExams() {
   const [resultsFor, setResultsFor] = useState<Exam | null>(null);
   const [printFor, setPrintFor] = useState<Exam | null>(null);
   const [monitorFor, setMonitorFor] = useState<Exam | null>(null);
-  const [tab, setTab] = useState(navTarget?.tab === "studio" ? "studio" : "exams");
+  const [tab, setTab] = useState<string>(["studio", "hall", "schedule"].includes(navTarget?.tab ?? "") ? (navTarget?.tab as string) : "exams");
 
   const load = useCallback(() => {
     if (!currentSchoolId) return;
@@ -83,6 +84,7 @@ export function OnlineExams() {
           <TabsTrigger value="exams">Exams ({exams.length})</TabsTrigger>
           <TabsTrigger value="studio" className="gap-1.5"><Sparkles className="size-3.5" /> AI Paper Studio</TabsTrigger>
           <TabsTrigger value="hall" className="gap-1.5"><Grid3x3 className="size-3.5" /> Exam hall</TabsTrigger>
+          <TabsTrigger value="schedule" className="gap-1.5"><CalendarClock className="size-3.5" /> Timetable</TabsTrigger>
         </TabsList>
 
         <TabsContent value="exams" className="mt-2">
@@ -163,6 +165,10 @@ export function OnlineExams() {
 
         <TabsContent value="hall" className="mt-2">
           <ExamHall />
+        </TabsContent>
+
+        <TabsContent value="schedule" className="mt-2">
+          <ExamTimetable />
         </TabsContent>
       </Tabs>
 

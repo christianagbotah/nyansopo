@@ -225,6 +225,7 @@ model School {
   dutyAssignments      DutyAssignment[]
   staffMovements       StaffMovement[]
   substitutionLogs     SubstitutionLog[]
+  examTimetableEntries ExamTimetableEntry[]
   frontOfficeVisitors  Visitor[]
   appointments         Appointment[]
   phoneCalls           PhoneCall[]
@@ -384,6 +385,7 @@ model Classroom {
   sections            Section[]
   termResults         TermResult[]
   homeworkItems       Homework[]
+  examTimetableEntries ExamTimetableEntry[]
 }
 
 // Section (stream) within a classroom — iEduPro parity: a class like
@@ -3573,6 +3575,30 @@ model ExamSeatingPlan {
   updatedAt      DateTime @updatedAt
 
   @@index([schoolId, updatedAt])
+}
+
+/* wave 70 — Exam Timetable & Invigilation: the printed docket every Ghanaian
+   hall runs on — subject × date × start × duration × venue with named
+   invigilators. Clash-guarded at the API: a class, a venue or an invigilator
+   can never be scheduled into two overlapping papers on the same day. */
+model ExamTimetableEntry {
+  id             String    @id @default(cuid())
+  schoolId       String
+  school         School    @relation(fields: [schoolId], references: [id])
+  examName       String
+  classroomId    String
+  classroom      Classroom @relation(fields: [classroomId], references: [id])
+  subjectName    String
+  date           DateTime  @db.Date
+  startMinute    Int // minutes from midnight
+  durationMin    Int       @default(60)
+  venue          String?
+  invigilatorIds String    @default("") // comma-separated staff ids
+  createdBy      String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([schoolId, examName, date])
 }
 
 /* wave 69 — Payment Plans (installments): the Ghanaian way of paying school
