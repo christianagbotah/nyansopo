@@ -31,7 +31,7 @@ import {
   Percent, Layers, RefreshCcw, ScrollText, Send, Undo2, Megaphone, BarChart3, Mail, Phone, PhoneOff,
   MailWarning, Gauge, ChevronDown, ChevronUp, BadgeCheck, AlertTriangle,
   UsersRound, MoveUpRight, ListChecks, Save, ClipboardList, Sparkles, SquareCheck,
-  Table2, Download, BookCopy,
+  Table2, Download, BookCopy, Loader2,
 } from "lucide-react";
 
 /* ══════════════════════════════════════════════════════════════
@@ -2148,6 +2148,43 @@ function MarksheetPanel(props: {
     ? Math.round((Number(draft.daysPresent) / Number(draft.daysOpened)) * 100)
     : null;
 
+  /* wave 68 — AI remark writer: drafts the teacher / head remark from the
+     VERIFIED marksheet numbers (never invents facts); falls back to the
+     deterministic compose from the same numbers when the AI is down. */
+  const [aiBusy, setAiBusy] = useState<"TEACHER" | "HEAD" | null>(null);
+  const { currentSchoolId } = useStore();
+  const gradedRows = p.rows.filter((r) => r.total != null).sort((a, b) => (b.total ?? 0) - (a.total ?? 0));
+  const bestRows = gradedRows.slice(0, 2).map((r) => ({ name: r.subjectName, grade: r.grade ?? null }));
+  const weakRows = gradedRows.slice(-2).reverse().filter((r) => !bestRows.some((b) => b.name === r.subjectName)).map((r) => ({ name: r.subjectName, grade: r.grade ?? null }));
+  const conductNames = p.conductItems.filter((c) => draft.conductIds.includes(c.id)).map((c) => c.name);
+  const interestName = p.conductItems.find((c) => c.id === draft.interestId)?.name ?? null;
+  const avgForAI = p.card?.average ?? (p.totals.subjects ? Math.round((p.totals.total / p.totals.subjects) * 10) / 10 : null);
+
+  async function aiDraftRemark(kind: "TEACHER" | "HEAD") {
+    if (!currentSchoolId) return;
+    setAiBusy(kind);
+    try {
+      const r = await apiPost<{ remark: string; source: string }>(`/api/school/${currentSchoolId}/ops/ai-remark`, {
+        action: "remark.draft", kind,
+        studentName,
+        gender: p.student.gender,
+        classroom: p.classroom?.name ?? "",
+        average: avgForAI,
+        position: p.card?.classPosition ?? null,
+        classSize: p.card?.classSize ?? null,
+        attendancePct: attendancePct ?? p.card?.attendancePct ?? null,
+        bestSubjects: bestRows, weakSubjects: weakRows,
+        conductNames, interestName,
+      });
+      setDraft((d) => kind === "TEACHER"
+        ? { ...d, teacherRemark: r.remark, remarkTemplateId: "", teacherCustom: true }
+        : { ...d, headRemark: r.remark, headTemplateId: "", headCustom: true });
+      toast({ title: kind === "TEACHER" ? "Class teacher remark drafted" : "Head remark drafted", description: r.source === "ai" ? "Grounded in this learner's verified marks — edit freely." : "AI unreachable — composed from the same verified numbers." });
+    } catch (e: any) {
+      toast({ title: "Could not draft the remark", description: e.message, variant: "destructive" });
+    } finally { setAiBusy(null); }
+  }
+
   return (
     <div className="space-y-4">
       {/* learner identity — the purple header band of the classic sheet */}
@@ -2388,7 +2425,12 @@ function MarksheetPanel(props: {
               </p>
             )}
             <div>
-              <p className="mb-1.5 text-sm font-medium">Class teacher&apos;s remarks</p>
+              <p className="mb-1.5 flex items-center justify-between gap-2 text-sm font-medium">
+                <span>Class teacher&apos;s remarks</span>
+                <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" disabled={aiBusy !== null} onClick={() => aiDraftRemark("TEACHER")}>
+                  {aiBusy === "TEACHER" ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3 text-primary" />} Draft with AI
+                </Button>
+              </p>
               <Select value={draft.teacherCustom ? "custom" : draft.remarkTemplateId || "none"} onValueChange={pickTeacherTemplate}>
                 <SelectTrigger className="w-full" aria-label="Class teacher remark"><SelectValue placeholder="Pick a remark template" /></SelectTrigger>
                 <SelectContent className="max-h-60 overflow-y-auto nice-scroll">
@@ -2416,11 +2458,16 @@ function MarksheetPanel(props: {
               )}
             </div>
             <div>
-              <p className="mb-1.5 flex items-center gap-1.5 text-sm font-medium">
-                Head teacher&apos;s remarks
-                {p.suggestedHead && draft.headRemark === p.suggestedHead && (
-                  <Badge variant="outline" className="text-[10px] font-normal">auto by {fmt1(p.card?.average)}%</Badge>
-                )}
+              <p className="mb-1.5 flex items-center justify-between gap-2 text-sm font-medium">
+                <span className="flex items-center gap-1.5">
+                  Head teacher&apos;s remarks
+                  {p.suggestedHead && draft.headRemark === p.suggestedHead && (
+                    <Badge variant="outline" className="text-[10px] font-normal">auto by {fmt1(p.card?.average)}%</Badge>
+                  )}
+                </span>
+                <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" disabled={aiBusy !== null} onClick={() => aiDraftRemark("HEAD")}>
+                  {aiBusy === "HEAD" ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3 text-primary" />} Draft with AI
+                </Button>
               </p>
               <Select value={draft.headCustom ? "custom" : draft.headTemplateId || "none"} onValueChange={pickHeadTemplate}>
                 <SelectTrigger className="w-full" aria-label="Head teacher remark"><SelectValue placeholder="Pick a remark band" /></SelectTrigger>
