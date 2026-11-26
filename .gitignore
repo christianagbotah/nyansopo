@@ -93,3 +93,6 @@ GIT_REMOTE.md
 # cluster snapshots: only the stable latest copy is tracked (off-site via GitHub);
 # timestamped history is local-only
 /backups/history/
+
+# repo-root generated prisma client (output = ../.prisma/client)
+/.prisma/
