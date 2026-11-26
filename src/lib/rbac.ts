@@ -77,6 +77,9 @@ export const PERMISSIONS: PermDef[] = [
   // Health & wellness clinic (wave 26 — sick bay & SHEP screenings)
   { id: "health.view", label: "View sick-bay register & screenings", group: "Health & Welfare" },
   { id: "health.manage", label: "Record clinic visits, screenings & guardian notices", group: "Health & Welfare" },
+  // Guidance & Counselling unit (wave 71 — the confidential G&C case file)
+  { id: "counsel.view", label: "View the counselling case board (confidential cases limited to assigned/opener unless manage)", group: "Health & Welfare" },
+  { id: "counsel.manage", label: "Run the G&C unit — adjudicate, refer out, close cases & log sessions", group: "Health & Welfare" },
   // Clubs & societies (wave 27 — the co-curricular register)
   { id: "clubs.view", label: "View club register, rosters & events", group: "Academic" },
   { id: "clubs.manage", label: "Manage clubs, memberships, meetings & events", group: "Academic" },
@@ -194,6 +197,7 @@ export const ROLE_DEFAULTS: Record<string, string[] | "*"> = {
     "attendance.view", "attendance.take",
     "discipline.view", "discipline.manage",
     "health.view", "health.manage",
+    "counsel.view", // wave 71 — every teacher can refer a learner to the G&C unit
     "clubs.view", "clubs.manage",
     "classes.view", "classes.manage",
     "gradebook.view", "gradebook.enter",
@@ -274,6 +278,7 @@ export const PERM_IMPLIES: Record<string, string[]> = {
   "reports.publish": ["reports.view"],
   "discipline.manage": ["discipline.view"],
   "health.manage": ["health.view"],
+  "counsel.manage": ["counsel.view"],
   "clubs.manage": ["clubs.view"],
   "staffduty.manage": ["staffduty.view"],
   "staffcpd.manage": ["staffcpd.view"],
@@ -362,6 +367,7 @@ export const MODULE_PERMS: Record<string, string[]> = {
   results: ["reports.view"],
   discipline: ["discipline.view"],
   health: ["health.view"],
+  counsel: ["counsel.view"],
   clubs: ["clubs.view"],
   staffduty: ["staffduty.view"],
   staffcpd: ["staffcpd.view"],

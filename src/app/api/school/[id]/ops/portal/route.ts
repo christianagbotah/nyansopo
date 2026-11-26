@@ -394,6 +394,48 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
   const body = await req.json().catch(() => ({}));
 
+  // ── wave 71 — confidential self-referral to the G&C unit: the learner (or a
+  //    parent on their behalf) asks for a private chat. Lands as a SELF-source
+  //    case on the counsellor's board — confidential by construction, visible
+  //    only to the assigned counsellor, the opener and counsel managers. ──
+  if (body.action === "counsel.self-refer") {
+    if (user.role !== "STUDENT" && user.role !== "PARENT") {
+      return NextResponse.json({ error: "Only learner and parent accounts can send counselling notes here" }, { status: 403 });
+    }
+    const allowedStudentIds = user.role === "STUDENT" && user.studentId ? [user.studentId] : user.role === "PARENT" ? user.linkedStudentIds : [];
+    const { studentId, topic, message } = body;
+    if (!studentId || !allowedStudentIds.includes(studentId)) {
+      return NextResponse.json({ error: "You can only send a note for yourself or your own child" }, { status: 403 });
+    }
+    const raw = typeof message === "string" ? message.trim() : "";
+    if (!raw) return NextResponse.json({ error: "Write a short note for the counsellor" }, { status: 400 });
+    const student = await db.student.findUnique({ where: { id: studentId }, select: { id: true, firstName: true, lastName: true, enrollments: { where: { status: "ACTIVE" }, take: 1, select: { classroom: { select: { schoolId: true } } } } } });
+    if (!student || !student.enrollments.length || student.enrollments[0].classroom.schoolId !== schoolId) {
+      return NextResponse.json({ error: "Learner not found at this school" }, { status: 404 });
+    }
+    const year = new Date().getFullYear();
+    const count = await db.counselCase.count({ where: { schoolId, caseNo: { startsWith: `GC-${year}-` } } });
+    // assign to a staff member with counsel.manage, else leave for the head
+    const school = await db.school.findUnique({ where: { id: schoolId }, select: { name: true } });
+    const created = await db.counselCase.create({
+      data: {
+        schoolId,
+        studentId,
+        caseNo: `GC-${year}-${String(count + 1).padStart(3, "0")}`,
+        category: ["ACADEMIC", "PEER", "FAMILY", "HEALTH", "FINANCIAL", "OTHER"].includes(topic) ? topic : "OTHER",
+        severity: "MEDIUM",
+        status: "OPEN",
+        source: "SELF",
+        title: `Self-referral: wants to talk to the counsellor`,
+        summary: raw.slice(0, 2000),
+        confidential: true,
+        openedByStaffId: null,
+        openedByName: `${student.firstName} ${student.lastName} (self-referral)`,
+      },
+    });
+    return NextResponse.json({ ok: true, caseNo: created.caseNo, school: school?.name ?? "School" });
+  }
+
   if (body.action === "book-request.create") {
     const { bookId, studentId, startAt, endAt } = body;
     // scoping: the requesting user may only request for their own learner record / their child
@@ -405,7 +447,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (!studentId || !allowedStudentIds.includes(studentId)) {
       return NextResponse.json({ error: "You can only request books for yourself or your own children" }, { status: 403 });
     }
-    if (!bookId) return NextResponse.json({ error: "Choose a book from the catalogue" }, { status: 400 });
     const book = await db.libraryBook.findUnique({ where: { id: bookId } });
     if (!book || book.schoolId !== schoolId) return NextResponse.json({ error: "Book not found" }, { status: 404 });
     if (book.available < 1) {

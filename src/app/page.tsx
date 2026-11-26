@@ -17,7 +17,7 @@ const DEEPLINK_MODULES = [
   // wave 61 — deep links now cover every module page in the index
   "siren", "office", "waec", "staffcpd", "emis", "health", "clubs", "discipline",
   "staffduty", "frontoffice", "certificates", "audit", "sync", "website", "curriculum",
-  "momo", "budget", "boarding",
+  "momo", "budget", "boarding", "counsel",
 ];
 
 export default function Home() {

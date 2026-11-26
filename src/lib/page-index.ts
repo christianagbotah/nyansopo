@@ -19,6 +19,7 @@ import {
   Trophy, Medal, BookUser, Footprints, Truck, AlarmClock, Target,
   DoorOpen, CalendarClock, PhoneCall, Mailbox, CalendarRange, BellRing, FileBadge, Stamp, Gauge, GitMerge, History,
   Table2, Database, Globe, Newspaper, Image, Inbox, FileText, IdCard, Megaphone, BookPlus, UserCheck, Grid3x3,
+  HandHeart,
 } from "lucide-react";
 
 export type PageEntry = {
@@ -173,6 +174,9 @@ export const PAGE_INDEX: PageEntry[] = [
   { id: "pg-screenings", label: "Health Screenings", section: S.academic, module: "health", target: { tab: "screenings" }, perm: ["health.view"], icon: Ruler, keywords: ["shep", "screening", "height", "weight", "bmi", "vision", "hearing", "growth check"] },
   { id: "pg-health-profiles", label: "Learner Health Profiles", section: S.academic, module: "health", target: { tab: "profiles" }, perm: ["health.view"], icon: HeartPulse, keywords: ["medical history", "blood group", "allergies", "medical conditions", "health record", "emergency contact"] },
   { id: "pg-health-analytics", label: "Wellness Analytics", section: S.academic, module: "health", target: { tab: "analytics" }, perm: ["health.view"], icon: Activity, keywords: ["visit trends", "top complaints", "frequent visitors", "sick bay load", "wellness analytics"] },
+  { id: "pg-counsel", label: "G&C Case Board", section: S.academic, module: "counsel", perm: ["counsel.view"], icon: HandHeart, keywords: ["guidance", "counselling", "counselor", "confidential", "case file", "referral", "dovvsu", "social welfare", "abuse report", "g&c"] },
+  { id: "pg-counsel-followups", label: "Counselling Follow-ups", section: S.academic, module: "counsel", target: { tab: "followups" }, perm: ["counsel.view"], icon: CalendarClock, keywords: ["follow up", "promise", "check on learner", "remind counsellor", "overdue"] },
+  { id: "pg-counsel-analytics", label: "G&C Analytics", section: S.academic, module: "counsel", target: { tab: "analytics" }, perm: ["counsel.view"], icon: Activity, keywords: ["counselling report", "cases by category", "referrals out", "resolution rate", "termly g&c"] },
   { id: "pg-clubs", label: "Club Register", section: S.academic, module: "clubs", target: { tab: "register" }, perm: ["clubs.view"], icon: Trophy, keywords: ["clubs", "societies", "co-curricular", "club register", "patron", "membership", "cadet", "scripture union", "science club"] },
   { id: "pg-club-meetings", label: "Club Meetings", section: S.academic, module: "clubs", target: { tab: "meetings" }, perm: ["clubs.view"], icon: ClipboardList, keywords: ["meeting register", "club attendance", "minutes", "present absent excused"] },
   { id: "pg-club-events", label: "Competitions & Events", section: S.academic, module: "clubs", target: { tab: "events" }, perm: ["clubs.view"], icon: Medal, keywords: ["inter-schools", "quiz", "competition", "festival", "debate", "cultural", "placement", "zonal", "regional"] },

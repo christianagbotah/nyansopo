@@ -260,6 +260,7 @@ model School {
   homeworkItems         Homework[]
   seatingPlans          ExamSeatingPlan[]
   paymentPlans          PaymentPlan[]
+  counselCases          CounselCase[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -487,6 +488,8 @@ model Staff {
   cpdActivities  CpdActivity[]
   visitorsToSee  Visitor[]      @relation("VisitorSeesStaff")
   homeworkPosted Homework[]
+  counselAssigned CounselCase[] @relation("CounselAssigned")
+  counselOpened   CounselCase[] @relation("CounselOpened")
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -570,6 +573,7 @@ model Student {
   clubMemberships        ClubMembership[]
   waecCandidacies        WaecCandidacy[]
   homeworkSubmissions    HomeworkSubmission[]
+  counselCases           CounselCase[]
 }
 
 model Enrollment {
@@ -3639,4 +3643,74 @@ model PaymentPlanInstallment {
 
   @@index([planId, sequence])
   @@index([dueDate])
+}
+
+/* wave 71 — Guidance & Counselling (G&C) unit: the confidential case file
+   every GES school must keep, separate from the discipline register.
+   A case is a concern about ONE learner; sessions log the counselling
+   conversations; follow-ups track promises made ("check on Kwame Friday").
+   CONFIDENTIAL cases are only visible to the assigned counsellor, the
+   opener and counsel.manage holders (head / G&C coordinator). ABUSE_REPORT
+   cases are always confidential and high-severity by construction. */
+model CounselCase {
+  id             String   @id @default(cuid())
+  schoolId       String
+  school         School   @relation(fields: [schoolId], references: [id])
+  studentId      String
+  student        Student  @relation(fields: [studentId], references: [id])
+  caseNo         String   // GC-2026-001 — derived per school per year
+  category       String   // ACADEMIC | BEHAVIOURAL | FAMILY | HEALTH | CAREER | PEER | ATTENDANCE | FINANCIAL | ABUSE_REPORT | OTHER
+  severity       String   @default("MEDIUM") // LOW | MEDIUM | HIGH | CRITICAL
+  status         String   @default("OPEN") // OPEN | IN_PROGRESS | MONITORING | RESOLVED | REFERRED
+  source         String   @default("TEACHER_REFERRAL") // TEACHER_REFERRAL | SELF | PARENT | DISCIPLINE | ATTENDANCE | HEALTH | ANON
+  title          String
+  summary        String?  @db.Text
+  confidential   Boolean  @default(true)
+  assignedToId   String?
+  assignedTo     Staff?   @relation("CounselAssigned", fields: [assignedToId], references: [id])
+  referredExternal String? // DOVVSU · Social Welfare · hospital · CHPS — named on REFERRED
+  openedByStaffId String?
+  openedBy        Staff?  @relation("CounselOpened", fields: [openedByStaffId], references: [id])
+  openedByName   String
+  closedAt       DateTime?
+  closedNote     String?
+  sessions       CounselSession[]
+  followUps      CounselFollowUp[]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([schoolId, status])
+  @@index([schoolId, studentId])
+  @@index([assignedToId])
+}
+
+model CounselSession {
+  id          String      @id @default(cuid())
+  caseId      String
+  case        CounselCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  heldAt      DateTime
+  mode        String      @default("FACE_TO_FACE") // FACE_TO_FACE | GROUP | PHONE | HOME_VISIT
+  notes       String      @db.Text // raw counsellor notes (confidential)
+  aiSummary   String?     @db.Text // drafted professional summary (AI-assist)
+  outcome     String? // IMPROVED | NO_CHANGE | WORSE | ESCALATED
+  attendees   String? // who was present ("learner + mother")
+  loggedByName String
+  createdAt   DateTime    @default(now())
+
+  @@index([caseId, heldAt])
+}
+
+model CounselFollowUp {
+  id        String      @id @default(cuid())
+  caseId    String
+  case      CounselCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  dueAt     DateTime
+  note      String
+  doneAt    DateTime?
+  doneNote  String?
+  remindedAt DateTime? // last reminder SMS to the assigned counsellor
+  createdAt DateTime    @default(now())
+
+  @@index([caseId, dueAt])
+  @@index([dueAt])
 }

@@ -74,6 +74,7 @@ const StudentPortal = dynamic(() => import("@/components/modules/student-portal"
 const Boarding = dynamic(() => import("@/components/modules/boarding").then((m: any) => m.Boarding), { loading: () => <ModuleSkeleton /> });
 const Discipline = dynamic(() => import("@/components/modules/discipline").then((m: any) => m.Discipline), { loading: () => <ModuleSkeleton /> });
 const Health = dynamic(() => import("@/components/modules/health").then((m: any) => m.Health), { loading: () => <ModuleSkeleton /> });
+const Counsel = dynamic(() => import("@/components/modules/counsel").then((m: any) => m.Counsel), { loading: () => <ModuleSkeleton /> });
 const Clubs = dynamic(() => import("@/components/modules/clubs").then((m: any) => m.Clubs), { loading: () => <ModuleSkeleton /> });
 const StaffDaily = dynamic(() => import("@/components/modules/staff-daily").then((m: any) => m.StaffDaily), { loading: () => <ModuleSkeleton /> });
 const TimetableIntel = dynamic(() => import("@/components/modules/timetable-intel").then((m: any) => m.TimetableIntel), { loading: () => <ModuleSkeleton /> });
@@ -101,7 +102,7 @@ import {
   PanelLeftClose, PanelLeftOpen, Palette, SlidersHorizontal, Archive, FileText, BookMarked, Target, PiggyBank, Award, IdCard,
   MessagesSquare, Landmark as LedgerIcon, DatabaseBackup, Gavel, HeartPulse, Stethoscope, Ruler, Trophy, Footprints,
   DoorOpen, CalendarClock, FileBadge, History, Truck, AlarmClock, Globe, BadgeCheck, ClipboardCheck,
-  BookPlus,
+  BookPlus, HandHeart,
 } from "lucide-react";
 
 type NavLeaf = { id: string; label: string; icon?: any; target?: NavTarget };
@@ -133,6 +134,7 @@ const SCHOOL_NAV: NavItem[] = [
   { id: "attendance", label: "Attendance", icon: CalendarCheck, section: "Academic" },
   { id: "discipline", label: "Discipline & Conduct", icon: Gavel, section: "Academic" },
   { id: "health", label: "Health & Sick Bay", icon: HeartPulse, section: "Academic" },
+  { id: "counsel", label: "Guidance & Counselling", icon: HandHeart, section: "Academic" },
   { id: "clubs", label: "Clubs & Societies", icon: Trophy, section: "Academic" },
   { id: "classes", label: "Classes & Timetable", icon: LayoutList, section: "Academic" },
   { id: "timetable", label: "Timetable Intelligence", icon: CalendarClock, section: "Academic" },
@@ -1060,6 +1062,7 @@ export function AppShell() {
              module === "attendance" && show("attendance") ? <Attendance /> :
              module === "discipline" && show("discipline") ? <Discipline /> :
              module === "health" && show("health") ? <Health /> :
+             module === "counsel" && show("counsel") ? <Counsel /> :
              module === "clubs" && show("clubs") ? <Clubs /> :
              module === "staffduty" && show("staffduty") ? <StaffDaily /> :
              module === "frontoffice" && show("frontoffice") ? <FrontOffice /> :

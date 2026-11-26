@@ -18,7 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "@/hooks/use-toast";
 import { avatarColor } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { Backpack, CalendarDays, BookOpen, GraduationCap, Wallet, Megaphone, Clock, AlertTriangle, CheckCircle2, UserRound, Laptop, Send, BookPlus, Hourglass, XCircle, MessageSquare, PenLine, Loader2 } from "lucide-react";
+import { Backpack, CalendarDays, BookOpen, GraduationCap, Wallet, Megaphone, Clock, AlertTriangle, CheckCircle2, UserRound, Laptop, Send, BookPlus, Hourglass, XCircle, MessageSquare, PenLine, Loader2, HandHeart, Lock } from "lucide-react";
 import { PortalMessenger } from "@/components/portal-messenger";
 
 type Slot = { day: number; start: number; end: number; subject: string; teacher: string | null };
@@ -76,6 +76,7 @@ export function StudentPortal() {
   const [data, setData] = useState<StudentData | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [requestOpen, setRequestOpen] = useState(false);
+  const [counselOpen, setCounselOpen] = useState(false);
 
   const load = useCallback(() => {
     if (!currentSchoolId) return;
@@ -164,6 +165,20 @@ export function StudentPortal() {
                   <div className="text-[10px] text-muted-foreground mt-1">{fmtDate(a.postedAt)}</div>
                 </div>
               )) : <EmptyState title="No notices" />}
+            </CardContent>
+          </Card>
+
+          {/* wave 71 — the G&C door: a private way to ask for a chat */}
+          <Card className="lg:col-span-3 border-primary/30 bg-primary/5">
+            <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+              <span className="flex size-10 items-center justify-center rounded-full bg-primary/10 shrink-0"><HandHeart className="size-5 text-primary" /></span>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold">Need someone to talk to?</div>
+                <div className="text-xs text-muted-foreground flex items-center gap-1"><Lock className="size-3" /> Send a private note to the school counsellor — only they and the head can read it. They will arrange a quiet time to chat.</div>
+              </div>
+              <Button size="sm" className="gap-1.5 shrink-0" onClick={() => setCounselOpen(true)}>
+                <HandHeart className="size-4" /> Talk to the counsellor
+              </Button>
             </CardContent>
           </Card>
 
@@ -380,7 +395,91 @@ export function StudentPortal() {
         schoolId={currentSchoolId!}
         onDone={load}
       />
+
+      {/* wave 71 — confidential self-referral to the G&C unit */}
+      <CounselRequestDialog
+        open={counselOpen}
+        onOpenChange={setCounselOpen}
+        studentId={me.id}
+        schoolId={currentSchoolId!}
+      />
     </div>
+  );
+}
+
+/* ── wave 71 — confidential self-referral: the learner (or their parent, from
+    the parent portal) asks the G&C unit for a private chat. It lands as a
+    SELF-source case on the counsellor's board — nothing is posted publicly. ── */
+const COUNSEL_TOPICS = [
+  { value: "ACADEMIC", label: "School work is hard right now" },
+  { value: "PEER", label: "Friends / classmates" },
+  { value: "FAMILY", label: "Something at home" },
+  { value: "HEALTH", label: "Not feeling well (body or mind)" },
+  { value: "FINANCIAL", label: "School fees or money worries" },
+  { value: "OTHER", label: "Something else" },
+];
+
+function CounselRequestDialog({ open, onOpenChange, studentId, schoolId }: {
+  open: boolean; onOpenChange: (o: boolean) => void; studentId: string; schoolId: string;
+}) {
+  const [topic, setTopic] = useState("PEER");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (open) { setTopic("PEER"); setMessage(""); }
+  }, [open]);
+
+  async function submit() {
+    if (!message.trim()) { toast({ title: "Write a short note first", description: "Just a few words — the counsellor will ask the rest gently." }); return; }
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${schoolId}/ops/portal`, {
+        action: "counsel.self-refer",
+        studentId, topic, message: message.trim(),
+      });
+      toast({
+        title: "Note sent — well done for asking",
+        description: "The counsellor will arrange a quiet time with you soon. This note is private.",
+      });
+      onOpenChange(false);
+    } catch (e: any) {
+      toast({ title: "Could not send the note", description: e.message, variant: "destructive" });
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><HandHeart className="size-4.5 text-primary" /> Talk to the counsellor</DialogTitle>
+          <DialogDescription>
+            This goes straight to the school counsellor as a private note. No teacher or classmate sees it.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3">
+          <div className="space-y-1.5">
+            <Label>What is it about?</Label>
+            <Select value={topic} onValueChange={setTopic}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {COUNSEL_TOPICS.map((t) => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Your note (private)</Label>
+            <Textarea rows={4} value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Write a few words — you can say as much or as little as you want." />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button disabled={busy || !message.trim()} onClick={submit} className="gap-1.5">
+            {busy ? "Sending…" : <><Send className="size-4" /> Send privately</>}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

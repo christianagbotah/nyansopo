@@ -151,6 +151,51 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // 3d — Guidance & Counselling (wave 71): open HIGH/CRITICAL cases on the
+  //      viewer's board (confidentiality-scoped — a plain teacher only counts
+  //      the cases assigned to or opened by them) + my overdue follow-ups.
+  if (can("counsel.view")) {
+    const canManageCounsel = can("counsel.manage");
+    const staffId = user.staffId ?? null;
+    const scope = canManageCounsel || !staffId
+      ? { schoolId }
+      : { schoolId, OR: [{ confidential: false }, { assignedToId: staffId }, { openedByStaffId: staffId }] };
+    const critical = await db.counselCase.findFirst({
+      where: { ...scope, severity: { in: ["HIGH", "CRITICAL"] }, status: { in: ["OPEN", "IN_PROGRESS", "MONITORING"] } },
+      orderBy: { updatedAt: "desc" },
+      select: { caseNo: true, title: true, severity: true, updatedAt: true },
+    });
+    if (critical) {
+      const cnt = await db.counselCase.count({
+        where: { ...scope, severity: { in: ["HIGH", "CRITICAL"] }, status: { in: ["OPEN", "IN_PROGRESS", "MONITORING"] } },
+      });
+      items.push({
+        id: "counsel-critical", kind: "counsel", severity: critical.severity === "CRITICAL" ? "danger" : "warning", count: cnt,
+        title: `${cnt} G&C case${cnt > 1 ? "s" : ""} at ${critical.severity.toLowerCase()} severity`,
+        detail: `e.g. ${critical.caseNo} — ${critical.title}. Open the case board.`,
+        module: "counsel", at: critical.updatedAt,
+      });
+    }
+    if (staffId) {
+      const overdueFu = await db.counselFollowUp.findFirst({
+        where: { doneAt: null, dueAt: { lt: new Date() }, case: { schoolId, assignedToId: staffId } },
+        orderBy: { dueAt: "asc" },
+        select: { dueAt: true, note: true, case: { select: { caseNo: true } } },
+      });
+      if (overdueFu) {
+        const cnt = await db.counselFollowUp.count({
+          where: { doneAt: null, dueAt: { lt: new Date() }, case: { schoolId, assignedToId: staffId } },
+        });
+        items.push({
+          id: "counsel-followup", kind: "counsel", severity: "warning", count: cnt,
+          title: `${cnt} counselling follow-up${cnt > 1 ? "s" : ""} overdue`,
+          detail: `${overdueFu.case.caseNo} — "${overdueFu.note}". You promised to check on this.`,
+          module: "counsel", tab: "followups", at: overdueFu.dueAt,
+        });
+      }
+    }
+  }
+
   // 4 — low / out-of-stock inventory
   if (can("inventory.view")) {
     const all = await db.inventoryItem.findMany({ where: { schoolId } });
