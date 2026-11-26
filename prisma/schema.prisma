@@ -258,6 +258,7 @@ model School {
   emisReturns           EmisReturn[]
   homeworkItems         Homework[]
   seatingPlans          ExamSeatingPlan[]
+  paymentPlans          PaymentPlan[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -685,6 +686,7 @@ model Invoice {
   createdAt      DateTime         @default(now())
   payments       Payment[]
   momoRequests   PaymentRequest[]
+  paymentPlans   PaymentPlan[]
 }
 
 model InvoiceItem {
