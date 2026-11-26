@@ -3574,3 +3574,43 @@ model ExamSeatingPlan {
 
   @@index([schoolId, updatedAt])
 }
+
+/* wave 69 — Payment Plans (installments): the Ghanaian way of paying school
+   fees. One ACTIVE plan per invoice splits the remaining balance into dated
+   installments the bursar can track, remind (SMS) and settle against.
+   OVERDUE is derived (dueDate < today && status = OPEN), never stored. */
+model PaymentPlan {
+  id            String   @id @default(cuid())
+  schoolId      String
+  school        School   @relation(fields: [schoolId], references: [id])
+  invoiceId     String
+  invoice       Invoice  @relation(fields: [invoiceId], references: [id])
+  status        String   @default("ACTIVE") // ACTIVE | SETTLED | CANCELLED
+  createdByName String
+  note          String?
+  installments  PaymentPlanInstallment[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([schoolId, status])
+  @@index([invoiceId])
+}
+
+model PaymentPlanInstallment {
+  id            String      @id @default(cuid())
+  planId        String
+  plan          PaymentPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  sequence      Int
+  label         String?
+  amountCents   Int
+  dueDate       DateTime
+  status        String      @default("OPEN") // OPEN | PAID
+  paidCents     Int         @default(0)
+  paidAt        DateTime?
+  receiptNo     String?
+  settledByName String?
+  createdAt     DateTime    @default(now())
+
+  @@index([planId, sequence])
+  @@index([dueDate])
+}

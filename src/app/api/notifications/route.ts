@@ -127,6 +127,30 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // 3c — installment plans coming due (wave 69 Payment Plans): installments
+  //      due within 3 days (or overdue) on active plans — the bursar's
+  //      "who do I chase today" nudge, deep-linked into the plans tab.
+  if (can("fees.view")) {
+    const today = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`);
+    const horizon = new Date(today.getTime() + 3 * 86400000);
+    const dueInsts = await db.paymentPlanInstallment.findMany({
+      where: { status: "OPEN", dueDate: { lte: horizon }, plan: { schoolId, status: "ACTIVE" } },
+      include: { plan: { include: { invoice: { select: { invoiceNo: true, student: { select: { firstName: true, lastName: true } } } } } } },
+      orderBy: { dueDate: "asc" },
+      take: 1,
+    });
+    if (dueInsts.length) {
+      const first = dueInsts[0];
+      const overdue = first.dueDate < today;
+      items.push({
+        id: "payment-plans-due", kind: "fees", severity: overdue ? "warning" : "info", count: 1,
+        title: `${first.plan.invoice.student.firstName}'s installment ${overdue ? "is overdue" : "is due within 3 days"}`,
+        detail: `${first.plan.invoice.invoiceNo} — installment ${first.sequence} · ${first.label ?? "part payment"}. Open Payment plans to remind or settle.`,
+        module: "fees", tab: "plans", at: first.dueDate,
+      });
+    }
+  }
+
   // 4 — low / out-of-stock inventory
   if (can("inventory.view")) {
     const all = await db.inventoryItem.findMany({ where: { schoolId } });

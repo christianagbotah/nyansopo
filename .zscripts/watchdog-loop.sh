@@ -21,7 +21,7 @@ fi
 
 echo "$(date '+%F %T') loop: watchdog started (pid $$)" >> "$LOG"
 while true; do
-  code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 8 http://localhost:3000/ || true)
+  code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 http://localhost:3000/ || true)
   if [ "$code" != "200" ]; then
     echo "$(date '+%F %T') loop: server down (http=$code) — restarting" >> "$LOG"
     pgrep -f "next dev" | xargs -r kill 2>/dev/null
@@ -30,7 +30,7 @@ while true; do
     setsid nohup bun run dev > dev.log 2>&1 &
     # wait up to ~4 min for the first compile of /
     for _ in $(seq 1 48); do
-      code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 8 http://localhost:3000/ || true)
+      code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 http://localhost:3000/ || true)
       [ "$code" = "200" ] && break
       sleep 5
     done

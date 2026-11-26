@@ -16,7 +16,8 @@ import { fmtCedi, fmtDate, PAYMENT_LABELS } from "@/lib/format";
 import { canAny } from "@/lib/rbac";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { Banknote, Receipt, AlertTriangle, CheckCircle2, Plus, X, Flag, Printer, Wallet, Ticket, Percent, UserPlus, XCircle, ListChecks, Copy as CopyIcon, Eye, Link2, ClipboardList, ShieldCheck, Undo2, PencilLine, Trash2, FileWarning, Ban, Download, History, ArrowRightLeft, PiggyBank, HandCoins, CopyPlus, FileUp, Smartphone, Search, UserRound, GraduationCap, Mail, HeartHandshake, Truck, AlarmClock } from "lucide-react";
+import { Banknote, Receipt, AlertTriangle, CheckCircle2, Plus, X, Flag, Printer, Wallet, Ticket, Percent, UserPlus, XCircle, ListChecks, Copy as CopyIcon, Eye, Link2, ClipboardList, ShieldCheck, Undo2, PencilLine, Trash2, FileWarning, Ban, Download, History, ArrowRightLeft, PiggyBank, HandCoins, CopyPlus, FileUp, Smartphone, Search, UserRound, GraduationCap, Mail, HeartHandshake, Truck, AlarmClock, Loader2, CalendarClock, Send } from "lucide-react";
+import { DateField } from "@/components/date-field";
 import { ReceiptDocument, BulkReceiptsDocument, RECEIPT_STYLES, type ReceiptStyle } from "@/components/receipts";
 import { BillItemsTab, CreateInvoicesTab, type BillItemRow, type RosterRow } from "@/components/modules/fees-billing";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -113,6 +114,15 @@ export function Fees() {
   /* wave 37 — beneficiary register (legacy benefit_categories parity) */
   const [benefits, setBenefits] = useState<BenefitData | null>(null);
   const [benefitTerm, setBenefitTerm] = useState<string | null>(null);
+  /* wave 69 — payment plans (installments) */
+  const [plans, setPlans] = useState<PlansData | null>(null);
+  const loadPlans = () => {
+    if (!currentSchoolId) return;
+    apiGet<PlansData>(`/api/school/${currentSchoolId}/ops/payment-plans`).then(setPlans).catch((e) => toast({ title: "Could not load payment plans", description: e.message, variant: "destructive" }));
+  };
+  useEffect(() => {
+    if (tab === "plans" && !plans) loadPlans();
+  }, [tab, plans, currentSchoolId]);
   /* wave 38 — receivables aging + reminder letters (CI3 aging_report / print_payment_reminders parity) */
   const [remindersOpen, setRemindersOpen] = useState(false);
 
@@ -137,7 +147,7 @@ export function Fees() {
   const [appliedTarget, setAppliedTarget] = useState<any>(null);
   if (navTarget !== appliedTarget) {
     setAppliedTarget(navTarget);
-    if (navTarget?.tab && ["bill-items", "create", "invoices", "receipts", "structures", "discounts", "arrears", "credits", "approvals", "beneficiaries", "drive-list", "aging"].includes(navTarget.tab)) setTab(navTarget.tab);
+    if (navTarget?.tab && ["bill-items", "create", "invoices", "receipts", "structures", "discounts", "arrears", "credits", "approvals", "beneficiaries", "drive-list", "aging", "plans"].includes(navTarget.tab)) setTab(navTarget.tab);
   }
   const canManageApprovals = canAny(session?.permissions, ["approvals.manage"]);
   const canRequestMods = canAny(session?.permissions, ["approvals.request", "approvals.manage"]);
@@ -327,6 +337,7 @@ export function Fees() {
           <TabsTrigger value="arrears">Arrears chase-list ({overdue.length})</TabsTrigger>
           <TabsTrigger value="drive-list" className="gap-1.5"><Truck className="size-4" /> Drive list</TabsTrigger>
           <TabsTrigger value="aging" className="gap-1.5"><AlarmClock className="size-4" /> Aging</TabsTrigger>
+          <TabsTrigger value="plans" className="gap-1.5"><CalendarClock className="size-4" /> Payment plans</TabsTrigger>
           <TabsTrigger value="credits">Credits</TabsTrigger>
           <TabsTrigger value="approvals" className="gap-1.5">
             Approvals
@@ -597,6 +608,15 @@ export function Fees() {
         <TabsContent value="aging" className="mt-4">
           {currentSchoolId && (
             <AgingTab schoolId={currentSchoolId} onReminders={canAny(session?.permissions, ["fees.view"]) ? () => setRemindersOpen(true) : undefined} />
+          )}
+        </TabsContent>
+
+        {/* wave 69 — payment plans (installments): split a balance into dated parts */}
+        <TabsContent value="plans" className="mt-4">
+          {!plans ? (
+            <LoadingBlock label="Loading payment plans…" />
+          ) : (
+            <PaymentPlansTab data={plans} onChanged={loadPlans} canManage={canAny(session?.permissions, ["fees.manage"])} />
           )}
         </TabsContent>
 
@@ -2908,6 +2928,338 @@ function AddBeneficiaryDialog({ open, onOpenChange, categories, roster, termId, 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button disabled={busy} onClick={save}>{busy ? "Saving…" : "Add to register"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════
+   wave 69 — Payment Plans (installments): the Ghanaian way of paying
+   school fees. Split a balance into dated parts; remind by SMS; settle
+   each part as the money lands. The invoice's paymentPlan flag flips to
+   INSTALLMENTS while the plan is active (CI3 enroll.payment_plan parity).
+   ══════════════════════════════════════════════════════════════ */
+type PlanInst = { id: string; sequence: number; label: string | null; amountCents: number; dueDate: string; status: string; overdue: boolean; paidCents: number; paidAt: string | null; receiptNo: string | null; settledByName: string | null };
+type PlanRow = {
+  id: string; status: string; createdByName: string; note: string | null; createdAt: string;
+  invoice: { id: string; invoiceNo: string; termBalance: number; total: number; paid: number; discount: number; status: string; student: { name: string; nyansapoIndex: string; guardianName: string; guardianPhone: string } };
+  installments: PlanInst[];
+  openCount: number; dueSoonCents: number; overdueCount: number;
+};
+type PlansData = {
+  plans: PlanRow[];
+  eligible: { id: string; invoiceNo: string; balance: number; status: string; dueDate: string | null; student: string }[];
+  stats: { active: number; dueSoon: number; overdue: number; plannedCents: number };
+};
+
+const dayLabel = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+
+function PaymentPlansTab({ data, onChanged, canManage }: { data: PlansData; onChanged: () => void; canManage: boolean }) {
+  const { currentSchoolId } = useStore();
+  const [busy, setBusy] = useState(false);
+  const [openPlan, setOpenPlan] = useState<PlanRow | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+
+  async function act(body: Record<string, unknown>, okTitle: string, okDesc?: string) {
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/payment-plans`, body);
+      toast({ title: okTitle, description: okDesc });
+      onChanged();
+      return true;
+    } catch (e: any) {
+      toast({ title: "Action failed", description: e.message, variant: "destructive" });
+      return false;
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatCard icon={<CalendarClock className="size-4" />} label="Active plans" value={data.stats.active} sub="installment schedules" tone="primary" />
+        <StatCard icon={<AlarmClock className="size-4" />} label="Due ≤ 3 days" value={data.stats.dueSoon} sub="installments to chase now" tone={data.stats.dueSoon ? "danger" : "default"} />
+        <StatCard icon={<AlertTriangle className="size-4" />} label="Plans with overdue parts" value={data.stats.overdue} sub="past-due installments" tone={data.stats.overdue ? "danger" : "default"} />
+        <StatCard icon={<Wallet className="size-4" />} label="Still to collect" value={fmtCedi(data.stats.plannedCents, { compact: true })} sub="open installments on active plans" />
+      </div>
+
+      {canManage && (
+        <div className="flex justify-end">
+          <Button className="gap-1.5" onClick={() => setCreateOpen(true)}><Plus className="size-4" /> New payment plan</Button>
+        </div>
+      )}
+
+      {data.plans.length === 0 ? (
+        <EmptyState icon={<CalendarClock className="size-8" />} title="No payment plans yet" hint="Split a term balance into dated installments — the way most families actually pay." />
+      ) : (
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-base">Installment plans ({data.plans.length})</CardTitle></CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Learner</TableHead>
+                  <TableHead className="hidden md:table-cell">Invoice</TableHead>
+                  <TableHead>Progress</TableHead>
+                  <TableHead className="hidden sm:table-cell">Next due</TableHead>
+                  <TableHead className="hidden lg:table-cell">Outstanding</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.plans.map((p) => {
+                  const next = p.installments.find((i) => i.status === "OPEN");
+                  const outstanding = p.installments.filter((i) => i.status === "OPEN").reduce((s, i) => s + i.amountCents, 0);
+                  return (
+                    <TableRow key={p.id}>
+                      <TableCell>
+                        <div className="font-medium leading-tight">{p.invoice.student.name}</div>
+                        <div className="text-[11px] text-muted-foreground font-mono">{p.invoice.student.nyansapoIndex}</div>
+                      </TableCell>
+                      <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
+                        {p.invoice.invoiceNo}
+                        {p.overdueCount > 0 && <Badge className="ml-1.5 bg-destructive text-[9px]">{p.overdueCount} overdue</Badge>}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-1.5">
+                          {p.installments.map((i) => (
+                            <span key={i.id} title={`#${i.sequence} ${i.status}${i.overdue ? " (overdue)" : ""}`} className={cn("inline-block size-2.5 rounded-full", i.status === "PAID" ? "bg-emerald-500" : i.overdue ? "bg-destructive" : "bg-amber-400")} />
+                          ))}
+                          <span className="text-xs text-muted-foreground ml-1">{p.installments.filter((i) => i.status === "PAID").length}/{p.installments.length}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="hidden sm:table-cell">
+                        {next ? (
+                          <span className={cn("text-xs", next.overdue ? "text-destructive font-medium" : "text-muted-foreground")}>{dayLabel(next.dueDate)} · {fmtCedi(next.amountCents)}</span>
+                        ) : <Badge className="bg-emerald-600 text-[10px]">settled</Badge>}
+                      </TableCell>
+                      <TableCell className="hidden lg:table-cell tabular-nums">{fmtCedi(outstanding)}</TableCell>
+                      <TableCell className="text-right">
+                        <div className="inline-flex gap-1">
+                          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setOpenPlan(p)}>View</Button>
+                          {canManage && next && (
+                            <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs text-emerald-700" disabled={busy}
+                              onClick={() => act({ action: "plan.settle", installmentId: next.id }, "Installment settled", `${fmtCedi(next.amountCents)} marked paid`)}>
+                              <CheckCircle2 className="size-3" /> Settle
+                            </Button>
+                          )}
+                          {canManage && next && (
+                            <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" disabled={busy}
+                              onClick={() => act({ action: "plan.remind", planId: p.id }, "Reminder SMS on its way", `The schedule for ${p.invoice.student.name.split(" ")[0]} was texted to ${p.invoice.student.guardianPhone}`)}>
+                              <Send className="size-3" /> Remind
+                            </Button>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+
+      {openPlan && (
+        <PlanDetailDialog
+          plan={openPlan}
+          busy={busy}
+          onClose={() => setOpenPlan(null)}
+          canManage={canManage}
+          onSettle={async (inst, receipt) => { const ok = await act({ action: "plan.settle", installmentId: inst.id, receiptNo: receipt || null }, "Installment settled", `${fmtCedi(inst.amountCents)} marked paid`); if (ok) setOpenPlan(null); }}
+          onRemind={async () => act({ action: "plan.remind", planId: openPlan.id }, "Reminder SMS on its way", `The outstanding schedule was texted to ${openPlan.invoice.student.guardianPhone}`)}
+          onCancel={async (note) => { const ok = await act({ action: "plan.cancel", planId: openPlan.id, note }, "Plan cancelled", `${openPlan.invoice.invoiceNo} is back on the normal balance`); if (ok) setOpenPlan(null); }}
+        />
+      )}
+
+      {createOpen && (
+        <CreatePlanDialog
+          eligible={data.eligible}
+          busy={busy}
+          onClose={() => setCreateOpen(false)}
+          onCreate={async (invoiceId, parts, note) => {
+            const ok = await act({ action: "plan.create", invoiceId, installments: parts, note }, "Payment plan created", "The invoice now carries INSTALLMENTS — track and remind from this tab");
+            if (ok) setCreateOpen(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function PlanDetailDialog({ plan, busy, canManage, onClose, onSettle, onRemind, onCancel }: {
+  plan: PlanRow; busy: boolean; canManage: boolean;
+  onClose: () => void; onSettle: (inst: PlanInst, receipt: string) => Promise<unknown>;
+  onRemind: () => Promise<unknown>; onCancel: (note: string) => Promise<unknown>;
+}) {
+  const [receipt, setReceipt] = useState("");
+  const [cancelNote, setCancelNote] = useState("");
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  const outstanding = plan.installments.filter((i) => i.status === "OPEN").reduce((s, i) => s + i.amountCents, 0);
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-xl max-h-[92vh] overflow-y-auto nice-scroll">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><CalendarClock className="size-4.5" /> {plan.invoice.student.name}</DialogTitle>
+          <DialogDescription>
+            {plan.invoice.invoiceNo} · balance {fmtCedi(plan.invoice.termBalance)} · outstanding on plan {fmtCedi(outstanding)} · by {plan.createdByName}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2">
+          {plan.installments.map((i) => (
+            <div key={i.id} className={cn("rounded-lg border p-3", i.status === "PAID" ? "border-emerald-200 bg-emerald-50/50 dark:border-emerald-900 dark:bg-emerald-950/20" : i.overdue ? "border-destructive/40 bg-destructive/5" : "")}>
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-sm">
+                  <span className="font-semibold">#{i.sequence}</span> {i.label ?? `Part ${i.sequence}`} · <span className="font-medium">{fmtCedi(i.amountCents)}</span> · due {dayLabel(i.dueDate)}
+                </div>
+                {i.status === "PAID" ? (
+                  <Badge className="bg-emerald-600 text-[10px]">paid {i.paidAt ? dayLabel(i.paidAt) : ""}{i.receiptNo ? ` · ${i.receiptNo}` : ""}</Badge>
+                ) : i.overdue ? (
+                  <Badge className="bg-destructive text-[10px]">overdue</Badge>
+                ) : (
+                  <Badge variant="outline" className="text-[10px]">open</Badge>
+                )}
+              </div>
+              {canManage && i.status === "OPEN" && (
+                <div className="mt-2 flex items-center gap-2">
+                  <Input value={receipt} onChange={(e) => setReceipt(e.target.value)} placeholder="Receipt no (optional)" className="h-8 text-xs" />
+                  <Button size="sm" className="h-8 gap-1 text-xs" disabled={busy} onClick={() => onSettle(i, receipt)}>
+                    {busy ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCircle2 className="size-3.5" />} Mark paid
+                  </Button>
+                </div>
+              )}
+              {i.status === "PAID" && i.settledByName && <p className="text-[10px] text-muted-foreground mt-1">settled by {i.settledByName}</p>}
+            </div>
+          ))}
+        </div>
+        {canManage && plan.status === "ACTIVE" && (
+          <DialogFooter className="flex-row items-center justify-between gap-2">
+            {confirmCancel ? (
+              <div className="flex items-center gap-2 w-full">
+                <Input value={cancelNote} onChange={(e) => setCancelNote(e.target.value)} placeholder="Why is the plan being cancelled?" className="h-8 text-xs" />
+                <Button size="sm" variant="destructive" className="h-8 text-xs shrink-0" disabled={busy} onClick={() => onCancel(cancelNote)}>Confirm cancel</Button>
+                <Button size="sm" variant="ghost" className="h-8 text-xs shrink-0" onClick={() => setConfirmCancel(false)}>Keep</Button>
+              </div>
+            ) : (
+              <>
+                <Button variant="ghost" size="sm" className="h-8 text-xs text-destructive" disabled={busy} onClick={() => setConfirmCancel(true)}>Cancel plan</Button>
+                <Button size="sm" className="h-8 gap-1.5 text-xs" disabled={busy} onClick={onRemind}>
+                  <Send className="size-3.5" /> SMS schedule to guardian
+                </Button>
+              </>
+            )}
+          </DialogFooter>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function CreatePlanDialog({ eligible, busy, onClose, onCreate }: {
+  eligible: PlansData["eligible"]; busy: boolean;
+  onClose: () => void; onCreate: (invoiceId: string, parts: { amountCents: number; dueDate: string; label?: string }[], note: string) => Promise<void>;
+}) {
+  const [invoiceId, setInvoiceId] = useState("");
+  const [note, setNote] = useState("");
+  const [parts, setParts] = useState<{ label: string; amount: string; due: string }[]>([
+    { label: "", amount: "", due: "" }, { label: "", amount: "", due: "" },
+  ]);
+  const picked = eligible.find((e) => e.id === invoiceId);
+  const sumCents = parts.reduce((s, p) => s + Math.round((Number(p.amount) || 0) * 100), 0);
+  const balance = picked?.balance ?? 0;
+  const balanced = balance > 0 && sumCents === balance;
+  const datesOk = parts.every((p) => /^\d{4}-\d{2}-\d{2}/.test(p.due)) && parts.every((p, i) => i === 0 || new Date(p.due) > new Date(parts[i - 1].due));
+
+  function setPart(i: number, patch: Partial<(typeof parts)[number]>) {
+    setParts((ps) => ps.map((p, j) => (j === i ? { ...p, ...patch } : p)));
+  }
+
+  function splitEvenly() {
+    if (!picked || !picked.balance) return;
+    const n = parts.length;
+    const per = Math.floor(picked.balance / n);
+    const rem = picked.balance - per * n;
+    const start = new Date();
+    setParts(parts.map((_, i) => ({
+      label: `Part ${i + 1} of ${n}`,
+      amount: ((per + (i === n - 1 ? rem : 0)) / 100).toFixed(2),
+      due: new Date(start.getFullYear(), start.getMonth(), start.getDate() + (i + 1) * 30).toISOString().slice(0, 10),
+    })));
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-xl max-h-[92vh] overflow-y-auto nice-scroll">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><CalendarClock className="size-4.5" /> New payment plan</DialogTitle>
+          <DialogDescription>Split the invoice balance into dated installments. The parts must sum exactly to the balance.</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label>Invoice</Label>
+            <Select value={invoiceId} onValueChange={setInvoiceId}>
+              <SelectTrigger><SelectValue placeholder="Pick an invoice with a balance" /></SelectTrigger>
+              <SelectContent className="max-h-64 overflow-y-auto nice-scroll">
+                {eligible.map((e) => (
+                  <SelectItem key={e.id} value={e.id}>{e.student} — {e.invoiceNo} · {fmtCedi(e.balance)} left</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {picked && <p className="text-xs text-muted-foreground">Balance to plan: <span className="font-medium text-foreground">{fmtCedi(balance)}</span></p>}
+          </div>
+
+          {picked && (
+            <>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label>Installments</Label>
+                  <div className="flex gap-1.5">
+                    <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={splitEvenly}><Wallet className="size-3" /> Split evenly, monthly</Button>
+                    <Button size="sm" variant="outline" className="h-7 text-xs gap-1" disabled={parts.length >= 12}
+                      onClick={() => setParts((ps) => [...ps, { label: `Part ${ps.length + 1}`, amount: "", due: "" }])}><Plus className="size-3" /> Add</Button>
+                  </div>
+                </div>
+                {parts.map((p, i) => (
+                  <div key={i} className="grid grid-cols-[1fr_110px_150px_32px] gap-2 items-end">
+                    <div className="space-y-1">
+                      {i === 0 && <Label className="text-[10px] text-muted-foreground">Label</Label>}
+                      <Input value={p.label} onChange={(e) => setPart(i, { label: e.target.value })} placeholder={`Part ${i + 1}`} className="h-8 text-sm" />
+                    </div>
+                    <div className="space-y-1">
+                      {i === 0 && <Label className="text-[10px] text-muted-foreground">GH₵</Label>}
+                      <Input value={p.amount} onChange={(e) => setPart(i, { amount: e.target.value })} placeholder="0.00" inputMode="decimal" className="h-8 text-sm" />
+                    </div>
+                    <div className="space-y-1">
+                      {i === 0 && <Label className="text-[10px] text-muted-foreground">Due date</Label>}
+                      <DateField value={p.due} onChange={(v) => setPart(i, { due: v ?? "" })} placeholder="Due" />
+                    </div>
+                    <div className={i === 0 ? "mt-5" : ""}>
+                      <Button size="icon" variant="ghost" className="size-8 text-destructive" disabled={parts.length <= 2} aria-label={`Remove part ${i + 1}`} onClick={() => setParts((ps) => ps.filter((_, j) => j !== i).map((x, j) => ({ ...x, label: x.label.startsWith("Part") ? `Part ${j + 1}` : x.label })))}>
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className={cn("rounded-lg border px-3 py-2 text-sm flex items-center justify-between", balanced ? "border-emerald-300 bg-emerald-50/60 dark:bg-emerald-950/20" : sumCents > 0 ? "border-amber-300 bg-amber-50/60 dark:bg-amber-950/20" : "")}>
+                <span className="text-muted-foreground">Parts sum</span>
+                <span className={cn("font-medium tabular-nums", balanced ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300")}>
+                  {fmtCedi(sumCents)} {balanced ? "= balance ✓" : `of ${fmtCedi(balance)}`}
+                </span>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Note (optional)</Label>
+                <Textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="e.g. Father asked to spread the balance over three months" />
+              </div>
+            </>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
+          <Button size="sm" disabled={busy || !invoiceId || !balanced || !datesOk} className="gap-1.5" onClick={() => onCreate(invoiceId, parts.map((p) => ({ amountCents: Math.round((Number(p.amount) || 0) * 100), dueDate: p.due, label: p.label || undefined })), note)}>
+            {busy ? <Loader2 className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />} Create plan
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -119,6 +119,7 @@ export const PAGE_INDEX: PageEntry[] = [
   { id: "pg-arrears", label: "Arrears Chase-List", section: S.billing, module: "fees", target: { tab: "arrears" }, perm: ["fees.view"], icon: FileWarning, keywords: ["owing", "debtors", "balance", "chase"] },
   { id: "pg-drive", label: "Drive List", section: S.billing, module: "fees", target: { tab: "drive-list" }, perm: ["fees.view", "cashier.reports", "daily.collect"], icon: Truck, keywords: ["drive", "debtors", "board", "streams", "collections walk"] },
   { id: "pg-aging", label: "Receivables Aging", section: S.billing, module: "fees", target: { tab: "aging" }, perm: ["fees.view", "cashier.reports", "daily.collect"], icon: AlarmClock, keywords: ["aging", "buckets", "30 60 90", "overdue", "receivables", "reminder letters", "payment reminders"] },
+  { id: "pg-plans", label: "Payment Plans", section: S.billing, module: "fees", target: { tab: "plans" }, perm: ["fees.view"], icon: CalendarClock, keywords: ["installments", "split payment", "pay in parts", "payment schedule", "plan", "terms"] },
   { id: "pg-credits", label: "Student Credits", section: S.billing, module: "fees", target: { tab: "credits" }, perm: ["fees.view"], icon: Wallet, keywords: ["prepaid", "advance", "topup", "wallet"] },
   { id: "pg-mod-approvals", label: "Modification Approvals", section: S.billing, module: "fees", target: { tab: "approvals" }, perm: ["fees.view"], icon: Scale, keywords: ["edit receipt", "amend", "level 1"] },
 

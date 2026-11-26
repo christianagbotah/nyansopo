@@ -461,3 +461,4 @@ function TemplateManager({ open, onOpenChange, schoolId, onSaved, defaultContent
     </Dialog>
   );
 }
+
