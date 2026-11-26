@@ -188,6 +188,7 @@ export const PAGE_INDEX: PageEntry[] = [
   { id: "pg-cumulative", label: "Cumulative Records", section: S.academic, module: "reports", target: { tab: "cumulative" }, perm: ["reports.view"], icon: ScrollText, keywords: ["cum record", "history"] },
   { id: "pg-papers", label: "BECE Papers", section: S.academic, module: "reports", target: { tab: "papers" }, perm: ["reports.view"], icon: Flag, keywords: ["bece", "mock", "questions"] },
   { id: "pg-exams", label: "Online Exams", section: S.academic, module: "exams", perm: ["exams.online"], icon: Laptop, keywords: ["quiz", "test", "cbt"] },
+  { id: "pg-exam-studio", label: "AI Exam Paper Studio", section: S.academic, module: "exams", target: { tab: "studio" }, perm: ["exams.online"], icon: Sparkles, keywords: ["generate exam", "question paper", "mock bece", "marking scheme", "objectives", "theory", "ai paper"] },
   { id: "pg-waec", label: "WAEC Candidacy", section: S.academic, module: "waec", target: { tab: "candidates" }, perm: ["exams.waec"], icon: IdCard, keywords: ["bece", "wassce", "index number", "centre", "candidate", "registration"] },
   { id: "pg-waec-mocks", label: "WAEC Mock Results", section: S.academic, module: "waec", target: { tab: "mocks" }, perm: ["exams.waec"], icon: IdCard, keywords: ["mock", "trial exam", "objective", "theory"] },
   { id: "pg-waec-analysis", label: "WAEC Mock Analysis", section: S.academic, module: "waec", target: { tab: "analysis" }, perm: ["exams.waec"], icon: IdCard, keywords: ["aggregate", "best six", "subject pass rate", "progression"] },

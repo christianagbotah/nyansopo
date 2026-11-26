@@ -14,7 +14,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { Laptop, Plus, Send, Lock, Trash2, PencilLine, Users, Trophy, Clock, CheckCircle2, Printer, Radio, Eye, EyeOff } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
+import { Laptop, Plus, Send, Lock, Trash2, PencilLine, Users, Trophy, Clock, CheckCircle2, Printer, Radio, Eye, EyeOff, Sparkles, FileText, Loader2, ScrollText } from "lucide-react";
 
 type Question = {
   id?: string; type: string; prompt: string;
@@ -40,12 +43,13 @@ export function renderBlanks(prompt: string): (string | { blank: true })[] {
 }
 
 export function OnlineExams() {
-  const { currentSchoolId, session } = useStore();
+  const { currentSchoolId, session, navTarget } = useStore();
   const [exams, setExams] = useState<Exam[] | null>(null);
   const [edit, setEdit] = useState<Exam | "new" | null>(null);
   const [resultsFor, setResultsFor] = useState<Exam | null>(null);
   const [printFor, setPrintFor] = useState<Exam | null>(null);
   const [monitorFor, setMonitorFor] = useState<Exam | null>(null);
+  const [tab, setTab] = useState(navTarget?.tab === "studio" ? "studio" : "exams");
 
   const load = useCallback(() => {
     if (!currentSchoolId) return;
@@ -74,6 +78,13 @@ export function OnlineExams() {
         description="Publish MCQ, true/false and fill-in-the-blanks papers to a class, watch learners sit them live, print the question paper, and auto-mark — iEduPro online_exam parity."
         actions={<Button size="sm" className="gap-1.5 h-8" onClick={() => setEdit("new")}><Plus className="size-4" /> Create exam</Button>}
       />
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList>
+          <TabsTrigger value="exams">Exams ({exams.length})</TabsTrigger>
+          <TabsTrigger value="studio" className="gap-1.5"><Sparkles className="size-3.5" /> AI Paper Studio</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="exams" className="mt-2">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
         <StatCard icon={<Laptop className="size-4" />} label="Exams" value={exams.length} sub={`${published.length} open now`} />
         <StatCard icon={<Users className="size-4" />} label="Attempts" value={attempts} sub="submissions marked" tone="primary" />
@@ -143,6 +154,12 @@ export function OnlineExams() {
       ) : (
         <EmptyState icon={<Laptop className="size-8" />} title="No online exams yet" hint="Create one — add questions of any type, publish it to a class, and learners sit it from the student portal." />
       )}
+        </TabsContent>
+
+        <TabsContent value="studio" className="mt-2">
+          <ExamStudio onSavedExam={() => { setTab("exams"); load(); }} />
+        </TabsContent>
+      </Tabs>
 
       <ExamEditor exam={edit} onOpenChange={(o) => !o && setEdit(null)} onDone={() => { setEdit(null); load(); }} />
       <ResultsDialog exam={resultsFor} onOpenChange={(o) => !o && setResultsFor(null)} />
@@ -552,5 +569,248 @@ function MonitorDialog({ exam, onOpenChange }: { exam: Exam | null; onOpenChange
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/* ── wave 66 — AI Exam Paper Studio ──
+   Type what the exam should cover; the AI drafts a complete Ghanaian paper —
+   Section A objectives (A–D + answer key) and Section B theory with mark
+   allocations and answer guides, NaCCA SBC style with Ghanaian context.
+   Review the draft, then either save it as a printable question paper (the
+   exam-paper bank in Exams & Reports) or drop Section A straight into an
+   Online Exam draft the class can sit on devices, auto-marked. */
+type McqDraft = { prompt: string; A: string; B: string; C: string; D: string; answer: string; marks: number };
+type TheoryDraft = { prompt: string; marks: number; guide: string };
+type StudioDraft = {
+  title: string; sectionA: McqDraft[]; sectionB: TheoryDraft[];
+  totalMarks: number; durationMins: number; className?: string; subject?: string;
+};
+
+const PAPER_TYPE_OPTS = [
+  { v: "EXERCISE", label: "Class exercise" },
+  { v: "CLASS_TEST", label: "Class test" },
+  { v: "END_OF_TERM_PRACTICE", label: "End-of-term practice" },
+  { v: "MOCK_BECE", label: "Mock BECE" },
+];
+
+function ExamStudio({ onSavedExam }: { onSavedExam: () => void }) {
+  const { currentSchoolId } = useStore();
+  const [classrooms, setClassrooms] = useState<{ id: string; name: string }[]>([]);
+  const [form, setForm] = useState({
+    subjectName: "", classroomId: "", examName: "", paperType: "CLASS_TEST",
+    topics: "", numObjective: "10", numTheory: "2", durationMins: "45",
+  });
+  const [draft, setDraft] = useState<StudioDraft | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState<"paper" | "exam" | null>(null);
+  const [includeScheme, setIncludeScheme] = useState(true);
+
+  useEffect(() => {
+    if (!currentSchoolId) return;
+    apiGet<any>(`/api/school/${currentSchoolId}/settings`).then((d) => setClassrooms(d.classrooms ?? [])).catch(() => {});
+  }, [currentSchoolId]);
+
+  const klass = classrooms.find((c) => c.id === form.classroomId);
+
+  async function generate() {
+    if (!form.subjectName.trim() || !form.topics.trim()) {
+      toast({ title: "Subject and topics are required", description: "Tell the AI what the paper should cover.", variant: "destructive" });
+      return;
+    }
+    setBusy(true); setDraft(null);
+    try {
+      const d = await apiPost<{ draft: StudioDraft }>(`/api/school/${currentSchoolId}/ops/exam-studio`, {
+        action: "exam-studio.generate",
+        subjectName: form.subjectName, classroomId: form.classroomId || null, classroomName: klass?.name ?? "",
+        paperType: form.paperType, topics: form.topics,
+        numObjective: Number(form.numObjective) || 10, numTheory: Number(form.numTheory) || 0,
+        durationMins: Number(form.durationMins) || 45,
+      });
+      setDraft(d.draft);
+      toast({ title: "Draft ready", description: `${d.draft.sectionA.length} objectives + ${d.draft.sectionB.length} theory · ${d.draft.totalMarks} marks. Review before saving.` });
+    } catch (e: any) {
+      toast({ title: "Generation failed", description: e.message, variant: "destructive" });
+    } finally { setBusy(false); }
+  }
+
+  async function savePaper() {
+    if (!draft) return;
+    setSaving("paper");
+    try {
+      const r = await apiPost<{ paper: { id: string; title: string } }>(`/api/school/${currentSchoolId}/ops/exam-studio`, {
+        action: "exam-studio.save-paper",
+        draft, classroomId: form.classroomId || null, examName: form.examName || null,
+        subjectName: form.subjectName, durationMins: Number(form.durationMins) || 45, includeScheme,
+      });
+      toast({ title: "Paper saved to the bank", description: `“${r.paper.title}” — print it from Exams & Reports → Question papers.` });
+    } catch (e: any) {
+      toast({ title: "Could not save the paper", description: e.message, variant: "destructive" });
+    } finally { setSaving(null); }
+  }
+
+  async function saveOnlineExam() {
+    if (!draft) return;
+    setSaving("exam");
+    try {
+      const questions = draft.sectionA.map((q) => ({
+        type: "MCQ", prompt: q.prompt, optionA: q.A, optionB: q.B, optionC: q.C, optionD: q.D,
+        correctOption: q.answer, marks: q.marks,
+      }));
+      await apiPost(`/api/school/${currentSchoolId}/ops/exams`, {
+        action: "save-exam",
+        title: draft.title, subjectName: form.subjectName || draft.subject || "Examination",
+        description: draft.sectionB.length ? `AI-drafted from the Paper Studio. ${draft.sectionB.length} theory question(s) with mark allocations are in the printable paper.` : "AI-drafted from the Paper Studio.",
+        classroomId: form.classroomId || null, durationMins: Number(form.durationMins) || 45,
+        questions,
+      });
+      toast({ title: "Online exam draft created", description: "Section A is in — review it in the exam list, then publish to the class." });
+      onSavedExam();
+    } catch (e: any) {
+      toast({ title: "Could not create the online exam", description: e.message, variant: "destructive" });
+    } finally { setSaving(null); }
+  }
+
+  return (
+    <div className="grid lg:grid-cols-3 gap-4">
+      <Card className="lg:col-span-1">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2"><Sparkles className="size-4 text-primary" /> Describe the paper</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="space-y-1.5">
+            <Label>Subject</Label>
+            <Input value={form.subjectName} onChange={(e) => setForm({ ...form, subjectName: e.target.value })} placeholder="e.g. Integrated Science" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Class</Label>
+            <Select value={form.classroomId || "all"} onValueChange={(v) => setForm({ ...form, classroomId: v === "all" ? "" : v })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">No specific class</SelectItem>
+                {classrooms.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Paper type</Label>
+              <Select value={form.paperType} onValueChange={(v) => setForm({ ...form, paperType: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {PAPER_TYPE_OPTS.map((p) => <SelectItem key={p.v} value={p.v}>{p.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Duration (mins)</Label>
+              <Input type="number" min={10} max={180} value={form.durationMins} onChange={(e) => setForm({ ...form, durationMins: e.target.value })} />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Exam name (optional)</Label>
+            <Input value={form.examName} onChange={(e) => setForm({ ...form, examName: e.target.value })} placeholder="e.g. End of Term 1 Examination 2026/27" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Topics to cover</Label>
+            <Textarea value={form.topics} onChange={(e) => setForm({ ...form, topics: e.target.value })} rows={4} placeholder="e.g. Photosynthesis and respiration; the human digestive system; forces and motion basics" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Objective questions</Label>
+              <Input type="number" min={3} max={40} value={form.numObjective} onChange={(e) => setForm({ ...form, numObjective: e.target.value })} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Theory questions</Label>
+              <Input type="number" min={0} max={5} value={form.numTheory} onChange={(e) => setForm({ ...form, numTheory: e.target.value })} />
+            </div>
+          </div>
+          <Button onClick={generate} disabled={busy} className="w-full gap-1.5">
+            {busy ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+            {busy ? "Drafting the paper…" : "Draft exam paper with AI"}
+          </Button>
+          <p className="text-[11px] text-muted-foreground leading-relaxed">
+            You stay the examiner: nothing is saved until you review the draft. Distractors lean on common misconceptions, and every paper carries a marking scheme.
+          </p>
+        </CardContent>
+      </Card>
+
+      <div className="lg:col-span-2 space-y-4">
+        {!draft ? (
+          <Card className="border-dashed">
+            <CardContent className="py-14 text-center">
+              <ScrollText className="size-10 mx-auto text-muted-foreground/40" />
+              <p className="text-sm font-medium mt-3">No draft yet</p>
+              <p className="text-xs text-muted-foreground mt-1 max-w-md mx-auto">
+                Fill in the subject, class and topics — the AI drafts a complete Section A (objectives with an answer key)
+                and Section B (theory with mark allocations). Review it, then save it as a printable paper, an online exam, or both.
+              </p>
+            </CardContent>
+          </Card>
+        ) : (
+          <>
+            <Card>
+              <CardHeader className="pb-2 flex-row flex-wrap items-center justify-between gap-2 space-y-0">
+                <div>
+                  <CardTitle className="text-base flex items-center gap-2"><FileText className="size-4" /> {draft.title}</CardTitle>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {draft.sectionA.length} objectives ({draft.sectionA.reduce((s, q) => s + q.marks, 0)} marks)
+                    {draft.sectionB.length ? ` · ${draft.sectionB.length} theory (${draft.sectionB.reduce((s, q) => s + q.marks, 0)} marks)` : ""}
+                    {" "}· {draft.totalMarks} marks · {draft.durationMins} minutes{draft.className ? ` · ${draft.className}` : ""}
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center gap-2 rounded-lg border px-3 py-2">
+                    <span className="text-xs font-medium">Marking scheme in paper</span>
+                    <Switch checked={includeScheme} onCheckedChange={setIncludeScheme} />
+                  </div>
+                  <Button size="sm" variant="outline" className="gap-1.5" disabled={saving !== null} onClick={savePaper}>
+                    {saving === "paper" ? <Loader2 className="size-3.5 animate-spin" /> : <FileText className="size-3.5" />} Save printable paper
+                  </Button>
+                  <Button size="sm" className="gap-1.5" disabled={saving !== null || draft.sectionA.length === 0} onClick={saveOnlineExam}>
+                    {saving === "exam" ? <Loader2 className="size-3.5 animate-spin" /> : <Laptop className="size-3.5" />} Save as online exam
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <p className="text-[11px] text-muted-foreground">Saving as an online exam takes Section A only — the theory questions stay in the printable paper (learners write those in their booklets).</p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-2"><CardTitle className="text-sm">Section A — objectives ({draft.sectionA.reduce((s, q) => s + q.marks, 0)} marks)</CardTitle></CardHeader>
+              <CardContent className="space-y-3 max-h-72 overflow-y-auto nice-scroll">
+                {draft.sectionA.map((q, i) => (
+                  <div key={i} className="rounded-lg border p-3">
+                    <div className="text-sm font-medium leading-snug">{i + 1}. {q.prompt} <Badge variant="outline" className="ml-1 text-[10px]">{q.marks} mk</Badge></div>
+                    <div className="mt-1.5 grid sm:grid-cols-2 gap-1 text-xs">
+                      {(["A", "B", "C", "D"] as const).map((o) => (
+                        <div key={o} className={cn("rounded-md border px-2 py-1", q.answer === o ? "border-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 font-semibold text-emerald-700 dark:text-emerald-300" : "text-muted-foreground")}>
+                          <span className="font-medium mr-1">{o}.</span>{q[o]}
+                          {q.answer === o && <CheckCircle2 className="inline size-3 ml-1" />}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+
+            {draft.sectionB.length > 0 && (
+              <Card>
+                <CardHeader className="pb-2"><CardTitle className="text-sm">Section B — theory ({draft.sectionB.reduce((s, q) => s + q.marks, 0)} marks)</CardTitle></CardHeader>
+                <CardContent className="space-y-3 max-h-56 overflow-y-auto nice-scroll">
+                  {draft.sectionB.map((q, i) => (
+                    <div key={i} className="rounded-lg border p-3">
+                      <div className="text-sm font-medium leading-snug">{i + 1}. {q.prompt} <Badge variant="outline" className="ml-1 text-[10px]">{q.marks} mk</Badge></div>
+                      {q.guide && <p className="text-xs text-muted-foreground mt-1.5"><span className="font-medium text-foreground">Answer guide: </span>{q.guide}</p>}
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
+          </>
+        )}
+      </div>
+    </div>
   );
 }
