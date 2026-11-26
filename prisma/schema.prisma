@@ -257,6 +257,7 @@ model School {
   cpdActivities         CpdActivity[]
   emisReturns           EmisReturn[]
   homeworkItems         Homework[]
+  seatingPlans          ExamSeatingPlan[]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -3546,4 +3547,28 @@ model HomeworkSubmission {
   @@unique([homeworkId, studentId])
   @@index([homeworkId])
   @@index([studentId])
+}
+
+/* wave 67 — Exam Hall & Seating Planner: one row per printable seating chart.
+   entriesJson carries the seat grid: [{ seat, studentId, name, indexNo,
+   className }] in seat order (row-major). interleave=true rounds classes
+   seat-by-seat so neighbours always come from different classes — the
+   anti-copying pattern every Ghanaian exam hall runs on. */
+model ExamSeatingPlan {
+  id             String   @id @default(cuid())
+  schoolId       String
+  school         School   @relation(fields: [schoolId], references: [id])
+  title          String
+  examName       String?
+  rows           Int      @default(6)
+  cols           Int      @default(6)
+  interleave     Boolean  @default(true)
+  classroomNames String   @default("") // comma-separated source classes
+  entriesJson    String   @default("[]")
+  candidateCount Int      @default(0)
+  createdBy      String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([schoolId, updatedAt])
 }

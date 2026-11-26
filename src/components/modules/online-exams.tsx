@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import { Laptop, Plus, Send, Lock, Trash2, PencilLine, Users, Trophy, Clock, CheckCircle2, Printer, Radio, Eye, EyeOff, Sparkles, FileText, Loader2, ScrollText } from "lucide-react";
+import { Laptop, Plus, Send, Lock, Trash2, PencilLine, Users, Trophy, Clock, CheckCircle2, Printer, Radio, Eye, EyeOff, Sparkles, FileText, Loader2, ScrollText, Grid3x3, Shuffle, Rows3 } from "lucide-react";
 
 type Question = {
   id?: string; type: string; prompt: string;
@@ -79,9 +79,10 @@ export function OnlineExams() {
         actions={<Button size="sm" className="gap-1.5 h-8" onClick={() => setEdit("new")}><Plus className="size-4" /> Create exam</Button>}
       />
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList>
+        <TabsList className="flex-wrap h-auto">
           <TabsTrigger value="exams">Exams ({exams.length})</TabsTrigger>
           <TabsTrigger value="studio" className="gap-1.5"><Sparkles className="size-3.5" /> AI Paper Studio</TabsTrigger>
+          <TabsTrigger value="hall" className="gap-1.5"><Grid3x3 className="size-3.5" /> Exam hall</TabsTrigger>
         </TabsList>
 
         <TabsContent value="exams" className="mt-2">
@@ -158,6 +159,10 @@ export function OnlineExams() {
 
         <TabsContent value="studio" className="mt-2">
           <ExamStudio onSavedExam={() => { setTab("exams"); load(); }} />
+        </TabsContent>
+
+        <TabsContent value="hall" className="mt-2">
+          <ExamHall />
         </TabsContent>
       </Tabs>
 
@@ -811,6 +816,286 @@ function ExamStudio({ onSavedExam }: { onSavedExam: () => void }) {
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ── wave 67 — Exam Hall & Seating Planner ──
+   Pick the candidate classes and the hall grid; the planner distributes
+   candidates — interleaved round-robin by class (neighbours are never
+   classmates: the anti-copying layout every Ghanaian exam hall runs) or
+   alphabetical — then the chart prints full-page with the school header. */
+type HallPlan = {
+  id: string; title: string; examName: string | null; rows: number; cols: number;
+  interleave: boolean; classroomNames: string; candidateCount: number; createdBy: string;
+  createdAt: string; updatedAt: string;
+  entries: { seat: number; studentId: string; name: string; indexNo: string; className: string }[];
+};
+type HallDraft = {
+  rows: number; cols: number; interleave: boolean; entries: HallPlan["entries"];
+  candidateCount: number; classroomNames: string; blankSeats: number; byClass: Record<string, number>;
+};
+
+function ExamHall() {
+  const { currentSchoolId, schools } = useStore();
+  const [plans, setPlans] = useState<HallPlan[] | null>(null);
+  const [classrooms, setClassrooms] = useState<{ id: string; name: string; candidates: number }[]>([]);
+  const [form, setForm] = useState({ title: "", examName: "", rows: "6", cols: "6", interleave: true, classroomIds: [] as string[] });
+  const [draft, setDraft] = useState<HallDraft | null>(null);
+  const [viewing, setViewing] = useState<HallPlan | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [deleting, setDeleting] = useState<HallPlan | null>(null);
+
+  const load = useCallback(() => {
+    if (!currentSchoolId) return;
+    apiGet<{ plans: HallPlan[]; classrooms: { id: string; name: string; candidates: number }[] }>(`/api/school/${currentSchoolId}/ops/exam-hall`)
+      .then((d) => { setPlans(d.plans); setClassrooms(d.classrooms); })
+      .catch((e) => toast({ title: "Load failed", description: e.message, variant: "destructive" }));
+  }, [currentSchoolId]);
+  useEffect(load, [load]);
+
+  const school = schools.find((s) => s.id === currentSchoolId);
+  const pickedCandidates = classrooms.filter((c) => form.classroomIds.includes(c.id)).reduce((s, c) => s + c.candidates, 0);
+
+  function toggleClass(id: string) {
+    setForm((f) => ({ ...f, classroomIds: f.classroomIds.includes(id) ? f.classroomIds.filter((x) => x !== id) : [...f.classroomIds, id] }));
+  }
+
+  async function generate() {
+    if (!form.classroomIds.length) { toast({ title: "Pick at least one class", variant: "destructive" }); return; }
+    setBusy(true);
+    try {
+      const d = await apiPost<{ draft: HallDraft }>(`/api/school/${currentSchoolId}/ops/exam-hall`, {
+        action: "hall.generate",
+        classroomIds: form.classroomIds,
+        rows: Number(form.rows) || 6, cols: Number(form.cols) || 6,
+        interleave: form.interleave,
+      });
+      setDraft(d.draft);
+      toast({ title: `${d.draft.candidateCount} candidates seated`, description: `${d.draft.rows} rows × ${d.draft.cols} seats${d.draft.blankSeats ? ` · ${d.draft.blankSeats} spare seats` : ""}` });
+    } catch (e: any) {
+      toast({ title: "Could not seat the hall", description: e.message, variant: "destructive" });
+    } finally { setBusy(false); }
+  }
+
+  async function savePlan() {
+    if (!draft) return;
+    if (!form.title.trim()) { toast({ title: "Give the plan a title", variant: "destructive" }); return; }
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/exam-hall`, {
+        action: "hall.save", title: form.title, examName: form.examName || null, draft,
+      });
+      toast({ title: "Seating plan saved", description: "Open it any time to print for the exam hall." });
+      setDraft(null); setForm((f) => ({ ...f, title: "", examName: "" }));
+      load();
+    } catch (e: any) {
+      toast({ title: "Could not save", description: e.message, variant: "destructive" });
+    } finally { setBusy(false); }
+  }
+
+  async function removePlan(p: HallPlan) {
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/exam-hall`, { action: "hall.delete", id: p.id });
+      toast({ title: "Plan deleted", description: p.title });
+      setDeleting(null); load();
+    } catch (e: any) {
+      toast({ title: "Could not delete", description: e.message, variant: "destructive" });
+    } finally { setBusy(false); }
+  }
+
+  /** seat grid — row-major cells with entries filled in seat order */
+  const gridOf = (rows: number, cols: number, entries: HallPlan["entries"]) => {
+    const cells: (HallPlan["entries"][number] | null)[] = Array.from({ length: rows * cols }, (_, i) => null);
+    entries.forEach((e, i) => { if (i < cells.length) cells[i] = e; });
+    return cells;
+  };
+
+  return (
+    <div className="grid lg:grid-cols-3 gap-4">
+      {/* planner */}
+      <Card className="lg:col-span-1">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2"><Grid3x3 className="size-4 text-primary" /> Seat the hall</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="space-y-1.5">
+            <Label>Plan title</Label>
+            <Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="e.g. End of Term 1 — Main Hall" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Exam name (optional)</Label>
+            <Input value={form.examName} onChange={(e) => setForm({ ...form, examName: e.target.value })} placeholder="e.g. End of Term 1 Examination" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5"><Label>Rows</Label><Input type="number" min={1} max={20} value={form.rows} onChange={(e) => setForm({ ...form, rows: e.target.value })} /></div>
+            <div className="space-y-1.5"><Label>Seats per row</Label><Input type="number" min={1} max={20} value={form.cols} onChange={(e) => setForm({ ...form, cols: e.target.value })} /></div>
+          </div>
+          <div className="rounded-lg border p-3 flex items-center justify-between gap-3">
+            <div className="text-sm">
+              <div className="font-medium flex items-center gap-1.5"><Shuffle className="size-3.5" /> Interleave classes</div>
+              <div className="text-xs text-muted-foreground">Neighbours never share a class — the anti-copy pattern.</div>
+            </div>
+            <Switch checked={form.interleave} onCheckedChange={(v) => setForm({ ...form, interleave: v })} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Candidate classes {form.classroomIds.length ? `· ${pickedCandidates} learners` : ""}</Label>
+            <div className="rounded-lg border max-h-44 overflow-y-auto nice-scroll divide-y">
+              {classrooms.map((c) => (
+                <label key={c.id} className="flex items-center gap-2.5 px-3 py-2 text-sm cursor-pointer hover:bg-secondary/40">
+                  <input type="checkbox" className="accent-primary" checked={form.classroomIds.includes(c.id)} onChange={() => toggleClass(c.id)} />
+                  <span className="flex-1">{c.name}</span>
+                  <Badge variant="secondary" className="text-[10px] tabular-nums">{c.candidates}</Badge>
+                </label>
+              ))}
+              {!classrooms.length && <p className="px-3 py-3 text-xs text-muted-foreground">No classes yet.</p>}
+            </div>
+          </div>
+          <Button onClick={generate} disabled={busy} className="w-full gap-1.5">
+            {busy ? <Loader2 className="size-4 animate-spin" /> : <Rows3 className="size-4" />}
+            {busy ? "Seating…" : "Generate seating"}
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* draft grid + saved plans */}
+      <div className="lg:col-span-2 space-y-4">
+        {draft && (
+          <Card>
+            <CardHeader className="pb-2 flex-row flex-wrap items-center justify-between gap-2 space-y-0">
+              <div>
+                <CardTitle className="text-base">{draft.candidateCount} candidates · {draft.rows}×{draft.cols}</CardTitle>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {draft.classroomNames}{draft.interleave ? " · interleaved — neighbours from different classes" : " · alphabetical"}
+                  {draft.blankSeats ? ` · ${draft.blankSeats} spare seats` : ""}
+                </p>
+              </div>
+              <Button size="sm" className="gap-1.5" disabled={busy} onClick={savePlan}><CheckCircle2 className="size-3.5" /> Save plan</Button>
+            </CardHeader>
+            <CardContent className="overflow-x-auto">
+              <div className="grid gap-1.5 min-w-[560px]" style={{ gridTemplateColumns: `repeat(${draft.cols}, minmax(0, 1fr))` }}>
+                {gridOf(draft.rows, draft.cols, draft.entries).map((cell, i) => (
+                  <div key={i} className={cn("rounded-md border px-2 py-1.5 min-h-14", cell ? "border-indigo-200 bg-indigo-50/60 dark:border-indigo-900 dark:bg-indigo-950/30" : "border-dashed border-muted-foreground/25")}>
+                    {cell ? (
+                      <>
+                        <div className="text-[11px] font-semibold leading-tight truncate" title={cell.name}>{cell.name}</div>
+                        <div className="text-[9px] text-muted-foreground truncate">{cell.className}</div>
+                        <div className="text-[9px] font-mono text-muted-foreground truncate">{cell.indexNo}</div>
+                      </>
+                    ) : (
+                      <div className="text-[10px] text-muted-foreground/50 h-full flex items-center">seat {i + 1}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        <Card>
+          <CardHeader className="pb-3"><CardTitle className="text-base">Saved seating plans ({plans?.length ?? 0})</CardTitle></CardHeader>
+          <CardContent className="p-0">
+            {plans && plans.length === 0 ? (
+              <EmptyState icon={<Grid3x3 className="size-5" />} title="No seating plans yet" hint="Pick the classes, size the hall, and seat the exam." />
+            ) : plans ? (
+              <div className="overflow-x-auto nice-scroll max-h-[420px]">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-secondary/70 backdrop-blur">
+                    <tr className="text-left border-b">
+                      <th className="px-3 py-2.5 font-medium">Plan</th>
+                      <th className="px-3 py-2.5 font-medium hidden md:table-cell">Classes</th>
+                      <th className="px-3 py-2.5 font-medium hidden sm:table-cell">Layout</th>
+                      <th className="px-3 py-2.5 font-medium">Candidates</th>
+                      <th className="px-3 py-2.5 font-medium hidden lg:table-cell">By</th>
+                      <th className="px-3 py-2.5"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {plans.map((p) => (
+                      <tr key={p.id} className="border-b last:border-0 hover:bg-secondary/30">
+                        <td className="px-3 py-2.5">
+                          <div className="font-medium">{p.title}</div>
+                          {p.examName && <div className="text-[11px] text-muted-foreground">{p.examName}</div>}
+                        </td>
+                        <td className="px-3 py-2.5 hidden md:table-cell text-muted-foreground text-xs">{p.classroomNames}</td>
+                        <td className="px-3 py-2.5 hidden sm:table-cell text-muted-foreground">{p.rows}×{p.cols} {p.interleave && <Badge variant="outline" className="text-[9px] ml-1">interleaved</Badge>}</td>
+                        <td className="px-3 py-2.5 tabular-nums font-medium">{p.candidateCount}</td>
+                        <td className="px-3 py-2.5 hidden lg:table-cell text-muted-foreground">{p.createdBy}</td>
+                        <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                          <Button size="sm" variant="outline" className="h-8 gap-1" onClick={() => setViewing(p)}><Printer className="size-3.5" /> Print</Button>
+                          <Button size="sm" variant="ghost" className="h-8 size-8 p-0 text-destructive ml-1" aria-label={`Delete ${p.title}`} onClick={() => setDeleting(p)}><Trash2 className="size-4" /></Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : <LoadingBlock label="Loading plans…" />}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* printable sheet */}
+      <Dialog open={!!viewing} onOpenChange={(o) => !o && setViewing(null)}>
+        <DialogContent className="max-w-4xl max-h-[92vh] overflow-y-auto nice-scroll">
+          <DialogHeader className="no-print">
+            <DialogTitle className="text-base flex items-center gap-2"><Grid3x3 className="size-4" /> {viewing?.title}</DialogTitle>
+            <DialogDescription>{viewing?.examName ?? "Seating plan"} · {viewing?.candidateCount} candidates</DialogDescription>
+          </DialogHeader>
+          {viewing && (
+            <>
+              <div className="print-area">
+                <div className="print-sheet rounded-xl border bg-card p-8">
+                  <div className="text-center border-b-2 border-foreground/80 pb-4">
+                    <div className="font-bold text-lg uppercase tracking-tight">{school?.name ?? "School"}</div>
+                    <div className="text-sm font-semibold mt-1">{viewing.examName ?? "Examination"}</div>
+                    <div className="text-xs text-muted-foreground mt-1">Seating plan — {viewing.classroomNames}</div>
+                    <div className="mt-2 inline-block border-2 border-foreground px-4 py-0.5 font-bold tracking-[0.15em] text-xs uppercase">{viewing.title}</div>
+                    <div className="text-[11px] text-muted-foreground mt-1.5">{viewing.candidateCount} candidates · {viewing.rows} rows × {viewing.cols} seats{viewing.interleave ? " · interleaved (no two neighbours from the same class)" : ""}</div>
+                  </div>
+                  <div className="mt-5 overflow-x-auto">
+                    <div className="grid gap-2 min-w-[600px]" style={{ gridTemplateColumns: `repeat(${viewing.cols}, minmax(0, 1fr))` }}>
+                      {gridOf(viewing.rows, viewing.cols, viewing.entries).map((cell, i) => (
+                        <div key={i} className={cn("rounded-md border px-2 py-2 min-h-16 text-center", cell ? "border-foreground/30" : "border-dashed border-foreground/20")}>
+                          {cell ? (
+                            <>
+                              <div className="text-[10px] text-muted-foreground">SEAT {i + 1}</div>
+                              <div className="text-xs font-bold leading-tight">{cell.name}</div>
+                              <div className="text-[10px] text-muted-foreground">{cell.className}</div>
+                              <div className="text-[10px] font-mono">{cell.indexNo}</div>
+                            </>
+                          ) : (
+                            <div className="text-[10px] text-muted-foreground/60 h-full flex items-center justify-center">SPARE</div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-6 text-center">Candidates must remain in the seat printed beside their name. Any change must be approved by the invigilator.</p>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 mt-3 no-print">
+                <Button size="sm" className="gap-1.5" onClick={() => window.print()}><Printer className="size-4" /> Print seating chart</Button>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* delete confirm */}
+      <Dialog open={!!deleting} onOpenChange={(o) => !o && setDeleting(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-base">Delete “{deleting?.title}”?</DialogTitle>
+            <DialogDescription>The seating chart for {deleting?.candidateCount} candidates will be removed. Print it again after regenerating.</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setDeleting(null)}>Cancel</Button>
+            <Button variant="destructive" size="sm" disabled={busy} onClick={() => deleting && removePlan(deleting)}>Delete plan</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

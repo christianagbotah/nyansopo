@@ -18,7 +18,7 @@ import {
   DatabaseBackup, PiggyBank, Award, Gavel, Ruler, Activity, Home as HomeIcon, Hospital, Thermometer,
   Trophy, Medal, BookUser, Footprints, Truck, AlarmClock, Target,
   DoorOpen, CalendarClock, PhoneCall, Mailbox, CalendarRange, BellRing, FileBadge, Stamp, Gauge, GitMerge, History,
-  Table2, Database, Globe, Newspaper, Image, Inbox, FileText, IdCard, Megaphone, BookPlus, UserCheck,
+  Table2, Database, Globe, Newspaper, Image, Inbox, FileText, IdCard, Megaphone, BookPlus, UserCheck, Grid3x3,
 } from "lucide-react";
 
 export type PageEntry = {
@@ -189,6 +189,7 @@ export const PAGE_INDEX: PageEntry[] = [
   { id: "pg-papers", label: "BECE Papers", section: S.academic, module: "reports", target: { tab: "papers" }, perm: ["reports.view"], icon: Flag, keywords: ["bece", "mock", "questions"] },
   { id: "pg-exams", label: "Online Exams", section: S.academic, module: "exams", perm: ["exams.online"], icon: Laptop, keywords: ["quiz", "test", "cbt"] },
   { id: "pg-exam-studio", label: "AI Exam Paper Studio", section: S.academic, module: "exams", target: { tab: "studio" }, perm: ["exams.online"], icon: Sparkles, keywords: ["generate exam", "question paper", "mock bece", "marking scheme", "objectives", "theory", "ai paper"] },
+  { id: "pg-exam-hall", label: "Exam Hall Seating", section: S.academic, module: "exams", target: { tab: "hall" }, perm: ["exams.online"], icon: Grid3x3, keywords: ["seating plan", "seat candidates", "invigilator", "hall", "anti-copy", "interleave"] },
   { id: "pg-waec", label: "WAEC Candidacy", section: S.academic, module: "waec", target: { tab: "candidates" }, perm: ["exams.waec"], icon: IdCard, keywords: ["bece", "wassce", "index number", "centre", "candidate", "registration"] },
   { id: "pg-waec-mocks", label: "WAEC Mock Results", section: S.academic, module: "waec", target: { tab: "mocks" }, perm: ["exams.waec"], icon: IdCard, keywords: ["mock", "trial exam", "objective", "theory"] },
   { id: "pg-waec-analysis", label: "WAEC Mock Analysis", section: S.academic, module: "waec", target: { tab: "analysis" }, perm: ["exams.waec"], icon: IdCard, keywords: ["aggregate", "best six", "subject pass rate", "progression"] },
