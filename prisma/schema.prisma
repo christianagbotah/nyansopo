@@ -490,6 +490,8 @@ model Staff {
   homeworkPosted Homework[]
   counselAssigned CounselCase[] @relation("CounselAssigned")
   counselOpened   CounselCase[] @relation("CounselOpened")
+  appointmentsToHost Appointment[] @relation("AppointmentSeesStaff")
+  appointmentsBooked Appointment[] @relation("AppointmentBookedBy")
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1675,6 +1677,7 @@ model SmsSetting {
   autoPaymentReceipts  Boolean @default(true)
   autoLessonNoteAlerts Boolean @default(true) // teacher SMS when a GES note is returned / endorsed
   autoVisitorAlerts    Boolean @default(true) // front-desk → staff visitor-arrival alerts (SMS + email + in-app)
+  autoApptAlerts       Boolean @default(true) // wave 72 — appointment requests, staff responses & T-2-min reminders
   // ── per-event toggles (iEduPro parity — granular control over each trigger) ──
   evtInvoicePaid       Boolean @default(true) // billed invoice settled in full
   evtDailyFeesPaid     Boolean @default(true) // daily-fee payment made (lunch/bus etc.)
@@ -3059,20 +3062,47 @@ model Appointment {
   title         String
   withName      String
   withRole      String   @default("PARENT") // PARENT | STAFF | VENDOR | GOVT | OTHER
-  personToSee   String? // staff member the meeting is with
+  // wave 72 — the front-desk booking flow: the visitor is reachable & the
+  // staff member is a first-class link (odd-hours rule + alerts + response)
+  visitorPhone  String? // desk can call the visitor back about changes
+  visitorOrg    String?
+  personToSee   String? // staff member the meeting is with (display copy)
+  staffId       String? // the linked staff record being visited
+  staff         Staff?   @relation("AppointmentSeesStaff", fields: [staffId], references: [id])
+  // APT-YYYY-NNNN reference + the one-time token behind the staff member's
+  // accept / decline / reschedule link (public /appoint/{code}?t=…)
+  code          String?  @unique
+  decisionToken String?
   scheduledAt   DateTime
   durationMin   Int?
   location      String? // Head's office · Meeting room · Gate
   purpose       String?
-  status        String   @default("SCHEDULED") // SCHEDULED | CONFIRMED | COMPLETED | CANCELLED | NO_SHOW
+  // SCHEDULED (awaiting staff response) → CONFIRMED (accepted) · DECLINED
+  // (rejected) · RESCHEDULED (staff proposed a new time) → COMPLETED ·
+  // CANCELLED · NO_SHOW
+  status        String   @default("SCHEDULED")
   outcome       String?
   notes         String?
+  // response trail (wave 72 — who answered the request, when & how)
+  respondedAt       DateTime?
+  respondedByName   String?
+  respondedByUserId String?
+  responseNote      String? // decline reason / reschedule note
+  rescheduledFrom   DateTime? // the original slot when the time was moved
+  reminderSentAt    DateTime? // T-2-min SMS reminder to the staff (dedupe)
+  alertedSms     Boolean  @default(false) // request SMS delivered to the staff member
+  alertedEmail   Boolean  @default(false)
+  alertedInApp   Boolean  @default(false) // bell item live for the staff member
+  relayedAt      DateTime? // desk acknowledged the decision & told the visitor
   createdByName String?
+  createdByStaffId String? // the desk officer who booked (gets decision SMS)
+  createdByStaff   Staff?  @relation("AppointmentBookedBy", fields: [createdByStaffId], references: [id])
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   @@index([schoolId, scheduledAt])
   @@index([schoolId, status])
+  @@index([schoolId, staffId, status])
 }
 
 model PhoneCall {

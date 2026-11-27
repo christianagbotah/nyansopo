@@ -335,6 +335,75 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // 8c — appointment requests awaiting YOUR response (wave 72 front-desk
+  //      bookings). Derived from the SCHEDULED rows linked to this user's
+  //      staff record — fires the moment the desk books a visitor in to see
+  //      them; deep-links Home, where the Accept / Decline / Reschedule card
+  //      lives (no front-office permission needed to answer your own door).
+  if (user.staffId) {
+    const pending = await db.appointment.findMany({
+      where: { schoolId, staffId: user.staffId, status: "SCHEDULED", scheduledAt: { gte: new Date(Date.now() - 30 * 60_000) } },
+      orderBy: { scheduledAt: "asc" },
+      take: 1,
+    });
+    if (pending.length) {
+      const cnt = await db.appointment.count({
+        where: { schoolId, staffId: user.staffId, status: "SCHEDULED", scheduledAt: { gte: new Date(Date.now() - 30 * 60_000) } },
+      });
+      const ap = pending[0];
+      items.push({
+        id: "appt-requests", kind: "appointments", severity: "info", count: cnt,
+        title: cnt > 1 ? `${cnt} visitors request meetings with you` : "A visitor requests a meeting with you",
+        detail: `${ap.withName}${ap.visitorOrg ? ` (${ap.visitorOrg})` : ""} — “${ap.title}” · ${new Date(ap.scheduledAt).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}${ap.location ? ` · ${ap.location}` : ""}. Accept, decline or reschedule from your Home.`,
+        module: "dashboard", at: ap.createdAt,
+      });
+    }
+  }
+
+  // 8d — your meeting starts within 2 minutes (wave 72 T-2 alarm). The
+  //      in-app leg of the desk chime + the staff SMS reminder — the visited
+  //      staff member gets their "they are on the way" nudge.
+  if (user.staffId) {
+    const now = Date.now();
+    const soon = await db.appointment.findFirst({
+      where: {
+        schoolId, staffId: user.staffId, status: { in: ["SCHEDULED", "CONFIRMED", "RESCHEDULED"] },
+        scheduledAt: { gte: new Date(now - 60_000), lte: new Date(now + 2 * 60_000) },
+      },
+      orderBy: { scheduledAt: "asc" },
+    });
+    if (soon) {
+      items.push({
+        id: "appt-soon", kind: "appointments", severity: "warning", count: 1,
+        title: `Your ${new Date(soon.scheduledAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })} meeting starts in 2 minutes`,
+        detail: `${soon.withName} — “${soon.title}”${soon.location ? ` · ${soon.location}` : ""}. The front desk is showing the visitor in.`,
+        module: "dashboard", at: soon.scheduledAt,
+      });
+    }
+  }
+
+  // 8e — front-desk feed: staff responses landed (wave 72). Whoever runs the
+  //      desk sees the accepted / declined / rescheduled answers as they
+  //      arrive, until relayed to the visitor; your own responses are
+  //      excluded so answering never pings you.
+  if (can("frontoffice.view")) {
+    const since = new Date(Date.now() - 24 * 3600_000);
+    const whereFeed = { schoolId, status: { in: ["CONFIRMED", "DECLINED", "RESCHEDULED"] }, respondedAt: { gte: since }, relayedAt: null, respondedByUserId: { not: user.id } };
+    const latest = await db.appointment.findMany({ where: whereFeed, orderBy: { respondedAt: "desc" }, take: 1 });
+    if (latest.length) {
+      const cnt = await db.appointment.count({ where: whereFeed });
+      const a = latest[0];
+      const verb = a.status === "CONFIRMED" ? "confirmed" : a.status === "DECLINED" ? "declined" : "rescheduled";
+      const when = new Date(a.scheduledAt).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+      items.push({
+        id: "appt-updates", kind: "appointments", severity: "info", count: cnt,
+        title: cnt > 1 ? `${cnt} appointment responses to relay to visitors` : "An appointment response to relay to the visitor",
+        detail: `${a.respondedByName ?? "Staff"} ${verb} the ${when} meeting with ${a.withName}${a.status === "RESCHEDULED" ? " — new time proposed, confirm it for the visitor" : ""}.`,
+        module: "frontoffice", tab: "appointments", at: a.respondedAt,
+      });
+    }
+  }
+
   // 9 — LIVE EMERGENCY (wave 62 AI Emergency Command). Any EMERGENCY siren
   //     event in the last 20 minutes shows a danger item to EVERY user of the
   //     school — the in-app leg of the escalation alongside the SMS fan-out.

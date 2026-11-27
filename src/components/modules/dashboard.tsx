@@ -1,18 +1,20 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
-import { apiGet } from "@/lib/api";
+import { apiGet, apiPost } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { StatCard, ModuleHeader, LoadingBlock, SeverityBadge, StatusBadge, EmptyState } from "@/components/ui-helpers";
-import { fmtCedi, fmtDate, PAYMENT_LABELS, FLAG_LABELS, fmtDateShort } from "@/lib/format";
+import { StatCard, ModuleHeader, LoadingBlock, SeverityBadge, StatusBadge, EmptyState, FormGrid, FormField } from "@/components/ui-helpers";
+import { fmtCedi, fmtDate, fmtDateTime, PAYMENT_LABELS, FLAG_LABELS, fmtDateShort } from "@/lib/format";
+import { playSirenSound } from "@/lib/siren-sounds";
+import { useToast } from "@/hooks/use-toast";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell } from "recharts";
-import { Banknote, CalendarCheck, Flag, TrendingUp, Users, AlertTriangle, ArrowLeftRight, Inbox, UtensilsCrossed, Calculator, Package, Smartphone, Bus, Droplets, BookOpen, Baby, UserPlus, ClipboardList, MessageSquareText, BellRing, HandCoins, PiggyBank, Receipt, LayoutList, Filter } from "lucide-react";
+import { Banknote, CalendarCheck, Flag, TrendingUp, Users, AlertTriangle, ArrowLeftRight, Inbox, UtensilsCrossed, Calculator, Package, Smartphone, Bus, Droplets, BookOpen, Baby, UserPlus, ClipboardList, MessageSquareText, BellRing, HandCoins, PiggyBank, Receipt, LayoutList, Filter, CalendarClock, Check, X, CalendarPlus, AlarmClock } from "lucide-react";
 
 type Dash = {
   school: any; year: { name: string } | null; term: any;
@@ -53,6 +55,24 @@ type PaymentsPayload = {
   classrooms: { id: string; name: string }[];
 };
 
+// wave 72 — front-desk appointment requests addressed to the signed-in staff
+// member (fetched from ops/frontoffice?action=my; no front-office permission
+// needed — every staff-linked user answers their own door from Home)
+type MyAppts = {
+  staffLinked: boolean;
+  requests: {
+    id: string; title: string; withName: string; withRole: string;
+    visitorPhone: string | null; visitorOrg: string | null; staffCategory: string | null;
+    scheduledAt: string | null; durationMin: number | null; location: string | null;
+    purpose: string | null; status: string; createdByName: string | null;
+    rescheduledFrom: string | null; minutesUntil: number | null;
+  }[];
+  upcoming: {
+    id: string; title: string; withName: string; scheduledAt: string | null;
+    durationMin: number | null; location: string | null; status: string; minutesUntil: number | null;
+  }[];
+};
+
 const SERVICE_ICONS: Record<string, React.ReactNode> = {
   MEAL: <UtensilsCrossed className="size-4 text-muted-foreground" />,
   DRINK: <Droplets className="size-4 text-muted-foreground" />,
@@ -64,8 +84,30 @@ const SERVICE_ICONS: Record<string, React.ReactNode> = {
 
 const GENDER_COLORS = { boys: "var(--chart-1)", girls: "var(--chart-2)" };
 
+const hhmmAppt = (iso: string | null) => {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+};
+// tomorrow at 09:00 — the classic "have them come in the morning" offer
+const tomorrowAt9 = () => {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  d.setHours(9, 0, 0, 0);
+  return d.toISOString();
+};
+const apptCountdown = (mins: number | null) => {
+  if (mins == null) return null;
+  if (mins <= -60) return null;
+  if (mins <= -1) return "started";
+  if (mins <= 0) return "now";
+  if (mins < 60) return `in ${mins} min`;
+  if (mins < 1440) return `in ${Math.floor(mins / 60)} h`;
+  return `in ${Math.floor(mins / 1440)} d`;
+};
+
 export function Dashboard() {
   const { currentSchoolId, setModule, session } = useStore();
+  const { toast } = useToast();
   const [data, setData] = useState<Dash | null>(null);
   const [ops, setOps] = useState<OpsOverview | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -74,14 +116,74 @@ export function Dashboard() {
   const [revPreset, setRevPreset] = useState<{ source: string; serviceId: string }>({ source: "all", serviceId: "all" });
   const isTeacher = session?.role === "TEACHER";
 
+  // wave 72 — my appointment requests (front-desk bookings addressed to me)
+  const [myAppts, setMyAppts] = useState<MyAppts | null>(null);
+  const [apptNote, setApptNote] = useState<Record<string, string>>({});
+  const [apptBusy, setApptBusy] = useState<string | null>(null);
+  const [pickAppt, setPickAppt] = useState<MyAppts["requests"][number] | null>(null);
+  const [pickDate, setPickDate] = useState("");
+  const [pickTime, setPickTime] = useState("");
+  const chimedRef = useRef<Set<string>>(new Set());
+
+  const loadMyAppts = () => {
+    if (!currentSchoolId) return;
+    apiGet<MyAppts>(`/api/school/${currentSchoolId}/ops/frontoffice?action=my`)
+      .then((r) => {
+        setMyAppts(r);
+        // T-2-min nudge for my own upcoming meeting — the desk chime's
+        // counterpart on the visited staff member's own screen
+        for (const a of r.upcoming) {
+          if (!a.scheduledAt || chimedRef.current.has(a.id)) continue;
+          const mins = Math.round((new Date(a.scheduledAt).getTime() - Date.now()) / 60_000);
+          if (mins <= 2 && mins >= -1) {
+            chimedRef.current.add(a.id);
+            try { playSirenSound("CHIME", 8); } catch { /* audio locked until first gesture */ }
+            toast({ title: `Your ${hhmmAppt(a.scheduledAt)} meeting starts in ${Math.max(0, mins)} minute${Math.max(0, mins) === 1 ? "" : "s"}`, description: `${a.withName} — “${a.title}”${a.location ? ` · ${a.location}` : ""}. The front desk is showing the visitor in.` });
+          }
+        }
+      })
+      .catch(() => {/* not staff-linked or offline — the card simply stays away */ });
+  };
+
+  const respondAppt = async (id: string, decision: "ACCEPT" | "DECLINE" | "RESCHEDULE", note?: string, scheduledAt?: string) => {
+    if (!currentSchoolId) return;
+    setApptBusy(`${id}:${decision}`);
+    try {
+      await apiPost(`/api/school/${currentSchoolId}/ops/frontoffice`, {
+        action: "appointment-respond", appointmentId: id, decision,
+        scheduledAt, note: note?.trim() || undefined,
+      });
+      toast({
+        title: decision === "ACCEPT" ? "Accepted — the front desk sees it live" : decision === "DECLINE" ? "Declined — the desk will relay to the visitor" : "New time proposed — the desk sees it live",
+        description: decision === "RESCHEDULE" ? "The front desk will confirm and usher the visitor in at the new time." : undefined,
+      });
+      setApptNote((n) => ({ ...n, [id]: "" }));
+      loadMyAppts();
+    } catch (e: any) {
+      toast({ title: "Could not respond", description: e.message, variant: "destructive" });
+    }
+    setApptBusy(null);
+  };
+
   const load = () => {
     if (!currentSchoolId) return;
     apiGet<Dash>(`/api/school/${currentSchoolId}/dashboard`)
       .then(setData)
       .catch((e) => setErr(e.message));
     apiGet<OpsOverview>(`/api/school/${currentSchoolId}/ops/overview`).then(setOps).catch(() => null);
+    loadMyAppts();
   };
   useEffect(load, [currentSchoolId]);
+
+  // wave 72 — keep the appointment requests fresh (30 s + on focus) so a
+  // booking that lands while the dashboard is open still shows up
+  useEffect(() => {
+    if (!currentSchoolId) return;
+    const t = setInterval(loadMyAppts, 30_000);
+    const onFocus = () => loadMyAppts();
+    window.addEventListener("focus", onFocus);
+    return () => { clearInterval(t); window.removeEventListener("focus", onFocus); };
+  }, [currentSchoolId]);
 
   if (err) return <div className="text-destructive text-sm">{err}</div>;
   if (!data) return <LoadingBlock label="Loading your school…" />;
@@ -110,6 +212,91 @@ export function Dashboard() {
           </>
         }
       />
+
+      {/* wave 72 — appointment requests: the front desk books visitors in
+          to see you; accept, decline or offer another time right here — the
+          desk sees your answer land in real time on their board */}
+      {!!myAppts && !!(myAppts.requests.length || myAppts.upcoming.length) && (
+        <Card className="mt-4 border-amber-400/70 shadow-sm dark:border-amber-700/50">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex flex-wrap items-center gap-2 text-base">
+              <CalendarClock className="size-4 text-amber-600" /> Appointment requests
+              {!!myAppts.requests.length && (
+                <Badge className="gap-1 bg-amber-500 text-white hover:bg-amber-500">
+                  <BellRing className="size-3" /> {myAppts.requests.length} awaiting your response
+                </Badge>
+              )}
+              <span className="ml-auto text-xs font-normal text-muted-foreground">from the front desk · answers reach the desk live</span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {myAppts.requests.map((a) => (
+              <div key={a.id} className="rounded-xl border p-3">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold leading-snug">{a.title}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {a.withName}{a.visitorOrg ? ` (${a.visitorOrg})` : ""} · {fmtDateTime(a.scheduledAt)}{a.durationMin ? ` · ${a.durationMin} min` : ""}{a.location ? ` · ${a.location}` : ""}
+                    </p>
+                    {a.purpose && <p className="mt-1 text-xs text-muted-foreground">{a.purpose}</p>}
+                    {a.rescheduledFrom && <p className="mt-1 text-[11px] text-muted-foreground">moved from {fmtDateTime(a.rescheduledFrom)}</p>}
+                  </div>
+                  <Badge variant="outline" className="shrink-0">booked by {a.createdByName ?? "front desk"}</Badge>
+                </div>
+                <div className="mt-2.5 space-y-2">
+                  <Input
+                    value={apptNote[a.id] ?? ""}
+                    onChange={(e) => setApptNote((n) => ({ ...n, [a.id]: e.target.value }))}
+                    placeholder="Optional note to the front desk (e.g. at a GES workshop until noon)"
+                    className="h-8 text-xs"
+                  />
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Button size="sm" disabled={!!apptBusy} onClick={() => respondAppt(a.id, "ACCEPT", apptNote[a.id])}>
+                      <Check /> Accept
+                    </Button>
+                    <Button size="sm" variant="outline" className="text-destructive" disabled={!!apptBusy} onClick={() => respondAppt(a.id, "DECLINE", apptNote[a.id])}>
+                      <X /> Decline
+                    </Button>
+                    <span className="ml-1 text-xs text-muted-foreground">or offer another time:</span>
+                    <Button size="sm" variant="outline" disabled={!!apptBusy} onClick={() => respondAppt(a.id, "RESCHEDULE", apptNote[a.id], new Date(Date.now() + 30 * 60_000).toISOString())}>
+                      In 30 min
+                    </Button>
+                    <Button size="sm" variant="outline" disabled={!!apptBusy} onClick={() => respondAppt(a.id, "RESCHEDULE", apptNote[a.id], new Date(Date.now() + 60 * 60_000).toISOString())}>
+                      In 1 hour
+                    </Button>
+                    <Button size="sm" variant="outline" disabled={!!apptBusy} onClick={() => respondAppt(a.id, "RESCHEDULE", apptNote[a.id], tomorrowAt9())}>
+                      Tomorrow 09:00
+                    </Button>
+                    <Button size="sm" variant="outline" disabled={!!apptBusy} onClick={() => { setPickAppt(a); setPickDate(a.scheduledAt ? new Date(a.scheduledAt).toISOString().slice(0, 10) : ""); setPickTime(a.scheduledAt ? new Date(a.scheduledAt).toTimeString().slice(0, 5) : ""); }}>
+                      <CalendarPlus /> Pick a time…
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ))}
+            {!!myAppts.upcoming.length && (
+              <div className="rounded-xl bg-muted/50 p-3">
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Your upcoming meetings</p>
+                <ul className="mt-1.5 space-y-1.5">
+                  {myAppts.upcoming.map((a) => {
+                    const cd = apptCountdown(a.minutesUntil);
+                    const hot = cd && (cd === "now" || cd === "started" || cd === "in 1 min" || cd === "in 2 min");
+                    return (
+                      <li key={a.id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                        <span className="min-w-0 truncate">{a.withName} — “{a.title}”{a.location ? ` · ${a.location}` : ""}</span>
+                        <span className="flex shrink-0 items-center gap-1.5">
+                          {cd && hot && <Badge className="gap-1 bg-amber-500 text-white hover:bg-amber-500"><AlarmClock className="size-3" /> {cd}</Badge>}
+                          <span className="text-xs text-muted-foreground">{hhmmAppt(a.scheduledAt)}{cd && !hot ? ` · ${cd}` : ""}</span>
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <StatCard icon={<Users className="size-4" />} label="Learners on roll" value={stats.students} sub={`${stats.gender.M} boys · ${stats.gender.F} girls · ${stats.classes} classes`} tone="primary" />
@@ -502,6 +689,46 @@ export function Dashboard() {
           preset={revPreset}
         />
       )}
+
+      {/* wave 72 — propose another time for a front-desk appointment: the
+          visited staff member picks the slot that works for them */}
+      <Dialog open={!!pickAppt} onOpenChange={(o) => { if (!o) setPickAppt(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><CalendarPlus className="size-4" /> Propose another time</DialogTitle>
+            <DialogDescription>
+              {pickAppt ? <>“{pickAppt.title}” with {pickAppt.withName} — currently {fmtDateTime(pickAppt.scheduledAt)}. The front desk will relay your new time to the visitor.</> : null}
+            </DialogDescription>
+          </DialogHeader>
+          <FormGrid cols={2}>
+            <FormField label="Date" required>
+              <Input type="date" value={pickDate} onChange={(e) => setPickDate(e.target.value)} />
+            </FormField>
+            <FormField label="Time" required>
+              <Input type="time" value={pickTime} onChange={(e) => setPickTime(e.target.value)} />
+            </FormField>
+          </FormGrid>
+          {pickAppt?.staffCategory && pickAppt.staffCategory !== "ADMINISTRATION" && (() => {
+            if (!pickDate) return null;
+            const d = new Date(`${pickDate}T${pickTime || "09:00"}:00`);
+            const odd = d.getDay() === 0 || d.getDay() === 6 || d.getHours() < 7 || d.getHours() >= 17;
+            return odd ? (
+              <p className="rounded-md bg-red-50 dark:bg-red-950/40 p-2 text-xs text-red-700 dark:text-red-300">
+                Odd hours — visitors cannot see you outside school hours (Mon–Fri 07:00–17:00). Pick a slot within school hours.
+              </p>
+            ) : null;
+          })()}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPickAppt(null)}>Cancel</Button>
+            <Button disabled={!!apptBusy} onClick={() => {
+              if (!pickAppt || !pickDate || !pickTime) return;
+              const at = new Date(`${pickDate}T${pickTime}:00`).toISOString();
+              respondAppt(pickAppt.id, "RESCHEDULE", apptNote[pickAppt.id], at);
+              setPickAppt(null);
+            }}>{apptBusy ? "Sending…" : "Propose new time"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Ask Nyansapo copilot now mounts globally in AppShell (wave 63) */}
     </div>

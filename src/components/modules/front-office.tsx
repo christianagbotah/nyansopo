@@ -1,13 +1,17 @@
 "use client";
-// ── Front Office (wave 29 — the front desk books) ──
+// ── Front Office (wave 29 — the front desk books; wave 72 — the booking ──
+// ── workflow: staff-linked appointments, live responses & T-2 alarms) ──
 // The desk beside the gate: the Front Desk Board (who is on site right
 // now, today's meetings, open follow-ups, upcoming events), the Visitors
 // Book (pass numbers, time in/out, check-out), the Appointments Book
-// (SCHEDULED → CONFIRMED → COMPLETED / CANCELLED / NO_SHOW), the Phone
-// Call Log (incoming/outgoing with follow-up flags), the Postal Register
-// (incoming parcels collected, outgoing letters dispatched) and the
-// School Events Calendar (PTA meetings, open day, sports, prize-giving).
-import { useCallback, useEffect, useMemo, useState } from "react";
+// (SCHEDULED → CONFIRMED / DECLINED / RESCHEDULED → COMPLETED / CANCELLED
+// / NO_SHOW — the visited staff member answers from their Home, the desk
+// sees every answer land live, and a chime alarm rings two minutes before
+// a visitor is due), the Phone Call Log (incoming/outgoing with follow-up
+// flags), the Postal Register (incoming parcels collected, outgoing
+// letters dispatched) and the School Events Calendar (PTA meetings, open
+// day, sports, prize-giving).
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
 import { apiGet, apiPost } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,11 +27,13 @@ import { ModuleHeader, LoadingBlock, EmptyState, StatCard, FormGrid, FormField }
 import { DateField } from "@/components/date-field";
 import { fmtDateShort, fmtDateTime, initials, avatarColor } from "@/lib/format";
 import { canAny } from "@/lib/rbac";
+import { playSirenSound } from "@/lib/siren-sounds";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
   BellRing, DoorOpen, CalendarClock, PhoneCall, Mailbox, CalendarRange, Plus, Search, LogOut,
   ClipboardCheck, ArrowUpRight, ArrowDownLeft, PackageOpen, Send, PartyPopper, Trash2, Stamp,
+  Check, X, CalendarPlus, AlarmClock, CheckCheck, Hourglass,
 } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -49,9 +55,16 @@ type StaffOption = {
   category: string; position: string | null; hasPhone: boolean; hasEmail: boolean;
 };
 type AppointmentRow = {
-  id: string; title: string; withName: string; withRole: string; personToSee: string | null;
+  id: string; title: string; withName: string; withRole: string;
+  visitorPhone: string | null; visitorOrg: string | null;
+  personToSee: string | null; staffId: string | null; staffName: string | null; staffCategory: string | null;
   scheduledAt: string | null; durationMin: number | null; location: string | null;
   purpose: string | null; status: string; outcome: string | null; notes: string | null; createdByName: string | null;
+  code: string | null;
+  // wave 72 — the response trail + countdown
+  respondedAt: string | null; respondedByName: string | null; responseNote: string | null; rescheduledFrom: string | null;
+  relayedAt: string | null;
+  minutesUntil: number | null;
 };
 type CallRow = {
   id: string; direction: string; contactName: string; phone: string | null;
@@ -97,10 +110,15 @@ const CAT_STYLES: Record<string, string> = {
 const APPT_STYLES: Record<string, string> = {
   SCHEDULED: "bg-stone-100 text-stone-700 dark:bg-stone-800 dark:text-stone-300",
   CONFIRMED: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
+  DECLINED: "bg-red-100 text-red-700 line-through dark:bg-red-950 dark:text-red-300",
+  RESCHEDULED: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
   COMPLETED: "bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-300",
   CANCELLED: "bg-stone-200 text-stone-500 line-through dark:bg-stone-800 dark:text-stone-400",
   NO_SHOW: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300",
 };
+// statuses where a visitor is still expected at the desk
+const APPT_ACTIVE = ["SCHEDULED", "CONFIRMED", "RESCHEDULED"];
+const STAFF_CAT_LABELS: Record<string, string> = { TEACHING: "Teaching", NON_TEACHING: "Non-teaching", ADMINISTRATION: "Administration" };
 const EVENT_STYLES: Record<string, string> = {
   PTA_MEETING: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
   OPEN_DAY: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
@@ -130,6 +148,25 @@ const stayLabel = (mins: number | null) => {
   if (mins == null) return null;
   if (mins < 60) return `${mins} min on site`;
   return `${Math.floor(mins / 60)}h ${mins % 60}m on site`;
+};
+// wave 72 — countdown to a meeting ("in 8 min", "now", "started")
+const untilLabel = (a: AppointmentRow): string | null => {
+  if (!a.scheduledAt) return null;
+  const m = a.minutesUntil ?? Math.round((new Date(a.scheduledAt).getTime() - Date.now()) / 60_000);
+  if (m < -60) return null;
+  if (m <= -1) return "started";
+  if (m <= 0) return "now";
+  if (m < 60) return `in ${m} min`;
+  if (m < 1440) return `in ${Math.floor(m / 60)} h ${m % 60 ? `${m % 60}m` : ""}`.trim();
+  return `in ${Math.floor(m / 1440)} d`;
+};
+// wave 72 — odd-hours check (client mirror of the server rule: Mon–Fri
+// 07:00–17:00; outside that only administration staff can host a visitor)
+const isOddSlot = (date: string, time: string) => {
+  if (!date) return false;
+  const d = new Date(`${date}T${time || "09:00"}:00`);
+  if (isNaN(d.getTime())) return false;
+  return d.getDay() === 0 || d.getDay() === 6 || d.getHours() < 7 || d.getHours() >= 17;
 };
 
 export function FrontOffice() {
@@ -162,8 +199,21 @@ export function FrontOffice() {
   const [apptScope, setApptScope] = useState("upcoming");
   const [apptStatus, setApptStatus] = useState("all");
   const [apptDialog, setApptDialog] = useState(false);
-  const [apptForm, setApptForm] = useState({ title: "", withName: "", withRole: "PARENT", personToSee: "", date: "", time: "09:00", durationMin: "30", location: "", purpose: "", notes: "" });
+  const [apptForm, setApptForm] = useState({ title: "", withName: "", withRole: "PARENT", visitorPhone: "", visitorOrg: "", staffId: "none", personToSee: "", date: "", time: "09:00", durationMin: "30", location: "", purpose: "", notes: "" });
   const [apptBusy, setApptBusy] = useState(false);
+  // wave 72 — the live feed (board + appointments tab): today's active
+  // appointments polled every 8s; staff responses toast the moment they
+  // land, and the T-2-minute desk alarm (chime + banner) fires here
+  const [liveAppts, setLiveAppts] = useState<AppointmentRow[]>([]);
+  const [liveLoaded, setLiveLoaded] = useState(false);
+  const apptSnap = useRef<Map<string, { status: string; scheduledAt: string }>>(new Map());
+  const alarmedRef = useRef<Set<string>>(new Set());
+  const firstLive = useRef(true);
+  // wave 72 — the desk moving a meeting (Reschedule dialog)
+  const [moveAppt, setMoveAppt] = useState<AppointmentRow | null>(null);
+  const [moveDate, setMoveDate] = useState("");
+  const [moveTime, setMoveTime] = useState("");
+  const [moveBusy, setMoveBusy] = useState(false);
 
   // calls
   const [calls, setCalls] = useState<CallRow[]>([]);
@@ -252,6 +302,67 @@ export function FrontOffice() {
       .catch((e: Error) => toast({ title: "Could not load the appointments book", description: e.message, variant: "destructive" }));
   }, [schoolId, tab, apptScope, apptStatus, appointmentsTick]);
 
+  // wave 72 — the live desk feed. While the board or the appointments tab
+  // is open, poll action=live every 8 s: today's active appointments with
+  // their staff link + response trail. Every status/time change toasts
+  // ("Madam Grace confirmed the 09:30 meeting…"), a change refetches the
+  // scoped book, and any appointment inside the T-2-minute window rings
+  // the desk alarm — the assembly chime plus a banner toast — while the
+  // server side of the same poll sends the staff member their SMS reminder.
+  useEffect(() => {
+    if (!schoolId || (tab !== "board" && tab !== "appointments")) return;
+    let alive = true;
+    const tick = async () => {
+      try {
+        const r = await apiGet<{ now: string; appointments: AppointmentRow[]; staff: StaffOption[]; reminded?: { id: string; staff: string; status: string }[] }>(`/api/school/${schoolId}${OPS}?action=live`);
+        if (!alive) return;
+        if (r.staff?.length) setStaffOpts(r.staff);
+        // responses & moves → toasts for the desk (skip the very first load)
+        if (!firstLive.current) {
+          const changes = r.appointments.filter((a) => {
+            const prev = apptSnap.current.get(a.id);
+            return prev && (prev.status !== a.status || prev.scheduledAt !== a.scheduledAt);
+          });
+          for (const a of changes.slice(0, 3)) {
+            const who = a.respondedByName ?? "Staff";
+            const when = a.scheduledAt ? new Date(a.scheduledAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+            const host = a.staffName ?? a.personToSee ?? "staff";
+            if (a.status === "CONFIRMED") {
+              toast({ title: `${who} confirmed the ${when} meeting`, description: `${a.withName} → ${host}${a.location ? ` · ${a.location}` : ""} — show the visitor in when they arrive.` });
+            } else if (a.status === "DECLINED") {
+              toast({ title: `${who} declined the ${when} meeting`, description: `Relay to ${a.withName}${a.visitorPhone ? ` — visitor phone ${a.visitorPhone}` : ""}.`, variant: "destructive" });
+            } else if (a.status === "RESCHEDULED") {
+              const was = a.rescheduledFrom ? new Date(a.rescheduledFrom).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+              toast({ title: `${who} proposed ${when} (was ${was})`, description: `Confirm the new time for ${a.withName} — or move it again from the Appointments tab.` });
+            }
+          }
+          if (changes.length) setAppointmentsTick((t) => t + 1);
+        }
+        firstLive.current = false;
+        apptSnap.current = new Map(r.appointments.map((a) => [a.id, { status: a.status, scheduledAt: a.scheduledAt ?? "" }]));
+        setLiveAppts(r.appointments);
+        setLiveLoaded(true);
+        // the T-2-minute desk alarm — chime + banner, once per appointment
+        for (const a of r.appointments) {
+          if (alarmedRef.current.has(a.id) || !a.scheduledAt) continue;
+          const mins = Math.round((new Date(a.scheduledAt).getTime() - Date.now()) / 60_000);
+          if (mins <= 2 && mins >= -1) {
+            alarmedRef.current.add(a.id);
+            try { playSirenSound("CHIME", 8); } catch { /* audio locked until first gesture — the banner still shows */ }
+            const reminded = r.reminded?.find((x) => x.id === a.id);
+            toast({
+              title: `Alarm — “${a.title}” in ${Math.max(0, mins)} minute${Math.max(0, mins) === 1 ? "" : "s"}`,
+              description: `${a.withName} → ${a.staffName ?? a.personToSee ?? "staff"}${a.location ? ` · ${a.location}` : ""}${reminded ? ` — reminder SMS sent to ${reminded.staff}` : ""}. Ready the visitor.`,
+            });
+          }
+        }
+      } catch { /* desk offline between ticks — the next poll retries */ }
+    };
+    void tick();
+    const t = setInterval(tick, 8000);
+    return () => { alive = false; clearInterval(t); };
+  }, [schoolId, tab]);
+
   useEffect(() => {
     if (!schoolId || tab !== "calls") return;
     const p = new URLSearchParams({ action: "calls" });
@@ -332,23 +443,75 @@ export function FrontOffice() {
     setVisBusy(false);
   };
 
+  // wave 72 — client odd-hours mirror: at odd times only administration
+  // staff can be booked (teachers & non-teaching staff are school-hours only)
+  const apptOdd = isOddSlot(apptForm.date, apptForm.time);
+
   const submitAppointment = async () => {
     if (!apptForm.title.trim() || !apptForm.withName.trim() || !apptForm.date) {
       toast({ title: "Title, who it's with and the date are required", variant: "destructive" });
       return;
     }
+    const picked = apptForm.staffId !== "none" ? staffOpts.find((s) => s.id === apptForm.staffId) ?? null : null;
+    if (picked && apptOdd && picked.category !== "ADMINISTRATION") {
+      toast({
+        title: "Odd hours — pick an administrator",
+        description: `Visitors cannot see ${picked.fullName} at ${apptForm.time} (${picked.category === "TEACHING" ? "teachers" : "non-teaching staff"} are bookable Mon–Fri 07:00–17:00). Only administration staff can take visitors at odd hours.`,
+        variant: "destructive",
+      });
+      return;
+    }
     setApptBusy(true);
     const scheduledAt = new Date(`${apptForm.date}T${apptForm.time || "09:00"}:00`).toISOString();
-    await post({
-      action: "appointment-create", ...apptForm, scheduledAt,
-      durationMin: Number(apptForm.durationMin) || undefined,
-    }, "Appointment booked", () => {
+    try {
+      const r = await apiPost<{ ok: boolean; appointment: AppointmentRow; alert?: { staff: string | null; sms: string; email: string; inApp: boolean; code?: string | null; decisionUrl?: string | null } }>(`/api/school/${schoolId}${OPS}`, {
+        action: "appointment-create",
+        title: apptForm.title, withName: apptForm.withName, withRole: apptForm.withRole,
+        visitorPhone: apptForm.visitorPhone || undefined, visitorOrg: apptForm.visitorOrg || undefined,
+        staffId: picked?.id, personToSee: picked ? undefined : apptForm.personToSee || undefined,
+        scheduledAt, durationMin: Number(apptForm.durationMin) || undefined,
+        location: apptForm.location || undefined, purpose: apptForm.purpose || undefined, notes: apptForm.notes || undefined,
+      });
       setApptDialog(false);
-      setApptForm({ title: "", withName: "", withRole: "PARENT", personToSee: "", date: "", time: "09:00", durationMin: "30", location: "", purpose: "", notes: "" });
+      setApptForm({ title: "", withName: "", withRole: "PARENT", visitorPhone: "", visitorOrg: "", staffId: "none", personToSee: "", date: "", time: "09:00", durationMin: "30", location: "", purpose: "", notes: "" });
+      bumpAppointments();
+      bumpBoard();
+      const a = r.alert;
+      if (a?.staff) {
+        const bits: string[] = [];
+        if (a.sms === "SENT" || a.sms === "SIMULATED") bits.push(a.sms === "SIMULATED" ? "SMS queued" : "SMS sent");
+        if (a.email === "SENT" || a.email === "SIMULATED") bits.push(a.email === "SIMULATED" ? "email queued" : "email sent");
+        if (a.inApp) bits.push("in-app alert");
+        toast({
+          title: `Appointment booked${a.code ? ` — ${a.code}` : ""} · ${a.staff} alerted`,
+          description: bits.length
+            ? `${bits.join(" · ")}${(a as any).decisionUrl ? " — the answer link (accept · decline · reschedule) is in the SMS/email" : ""}${a.sms === "FAILED" || a.email === "FAILED" ? " (some channels failed — see the SMS / email logs)" : ""}. They can also answer from their Home.`
+            : "No channel was available for this staff member — add a phone or email on their staff record.",
+        });
+      } else {
+        toast({ title: "Appointment booked", description: "No staff member linked — link one to alert them instantly." });
+      }
+    } catch (e: any) {
+      toast({ title: "Could not book the appointment", description: e.message, variant: "destructive" });
+    }
+    setApptBusy(false);
+  };
+
+  // wave 72 — the desk moves a meeting (Reschedule dialog)
+  const submitMove = async () => {
+    if (!moveAppt) return;
+    if (!moveDate || !moveTime) {
+      toast({ title: "Pick a new date and time", variant: "destructive" });
+      return;
+    }
+    setMoveBusy(true);
+    const scheduledAt = new Date(`${moveDate}T${moveTime}:00`).toISOString();
+    await post({ action: "appointment-reschedule", appointmentId: moveAppt.id, scheduledAt }, `Moved to ${new Date(scheduledAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}`, () => {
+      setMoveAppt(null);
       bumpAppointments();
       bumpBoard();
     });
-    setApptBusy(false);
+    setMoveBusy(false);
   };
 
   const submitCall = async () => {
@@ -472,21 +635,29 @@ export function FrontOffice() {
                 </Card>
 
                 <Card>
-                  <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm"><CalendarClock className="size-4" /> Today's appointments</CardTitle></CardHeader>
+                  <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm"><CalendarClock className="size-4" /> Today's appointments <span className="ml-auto flex items-center gap-1 text-[10px] font-normal text-muted-foreground"><span className="size-1.5 rounded-full bg-emerald-500 pulse-dot" /> live</span></CardTitle></CardHeader>
                   <CardContent>
-                    {board.todayAppointments.length === 0 ? (
+                    {(liveLoaded ? liveAppts : board.todayAppointments).length === 0 ? (
                       <EmptyState title="No meetings today" hint={board.nextAppointment ? "The next scheduled meeting appears below." : "Book one from the Appointments tab."} />
                     ) : (
                       <ul className="max-h-72 space-y-2 overflow-y-auto pr-1">
-                        {board.todayAppointments.map((a) => (
-                          <li key={a.id} className="flex items-center justify-between gap-2 rounded-lg border p-2">
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-medium">{a.title}</p>
-                              <p className="truncate text-xs text-muted-foreground">{hhmm(a.scheduledAt)} · {a.withName} ({ROLE_LABELS[a.withRole] ?? a.withRole}){a.location ? ` · ${a.location}` : ""}</p>
-                            </div>
-                            <Badge variant="outline" className={cn("shrink-0", APPT_STYLES[a.status])}>{titleCase(a.status)}</Badge>
-                          </li>
-                        ))}
+                        {(liveLoaded ? liveAppts : board.todayAppointments).map((a) => {
+                          const until = untilLabel(a);
+                          const hot = until && (until === "now" || until === "started" || until.startsWith("in 1 min") || until === "in 2 min");
+                          return (
+                            <li key={a.id} className={cn("flex items-center justify-between gap-2 rounded-lg border p-2", hot && "border-amber-400 bg-amber-50/60 dark:border-amber-700/60 dark:bg-amber-950/30")}>
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-medium">{a.title}</p>
+                                <p className="truncate text-xs text-muted-foreground">{hhmm(a.scheduledAt)} · {a.withName} ({ROLE_LABELS[a.withRole] ?? a.withRole}){a.location ? ` · ${a.location}` : ""}</p>
+                              </div>
+                              <div className="flex shrink-0 items-center gap-1.5">
+                                {until && hot && <Badge className="gap-1 bg-amber-500 text-white hover:bg-amber-500"><AlarmClock className="size-3" /> {until}</Badge>}
+                                {until && !hot && <span className="text-xs text-muted-foreground">{until}</span>}
+                                <Badge variant="outline" className={cn("shrink-0", APPT_STYLES[a.status])}>{titleCase(a.status)}</Badge>
+                              </div>
+                            </li>
+                          );
+                        })}
                       </ul>
                     )}
                     {board.nextAppointment && (
@@ -674,28 +845,69 @@ export function FrontOffice() {
             <EmptyState icon={<CalendarClock className="size-8" />} title="No appointments here" hint="Try another scope, or book a meeting." />
           ) : (
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {appointments.map((a) => (
-                <Card key={a.id} className={cn(a.status === "CANCELLED" && "opacity-60")}>
+              {appointments.map((a) => {
+                const until = untilLabel(a);
+                const hot = APPT_ACTIVE.includes(a.status) && until && (until === "now" || until === "started" || until.startsWith("in 1 min") || until === "in 2 min");
+                return (
+                <Card key={a.id} className={cn(a.status === "CANCELLED" || a.status === "DECLINED" ? "opacity-70" : "", hot && "border-amber-400 dark:border-amber-700")}>
                   <CardHeader className="pb-1.5">
                     <div className="flex items-start justify-between gap-2">
-                      <CardTitle className="text-sm leading-snug">{a.title}</CardTitle>
-                      <Badge variant="outline" className={cn("shrink-0", APPT_STYLES[a.status])}>{titleCase(a.status)}</Badge>
+                      <div className="min-w-0">
+                        <CardTitle className="text-sm leading-snug">{a.title}</CardTitle>
+                        {a.code && <span className="mt-0.5 inline-block rounded bg-muted/70 px-1.5 py-0.5 font-mono text-[10px] tracking-wide text-muted-foreground">{a.code}</span>}
+                      </div>
+                      <div className="flex shrink-0 flex-col items-end gap-1">
+                        <Badge variant="outline" className={cn(APPT_STYLES[a.status])}>{titleCase(a.status)}</Badge>
+                        {until && APPT_ACTIVE.includes(a.status) && (
+                          <span className={cn("text-[11px] font-medium", hot ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground")}>{until}</span>
+                        )}
+                      </div>
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-1.5 text-sm">
                     <p className="text-xs text-muted-foreground">{fmtDateTime(a.scheduledAt)}{a.durationMin ? ` · ${a.durationMin} min` : ""}</p>
                     <p><span className="text-muted-foreground">With:</span> {a.withName} <span className="text-xs text-muted-foreground">({ROLE_LABELS[a.withRole] ?? a.withRole})</span></p>
-                    {a.personToSee && <p><span className="text-muted-foreground">Meeting:</span> {a.personToSee}</p>}
+                    {(a.staffName || a.personToSee) && (
+                      <p className="flex items-center gap-1.5">
+                        <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium", a.staffCategory === "ADMINISTRATION" ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300" : "bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-300")}>
+                          <Hourglass className="size-3" /> {a.staffName ?? a.personToSee}{a.staffCategory ? ` · ${STAFF_CAT_LABELS[a.staffCategory] ?? a.staffCategory}` : ""}
+                        </span>
+                      </p>
+                    )}
+                    {a.visitorPhone && <p className="text-xs text-muted-foreground">Visitor phone: {a.visitorPhone}</p>}
                     {a.location && <p><span className="text-muted-foreground">Where:</span> {a.location}</p>}
                     {a.purpose && <p className="text-xs text-muted-foreground">{a.purpose}</p>}
+                    {/* wave 72 — the response trail: who answered, how, and any move */}
+                    {a.respondedByName && (
+                      <p className="rounded bg-muted/60 p-2 text-xs">
+                        {a.status === "CONFIRMED" && <><CheckCheck className="mr-1 inline size-3 text-emerald-600" />{a.respondedByName} accepted</>}
+                        {a.status === "DECLINED" && <><X className="mr-1 inline size-3 text-red-600" />{a.respondedByName} declined</>}
+                        {a.status === "RESCHEDULED" && <><CalendarPlus className="mr-1 inline size-3 text-amber-600" />{a.respondedByName} moved it{a.rescheduledFrom ? ` from ${fmtDateTime(a.rescheduledFrom)}` : ""}</>}
+                        {!["CONFIRMED", "DECLINED", "RESCHEDULED"].includes(a.status) && <>{a.respondedByName} responded</>}
+                        {a.respondedAt ? ` · ${new Date(a.respondedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}
+                        {a.responseNote ? ` — “${a.responseNote}”` : ""}
+                      </p>
+                    )}
                     {a.outcome && <p className="rounded bg-muted/60 p-2 text-xs">{a.outcome}</p>}
-                    {canManage && ["SCHEDULED", "CONFIRMED"].includes(a.status) && (
+                    {/* wave 72 — the relay loop: staff answered → the desk tells the visitor and acks it */}
+                    {canManage && a.respondedAt && !a.relayedAt && ["CONFIRMED", "DECLINED", "RESCHEDULED"].includes(a.status) && (
+                      <Button size="sm" className="gap-1.5" onClick={() => post({ action: "appointment-relay", appointmentId: a.id }, a.status === "RESCHEDULED" ? "Visitor agreed — meeting confirmed at the new time" : "Relayed to the visitor", bumpAppointments)}>
+                        <Send /> {a.status === "RESCHEDULED" ? "Visitor agreed — confirm new time" : "Relayed to visitor"}
+                      </Button>
+                    )}
+                    {a.relayedAt && (
+                      <p className="text-[11px] text-muted-foreground">Relayed to the visitor · {new Date(a.relayedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p>
+                    )}
+                    {canManage && APPT_ACTIVE.includes(a.status) && (
                       <div className="flex flex-wrap gap-1.5 pt-1.5">
-                        {a.status === "SCHEDULED" && (
+                        {a.status !== "CONFIRMED" && (
                           <Button size="sm" variant="outline" onClick={() => post({ action: "appointment-status", appointmentId: a.id, status: "CONFIRMED" }, "Appointment confirmed", bumpAppointments)}>
-                            <ClipboardCheck /> Confirm
+                            <Check /> Confirm
                           </Button>
                         )}
+                        <Button size="sm" variant="outline" onClick={() => { setMoveAppt(a); setMoveDate(a.scheduledAt ? new Date(a.scheduledAt).toISOString().slice(0, 10) : ""); setMoveTime(a.scheduledAt ? new Date(a.scheduledAt).toTimeString().slice(0, 5) : ""); }}>
+                          <CalendarPlus /> Move
+                        </Button>
                         <Button size="sm" variant="outline" onClick={() => post({ action: "appointment-status", appointmentId: a.id, status: "COMPLETED" }, "Marked completed", bumpAppointments)}>
                           <ClipboardCheck /> Done
                         </Button>
@@ -709,7 +921,8 @@ export function FrontOffice() {
                     )}
                   </CardContent>
                 </Card>
-              ))}
+                );
+              })}
             </div>
           )}
         </TabsContent>
@@ -971,12 +1184,13 @@ export function FrontOffice() {
         </DialogContent>
       </Dialog>
 
-      {/* ── Book appointment dialog ── */}
+      {/* ── Book appointment dialog (wave 72 rework: staff-linked bookings +
+          odd-hours rule + instant alerts to the visited staff member) ── */}
       <Dialog open={apptDialog} onOpenChange={setApptDialog}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Book an appointment</DialogTitle>
-            <DialogDescription>Scheduled meeting with a parent, staff member or visitor.</DialogDescription>
+            <DialogDescription>Who is coming, who they are here to see — the selected staff member is alerted instantly and can accept, decline or reschedule.</DialogDescription>
           </DialogHeader>
           <FormGrid cols={2}>
             <FormField label="Title" required span={2}>
@@ -991,19 +1205,50 @@ export function FrontOffice() {
                 <SelectContent>{Object.keys(ROLE_LABELS).map((r) => <SelectItem key={r} value={r}>{ROLE_LABELS[r]}</SelectItem>)}</SelectContent>
               </Select>
             </FormField>
+            <FormField label="Visitor phone">
+              <Input value={apptForm.visitorPhone} onChange={(e) => setApptForm({ ...apptForm, visitorPhone: e.target.value })} placeholder="e.g. 024 123 4567" />
+            </FormField>
+            <FormField label="Organisation">
+              <Input value={apptForm.visitorOrg} onChange={(e) => setApptForm({ ...apptForm, visitorOrg: e.target.value })} placeholder="optional" />
+            </FormField>
             <FormField label="Date" required>
               <DateField mode="date" value={apptForm.date} onChange={(v) => setApptForm({ ...apptForm, date: v ?? "" })} />
             </FormField>
             <FormField label="Time">
               <Input type="time" value={apptForm.time} onChange={(e) => setApptForm({ ...apptForm, time: e.target.value })} />
             </FormField>
-            <FormField label="Meeting with (staff)">
-              <Input value={apptForm.personToSee} onChange={(e) => setApptForm({ ...apptForm, personToSee: e.target.value })} placeholder="e.g. Headmistress" />
+            <FormField label="Staff to see" span={2}>
+              <Select value={apptForm.staffId} onValueChange={(v) => setApptForm({ ...apptForm, staffId: v })}>
+                <SelectTrigger><SelectValue placeholder="Pick the staff member being visited" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Not listed (free text below)</SelectItem>
+                  {staffOpts.map((s) => {
+                    const blocked = apptOdd && s.category !== "ADMINISTRATION";
+                    return (
+                      <SelectItem key={s.id} value={s.id} disabled={blocked}>
+                        {s.fullName}{s.title ? ` · ${s.title}` : ""} — {STAFF_CAT_LABELS[s.category] ?? s.category}{blocked ? " (school hours only)" : ""}
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
+              {apptForm.staffId !== "none" && (
+                <p className="text-xs text-muted-foreground">
+                  {apptOdd
+                    ? "Odd hours — only administration staff can take visitors; teaching & non-teaching staff are school-hours only (Mon–Fri 07:00–17:00)."
+                    : "The staff member is alerted by SMS, email and in-app the moment you book, and answers from their Home."}
+                </p>
+              )}
             </FormField>
+            {apptForm.staffId === "none" && (
+              <FormField label="Meeting with (free text)" span={2}>
+                <Input value={apptForm.personToSee} onChange={(e) => setApptForm({ ...apptForm, personToSee: e.target.value })} placeholder="e.g. Headmistress" />
+              </FormField>
+            )}
             <FormField label="Duration (min)">
               <Input type="number" min={5} max={600} value={apptForm.durationMin} onChange={(e) => setApptForm({ ...apptForm, durationMin: e.target.value })} />
             </FormField>
-            <FormField label="Location" span={2}>
+            <FormField label="Location">
               <Input value={apptForm.location} onChange={(e) => setApptForm({ ...apptForm, location: e.target.value })} placeholder="e.g. Head's office" />
             </FormField>
             <FormField label="Purpose" span={2}>
@@ -1013,6 +1258,35 @@ export function FrontOffice() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setApptDialog(false)}>Cancel</Button>
             <Button onClick={submitAppointment} disabled={apptBusy}>{apptBusy ? "Booking…" : "Book"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Move appointment dialog (wave 72 — the desk reschedules) ── */}
+      <Dialog open={!!moveAppt} onOpenChange={(o) => { if (!o) setMoveAppt(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><CalendarPlus className="size-4" /> Move the appointment</DialogTitle>
+            <DialogDescription>
+              {moveAppt ? <>“{moveAppt.title}” with {moveAppt.withName} — currently {fmtDateTime(moveAppt.scheduledAt)}. The visitor relay runs through you; teachers stay school-hours only.</> : null}
+            </DialogDescription>
+          </DialogHeader>
+          <FormGrid cols={2}>
+            <FormField label="New date" required>
+              <DateField mode="date" value={moveDate} onChange={(v) => setMoveDate(v ?? "")} />
+            </FormField>
+            <FormField label="New time" required>
+              <Input type="time" value={moveTime} onChange={(e) => setMoveTime(e.target.value)} />
+            </FormField>
+          </FormGrid>
+          {moveAppt?.staffCategory && moveAppt.staffCategory !== "ADMINISTRATION" && isOddSlot(moveDate, moveTime) && (
+            <p className="rounded-md bg-red-50 dark:bg-red-950/40 p-2 text-xs text-red-700 dark:text-red-300">
+              Odd hours — {moveAppt?.staffName} is {moveAppt?.staffCategory === "TEACHING" ? "a teacher" : "non-teaching staff"} and can only take visitors Mon–Fri 07:00–17:00.
+            </p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMoveAppt(null)}>Cancel</Button>
+            <Button onClick={submitMove} disabled={moveBusy}>{moveBusy ? "Moving…" : "Move"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
