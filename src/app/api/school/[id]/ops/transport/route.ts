@@ -386,11 +386,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     });
   }
 
-  // bill transport fares onto current-term invoices for assigned learners
+  // bill transport fares onto current-term invoices for assigned learners.
+  // Optional routeId scopes the pass to one route (wave 75) — without it every
+  // active route is billed (idempotent: a learner already carrying the route's
+  // line is skipped, so the button can be tapped repeatedly without harm).
   if (action === "bill-term") {
     const term = await db.term.findFirst({ where: { isCurrent: true, academicYear: { schoolId } } });
     if (!term) return NextResponse.json({ error: "No current term" }, { status: 400 });
-    const routes = await db.transportRoute.findMany({ where: { schoolId, active: true }, include: { assignments: { where: { active: true } } } });
+    const routes = await db.transportRoute.findMany({
+      where: { schoolId, active: true, ...(body.routeId ? { id: body.routeId } : {}) },
+      include: { assignments: { where: { active: true } } },
+    });
     const invoices = await db.invoice.findMany({ where: { schoolId, termId: term.id }, include: { items: true } });
     const invByStudent: Record<string, typeof invoices[0]> = {};
     invoices.forEach((i) => (invByStudent[i.studentId] = i));
