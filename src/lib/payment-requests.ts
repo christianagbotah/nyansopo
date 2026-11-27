@@ -12,7 +12,7 @@
 
 import { PrismaClient, Payment, PaymentRequest } from "@prisma/client";
 import { collectDailyItems, creditItemBalance } from "@/lib/daily-billing";
-import { sendAutomated } from "@/lib/sms";
+import { sendAutomated, sendSms } from "@/lib/sms";
 import { nextReceiptNo } from "@/lib/codes";
 import {
   hubtelPaymentsConfigured, hubtelReceiveMoney, hubtelCreateCheckout, hubtelCheckoutStatus,
@@ -20,7 +20,7 @@ import {
 } from "@/lib/hubtel";
 import { toGhanaIntl } from "@/lib/phone";
 
-export const PAYMENT_PURPOSES = ["INVOICE", "DAILY_ITEMS", "ITEM_BALANCE", "WALLET"] as const;
+export const PAYMENT_PURPOSES = ["INVOICE", "DAILY_ITEMS", "ITEM_BALANCE", "WALLET", "SHOP_ORDER"] as const;
 export type PaymentPurpose = (typeof PAYMENT_PURPOSES)[number];
 
 export const PURPOSE_LABELS: Record<string, string> = {
@@ -28,6 +28,7 @@ export const PURPOSE_LABELS: Record<string, string> = {
   DAILY_ITEMS: "Daily fee items",
   ITEM_BALANCE: "Fee-item advance",
   WALLET: "Wallet top-up",
+  SHOP_ORDER: "School shop order",
 };
 
 const MOMO_LABEL: Record<string, string> = {
@@ -63,6 +64,7 @@ export type CreateRequestInput = {
   studentId: string;
   purpose: PaymentPurpose;
   invoiceId?: string | null;
+  shopOrderId?: string | null;
   items?: RequestItem[];
   walletKind?: "PREPAID" | "TRANSPORT" | "ITEM" | null;
   amountCents: number;
@@ -89,6 +91,7 @@ export async function createPaymentRequest(db: PrismaClient, input: CreateReques
   let description = input.description ?? "";
   let invoiceId: string | null = null;
   let walletKind: string | null = null;
+  let shopOrderId: string | null = null;
 
   if (input.purpose === "INVOICE") {
     if (!input.invoiceId) return { ok: false, error: "Choose the invoice this request settles" };
@@ -120,6 +123,18 @@ export async function createPaymentRequest(db: PrismaClient, input: CreateReques
     if (!["PREPAID", "TRANSPORT"].includes(kind)) return { ok: false, error: "Choose a wallet (prepaid or transport)" };
     walletKind = kind;
     description = description || (kind === "PREPAID" ? "Prepaid wallet top-up" : "Transport wallet top-up");
+  } else if (input.purpose === "SHOP_ORDER") {
+    // wave 77 — settle a parent-placed school-shop order (parent portal).
+    if (!input.shopOrderId) return { ok: false, error: "Choose the order this payment settles" };
+    const order = await db.shopOrder.findFirst({ where: { id: input.shopOrderId, schoolId: input.schoolId } });
+    if (!order) return { ok: false, error: "Shop order not found" };
+    if (order.status === "CANCELLED") return { ok: false, error: "This order was cancelled" };
+    if (order.status !== "PENDING_PAYMENT") return { ok: false, error: "This order is already settled" };
+    if (input.studentId && input.studentId !== order.studentId) return { ok: false, error: "The order belongs to a different learner" };
+    if (amount !== order.totalCents) return { ok: false, error: `The order total is ${fmtGH(order.totalCents)} — pay that exact amount` };
+    shopOrderId = order.id;
+    input.studentId = order.studentId;
+    description = description || `School shop order ${order.orderNo}`;
   } else {
     return { ok: false, error: "Unknown purpose" };
   }
@@ -187,7 +202,7 @@ export async function createPaymentRequest(db: PrismaClient, input: CreateReques
   const request = await db.paymentRequest.create({
     data: {
       schoolId: input.schoolId, studentId: input.studentId, purpose: input.purpose,
-      invoiceId, items: itemsJson as any, walletKind,
+      invoiceId, items: itemsJson as any, walletKind, shopOrderId,
       amountCents: amount, method, channel, payerName, payerMsisdn,
       status: "PENDING", provider, clientReference,
       providerTxnId, checkoutToken, checkoutUrl,
@@ -347,6 +362,54 @@ export async function applyCompletion(db: PrismaClient, requestId: string, sourc
         },
       });
       note = `${kind === "PREPAID" ? "Prepaid" : "Transport"} wallet +${fmtGH(request.amountCents)}`;
+    } else if (request.purpose === "SHOP_ORDER" && request.shopOrderId) {
+      // wave 77 — school-shop order: receipt + stock decrement + CAS to PAID.
+      // The order transition is an atomic compare-and-set like the request
+      // claim, so a webhook and a status poll can never both fulfil it.
+      const order = await db.shopOrder.findUnique({ where: { id: request.shopOrderId }, include: { items: true, student: true } });
+      if (order) {
+        const orderClaim = await db.shopOrder.updateMany({
+          where: { id: order.id, status: "PENDING_PAYMENT" },
+          data: { status: "PAID", paymentMethod: "ONLINE", paidAt: new Date(), paidByName: byName },
+        });
+        if (orderClaim.count) {
+          payment = await db.payment.create({
+            data: {
+              receiptNo: await nextReceiptNo(), studentId: order.studentId, category: "SHOP",
+              schoolId: request.schoolId, amountCents: request.amountCents,
+              method, reference: request.clientReference,
+              receivedByName: byName, paidAt: new Date(),
+            },
+          });
+          // tracked stock lines — tolerate a concurrent sale (logged, never blocks the learner's order)
+          let stockMisses = 0;
+          for (const line of order.items) {
+            if (!line.itemId) continue;
+            const dec = await db.shopItem.updateMany({
+              where: { id: line.itemId, stock: { not: null, gte: line.qty } },
+              data: { stock: { decrement: line.qty } },
+            });
+            if (!dec.count) stockMisses++;
+          }
+          if (stockMisses) await logEvent(db, request.id, "ERROR", { stockMisses }, `${stockMisses} shop line(s) short of stock at fulfilment — restock from the shop console`);
+          note = `Shop order ${order.orderNo} — ${fmtGH(request.amountCents)}, ${order.items.length} line(s)`;
+          // guardian alert — the order confirmation (gated on evtShopOrders)
+          const shopSmsSetting = await db.smsSetting.findUnique({ where: { schoolId: request.schoolId }, select: { evtShopOrders: true } });
+          if (shopSmsSetting?.evtShopOrders && order.student) {
+            await sendSms({
+              db, schoolId: request.schoolId, studentId: order.studentId,
+              recipientName: order.parentName || order.student.guardianName,
+              recipientPhone: order.student.guardianPhone,
+              body: `Shop order ${order.orderNo} confirmed — ${fmtGH(request.amountCents)}${payment ? `, receipt ${payment.receiptNo}` : ""}. ${order.items.map((i) => `${i.qty}× ${i.name}`).join(", ")} will be delivered to ${order.student.firstName} at school. Thank you.`,
+              category: "SHOP", sentByName: "School shop",
+            });
+          }
+        } else {
+          note = `Shop order ${order.orderNo} was already settled — payment link expired unused`;
+        }
+      } else {
+        note = "Shop order not found at completion";
+      }
     }
 
     await db.paymentRequest.update({

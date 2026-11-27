@@ -64,6 +64,7 @@ const Payroll = dynamic(() => import("@/components/modules/payroll").then((m: an
 const Inventory = dynamic(() => import("@/components/modules/inventory").then((m: any) => m.Inventory), { loading: () => <ModuleSkeleton /> });
 const Finance = dynamic(() => import("@/components/modules/finance").then((m: any) => m.Finance), { loading: () => <ModuleSkeleton /> });
 const LibraryPortal = dynamic(() => import("@/components/modules/library-portal").then((m: any) => m.LibraryPortal), { loading: () => <ModuleSkeleton /> });
+const ShopPortal = dynamic(() => import("@/components/modules/shop-portal").then((m: any) => m.ShopPortal), { loading: () => <ModuleSkeleton /> });
 const OnlineExams = dynamic(() => import("@/components/modules/online-exams").then((m: any) => m.OnlineExams), { loading: () => <ModuleSkeleton /> });
 const RbacConsole = dynamic(() => import("@/components/modules/rbac-console").then((m: any) => m.RbacConsole), { loading: () => <ModuleSkeleton /> });
 const CashierConsole = dynamic(() => import("@/components/modules/cashier-console").then((m: any) => m.CashierConsole), { loading: () => <ModuleSkeleton /> });
@@ -102,7 +103,7 @@ import {
   PanelLeftClose, PanelLeftOpen, Palette, SlidersHorizontal, Archive, FileText, BookMarked, Target, PiggyBank, Award, IdCard,
   MessagesSquare, Landmark as LedgerIcon, DatabaseBackup, Gavel, HeartPulse, Stethoscope, Ruler, Trophy, Footprints,
   DoorOpen, CalendarClock, FileBadge, History, Truck, AlarmClock, Globe, BadgeCheck, ClipboardCheck,
-  BookPlus, HandHeart,
+  BookPlus, HandHeart, Store,
 } from "lucide-react";
 
 type NavLeaf = { id: string; label: string; icon?: any; target?: NavTarget };
@@ -128,6 +129,7 @@ const SCHOOL_NAV: NavItem[] = [
   { id: "boarding", label: "Boarding Houses", icon: BedDouble, section: "Facilities" },
   { id: "payroll", label: "HR & Payroll", icon: Calculator, section: "Finance" },
   { id: "inventory", label: "Inventory & Stores", icon: Package, section: "Finance" },
+  { id: "shop", label: "School Shop", icon: Store, section: "Finance" },
   { id: "finance", label: "Finance & Analytics", icon: PieChart, section: "Finance" },
   { id: "accounts", label: "Accounts & Ledger", icon: LedgerIcon, section: "Finance" },
   { id: "budget", label: "Budgets & Fiscal Years", icon: PiggyBank, section: "Finance" },
@@ -1084,6 +1086,7 @@ export function AppShell() {
              module === "staffcpd" && show("staffcpd") ? <StaffCpd /> :
              module === "emis" && show("emis") ? <Emis /> :
              module === "library" && show("library") ? <LibraryPortal /> :
+             module === "shop" && show("shop") ? <ShopPortal /> :
              module === "boarding" && show("boarding") ? <Boarding /> :
              module === "rbac" && show("rbac") ? <RbacConsole /> :
              module === "cashier" && show("cashier") ? <CashierConsole /> :

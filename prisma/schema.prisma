@@ -58,6 +58,7 @@ model User {
   receivedThreads   MessageThread[]  @relation("MsgRecipient")
   studentId         String? // link to Student record — student portal (own record only)
   linkedStudentIds  String? // JSON array of student ids — parent portal (own children only)
+  shopOrders        ShopOrder[]      @relation("ShopOrderParent") // wave 77 — school-shop orders this account placed
   createdAt         DateTime         @default(now())
 }
 
@@ -181,6 +182,8 @@ model School {
   opsSettings          OpsSetting[]
   studentWallets       StudentWallet[]
   walletTxns           WalletTxn[]
+  shopItems            ShopItem[]
+  shopOrders           ShopOrder[]
   libraryBooks         LibraryBook[]
   libraryLoans         LibraryLoan[]
   bookRequests         BookRequest[]
@@ -567,6 +570,7 @@ model Student {
   stockIssues            StockMovement[]
   posPayments            Payment[]
   paymentRequests        PaymentRequest[]
+  shopOrders             ShopOrder[]
   credits                StudentCredit[]
   crecheRatings          CrecheRating[]
   disciplineCases        DisciplineCase[]
@@ -748,9 +752,11 @@ model PaymentRequest {
   school           School         @relation(fields: [schoolId], references: [id])
   studentId        String?
   student          Student?       @relation(fields: [studentId], references: [id])
-  purpose          String // INVOICE | DAILY_ITEMS | ITEM_BALANCE | WALLET
+  purpose          String // INVOICE | DAILY_ITEMS | ITEM_BALANCE | WALLET | SHOP_ORDER
   invoiceId        String? // INVOICE — the termly fee invoice being settled
   invoice          Invoice?       @relation(fields: [invoiceId], references: [id])
+  shopOrderId      String? // SHOP_ORDER — the shop order this request settles
+  shopOrder        ShopOrder?     @relation(fields: [shopOrderId], references: [id])
   items            Json? // DAILY_ITEMS / ITEM_BALANCE — [{serviceId, amountCents}]
   walletKind       String? // WALLET — PREPAID | TRANSPORT | ITEM (with items[0])
   amountCents      Int
@@ -1688,6 +1694,7 @@ model SmsSetting {
   evtResultsPublished  Boolean @default(true) // end-of-term results released
   evtPaymentReceipt    Boolean @default(true) // receipt confirmation for any fee payment
   evtOverpaymentCredit Boolean @default(true) // overpayment banked as prepaid credit
+  evtShopOrders        Boolean @default(true) // wave 77 — shop order paid / ready / delivered alerts
 }
 
 model SmsTemplate {
@@ -3749,4 +3756,72 @@ model CounselFollowUp {
 
   @@index([caseId, dueAt])
   @@index([dueAt])
+}
+
+// ─────────────────────────────────────────────────────────────
+// SCHOOL SHOP (wave 77) — parents order stationery / uniforms etc.
+// from the parent portal; pay ONLINE (MoMo / payment link via the
+// payments engine) or IN PERSON at the counter (cashier issues a
+// receipt); the shop attendant packs, delivers to the learner and
+// confirms — every transition alerts the guardian by SMS.
+// ─────────────────────────────────────────────────────────────
+model ShopItem {
+  id         String   @id @default(cuid())
+  schoolId   String
+  school     School   @relation(fields: [schoolId], references: [id])
+  name       String
+  category   String   @default("STATIONERY") // STATIONERY | UNIFORM | BOOKS | SUPPLIES | OTHER
+  priceCents Int
+  stock      Int? // null = not stock-tracked (tailoring, engraving…)
+  lowStockAt Int      @default(5)
+  active     Boolean  @default(true)
+  orderItems ShopOrderItem[]
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([schoolId, active])
+}
+
+model ShopOrder {
+  id              String          @id @default(cuid())
+  schoolId        String
+  school          School          @relation(fields: [schoolId], references: [id])
+  orderNo         String
+  parentId        String
+  parent          User            @relation("ShopOrderParent", fields: [parentId], references: [id])
+  parentName      String
+  studentId       String // the ward the items are delivered to
+  student         Student         @relation(fields: [studentId], references: [id])
+  items           ShopOrderItem[]
+  totalCents      Int
+  status          String          @default("PENDING_PAYMENT") // PENDING_PAYMENT | PAID | READY | DELIVERED | CANCELLED
+  paymentMethod   String? // ONLINE | COUNTER
+  paymentRequests PaymentRequest[]
+  paidAt          DateTime?
+  paidByName      String?
+  readyAt         DateTime?
+  readyByName     String?
+  deliveredAt     DateTime?
+  deliveredByName String?
+  deliveryNote    String? // e.g. "leave with the class teacher of B4 Gold"
+  cancelReason    String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@unique([schoolId, orderNo])
+  @@index([schoolId, status])
+  @@index([parentId])
+}
+
+model ShopOrderItem {
+  id         String    @id @default(cuid())
+  orderId    String
+  order      ShopOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  itemId     String?
+  item       ShopItem? @relation(fields: [itemId], references: [id])
+  name       String // snapshotted at order time
+  priceCents Int
+  qty        Int
+
+  @@index([orderId])
 }

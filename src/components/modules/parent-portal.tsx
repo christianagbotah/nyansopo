@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
 import { apiGet, apiPost } from "@/lib/api";
 import { ModuleHeader, LoadingBlock, EmptyState } from "@/components/ui-helpers";
@@ -19,7 +19,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "@/hooks/use-toast";
 import { initials, avatarColor } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { Home, Wallet, CalendarCheck, GraduationCap, Bus, MessageSquareText, Megaphone, Phone, ArrowUpRight, CheckCircle2, AlertTriangle, Receipt, BookOpen, BookPlus, Hourglass, XCircle, Send, UtensilsCrossed, Clock, Loader2 } from "lucide-react";
+import { Home, Wallet, CalendarCheck, GraduationCap, Bus, MessageSquareText, Megaphone, Phone, ArrowUpRight, CheckCircle2, AlertTriangle, Receipt, BookOpen, BookPlus, Hourglass, XCircle, Send, UtensilsCrossed, Clock, Loader2, Store, ShoppingCart, Trash2, ExternalLink, Package } from "lucide-react";
 import { PortalMessenger } from "@/components/portal-messenger";
 
 type Invoice = {
@@ -76,6 +76,32 @@ const REQ_STATUS: Record<string, { label: string; className: string; icon: React
   ISSUED: { label: "Issued", className: "bg-emerald-600", icon: <CheckCircle2 className="size-3" /> },
   REJECTED: { label: "Declined", className: "bg-destructive", icon: <XCircle className="size-3" /> },
 };
+// wave 77 — school shop + online payments (Hubtel MoMo prompts / hosted checkout links)
+type ShopItem = { id: string; name: string; category: string; price: number; stock: number | null };
+type ShopOrderLine = { name: string; price: number; qty: number };
+type ShopOrder = {
+  id: string; orderNo: string; status: string; total: number; paymentMethod: string | null;
+  deliveryNote: string | null; cancelReason: string | null; createdAt: string; paidAt: string | null;
+  deliveredAt: string | null; studentId: string; student: string; items: ShopOrderLine[];
+  payRequest: { id: string; clientReference: string; status: string; checkoutUrl: string | null } | null;
+};
+type PayRequest = { id: string; clientReference: string; status: string; checkoutUrl: string | null; provider?: string; amount: number };
+// newest status of a tracked payment, as returned by the payment.check action
+type CheckedRequest = {
+  id: string; clientReference: string; status: string; checkoutUrl: string | null; amount: number;
+  appliedNote: string | null; failureReason: string | null;
+};
+type PaymentRequestRow = {
+  id: string; purpose: string; amount: number; status: string; method: string | null; channel: string | null;
+  clientReference: string; checkoutUrl: string | null; appliedNote: string | null; failureReason: string | null;
+  createdAt: string; completedAt: string | null; shopOrderId: string | null; invoiceId: string | null; walletKind: string | null;
+};
+// what the shared PayDialog is paying for (fee invoice / wallet top-up / shop order)
+type PayTarget =
+  | { kind: "fees"; invoiceId: string; invoiceNo: string; balance: number; studentId: string; studentName: string; phone: string }
+  | { kind: "wallet"; walletKind: "PREPAID" | "TRANSPORT"; studentId: string; studentName: string; phone: string }
+  | { kind: "shop"; orderId: string; orderNo: string; total: number; studentName: string; phone: string };
+
 type ParentData = {
   role: string; school: { name: string; motto: string | null; phone: string | null; town: string; region: string } | null;
   year: string | null; term: string | null;
@@ -85,10 +111,32 @@ type ParentData = {
   libraryCatalogue: CatalogueBook[];
   mealServices?: MealServiceLite[];
   mealRequests?: MealRequestLite[];
+  // wave 77 — school shop catalog, the family's orders and recent online payment attempts
+  paymentsMode?: "HUBTEL" | "SIMULATED";
+  shopItems?: ShopItem[];
+  shopOrders?: ShopOrder[];
+  paymentRequests?: PaymentRequestRow[];
 };
 
 const ATT_COLOR: Record<string, string> = { PRESENT: "bg-emerald-600", LATE: "bg-amber-500", ABSENT: "bg-destructive", SICK: "bg-sky-500", EXCUSED: "bg-zinc-400" };
 const DIR_LABEL: Record<string, string> = { IN: "Morning pick-up", OUT: "Afternoon drop-off", BOTH: "Both ways", NONE: "Not riding" };
+// wave 77 — shop categories, order statuses, payment-request statuses & purposes
+const SHOP_CATS: Record<string, string> = { STATIONERY: "Stationery", UNIFORM: "Uniform", BOOKS: "Books", SUPPLIES: "Supplies", OTHER: "Other" };
+const PAY_STATUS: Record<string, { label: string; className: string }> = {
+  PENDING: { label: "Awaiting payment", className: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300" },
+  COMPLETED: { label: "Paid", className: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" },
+  FAILED: { label: "Failed", className: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300" },
+  CANCELLED: { label: "Cancelled", className: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300" },
+};
+const ORDER_STATUS: Record<string, { label: string; className: string }> = {
+  PENDING_PAYMENT: { label: "Awaiting payment", className: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300" },
+  PAID: { label: "Paid — being packed", className: "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300" },
+  READY: { label: "Packed — out for delivery", className: "bg-violet-100 text-violet-800 dark:bg-violet-950 dark:text-violet-300" },
+  DELIVERED: { label: "Delivered", className: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" },
+  CANCELLED: { label: "Cancelled", className: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300" },
+};
+const ORDER_PAYMENT: Record<string, string> = { ONLINE: "paid online", COUNTER: "counter receipt" };
+const PURPOSE_LABEL: Record<string, string> = { INVOICE: "School fees", WALLET: "Wallet top-up", SHOP_ORDER: "Shop order", DAILY_ITEMS: "Daily fee items", ITEM_BALANCE: "Fee-item advance" };
 
 export function ParentPortal() {
   const { currentSchoolId, session } = useStore();
@@ -96,6 +144,8 @@ export function ParentPortal() {
   const [err, setErr] = useState<string | null>(null);
   const [childIdx, setChildIdx] = useState(0);
   const [requestOpen, setRequestOpen] = useState(false);
+  // wave 77 — the shared online-payment dialog target (fee invoice / wallet top-up)
+  const [payTarget, setPayTarget] = useState<PayTarget | null>(null);
   // meal opt-in / opt-out form
   const [mealDate, setMealDate] = useState(new Date().toISOString().slice(0, 10));
   const [mealService, setMealService] = useState("");
@@ -154,6 +204,7 @@ export function ParentPortal() {
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="homework" className="gap-1.5"><BookPlus className="size-4" /> Homework</TabsTrigger>
           <TabsTrigger value="fees">Fees & Payments</TabsTrigger>
+          <TabsTrigger value="shop" className="gap-1.5"><Store className="size-4" /> Shop</TabsTrigger>
           <TabsTrigger value="attendance">Attendance</TabsTrigger>
           <TabsTrigger value="reports">Reports</TabsTrigger>
           <TabsTrigger value="library">Library</TabsTrigger>
@@ -206,8 +257,24 @@ export function ParentPortal() {
             <Card>
               <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><Wallet className="size-4" /> Prepaid wallets</CardTitle></CardHeader>
               <CardContent className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-lg border p-3"><div className="text-xs text-muted-foreground">Tuck / meals wallet</div><div className="text-xl font-bold tabular-nums">{fmtCedi(child.wallet.prepaid)}</div></div>
-                <div className="rounded-lg border p-3"><div className="text-xs text-muted-foreground">Transport wallet</div><div className="text-xl font-bold tabular-nums">{fmtCedi(child.wallet.transport)}</div></div>
+                <div className="rounded-lg border p-3 flex items-start justify-between gap-2">
+                  <div>
+                    <div className="text-xs text-muted-foreground">Tuck / meals wallet</div>
+                    <div className="text-xl font-bold tabular-nums">{fmtCedi(child.wallet.prepaid)}</div>
+                  </div>
+                  <Button size="sm" variant="outline" className="h-8 gap-1.5 shrink-0" onClick={() => setPayTarget({ kind: "wallet", walletKind: "PREPAID", studentId: child.id, studentName: child.name, phone: child.guardianPhone })}>
+                    <Wallet className="size-3.5" /> Top up
+                  </Button>
+                </div>
+                <div className="rounded-lg border p-3 flex items-start justify-between gap-2">
+                  <div>
+                    <div className="text-xs text-muted-foreground">Transport wallet</div>
+                    <div className="text-xl font-bold tabular-nums">{fmtCedi(child.wallet.transport)}</div>
+                  </div>
+                  <Button size="sm" variant="outline" className="h-8 gap-1.5 shrink-0" onClick={() => setPayTarget({ kind: "wallet", walletKind: "TRANSPORT", studentId: child.id, studentName: child.name, phone: child.guardianPhone })}>
+                    <Wallet className="size-3.5" /> Top up
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           )}
@@ -335,9 +402,16 @@ export function ParentPortal() {
                       <TableCell className="tabular-nums font-semibold">{fmtCedi(inv.balance)}</TableCell>
                       <TableCell><Badge className={inv.status === "PAID" ? "bg-emerald-600" : inv.status === "PARTIAL" ? "bg-amber-600" : "bg-destructive"}>{inv.status}</Badge></TableCell>
                       <TableCell>
-                        <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => window.open(`/invoice/${inv.id}`, "_blank")}>
-                          Statement <ArrowUpRight className="size-3" />
-                        </Button>
+                        <div className="flex items-center justify-end gap-1">
+                          {inv.balance > 0 && (
+                            <Button size="sm" className="h-7 gap-1 text-xs" onClick={() => setPayTarget({ kind: "fees", invoiceId: inv.id, invoiceNo: inv.invoiceNo, balance: inv.balance, studentId: child.id, studentName: child.name, phone: child.guardianPhone })}>
+                              <Wallet className="size-3" /> Pay online
+                            </Button>
+                          )}
+                          <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => window.open(`/invoice/${inv.id}`, "_blank")}>
+                            Statement <ArrowUpRight className="size-3" />
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -377,6 +451,39 @@ export function ParentPortal() {
               </CardContent>
             </Card>
           </div>
+
+          {/* wave 77 — recent online payment attempts (fees, wallets, shop) with their live status */}
+          {!!(data.paymentRequests ?? []).length && (
+            <Card>
+              <CardHeader className="pb-2"><CardTitle className="text-base">Online payments</CardTitle></CardHeader>
+              <CardContent>
+                <div className="space-y-1.5 max-h-64 overflow-y-auto nice-scroll">
+                  {(data.paymentRequests ?? []).map((r) => {
+                    const st = PAY_STATUS[r.status] ?? PAY_STATUS.PENDING;
+                    const label = r.purpose === "WALLET"
+                      ? (r.walletKind === "TRANSPORT" ? "Transport wallet top-up" : "Tuck / meals wallet top-up")
+                      : PURPOSE_LABEL[r.purpose] ?? r.purpose;
+                    return (
+                      <div key={r.id} className="flex items-center justify-between gap-2 rounded-lg border px-3 py-2">
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium">{fmtCedi(r.amount)} <span className="font-normal text-muted-foreground">· {label}</span></div>
+                          <div className="text-[11px] text-muted-foreground truncate">
+                            {fmtDate(r.createdAt)}{r.appliedNote ? ` · ${r.appliedNote}` : ""}{r.failureReason ? ` · ${r.failureReason}` : ""}
+                          </div>
+                        </div>
+                        <Badge className={cn("shrink-0", st.className)}>{st.label}</Badge>
+                      </div>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        {/* wave 77 — school shop: catalog + basket + checkout (online or at the counter) */}
+        <TabsContent value="shop" className="mt-3">
+          <ParentShop data={data} schoolId={currentSchoolId!} defaultStudentId={child.id} onChanged={load} />
         </TabsContent>
 
         <TabsContent value="attendance" className="mt-3 space-y-4">
@@ -587,6 +694,16 @@ export function ParentPortal() {
         studentId={child.id}
         studentName={child.name}
         schoolId={currentSchoolId!}
+        onDone={load}
+      />
+
+      {/* wave 77 — online payment dialog (fees invoice / wallet top-up) */}
+      <PayDialog
+        open={!!payTarget}
+        onOpenChange={(o) => { if (!o) setPayTarget(null); }}
+        target={payTarget}
+        schoolId={currentSchoolId!}
+        paymentsMode={data.paymentsMode}
         onDone={load}
       />
     </div>
@@ -821,5 +938,648 @@ function ParentHomework({ child, onChanged }: { child: Child; onChanged: () => v
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+/* ── wave 77 — online payments & school shop ───────────────────────────── */
+
+/** Poll `payment.check` every 3 seconds while a request id is set — the
+ *  interval is cleared when the id clears (close / completion / failure) or
+ *  when the dialog unmounts. Each result is tagged with the request id it
+ *  belongs to so a stale poll from a previous payment is never applied. */
+function usePaymentPoll(schoolId: string, requestId: string | null) {
+  const [checked, setChecked] = useState<PolledRequest | null>(null);
+  useEffect(() => {
+    if (!requestId) return;
+    let alive = true;
+    const check = async () => {
+      try {
+        const res = await apiPost<{ request: CheckedRequest }>(`/api/school/${schoolId}/ops/portal`, { action: "payment.check", requestId });
+        if (alive) setChecked({ id: requestId, data: res.request });
+      } catch { /* transient — the next tick retries */ }
+    };
+    const t = setInterval(check, 3000);
+    return () => { alive = false; clearInterval(t); };
+  }, [schoolId, requestId]);
+  return checked;
+}
+
+type PayLiveRequest = {
+  clientReference: string; status: string; checkoutUrl: string | null; amount: number;
+  appliedNote?: string | null; failureReason?: string | null;
+};
+type PolledRequest = { id: string; data: CheckedRequest };
+
+/* Shared tracking panel inside the payment dialogs once a request has been
+   created: reference, amount, status badge, then mode-specific instructions
+   (sandbox pay page / MoMo prompt / hosted checkout) and the terminal
+   success / failure states. */
+function PaymentTrackingPanel({ request, payUrl, method, phone, paymentsMode }: {
+  request: PayLiveRequest; payUrl: string | null;
+  method: "MOMO_PROMPT" | "PAYMENT_LINK"; phone: string;
+  paymentsMode: "HUBTEL" | "SIMULATED" | undefined;
+}) {
+  const st = PAY_STATUS[request.status] ?? PAY_STATUS.PENDING;
+  const payPage = payUrl || `/pay/${request.clientReference}`;
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5">
+        <div className="min-w-0">
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Reference</div>
+          <div className="font-mono text-sm truncate">{request.clientReference}</div>
+        </div>
+        <div className="text-right shrink-0">
+          <div className="text-base font-bold tabular-nums">{fmtCedi(request.amount)}</div>
+          <Badge className={st.className}>{st.label}</Badge>
+        </div>
+      </div>
+      {request.status === "PENDING" && (
+        <>
+          {paymentsMode === "SIMULATED" && (
+            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 flex items-start gap-2">
+              <AlertTriangle className="size-4 text-amber-600 shrink-0 mt-0.5" />
+              <div className="flex-1 space-y-2">
+                <p className="text-sm">Sandbox: no Hubtel keys configured — complete the payment on the payment page.</p>
+                <a href={payPage} target="_blank" rel="noreferrer">
+                  <Button size="sm" variant="outline" className="gap-1.5"><ExternalLink className="size-3.5" /> Open payment page</Button>
+                </a>
+              </div>
+            </div>
+          )}
+          {paymentsMode === "HUBTEL" && method === "MOMO_PROMPT" && (
+            <p className="text-sm text-muted-foreground">Approve the MoMo prompt on <b className="text-foreground">{phone || "your phone"}</b> — this page updates automatically.</p>
+          )}
+          {paymentsMode === "HUBTEL" && method === "PAYMENT_LINK" && (
+            <div className="flex items-center justify-between gap-2 rounded-lg border p-3">
+              <span className="text-sm text-muted-foreground">A secure checkout page is ready.</span>
+              {request.checkoutUrl
+                ? <a href={request.checkoutUrl} target="_blank" rel="noreferrer"><Button size="sm" className="gap-1.5 shrink-0"><ExternalLink className="size-3.5" /> Open secure checkout</Button></a>
+                : <a href={payPage} target="_blank" rel="noreferrer"><Button size="sm" variant="outline" className="gap-1.5 shrink-0"><ExternalLink className="size-3.5" /> Open payment page</Button></a>}
+            </div>
+          )}
+          <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Loader2 className="size-3 animate-spin" /> Checking every few seconds — you can close this and come back later.</p>
+        </>
+      )}
+      {request.status === "COMPLETED" && (
+        <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3 flex items-start gap-2">
+          <CheckCircle2 className="size-4 text-emerald-600 shrink-0 mt-0.5" />
+          <div>
+            <div className="text-sm font-medium">Payment received — thank you.</div>
+            {request.appliedNote && <div className="text-xs text-muted-foreground mt-0.5">{request.appliedNote}</div>}
+          </div>
+        </div>
+      )}
+      {(request.status === "FAILED" || request.status === "CANCELLED") && (
+        <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 flex items-start gap-2">
+          <AlertTriangle className="size-4 text-destructive shrink-0 mt-0.5" />
+          <div>
+            <div className="text-sm font-medium">{request.status === "FAILED" ? "The payment did not go through." : "The payment was cancelled."}</div>
+            {request.failureReason && <div className="text-xs text-muted-foreground mt-0.5">{request.failureReason}</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* Shared online-payment dialog (fees invoice / wallet top-up / shop order).
+   Form → create the payment request → tracking panel with the 3-second poll.
+   Money enters as GHS text and leaves as integer cents (Math.round). */
+function PayDialog({ open, onOpenChange, target, schoolId, paymentsMode, onDone }: {
+  open: boolean; onOpenChange: (o: boolean) => void;
+  target: PayTarget | null; schoolId: string;
+  paymentsMode: "HUBTEL" | "SIMULATED" | undefined; onDone: () => void;
+}) {
+  const [method, setMethod] = useState<"MOMO_PROMPT" | "PAYMENT_LINK">("MOMO_PROMPT");
+  const [phone, setPhone] = useState("");
+  const [amountGhs, setAmountGhs] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [active, setActive] = useState<{ request: PayRequest; payUrl: string | null } | null>(null);
+  const [pollId, setPollId] = useState<string | null>(null);
+  const [result, setResult] = useState<CheckedRequest | null>(null);
+  const settledRef = useRef(false);
+  const checked = usePaymentPoll(schoolId, pollId);
+
+  // fresh form each time the dialog opens; stop the poll when it closes
+  useEffect(() => {
+    if (open && target) {
+      settledRef.current = false;
+      setMethod("MOMO_PROMPT");
+      setPhone(target.phone ?? "");
+      setAmountGhs(target.kind === "fees" ? (target.balance / 100).toFixed(2) : "");
+      setBusy(false);
+      setActive(null); setPollId(null); setResult(null);
+    } else if (!open) {
+      setActive(null); setPollId(null); setResult(null);
+    }
+  }, [open, target]);
+
+  // react to poll results — any terminal status stops the interval
+  useEffect(() => {
+    if (!checked || checked.id !== pollId) return;
+    const c = checked.data;
+    if (c.status === "COMPLETED" || c.status === "FAILED" || c.status === "CANCELLED") {
+      setResult(c);
+      setPollId(null);
+      if (c.status === "COMPLETED" && !settledRef.current) {
+        settledRef.current = true;
+        toast({ title: "Payment received — thank you", description: c.appliedNote ?? undefined });
+        onDone();
+      }
+    }
+  }, [checked, pollId, onDone]);
+
+  async function submit() {
+    if (!target) return;
+    let amountCents: number | undefined;
+    if (target.kind === "fees") {
+      amountCents = Math.round(Number(amountGhs) * 100);
+      if (!Number.isFinite(amountCents) || amountCents <= 0) { toast({ title: "Enter an amount", description: "How much of the balance are you paying?" }); return; }
+      if (amountCents > target.balance) { toast({ title: "Amount too high", description: `The balance on ${target.invoiceNo} is ${fmtCedi(target.balance)}.` }); return; }
+    } else if (target.kind === "wallet") {
+      amountCents = Math.round(Number(amountGhs) * 100);
+      if (!Number.isFinite(amountCents) || amountCents < 50) { toast({ title: "Minimum ₵0.50", description: "Top-ups start at fifty pesewas." }); return; }
+    }
+    setBusy(true);
+    try {
+      const body = target.kind === "fees"
+        ? { action: "fees.pay-online", studentId: target.studentId, invoiceId: target.invoiceId, amountCents, method, payerMsisdn: phone || undefined }
+        : target.kind === "wallet"
+          ? { action: "wallet.topup", studentId: target.studentId, walletKind: target.walletKind, amountCents, method, payerMsisdn: phone || undefined }
+          : { action: "shop.order-pay", orderId: target.orderId, method, payerMsisdn: phone || undefined };
+      const res = await apiPost<{ ok: boolean; request: PayRequest; payUrl: string | null }>(`/api/school/${schoolId}/ops/portal`, body);
+      settledRef.current = false;
+      setResult(null);
+      setActive({ request: res.request, payUrl: res.payUrl ?? null });
+      setPollId(res.request.id);
+    } catch (e: any) {
+      toast({ title: "Could not start the payment", description: e.message, variant: "destructive" });
+    } finally { setBusy(false); }
+  }
+
+  if (!target) return null;
+  const title = target.kind === "fees" ? "Pay school fees online"
+    : target.kind === "wallet" ? (target.walletKind === "TRANSPORT" ? "Top up transport wallet" : "Top up tuck / meals wallet")
+    : `Pay for order ${target.orderNo}`;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><Wallet className="size-4.5" /> {title}</DialogTitle>
+          <DialogDescription>
+            {target.kind === "fees" ? `${target.studentName} · invoice ${target.invoiceNo}` : target.studentName}
+          </DialogDescription>
+        </DialogHeader>
+        {active ? (
+          <>
+            <PaymentTrackingPanel request={result ?? active.request} payUrl={active.payUrl} method={method} phone={phone} paymentsMode={paymentsMode} />
+            <DialogFooter>
+              {(result?.status === "FAILED" || result?.status === "CANCELLED") && (
+                <Button variant="outline" onClick={() => { setActive(null); setResult(null); settledRef.current = false; }}>Try again</Button>
+              )}
+              <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
+            </DialogFooter>
+          </>
+        ) : (
+          <>
+            <div className="grid gap-3">
+              {target.kind === "shop" ? (
+                <div className="flex items-center justify-between gap-2 rounded-lg border px-3 py-2.5">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium">Order {target.orderNo}</div>
+                    <div className="text-xs text-muted-foreground">{target.studentName}</div>
+                  </div>
+                  <div className="text-base font-bold tabular-nums shrink-0">{fmtCedi(target.total)}</div>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <Label>Amount (GHS)</Label>
+                  <Input type="number" inputMode="decimal" min={0.5} step="0.01" value={amountGhs} onChange={(e) => setAmountGhs(e.target.value)} placeholder={target.kind === "wallet" ? "e.g. 20.00" : undefined} />
+                  <p className="text-[11px] text-muted-foreground">
+                    {target.kind === "fees" ? `Balance ${fmtCedi(target.balance)} — partial payments are fine.` : "Minimum ₵0.50 per transaction."}
+                  </p>
+                </div>
+              )}
+              <div className="space-y-1.5">
+                <Label>Pay with</Label>
+                <Select value={method} onValueChange={(v) => setMethod(v === "PAYMENT_LINK" ? "PAYMENT_LINK" : "MOMO_PROMPT")}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="MOMO_PROMPT">MoMo prompt — approve on your phone</SelectItem>
+                    <SelectItem value="PAYMENT_LINK">Payment link — open a checkout page</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Mobile-money number</Label>
+                <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="e.g. 024 123 4567" />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+              <Button disabled={busy} onClick={submit} className="gap-1.5">
+                {busy ? <Loader2 className="size-4 animate-spin" /> : <Wallet className="size-4" />} Pay now
+              </Button>
+            </DialogFooter>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ── wave 77 — School shop (parent view): browse the catalog, fill a basket,
+   then check out — pay online now or at the school counter. Recent orders
+   with live statuses sit underneath. ── */
+function ParentShop({ data, schoolId, defaultStudentId, onChanged }: {
+  data: ParentData; schoolId: string; defaultStudentId: string; onChanged: () => void;
+}) {
+  const items = data.shopItems ?? [];
+  const orders = data.shopOrders ?? [];
+  const [cat, setCat] = useState("ALL");
+  const [qtys, setQtys] = useState<Record<string, string>>({});
+  const [cart, setCart] = useState<{ itemId: string; qty: number }[]>([]);
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [payTarget, setPayTarget] = useState<PayTarget | null>(null);
+  const [cancelling, setCancelling] = useState<string | null>(null);
+
+  const shown = cat === "ALL" ? items : items.filter((i) => i.category === cat);
+  const lines = cart
+    .map((c) => ({ qty: c.qty, item: items.find((i) => i.id === c.itemId) }))
+    .filter((l): l is { qty: number; item: ShopItem } => !!l.item);
+  const total = lines.reduce((s, l) => s + l.item.price * l.qty, 0);
+
+  function addToCart(item: ShopItem) {
+    if (item.stock === 0) return;
+    const want = Math.max(1, Math.round(Number(qtys[item.id]) || 1));
+    const add = item.stock == null ? want : Math.min(want, item.stock);
+    setCart((c) => {
+      const cur = c.find((x) => x.itemId === item.id);
+      if (!cur) return [...c, { itemId: item.id, qty: add }];
+      const next = item.stock == null ? cur.qty + add : Math.min(cur.qty + add, item.stock);
+      return c.map((x) => (x.itemId === item.id ? { ...x, qty: next } : x));
+    });
+    toast({ title: "Added to your basket", description: `${item.name} × ${add}` });
+  }
+
+  async function cancelOrder(orderId: string) {
+    setCancelling(orderId);
+    try {
+      await apiPost(`/api/school/${schoolId}/ops/portal`, { action: "shop.order-cancel", orderId });
+      toast({ title: "Order cancelled", description: "Nothing was charged — the items are back in the shop." });
+      onChanged();
+    } catch (e: any) {
+      toast({ title: "Could not cancel the order", description: e.message, variant: "destructive" });
+    } finally { setCancelling(null); }
+  }
+
+  if (!items.length && !orders.length) {
+    return <EmptyState icon={<Store className="size-8" />} title="The shop is quiet" hint="Uniforms, stationery and books the school sells will appear here." />;
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* category filter + payments-mode chip */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Select value={cat} onValueChange={setCat}>
+          <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ALL">All items</SelectItem>
+            {Object.entries(SHOP_CATS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        {data.paymentsMode === "HUBTEL"
+          ? <Badge className="gap-1.5 bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"><CheckCircle2 className="size-3" /> Hubtel live</Badge>
+          : <Badge className="gap-1.5 bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"><AlertTriangle className="size-3" /> Sandbox mode</Badge>}
+      </div>
+
+      {/* basket — a drawer-lite card at the top of the tab */}
+      {lines.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2 flex-row items-center justify-between space-y-0">
+            <CardTitle className="text-base flex items-center gap-2"><ShoppingCart className="size-4" /> Your basket</CardTitle>
+            <div className="text-base font-bold tabular-nums">{fmtCedi(total)}</div>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {lines.map((l) => (
+              <div key={l.item.id} className="flex items-center justify-between gap-2 rounded-lg border px-3 py-2">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium truncate">{l.item.name}</div>
+                  <div className="text-xs text-muted-foreground">{l.qty} × {fmtCedi(l.item.price)}</div>
+                </div>
+                <Button size="sm" variant="ghost" className="h-8 gap-1 text-xs shrink-0" onClick={() => setCart((c) => c.filter((x) => x.itemId !== l.item.id))}>
+                  <Trash2 className="size-3" /> Remove
+                </Button>
+              </div>
+            ))}
+            <Button className="w-full gap-1.5" onClick={() => setCheckoutOpen(true)}>
+              <Send className="size-4" /> Checkout — {fmtCedi(total)}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* catalog */}
+      {items.length > 0 && (
+        shown.length ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {shown.map((item) => (
+              <Card key={item.id} className="flex flex-col">
+                <CardContent className="p-3.5 flex flex-col gap-2.5 flex-1">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="text-sm font-medium leading-snug">{item.name}</div>
+                    <Badge variant="outline" className="text-[9px] shrink-0">{SHOP_CATS[item.category] ?? item.category}</Badge>
+                  </div>
+                  <div className="mt-auto flex items-baseline justify-between gap-2">
+                    <div className="text-lg font-bold tabular-nums">{fmtCedi(item.price)}</div>
+                    {item.stock != null && (
+                      <div className={cn("text-[11px]", item.stock === 0 ? "text-destructive font-medium" : "text-muted-foreground")}>
+                        {item.stock === 0 ? "Out of stock" : `${item.stock} in stock`}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="number" inputMode="numeric" min={1} max={item.stock ?? undefined}
+                      value={qtys[item.id] ?? "1"}
+                      onChange={(e) => setQtys((q) => ({ ...q, [item.id]: e.target.value }))}
+                      className="h-9 w-16 shrink-0" aria-label={`Quantity — ${item.name}`}
+                    />
+                    <Button className="flex-1 gap-1.5" disabled={item.stock === 0} onClick={() => addToCart(item)}>
+                      <ShoppingCart className="size-4" /> Add
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        ) : <EmptyState title="Nothing in this category yet" hint="Try another category — the school restocks through the term." />
+      )}
+
+      {/* my orders */}
+      <Card>
+        <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><Package className="size-4" /> My orders</CardTitle></CardHeader>
+        <CardContent>
+          {orders.length ? (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Order</TableHead>
+                  <TableHead>For</TableHead>
+                  <TableHead className="hidden md:table-cell">Items</TableHead>
+                  <TableHead>Total</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {orders.map((o) => {
+                  const st = ORDER_STATUS[o.status] ?? ORDER_STATUS.PENDING_PAYMENT;
+                  const guardianPhone = data.children.find((c) => c.id === o.studentId)?.guardianPhone ?? "";
+                  return (
+                    <TableRow key={o.id}>
+                      <TableCell>
+                        <div className="font-medium">{o.orderNo}</div>
+                        <div className="text-xs text-muted-foreground">{fmtDate(o.createdAt)}{o.paymentMethod ? ` · ${ORDER_PAYMENT[o.paymentMethod] ?? o.paymentMethod}` : ""}</div>
+                        {o.deliveryNote && <div className="text-[11px] text-muted-foreground mt-0.5 max-w-56">Note: {o.deliveryNote}</div>}
+                        {o.cancelReason && <div className="text-[11px] text-destructive mt-0.5 max-w-56">{o.cancelReason}</div>}
+                      </TableCell>
+                      <TableCell className="text-sm">{o.student}</TableCell>
+                      <TableCell className="hidden md:table-cell text-xs text-muted-foreground">{o.items.map((i) => `${i.qty}× ${i.name}`).join(" · ")}</TableCell>
+                      <TableCell className="tabular-nums font-semibold">{fmtCedi(o.total)}</TableCell>
+                      <TableCell><Badge className={st.className}>{st.label}</Badge></TableCell>
+                      <TableCell>
+                        {o.status === "PENDING_PAYMENT" && (
+                          <div className="flex flex-col items-stretch gap-1 min-w-24">
+                            <Button size="sm" className="h-7 gap-1 text-xs" onClick={() => setPayTarget({ kind: "shop", orderId: o.id, orderNo: o.orderNo, total: o.total, studentName: o.student, phone: guardianPhone })}>
+                              <Wallet className="size-3" /> Pay online
+                            </Button>
+                            <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs text-destructive" disabled={cancelling === o.id} onClick={() => cancelOrder(o.id)}>
+                              {cancelling === o.id && <Loader2 className="size-3 animate-spin" />} Cancel
+                            </Button>
+                          </div>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          ) : <EmptyState title="No orders yet" hint="Add items to your basket and check out — the shop delivers to the child at school." />}
+        </CardContent>
+      </Card>
+
+      <ShopCheckoutDialog
+        open={checkoutOpen}
+        onOpenChange={setCheckoutOpen}
+        lines={lines}
+        total={total}
+        kids={data.children}
+        defaultStudentId={defaultStudentId}
+        schoolId={schoolId}
+        paymentsMode={data.paymentsMode}
+        onPlaced={() => { setCart([]); onChanged(); }}
+      />
+
+      {/* pay an unpaid order straight from the list */}
+      <PayDialog
+        open={!!payTarget}
+        onOpenChange={(o) => { if (!o) setPayTarget(null); }}
+        target={payTarget}
+        schoolId={schoolId}
+        paymentsMode={data.paymentsMode}
+        onDone={onChanged}
+      />
+    </div>
+  );
+}
+
+/* Checkout dialog for the basket: choose the ward, add a delivery note, then
+   either pay online now (order → payment request → tracking) or place the
+   order and pay at the school counter. */
+function ShopCheckoutDialog({ open, onOpenChange, lines, total, kids, defaultStudentId, schoolId, paymentsMode, onPlaced }: {
+  open: boolean; onOpenChange: (o: boolean) => void;
+  lines: { item: ShopItem; qty: number }[]; total: number;
+  kids: Child[]; defaultStudentId: string; schoolId: string;
+  paymentsMode: "HUBTEL" | "SIMULATED" | undefined;
+  onPlaced: () => void;
+}) {
+  const [studentId, setStudentId] = useState(defaultStudentId);
+  const [deliveryNote, setDeliveryNote] = useState("");
+  const [payHow, setPayHow] = useState<"ONLINE" | "COUNTER">("ONLINE");
+  const [method, setMethod] = useState<"MOMO_PROMPT" | "PAYMENT_LINK">("MOMO_PROMPT");
+  const [phone, setPhone] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [placed, setPlaced] = useState<{ orderNo: string; student: string } | null>(null);
+  const [orderTotal, setOrderTotal] = useState<number | null>(null);
+  const [active, setActive] = useState<{ request: PayRequest; payUrl: string | null } | null>(null);
+  const [pollId, setPollId] = useState<string | null>(null);
+  const [result, setResult] = useState<CheckedRequest | null>(null);
+  const settledRef = useRef(false);
+  const checked = usePaymentPoll(schoolId, pollId);
+
+  // fresh form each time the dialog opens; stop the poll when it closes
+  useEffect(() => {
+    if (open) {
+      setStudentId(defaultStudentId);
+      setDeliveryNote("");
+      setPayHow("ONLINE");
+      setMethod("MOMO_PROMPT");
+      setPhone(kids.find((c) => c.id === defaultStudentId)?.guardianPhone ?? kids[0]?.guardianPhone ?? "");
+      setBusy(false);
+      setPlaced(null);
+      setOrderTotal(null);
+      setActive(null); setPollId(null); setResult(null);
+      settledRef.current = false;
+    } else {
+      setActive(null); setPollId(null); setResult(null);
+    }
+  }, [open]);
+
+  // react to poll results — any terminal status stops the interval
+  useEffect(() => {
+    if (!checked || checked.id !== pollId) return;
+    const c = checked.data;
+    if (c.status === "COMPLETED" || c.status === "FAILED" || c.status === "CANCELLED") {
+      setResult(c);
+      setPollId(null);
+      if (c.status === "COMPLETED" && !settledRef.current) {
+        settledRef.current = true;
+        toast({ title: "Payment received — thank you", description: c.appliedNote ?? undefined });
+        onPlaced();
+      }
+    }
+  }, [checked, pollId, onPlaced]);
+
+  async function submit() {
+    const kid = kids.find((c) => c.id === studentId);
+    if (!kid) { toast({ title: "Choose a child", description: "Pick which child the order is for." }); return; }
+    setBusy(true);
+    try {
+      const res = await apiPost<{ ok: boolean; order: { id: string; orderNo: string; total: number; items: { name: string; qty: number; price: number }[] } }>(
+        `/api/school/${schoolId}/ops/portal`,
+        {
+          action: "shop.order-create", studentId,
+          items: lines.map((l) => ({ itemId: l.item.id, qty: l.qty })),
+          deliveryNote: deliveryNote.trim() || undefined,
+        },
+      );
+      setOrderTotal(res.order.total);
+      if (payHow === "COUNTER") {
+        setPlaced({ orderNo: res.order.orderNo, student: kid.name });
+        onPlaced();
+      } else {
+        let payFailed = false;
+        try {
+          const pr = await apiPost<{ ok: boolean; request: PayRequest; payUrl: string | null }>(
+            `/api/school/${schoolId}/ops/portal`,
+            { action: "shop.order-pay", orderId: res.order.id, method, payerMsisdn: phone || undefined },
+          );
+          settledRef.current = false;
+          setActive({ request: pr.request, payUrl: pr.payUrl ?? null });
+          setPollId(pr.request.id);
+        } catch (e: any) {
+          payFailed = true;
+          toast({ title: "Order placed — but the payment could not start", description: `${e.message} You can pay for it under My orders.`, variant: "destructive" });
+        }
+        onPlaced(); // the order exists now — clear the basket & refresh either way
+        if (payFailed) onOpenChange(false);
+      }
+    } catch (e: any) {
+      toast({ title: "Could not place the order", description: e.message, variant: "destructive" });
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><ShoppingCart className="size-4.5" /> Checkout — {fmtCedi(orderTotal ?? total)}</DialogTitle>
+          <DialogDescription>The shop packs the order and hands it to the child at school.</DialogDescription>
+        </DialogHeader>
+        {placed ? (
+          <>
+            <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3 flex items-start gap-2">
+              <CheckCircle2 className="size-4 text-emerald-600 shrink-0 mt-0.5" />
+              <div>
+                <div className="text-sm font-medium">Order {placed.orderNo} placed — pay at the school office; the shop will deliver to {placed.student}.</div>
+                <div className="text-xs text-muted-foreground mt-0.5">Keep the order number handy when you come in.</div>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button onClick={() => onOpenChange(false)}>Done</Button>
+            </DialogFooter>
+          </>
+        ) : active ? (
+          <>
+            <PaymentTrackingPanel request={result ?? active.request} payUrl={active.payUrl} method={method} phone={phone} paymentsMode={paymentsMode} />
+            <DialogFooter>
+              {(result?.status === "FAILED" || result?.status === "CANCELLED") && (
+                <Button variant="outline" onClick={() => { setActive(null); setResult(null); settledRef.current = false; }}>Try again</Button>
+              )}
+              <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
+            </DialogFooter>
+          </>
+        ) : (
+          <>
+            <div className="grid gap-3">
+              <div className="space-y-1.5">
+                <Label>For which child</Label>
+                <Select value={studentId} onValueChange={setStudentId}>
+                  <SelectTrigger><SelectValue placeholder="Choose a child" /></SelectTrigger>
+                  <SelectContent>
+                    {kids.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}{c.classroom ? ` — ${c.classroom}` : ""}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Delivery note <span className="text-muted-foreground font-normal">(optional)</span></Label>
+                <Input value={deliveryNote} onChange={(e) => setDeliveryNote(e.target.value)} placeholder="e.g. leave with the class teacher of Basic 4 Gold" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Payment</Label>
+                <Select value={payHow} onValueChange={(v) => setPayHow(v === "COUNTER" ? "COUNTER" : "ONLINE")}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ONLINE">Pay online now (MoMo)</SelectItem>
+                    <SelectItem value="COUNTER">Pay at the school counter</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {payHow === "ONLINE" && (
+                <>
+                  <div className="space-y-1.5">
+                    <Label>Pay with</Label>
+                    <Select value={method} onValueChange={(v) => setMethod(v === "PAYMENT_LINK" ? "PAYMENT_LINK" : "MOMO_PROMPT")}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="MOMO_PROMPT">MoMo prompt — approve on your phone</SelectItem>
+                        <SelectItem value="PAYMENT_LINK">Payment link — open a checkout page</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Mobile-money number</Label>
+                    <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="e.g. 024 123 4567" />
+                  </div>
+                </>
+              )}
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2.5">
+                <div className="text-xs text-muted-foreground min-w-0 truncate">{lines.map((l) => `${l.qty}× ${l.item.name}`).join(" · ")}</div>
+                <div className="text-base font-bold tabular-nums shrink-0">{fmtCedi(orderTotal ?? total)}</div>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+              <Button disabled={busy || !studentId || !lines.length} onClick={submit} className="gap-1.5">
+                {busy ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+                {payHow === "ONLINE" ? "Place order & pay" : "Place order"}
+              </Button>
+            </DialogFooter>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }

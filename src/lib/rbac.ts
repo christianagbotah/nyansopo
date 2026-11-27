@@ -46,6 +46,9 @@ export const PERMISSIONS: PermDef[] = [
   { id: "inventory.view", label: "View inventory & stores", group: "Inventory" },
   { id: "inventory.manage", label: "Manage products, suppliers & stock", group: "Inventory" },
   { id: "inventory.pos", label: "Point of sale (POS)", group: "Inventory" },
+  // School shop (wave 77 — parent-ordered stationery/uniforms, attendant fulfilment)
+  { id: "shop.view", label: "View school-shop catalog & orders", group: "Inventory" },
+  { id: "shop.manage", label: "Run the school shop — catalog, counter payments, delivery", group: "Inventory" },
   // Finance analytics
   { id: "finance.view", label: "Finance dashboards & analytics", group: "Fees & Finance" },
   { id: "finance.manage", label: "Expenses & purchase orders", group: "Fees & Finance" },
@@ -172,6 +175,7 @@ export const ROLE_DEFAULTS: Record<string, string[] | "*"> = {
     "transport.view", "transport.manage",
     "payroll.view", "payroll.process",
     "inventory.view", "inventory.manage", "inventory.pos",
+    "shop.manage",
     "finance.view", "finance.manage",
     "accounts.view", "accounts.manage",
     "budget.view", "budget.manage",
@@ -188,6 +192,7 @@ export const ROLE_DEFAULTS: Record<string, string[] | "*"> = {
     "students.view", "fees.view", "fees.collect", "payments.momo", "cashier.reports", "approvals.request",
     "daily.view", "daily.collect",
     "transport.view", "transport.conduct", "messages.use",
+    "shop.manage",
   ],
   BUS_CONDUCTOR: [
     "students.view", "transport.view", "transport.conduct", "daily.view", "staffhub.self", "messages.use",
@@ -215,7 +220,7 @@ export const ROLE_DEFAULTS: Record<string, string[] | "*"> = {
     "frontoffice.view",
   ],
   // non-teaching staff often man the front desk (secretary / receptionist)
-  NON_TEACHING: ["staffhub.self", "messages.use", "frontoffice.view", "frontoffice.manage", "certificates.view", "certificates.manage", "siren.manage", "office.use"],
+  NON_TEACHING: ["staffhub.self", "messages.use", "frontoffice.view", "frontoffice.manage", "certificates.view", "certificates.manage", "siren.manage", "office.use", "shop.manage"],
   LIBRARIAN: ["students.view", "library.view", "library.issue", "library.manage", "messages.use", "office.use"],
   PARENT: ["portal.self"],
   STUDENT: ["campus.self"],
@@ -266,6 +271,7 @@ export const PERM_IMPLIES: Record<string, string[]> = {
   "payroll.process": ["payroll.view"],
   "inventory.manage": ["inventory.view"],
   "inventory.pos": ["inventory.view"],
+  "shop.manage": ["shop.view"],
   "finance.manage": ["finance.view"],
   "accounts.manage": ["accounts.view"],
   "budget.manage": ["budget.view"],
@@ -358,6 +364,7 @@ export const MODULE_PERMS: Record<string, string[]> = {
   transport: ["transport.view"],
   payroll: ["payroll.view"],
   inventory: ["inventory.view"],
+  shop: ["shop.view"],
   finance: ["finance.view"],
   attendance: ["attendance.view"],
   classes: ["classes.view"],

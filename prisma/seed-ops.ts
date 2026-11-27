@@ -453,6 +453,30 @@ async function main() {
     }
   }
 
+  // ── 12. SCHOOL SHOP catalog (wave 77) — parent-ordered stationery & uniforms ──
+  //    Deliberately shallow: GEA gets a full starter catalog, the other demo
+  //    schools a token one — attendant tops it up from the Shop console.
+  if (GEA) {
+    const exists = await db.shopItem.count({ where: { schoolId: GEA.id } });
+    if (!exists) {
+      const shopItems: [string, string, number, number | null][] = [
+        ["Exercise Book (40 leaves)", "STATIONERY", C(3), 120],
+        ["Exercise Book (80 leaves)", "STATIONERY", C(5), 90],
+        ["My First Copybook (A-Z)", "STATIONERY", C(4), 60],
+        ["School Pen — blue ink", "STATIONERY", C(2), 200],
+        ["Pencil HB + eraser", "STATIONERY", C(2.5), 150],
+        ["Mathematical set", "STATIONERY", C(18), 40],
+        ["School uniform — full set", "UNIFORM", C(120), null],
+        ["PE kit (shirt & shorts)", "UNIFORM", C(65), null],
+        ["School branded water bottle", "SUPPLIES", C(20), 45],
+        ["GES approved reader — Basic 4", "BOOKS", C(28), 35],
+      ];
+      for (const [name, category, priceCents, stock] of shopItems) {
+        await db.shopItem.create({ data: { schoolId: GEA.id, name, category, priceCents, stock, lowStockAt: 10, active: true } });
+      }
+    }
+  }
+
   console.log("🎉 Ops seed complete.");
 }
 

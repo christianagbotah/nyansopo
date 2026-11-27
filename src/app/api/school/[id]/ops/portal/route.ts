@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getUser } from "@/lib/session";
 import { attStats, leaveBalances } from "@/lib/staff-duty-core";
+import { createPaymentRequest, checkPaymentRequest, publicPayUrl, paymentsProvider } from "@/lib/payment-requests";
+import { nextOrderNo } from "@/lib/shop";
 
 // ── GET /api/school/[id]/ops/portal?view=parent|student|staff
 //    Self-service portal data — strictly scoped to the signed-in account:
@@ -138,6 +140,30 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       include: { student: { select: { firstName: true, lastName: true } }, service: { select: { name: true } } },
       orderBy: { createdAt: "desc" }, take: 20,
     });
+    // wave 77 — school shop: the live catalog + this family's orders + recent
+    // online payment requests (fees / wallet / shop) with their statuses
+    const shopItems = await db.shopItem.findMany({
+      where: { schoolId, active: true },
+      orderBy: [{ category: "asc" }, { name: "asc" }],
+    });
+    const shopOrders = await db.shopOrder.findMany({
+      where: { parentId: user.id, schoolId },
+      include: {
+        items: true,
+        student: { select: { id: true, firstName: true, lastName: true } },
+        paymentRequests: { select: { id: true, clientReference: true, status: true, checkoutUrl: true }, orderBy: { createdAt: "desc" } },
+      },
+      orderBy: { createdAt: "desc" }, take: 40,
+    });
+    const paymentRequests = await db.paymentRequest.findMany({
+      where: { schoolId, studentId: { in: user.linkedStudentIds } },
+      orderBy: { createdAt: "desc" }, take: 15,
+      select: {
+        id: true, purpose: true, amountCents: true, status: true, method: true, channel: true,
+        clientReference: true, checkoutUrl: true, appliedNote: true, failureReason: true,
+        createdAt: true, completedAt: true, shopOrderId: true, invoiceId: true, walletKind: true,
+      },
+    });
     const school = await db.school.findUnique({ where: { id: schoolId }, select: { name: true, motto: true, phone: true, town: true, region: true } });
     return NextResponse.json({
       role: "PARENT", school, year: year?.name ?? null, term: term?.name ?? null, children, announcements, messages,
@@ -148,6 +174,26 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         id: r.id, studentId: r.studentId, student: `${r.student.firstName} ${r.student.lastName}`,
         service: r.service.name, date: r.date, kind: r.kind, status: r.status,
         reason: r.reason, decidedByName: r.decidedByName, createdAt: r.createdAt,
+      })),
+      // wave 77 — shop & online payments
+      paymentsMode: paymentsProvider(),
+      shopItems: shopItems.map((i) => ({
+        id: i.id, name: i.name, category: i.category, price: i.priceCents, stock: i.stock,
+      })),
+      shopOrders: shopOrders.map((o) => ({
+        id: o.id, orderNo: o.orderNo, status: o.status, total: o.totalCents,
+        paymentMethod: o.paymentMethod, deliveryNote: o.deliveryNote, cancelReason: o.cancelReason,
+        createdAt: o.createdAt, paidAt: o.paidAt, deliveredAt: o.deliveredAt,
+        studentId: o.student.id, student: `${o.student.firstName} ${o.student.lastName}`,
+        items: o.items.map((i) => ({ name: i.name, price: i.priceCents, qty: i.qty })),
+        payRequest: o.paymentRequests?.[0] ?? null,
+      })),
+      paymentRequests: paymentRequests.map((r) => ({
+        id: r.id, purpose: r.purpose, amount: r.amountCents, status: r.status, method: r.method,
+        channel: r.channel, clientReference: r.clientReference, checkoutUrl: r.checkoutUrl,
+        appliedNote: r.appliedNote, failureReason: r.failureReason,
+        createdAt: r.createdAt, completedAt: r.completedAt,
+        shopOrderId: r.shopOrderId, invoiceId: r.invoiceId, walletKind: r.walletKind,
       })),
     });
   }
@@ -603,6 +649,149 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       data: { readAt: new Date() },
     });
     return NextResponse.json({ updated: r.count });
+  }
+
+  // ── wave 77 — parent self-service: online payments & the school shop ──
+  //    Fees payments, prepaid/transport wallet top-ups and shop orders are
+  //    parent-only actions; every request is scoped to the linked children
+  //    and rides the same payments engine the bursar's MoMo console uses
+  //    (Hubtel live when keys exist, SIMULATED otherwise — same ledgers).
+  if (["shop.order-create", "shop.order-pay", "shop.order-cancel", "fees.pay-online", "wallet.topup", "payment.check"].includes(body.action)) {
+    if (user.role !== "PARENT") {
+      return NextResponse.json({ error: "Only parent accounts can place shop orders or pay online from the portal" }, { status: 403 });
+    }
+    const ownStudent = (studentId: unknown): string | null => {
+      const sid = String(studentId ?? "");
+      return sid && user.linkedStudentIds.includes(sid) ? sid : null;
+    };
+
+    if (body.action === "shop.order-create") {
+      const studentId = ownStudent(body.studentId);
+      if (!studentId) return NextResponse.json({ error: "You can only order for your own children" }, { status: 403 });
+      const raw = Array.isArray(body.items) ? body.items : [];
+      // merge duplicate lines (two rows of the same exercise book = one line, qty 2)
+      const merged = new Map<string, number>();
+      for (const it of raw) {
+        const id = String(it?.itemId ?? "");
+        const qty = Math.max(1, Math.round(Number(it?.qty) || 0));
+        if (!id || qty <= 0) continue;
+        merged.set(id, (merged.get(id) ?? 0) + qty);
+      }
+      if (!merged.size) return NextResponse.json({ error: "Add at least one item to the order" }, { status: 400 });
+      const catalog = await db.shopItem.findMany({ where: { id: { in: [...merged.keys()] }, schoolId, active: true } });
+      for (const [id, qty] of merged) {
+        const item = catalog.find((c) => c.id === id);
+        if (!item) return NextResponse.json({ error: "One of the items is no longer on sale — refresh the shop" }, { status: 400 });
+        if (item.stock !== null && item.stock < qty) return NextResponse.json({ error: `Only ${item.stock} × ${item.name} left in stock` }, { status: 400 });
+      }
+      const totalCents = catalog.reduce((s, c) => s + c.priceCents * (merged.get(c.id) ?? 0), 0);
+      const orderNo = await nextOrderNo(schoolId);
+      const order = await db.shopOrder.create({
+        data: {
+          schoolId, orderNo, parentId: user.id, parentName: user.fullName, studentId,
+          totalCents, deliveryNote: typeof body.deliveryNote === "string" ? body.deliveryNote.trim().slice(0, 300) || null : null,
+          items: { create: catalog.map((c) => ({ itemId: c.id, name: c.name, priceCents: c.priceCents, qty: merged.get(c.id)! })) },
+        },
+        include: { items: true },
+      });
+      return NextResponse.json({
+        ok: true,
+        order: { id: order.id, orderNo: order.orderNo, total: order.totalCents, items: order.items.map((i) => ({ name: i.name, qty: i.qty, price: i.priceCents })) },
+      });
+    }
+
+    if (body.action === "shop.order-pay") {
+      const order = await db.shopOrder.findFirst({ where: { id: String(body.orderId ?? ""), parentId: user.id, schoolId } });
+      if (!order) return NextResponse.json({ error: "Order not found" }, { status: 404 });
+      if (order.status !== "PENDING_PAYMENT") return NextResponse.json({ error: order.status === "CANCELLED" ? "This order was cancelled" : "This order is already settled" }, { status: 409 });
+      const r = await createPaymentRequest(db, {
+        schoolId, studentId: order.studentId, purpose: "SHOP_ORDER", shopOrderId: order.id,
+        amountCents: order.totalCents,
+        method: body.method === "PAYMENT_LINK" ? "PAYMENT_LINK" : "MOMO_PROMPT",
+        payerMsisdn: body.payerMsisdn || user.phone || undefined,
+        channel: body.channel ?? null,
+        createdByName: `${user.fullName} (parent portal)`,
+        description: `School shop order ${order.orderNo}`,
+      });
+      if (!r.ok) return NextResponse.json({ error: r.error }, { status: 400 });
+      return NextResponse.json({
+        ok: true,
+        request: { id: r.request.id, clientReference: r.request.clientReference, status: r.request.status, checkoutUrl: r.request.checkoutUrl, provider: r.request.provider, amount: r.request.amountCents },
+        payUrl: publicPayUrl(r.request),
+      });
+    }
+
+    if (body.action === "shop.order-cancel") {
+      const order = await db.shopOrder.findFirst({ where: { id: String(body.orderId ?? ""), parentId: user.id, schoolId } });
+      if (!order) return NextResponse.json({ error: "Order not found" }, { status: 404 });
+      if (order.status !== "PENDING_PAYMENT") return NextResponse.json({ error: "Only orders still awaiting payment can be cancelled — call the office for anything else" }, { status: 409 });
+      await db.shopOrder.updateMany({
+        where: { id: order.id, status: "PENDING_PAYMENT" },
+        data: { status: "CANCELLED", cancelReason: "Cancelled by the parent" },
+      });
+      return NextResponse.json({ ok: true });
+    }
+
+    if (body.action === "fees.pay-online") {
+      const studentId = ownStudent(body.studentId);
+      if (!studentId) return NextResponse.json({ error: "You can only pay for your own children" }, { status: 403 });
+      const invoice = await db.invoice.findFirst({ where: { id: String(body.invoiceId ?? ""), schoolId, studentId } });
+      if (!invoice) return NextResponse.json({ error: "Invoice not found for this learner" }, { status: 404 });
+      const balance = invoice.totalCents - invoice.discountCents - invoice.paidCents;
+      if (balance <= 0) return NextResponse.json({ error: "This invoice is already fully settled" }, { status: 400 });
+      const amountCents = body.amountCents === undefined || body.amountCents === null || body.amountCents === "" ? balance : Math.round(Number(body.amountCents));
+      const r = await createPaymentRequest(db, {
+        schoolId, studentId, purpose: "INVOICE", invoiceId: invoice.id, amountCents,
+        method: body.method === "PAYMENT_LINK" ? "PAYMENT_LINK" : "MOMO_PROMPT",
+        payerMsisdn: body.payerMsisdn || user.phone || undefined,
+        channel: body.channel ?? null,
+        createdByName: `${user.fullName} (parent portal)`,
+        description: `School fees — invoice ${invoice.invoiceNo}`,
+      });
+      if (!r.ok) return NextResponse.json({ error: r.error }, { status: 400 });
+      return NextResponse.json({
+        ok: true,
+        request: { id: r.request.id, clientReference: r.request.clientReference, status: r.request.status, checkoutUrl: r.request.checkoutUrl, provider: r.request.provider, amount: r.request.amountCents },
+        payUrl: publicPayUrl(r.request),
+      });
+    }
+
+    if (body.action === "wallet.topup") {
+      const studentId = ownStudent(body.studentId);
+      if (!studentId) return NextResponse.json({ error: "You can only top up your own children's wallets" }, { status: 403 });
+      const walletKind = body.walletKind === "TRANSPORT" ? "TRANSPORT" : "PREPAID";
+      const r = await createPaymentRequest(db, {
+        schoolId, studentId, purpose: "WALLET", walletKind,
+        amountCents: Math.round(Number(body.amountCents)),
+        method: body.method === "MOMO_PROMPT" ? "MOMO_PROMPT" : "PAYMENT_LINK",
+        payerMsisdn: body.payerMsisdn || user.phone || undefined,
+        channel: body.channel ?? null,
+        createdByName: `${user.fullName} (parent portal)`,
+        description: walletKind === "TRANSPORT" ? "Transport wallet top-up" : "Prepaid wallet top-up",
+      });
+      if (!r.ok) return NextResponse.json({ error: r.error }, { status: 400 });
+      return NextResponse.json({
+        ok: true,
+        request: { id: r.request.id, clientReference: r.request.clientReference, status: r.request.status, checkoutUrl: r.request.checkoutUrl, provider: r.request.provider, amount: r.request.amountCents },
+        payUrl: publicPayUrl(r.request),
+      });
+    }
+
+    if (body.action === "payment.check") {
+      const request = await db.paymentRequest.findFirst({
+        where: { id: String(body.requestId ?? ""), schoolId, studentId: { in: user.linkedStudentIds } },
+      });
+      if (!request) return NextResponse.json({ error: "Payment request not found" }, { status: 404 });
+      const updated = await checkPaymentRequest(db, request);
+      return NextResponse.json({
+        request: {
+          id: updated.id, purpose: updated.purpose, amount: updated.amountCents, status: updated.status,
+          appliedNote: updated.appliedNote, failureReason: updated.failureReason,
+          checkoutUrl: updated.checkoutUrl, clientReference: updated.clientReference,
+          shopOrderId: updated.shopOrderId, invoiceId: updated.invoiceId, walletKind: updated.walletKind,
+        },
+      });
+    }
   }
 
   return NextResponse.json({ error: "Unknown action" }, { status: 400 });
