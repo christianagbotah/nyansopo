@@ -343,6 +343,7 @@ model Term {
   startsAt           DateTime
   endsAt             DateTime
   isCurrent          Boolean             @default(false)
+  closedAt           DateTime? // wave 76 — stamped by the term-closing wizard when the head closes the term
   feeStructures      FeeStructure[]
   invoices           Invoice[]
   assessments        Assessment[]

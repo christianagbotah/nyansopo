@@ -19,7 +19,7 @@ import { CURRICULA } from "@/lib/curricula";
 import { THEME_PRESETS, DEFAULT_THEME, applyThemeToDOM, type SchoolTheme } from "@/lib/theme";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import {Settings as SettingsIcon, GraduationCap, BookOpen, Users, CalendarRange, CalendarPlus, Plus, Save, MessageSquareQuote, Sparkles, Trash2, Award, Pencil, Baby, Sigma, PencilLine, ChevronDown, ChevronRight, ImageUp, ReceiptText, ShieldCheck, Banknote, Palette, CheckCircle2, Layers, DatabaseBackup, Download, ArchiveRestore, HardDriveDownload} from "lucide-react";
+import {Settings as SettingsIcon, GraduationCap, BookOpen, Users, CalendarRange, CalendarPlus, Plus, Save, MessageSquareQuote, Sparkles, Trash2, Award, Pencil, Baby, Sigma, PencilLine, ChevronDown, ChevronRight, ImageUp, ReceiptText, ShieldCheck, Banknote, Palette, CheckCircle2, Layers, DatabaseBackup, Download, ArchiveRestore, HardDriveDownload, Lock, LockOpen, Rocket, CalendarCheck} from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 
@@ -1661,6 +1661,163 @@ function usageChips(u: SessionUsage): { label: string; n: number }[] {
   ].filter((c) => c.n > 0);
 }
 
+/* ═══════════════════════════════════════════════════════════
+   Wave 76 — Term Closing & Rollover.
+   The end-of-term walk: results approved & locked per class,
+   the term billed, the library's books back, the next term on
+   the calendar — one readiness board with close / reopen /
+   roll-over as audited one-tap actions. Rollover flips the
+   same isCurrent invariant the switcher above owns, so the
+   whole school wakes up inside the new term.
+   ═══════════════════════════════════════════════════════════ */
+type TermCloseClass = { classroomId: string; name: string; enrolled: number; status: "DRAFT" | "SUBMITTED" | "APPROVED" | "LOCKED" };
+type TermClosePayload = {
+  term: { id: string; name: string; yearName: string; startsAt: string; endsAt: string; closedAt: string | null; isCurrent: boolean };
+  results: { classes: TermCloseClass[]; total: number; approved: number; locked: number; allLocked: boolean };
+  billing: { invoices: number; billedTotal: number; enrolled: number; billed: number; unbilled: number; coverage: number };
+  library: { loansOut: number; loansOverdue: number };
+  attendance: { sessions: number };
+  calendar: { id: string; name: string; yearName: string | null; startsAt: string } | null;
+};
+
+function TermClosingPanel() {
+  const { currentSchoolId } = useStore();
+  const [data, setData] = useState<TermClosePayload | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [confirm, setConfirm] = useState<null | { kind: "close" | "rollover"; force: boolean }>(null);
+
+  const load = () => {
+    if (!currentSchoolId) return;
+    apiGet<TermClosePayload>(`/api/school/${currentSchoolId}/ops/term-close`).then(setData).catch(() => setData(null));
+  };
+  useEffect(load, [currentSchoolId]);
+
+  if (!data) return null; // hidden when unreadable (perm or data) — never blocks the sessions tab
+
+  const t = data.term;
+  const closed = !!t.closedAt;
+  const cedis = (c: number) => `₵${(c / 100).toFixed(2)}`;
+  const notLocked = data.results.classes.filter((c) => c.status !== "LOCKED");
+
+  async function act(action: "close" | "reopen" | "rollover", force: boolean, title: string) {
+    setBusy(true);
+    try {
+      const d = await apiPost<{ message?: string }>(`/api/school/${currentSchoolId}/ops/term-close`, { action, force });
+      toast({ title, description: d.message });
+      setConfirm(null);
+      load();
+    } catch (e: any) {
+      toast({ title: "Failed", description: e.message, variant: "destructive" });
+      setConfirm(null);
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <Card className="border-primary/40">
+      <CardHeader className="pb-3 flex-row flex-wrap items-center justify-between gap-2 space-y-0">
+        <div>
+          <CardTitle className="text-base flex flex-wrap items-center gap-2">
+            <CalendarCheck className="size-4" /> Term closing — {t.name} · {t.yearName}
+            {closed ? <Badge variant="secondary" className="gap-1"><Lock className="size-3" /> closed</Badge> : <Badge variant="outline" className="gap-1"><LockOpen className="size-3" /> open</Badge>}
+          </CardTitle>
+          <p className="text-xs text-muted-foreground mt-1">{fmtDay(t.startsAt)} → {fmtDay(t.endsAt)}{closed ? ` · closed ${fmtDay(t.closedAt!)}` : ""}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {!closed && (
+            <Button size="sm" variant="outline" className="gap-1" disabled={busy} onClick={() => setConfirm({ kind: "close", force: !data.results.allLocked })}>
+              <Lock className="size-3.5" /> Close the term
+            </Button>
+          )}
+          {closed && (
+            <Button size="sm" variant="outline" className="gap-1" disabled={busy} onClick={() => act("reopen", false, "Term reopened")}>
+              <LockOpen className="size-3.5" /> Reopen
+            </Button>
+          )}
+          {data.calendar && (
+            <Button size="sm" className="gap-1" disabled={busy || t.isCurrent === false} onClick={() => setConfirm({ kind: "rollover", force: !closed })}>
+              <Rocket className="size-3.5" /> Roll over to {data.calendar.name}{data.calendar.yearName ? ` · ${data.calendar.yearName}` : ""}
+            </Button>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+          <div className={cn("rounded-lg border p-2.5", data.results.allLocked ? "border-emerald-600/40 bg-emerald-500/5" : "border-amber-600/40 bg-amber-500/5")}>
+            <div className="text-xs font-medium flex items-center gap-1.5"><GraduationCap className="size-3.5" /> Results</div>
+            <div className="text-sm mt-0.5">{data.results.locked}/{data.results.total} classes locked</div>
+            <div className="text-[11px] text-muted-foreground">{data.results.allLocked ? "every class approved & locked" : `${notLocked.length} still ${notLocked[0]?.status === "APPROVED" ? "awaiting lock" : "in draft"}`}</div>
+          </div>
+          <div className={cn("rounded-lg border p-2.5", data.billing.unbilled === 0 ? "border-emerald-600/40 bg-emerald-500/5" : "border-muted")}>
+            <div className="text-xs font-medium flex items-center gap-1.5"><ReceiptText className="size-3.5" /> Billing</div>
+            <div className="text-sm mt-0.5">{data.billing.coverage}% billed</div>
+            <div className="text-[11px] text-muted-foreground">{data.billing.invoices} invoice{data.billing.invoices === 1 ? "" : "s"} · {cedis(data.billing.billedTotal)}{data.billing.unbilled > 0 ? ` · ${data.billing.unbilled} learner${data.billing.unbilled === 1 ? "" : "s"} unbilled` : ""}</div>
+          </div>
+          <div className={cn("rounded-lg border p-2.5", data.library.loansOut === 0 ? "border-emerald-600/40 bg-emerald-500/5" : "border-amber-600/40 bg-amber-500/5")}>
+            <div className="text-xs font-medium flex items-center gap-1.5"><BookOpen className="size-3.5" /> Library</div>
+            <div className="text-sm mt-0.5">{data.library.loansOut === 0 ? "All books back" : `${data.library.loansOut} out`}</div>
+            <div className="text-[11px] text-muted-foreground">{data.library.loansOverdue > 0 ? `${data.library.loansOverdue} overdue — chase before closing` : "nothing overdue"}</div>
+          </div>
+          <div className="rounded-lg border p-2.5">
+            <div className="text-xs font-medium flex items-center gap-1.5"><Users className="size-3.5" /> Registers</div>
+            <div className="text-sm mt-0.5">{data.attendance.sessions} session{data.attendance.sessions === 1 ? "" : "s"}</div>
+            <div className="text-[11px] text-muted-foreground">attendance taken this term</div>
+          </div>
+          <div className={cn("rounded-lg border p-2.5", data.calendar ? "border-emerald-600/40 bg-emerald-500/5" : "border-amber-600/40 bg-amber-500/5")}>
+            <div className="text-xs font-medium flex items-center gap-1.5"><CalendarPlus className="size-3.5" /> Next term</div>
+            <div className="text-sm mt-0.5">{data.calendar ? data.calendar.name : "Not created"}</div>
+            <div className="text-[11px] text-muted-foreground">{data.calendar ? `${data.calendar.yearName ?? ""} · from ${fmtDay(data.calendar.startsAt)}` : "add a year in Academic sessions"}</div>
+          </div>
+        </div>
+        {closed && !data.calendar && (
+          <p className="text-xs text-muted-foreground mt-3">The term is closed and there is no next term on the calendar — create the next academic year above, then roll over.</p>
+        )}
+      </CardContent>
+
+      {/* ── confirm close / rollover ── */}
+      <AlertDialog open={!!confirm} onOpenChange={(o) => { if (!o) setConfirm(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {confirm?.kind === "close" ? `Close ${t.name} · ${t.yearName}?` : `Roll over to ${data.calendar?.name ?? "the next term"}?`}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirm?.kind === "close" ? (
+                data.results.allLocked
+                  ? "Every class's terminal results are approved & locked. Closing stamps the term closed — report cards and marks stay readable, nothing new lands in the term."
+                  : ` ${notLocked.length} of ${data.results.total} classes are not locked yet (${notLocked.slice(0, 3).map((c) => c.name).join(", ")}${notLocked.length > 3 ? "…" : ""}). You can force the close — their results stay unlocked and can still be locked later.`
+              ) : (
+                `The live session moves to ${data.calendar?.name}${data.calendar?.yearName ? ` · ${data.calendar.yearName}` : ""} — every dashboard, register and fee rail wakes up inside the new term. The old term${closed ? " is" : " is NOT"} closed${closed ? "" : " — close it first so its record freezes"}. Bill items carry over automatically; run Create invoices for the new term when you're ready to bill.`
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {confirm?.kind === "close" && !data.results.allLocked && (
+            <label className="flex items-start gap-2 rounded-lg border border-amber-600/40 bg-amber-500/5 p-3 text-sm cursor-pointer">
+              <Checkbox checked={confirm.force} onCheckedChange={(c) => setConfirm({ kind: "close", force: c === true })} className="mt-0.5" />
+              <span className="font-medium">Close anyway (force) — leave the unlocked classes unlocked</span>
+            </label>
+          )}
+          {confirm?.kind === "rollover" && !closed && (
+            <label className="flex items-start gap-2 rounded-lg border border-amber-600/40 bg-amber-500/5 p-3 text-sm cursor-pointer">
+              <Checkbox checked={confirm.force} onCheckedChange={(c) => setConfirm({ kind: "rollover", force: c === true })} className="mt-0.5" />
+              <span className="font-medium">Roll over while the term is still open</span>
+            </label>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className={cn(confirm?.kind === "close" && !data.results.allLocked && !confirm.force && "pointer-events-none opacity-50")}
+              disabled={busy || (confirm?.kind === "close" && !data.results.allLocked && !confirm.force) || (confirm?.kind === "rollover" && !closed && !confirm.force)}
+              onClick={() => confirm && act(confirm.kind, confirm.force, confirm.kind === "close" ? "Term closed" : "Term rolled over")}
+            >
+              {confirm?.kind === "close" ? "Close the term" : "Roll over"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </Card>
+  );
+}
+
 function SessionCalendar() {
   const { currentSchoolId } = useStore();
   const [data, setData] = useState<SessionsPayload | null>(null);
@@ -1789,6 +1946,8 @@ function SessionCalendar() {
         </div>
         <Button size="sm" className="gap-1.5" onClick={() => setYearDlg({ mode: "new" })}><CalendarPlus className="size-4" /> New academic year</Button>
       </div>
+
+      <TermClosingPanel />
 
       {data.years.length === 0 ? (
         <EmptyState icon={<CalendarRange className="size-5" />} title="No academic years yet" hint="Create the first year — First, Second and Third Term are laid out across its dates automatically." />
