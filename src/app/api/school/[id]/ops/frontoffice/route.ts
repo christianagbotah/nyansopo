@@ -277,10 +277,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   /* ── live (wave 72): the front-desk real-time feed — today's active
      appointments with their staff link + response trail at a polling
      cadence. Also drives the T-2-min staff SMS reminders from any live
-     desk session (reminderSentAt dedupes across pollers). */
+     desk session (reminderSentAt dedupes across pollers), and reports the
+     rows that just settled (declined / completed / cancelled / no-show in
+     the last 2 minutes) so the desk can toast them and relay to the
+     visitor. */
   if (action === "live") {
     const now = new Date();
-    const [rows, smsSetting, staff] = await Promise.all([
+    const [rows, smsSetting, staff, settled] = await Promise.all([
       db.appointment.findMany({
         where: { schoolId, scheduledAt: { gte: dayZero, lt: dayEnd }, status: { in: APPT_ACTIVE } },
         include: { staff: true },
@@ -288,6 +291,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       }),
       db.smsSetting.findUnique({ where: { schoolId } }),
       staffOptions(schoolId),
+      db.appointment.findMany({
+        where: { schoolId, status: { notIn: APPT_ACTIVE }, updatedAt: { gte: new Date(now.getTime() - 2 * 60_000) } },
+        include: { staff: true },
+        orderBy: { updatedAt: "desc" },
+        take: 8,
+      }),
     ]);
     const horizon = new Date(now.getTime() + 2 * 60_000);
     const grace = new Date(now.getTime() - 60_000);
@@ -309,7 +318,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       reminded.push({ id: a.id, staff: st.fullName, status: sms });
       await db.appointment.update({ where: { id: a.id }, data: { reminderSentAt: now } });
     }
-    return NextResponse.json({ now: now.toISOString(), appointments: rows.map(toAppt), staff, reminded });
+    return NextResponse.json({ now: now.toISOString(), appointments: rows.map(toAppt), staff, reminded, settled: settled.map(toAppt) });
   }
 
   /* ── board: the front desk at a glance ── */

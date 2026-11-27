@@ -208,6 +208,7 @@ export function FrontOffice() {
   const [liveLoaded, setLiveLoaded] = useState(false);
   const apptSnap = useRef<Map<string, { status: string; scheduledAt: string }>>(new Map());
   const alarmedRef = useRef<Set<string>>(new Set());
+  const settledRef = useRef<Set<string>>(new Set());
   const firstLive = useRef(true);
   // wave 72 — the desk moving a meeting (Reschedule dialog)
   const [moveAppt, setMoveAppt] = useState<AppointmentRow | null>(null);
@@ -305,24 +306,27 @@ export function FrontOffice() {
   // wave 72 — the live desk feed. While the board or the appointments tab
   // is open, poll action=live every 8 s: today's active appointments with
   // their staff link + response trail. Every status/time change toasts
-  // ("Madam Grace confirmed the 09:30 meeting…"), a change refetches the
-  // scoped book, and any appointment inside the T-2-minute window rings
-  // the desk alarm — the assembly chime plus a banner toast — while the
-  // server side of the same poll sends the staff member their SMS reminder.
+  // ("Madam Grace confirmed the 09:30 meeting…"), rows that appear or
+  // settle (declined / completed / cancelled) refetch the scoped book, and
+  // any appointment inside the T-2-minute window rings the desk alarm —
+  // the assembly chime plus a banner toast — while the server side of the
+  // same poll sends the staff member their SMS reminder.
   useEffect(() => {
     if (!schoolId || (tab !== "board" && tab !== "appointments")) return;
     let alive = true;
     const tick = async () => {
       try {
-        const r = await apiGet<{ now: string; appointments: AppointmentRow[]; staff: StaffOption[]; reminded?: { id: string; staff: string; status: string }[] }>(`/api/school/${schoolId}${OPS}?action=live`);
+        const r = await apiGet<{ now: string; appointments: AppointmentRow[]; staff: StaffOption[]; reminded?: { id: string; staff: string; status: string }[]; settled?: AppointmentRow[] }>(`/api/school/${schoolId}${OPS}?action=live`);
         if (!alive) return;
         if (r.staff?.length) setStaffOpts(r.staff);
-        // responses & moves → toasts for the desk (skip the very first load)
+        // responses & moves → toasts for the desk (skip the very first load);
+        // brand-new rows and just-settled rows refetch the scoped book
+        const changes = r.appointments.filter((a) => {
+          const prev = apptSnap.current.get(a.id);
+          return !prev || prev.status !== a.status || prev.scheduledAt !== a.scheduledAt;
+        });
+        const settledNew = (r.settled ?? []).filter((a) => !settledRef.current.has(a.id));
         if (!firstLive.current) {
-          const changes = r.appointments.filter((a) => {
-            const prev = apptSnap.current.get(a.id);
-            return prev && (prev.status !== a.status || prev.scheduledAt !== a.scheduledAt);
-          });
           for (const a of changes.slice(0, 3)) {
             const who = a.respondedByName ?? "Staff";
             const when = a.scheduledAt ? new Date(a.scheduledAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
@@ -336,12 +340,23 @@ export function FrontOffice() {
               toast({ title: `${who} proposed ${when} (was ${was})`, description: `Confirm the new time for ${a.withName} — or move it again from the Appointments tab.` });
             }
           }
-          if (changes.length) setAppointmentsTick((t) => t + 1);
+          for (const a of settledNew.slice(0, 2)) {
+            const when = a.scheduledAt ? new Date(a.scheduledAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+            if (a.status === "DECLINED") {
+              toast({ title: `${a.respondedByName ?? "The visitor's host"} declined the ${when} meeting`, description: `Relay to ${a.withName}${a.visitorPhone ? ` — visitor phone ${a.visitorPhone}` : ""}.`, variant: "destructive" });
+            } else if (a.status === "COMPLETED") {
+              toast({ title: `The ${when} meeting with ${a.withName} is completed` });
+            } else if (a.status === "CANCELLED") {
+              toast({ title: `The ${when} meeting with ${a.withName} was cancelled` });
+            }
+          }
         }
+        for (const a of settledNew) settledRef.current.add(a.id);
         firstLive.current = false;
         apptSnap.current = new Map(r.appointments.map((a) => [a.id, { status: a.status, scheduledAt: a.scheduledAt ?? "" }]));
         setLiveAppts(r.appointments);
         setLiveLoaded(true);
+        if (changes.length || settledNew.length) setAppointmentsTick((t) => t + 1);
         // the T-2-minute desk alarm — chime + banner, once per appointment
         for (const a of r.appointments) {
           if (alarmedRef.current.has(a.id) || !a.scheduledAt) continue;
