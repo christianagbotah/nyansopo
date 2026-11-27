@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
 import { apiGet, apiPost } from "@/lib/api";
 import { ModuleHeader, LoadingBlock, EmptyState, FilterSelect } from "@/components/ui-helpers";
-import { fmtDate } from "@/lib/format";
+import { fmtDate, fmtCedi } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,13 +14,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "@/hooks/use-toast";
-import { BookOpen, BookPlus, BookMarked, Library, AlertTriangle, Users, Search, RotateCcw, Pencil, Trash2, BookUp2, Check, X, Hourglass, XCircle, Inbox } from "lucide-react";
+import { BookOpen, BookPlus, BookMarked, Library, AlertTriangle, Users, Search, RotateCcw, Pencil, Trash2, BookUp2, Check, X, Hourglass, XCircle, Inbox, BellRing, Receipt, Scale, Settings2 } from "lucide-react";
 
 type Book = { id: string; title: string; author: string | null; isbn: string | null; category: string; copies: number; available: number; shelf: string | null; borrowers: string[] };
 type Loan = {
   id: string; bookId: string; book: string; studentId: string; student: string; classroom: string | null;
   issuedAt: string; dueAt: string; returnedAt: string | null; issuedByName: string | null; conditionNote: string | null;
   overdue: boolean; daysOverdue: number;
+  fineCents: number; finePostedAt: string | null; computedFineCents: number;
+  overdueSmsAt: string | null; overdueSmsCount: number;
 };
 // iEduPro parity: learner/parent book requests waiting for the librarian's decision
 type BookRequestRow = {
@@ -28,7 +30,13 @@ type BookRequestRow = {
   startAt: string; endAt: string; status: string; handledAt: string | null; handledByName: string | null;
   loanId: string | null; createdAt: string; overdue: boolean;
 };
-type LibData = { stats: { titles: number; copies: number; available: number; activeLoans: number; overdue: number; members: number }; books: Book[]; loans: Loan[]; requests: BookRequestRow[]; pendingRequests: number };
+type FinePolicy = { perDayCents: number; graceDays: number; capCents: number };
+type LibData = {
+  stats: { titles: number; copies: number; available: number; activeLoans: number; overdue: number; members: number };
+  books: Book[]; loans: Loan[]; requests: BookRequestRow[]; pendingRequests: number;
+  finePolicy: FinePolicy;
+  fines: { recorded: number; recordedTotalCents: number; posted: number; postedTotalCents: number };
+};
 type StudentLite = { id: string; name: string; nyansapoIndex: string; classroom: string };
 
 const CATEGORIES = ["Storybook", "Textbook", "Reference", "Fiction", "Science", "History", "Language", "General"];
@@ -39,6 +47,7 @@ export function LibraryPortal() {
   const [loading, setLoading] = useState(true);
   const [bookDialog, setBookDialog] = useState<{ open: boolean; book: Book | null }>({ open: false, book: null });
   const [issueOpen, setIssueOpen] = useState(false);
+  const [policyOpen, setPolicyOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("all");
   const [availFilter, setAvailFilter] = useState("all");
@@ -54,13 +63,59 @@ export function LibraryPortal() {
 
   async function act(body: Record<string, unknown>, okMsg: string) {
     try {
-      await apiPost(`/api/school/${currentSchoolId}/ops/library`, body);
+      const res = await apiPost<Record<string, unknown>>(`/api/school/${currentSchoolId}/ops/library`, body);
       toast({ title: okMsg });
       load();
-      return true;
+      return res;
     } catch (e: any) {
       toast({ title: "Action failed", description: e.message, variant: "destructive" });
-      return false;
+      return null;
+    }
+  }
+
+  // wave 74: returning a late book records the fine — say so in the toast
+  async function returnLoan(loan: Loan) {
+    try {
+      const res = await apiPost<{ fineCents: number }>(`/api/school/${currentSchoolId}/ops/library`, { action: "loan.return", loanId: loan.id });
+      toast({
+        title: loan.overdue && res.fineCents > 0
+          ? `Book returned — overdue fine ${fmtCedi(res.fineCents)} recorded`
+          : "Book returned",
+        description: loan.overdue && res.fineCents > 0 ? "Post it to the learner's invoice from the Overdue & fines tab." : undefined,
+      });
+      load();
+    } catch (e: any) {
+      toast({ title: "Action failed", description: e.message, variant: "destructive" });
+    }
+  }
+
+  // wave 74: one tap chases every stale loan — throttled server-side to one SMS per loan per 3 days
+  async function sendReminders() {
+    try {
+      const res = await apiPost<{ checked: number; chased: number; sent: number; failed: number; skipped: number }>(
+        `/api/school/${currentSchoolId}/ops/library`, { action: "overdue.scan" });
+      toast({
+        title: `Reminders sent to ${res.sent} guardian${res.sent === 1 ? "" : "s"}`,
+        description: res.skipped ? `${res.skipped} loan${res.skipped === 1 ? " was" : "s were"} reminded within the last 3 days — skipped.` : undefined,
+      });
+      load();
+    } catch (e: any) {
+      toast({ title: "Could not send reminders", description: e.message, variant: "destructive" });
+    }
+  }
+
+  // wave 74: post recorded fines onto the learners' current-term invoices (receipt engine)
+  async function postFines(loanId?: string) {
+    try {
+      const res = await apiPost<{ posted: number; postedTotalCents: number }>(
+        `/api/school/${currentSchoolId}/ops/library`, { action: "fine.post", loanId });
+      toast({
+        title: `${res.posted} fine${res.posted === 1 ? "" : "s"} billed — ${fmtCedi(res.postedTotalCents)}`,
+        description: "Appended as a line on each learner's current-term invoice.",
+      });
+      load();
+    } catch (e: any) {
+      toast({ title: "Could not post fines", description: e.message, variant: "destructive" });
     }
   }
 
@@ -96,7 +151,7 @@ export function LibraryPortal() {
         {[
           { icon: <BookOpen className="size-4" />, label: "Titles", value: data.stats.titles, sub: `${data.stats.copies} copies`, tone: "default" as const },
           { icon: <BookMarked className="size-4" />, label: "On loan", value: data.stats.activeLoans, sub: `${data.stats.available} on shelf`, tone: "default" as const },
-          { icon: <AlertTriangle className="size-4" />, label: "Overdue", value: data.stats.overdue, sub: data.stats.overdue ? "needs follow-up" : "all clear", tone: data.stats.overdue ? ("danger" as const) : ("default" as const) },
+          { icon: <AlertTriangle className="size-4" />, label: "Overdue", value: data.stats.overdue, sub: data.fines.recordedTotalCents > 0 ? `${fmtCedi(data.fines.recordedTotalCents)} fines unposted` : data.stats.overdue ? "needs follow-up" : "all clear", tone: data.stats.overdue ? ("danger" as const) : ("default" as const) },
           { icon: <Users className="size-4" />, label: "Active members", value: data.stats.members, sub: "borrowing now", tone: "default" as const },
           { icon: <Library className="size-4" />, label: "Returned", value: returned.length, sub: "in recent history", tone: "default" as const },
         ].map((s) => (
@@ -112,7 +167,7 @@ export function LibraryPortal() {
         <TabsList>
           <TabsTrigger value="catalogue">Catalogue ({data.books.length})</TabsTrigger>
           <TabsTrigger value="circulation">On loan ({activeLoans.length})</TabsTrigger>
-          {data.stats.overdue > 0 && <TabsTrigger value="overdue" className="text-destructive data-[state=active]:text-destructive gap-1.5">Overdue <span className="inline-flex items-center justify-center rounded-full bg-destructive px-1.5 min-w-4 h-4 text-[10px] font-bold text-white">{data.stats.overdue}</span></TabsTrigger>}
+          {(data.stats.overdue > 0 || data.fines.recorded > 0) && <TabsTrigger value="overdue" className="text-destructive data-[state=active]:text-destructive gap-1.5">Overdue <span className="inline-flex items-center justify-center rounded-full bg-destructive px-1.5 min-w-4 h-4 text-[10px] font-bold text-white">{data.stats.overdue + data.fines.recorded}</span></TabsTrigger>}
           <TabsTrigger value="requests" className="gap-1.5">
             Requests
             {data.pendingRequests > 0 && <span className="inline-flex items-center justify-center rounded-full bg-amber-600 px-1.5 min-w-4 h-4 text-[10px] font-bold text-white">{data.pendingRequests}</span>}
@@ -178,12 +233,66 @@ export function LibraryPortal() {
         </TabsContent>
 
         <TabsContent value="circulation" className="mt-3">
-          <LoanTable loans={activeLoans} onReturn={(id) => act({ action: "loan.return", loanId: id }, "Book returned")} />
+          <LoanTable loans={activeLoans} showFine onReturn={(l) => returnLoan(l)} />
         </TabsContent>
 
-        {data.stats.overdue > 0 && (
-          <TabsContent value="overdue" className="mt-3">
-            <LoanTable loans={activeLoans.filter((l) => l.overdue)} onReturn={(id) => act({ action: "loan.return", loanId: id }, "Book returned")} highlight />
+        {(data.stats.overdue > 0 || data.fines.recorded > 0) && (
+          <TabsContent value="overdue" className="mt-3 space-y-3">
+            <div className="rounded-xl border bg-card p-3 flex flex-wrap items-center gap-2">
+              <div className="text-sm font-semibold flex items-center gap-2 mr-auto">
+                <AlertTriangle className="size-4 text-destructive" />
+                Overdue chase &amp; fines
+                <span className="text-xs font-normal text-muted-foreground">
+                  {fmtCedi(data.finePolicy.perDayCents)}/day · {data.finePolicy.graceDays} grace day{data.finePolicy.graceDays === 1 ? "" : "s"} · cap {fmtCedi(data.finePolicy.capCents)}
+                </span>
+              </div>
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setPolicyOpen(true)}><Settings2 className="size-3.5" /> Fine policy</Button>
+              <Button size="sm" variant="outline" className="gap-1.5" disabled={!data.stats.overdue} onClick={sendReminders}>
+                <BellRing className="size-3.5" /> Send reminders ({data.stats.overdue})
+              </Button>
+              <Button size="sm" className="gap-1.5" disabled={!data.fines.recorded} onClick={() => postFines()}>
+                <Receipt className="size-3.5" /> Post fines to invoices ({data.fines.recorded} · {fmtCedi(data.fines.recordedTotalCents)})
+              </Button>
+            </div>
+            <LoanTable loans={activeLoans.filter((l) => l.overdue)} showFine onReturn={(l) => returnLoan(l)} reminderTrail />
+            {data.fines.recorded > 0 && (
+              <div className="rounded-xl border bg-card">
+                <div className="p-3 border-b text-sm font-semibold flex items-center gap-2"><Receipt className="size-4 text-muted-foreground" /> Recorded fines waiting to be billed</div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Book</TableHead>
+                      <TableHead>Learner</TableHead>
+                      <TableHead className="hidden md:table-cell">Returned</TableHead>
+                      <TableHead>Fine</TableHead>
+                      <TableHead className="w-40" />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {data.loans.filter((l) => l.fineCents > 0 && !l.finePostedAt).map((l) => (
+                      <TableRow key={l.id}>
+                        <TableCell className="font-medium">{l.book}</TableCell>
+                        <TableCell>
+                          <div>{l.student}</div>
+                          <div className="text-xs text-muted-foreground">{l.classroom ?? "—"}</div>
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell text-xs text-muted-foreground">{l.returnedAt ? fmtDate(l.returnedAt) : "still out"}</TableCell>
+                        <TableCell><Badge className="bg-amber-600">{fmtCedi(l.fineCents)}</Badge></TableCell>
+                        <TableCell>
+                          <div className="flex gap-1.5 justify-end">
+                            <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={() => postFines(l.id)}><Receipt className="size-3" /> Bill</Button>
+                            <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs text-muted-foreground"
+                              onClick={() => confirm(`Waive the ${fmtCedi(l.fineCents)} fine for ${l.student}?`) && act({ action: "fine.waive", loanId: l.id }, "Fine waived")}>
+                              <Scale className="size-3" /> Waive
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
           </TabsContent>
         )}
 
@@ -198,7 +307,7 @@ export function LibraryPortal() {
         </TabsContent>
 
         <TabsContent value="history" className="mt-3">
-          <LoanTable loans={returned} />
+          <LoanTable loans={returned} showFine />
         </TabsContent>
       </Tabs>
 
@@ -216,11 +325,15 @@ export function LibraryPortal() {
           if (ok) setIssueOpen(false);
         }}
       />
+      <FinePolicyDialog
+        open={policyOpen} onOpenChange={setPolicyOpen} policy={data.finePolicy} schoolId={currentSchoolId!}
+        onSaved={() => { setPolicyOpen(false); load(); }}
+      />
     </div>
   );
 }
 
-function LoanTable({ loans, onReturn, highlight }: { loans: Loan[]; onReturn?: (id: string) => void; highlight?: boolean }) {
+function LoanTable({ loans, onReturn, highlight, showFine, reminderTrail }: { loans: Loan[]; onReturn?: (l: Loan) => void; highlight?: boolean; showFine?: boolean; reminderTrail?: boolean }) {
   if (!loans.length) return <EmptyState icon={<BookMarked className="size-8" />} title="Nothing here" hint={highlight ? "No overdue books — great!" : "No loans to show."} />;
   return (
     <div className="rounded-xl border bg-card">
@@ -231,6 +344,7 @@ function LoanTable({ loans, onReturn, highlight }: { loans: Loan[]; onReturn?: (
             <TableHead>Learner</TableHead>
             <TableHead className="hidden md:table-cell">Issued</TableHead>
             <TableHead>Due</TableHead>
+            {showFine && <TableHead>Fine</TableHead>}
             <TableHead className="hidden lg:table-cell">By</TableHead>
             {onReturn && <TableHead className="w-24" />}
           </TableRow>
@@ -242,6 +356,11 @@ function LoanTable({ loans, onReturn, highlight }: { loans: Loan[]; onReturn?: (
               <TableCell>
                 <div>{l.student}</div>
                 <div className="text-xs text-muted-foreground">{l.classroom ?? "—"}</div>
+                {reminderTrail && l.overdueSmsCount > 0 && (
+                  <div className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-1">
+                    <BellRing className="size-2.5" /> reminded {l.overdueSmsCount}× · last {fmtDate(l.overdueSmsAt)}
+                  </div>
+                )}
               </TableCell>
               <TableCell className="hidden md:table-cell text-xs text-muted-foreground">{fmtDate(l.issuedAt)}</TableCell>
               <TableCell>
@@ -253,10 +372,23 @@ function LoanTable({ loans, onReturn, highlight }: { loans: Loan[]; onReturn?: (
                   <span className="text-xs text-muted-foreground">{fmtDate(l.dueAt)}</span>
                 )}
               </TableCell>
+              {showFine && (
+                <TableCell>
+                  {l.finePostedAt ? (
+                    <Badge variant="secondary" className="gap-1"><Receipt className="size-3" /> {fmtCedi(l.fineCents)} billed</Badge>
+                  ) : (l.fineCents || l.computedFineCents) > 0 ? (
+                    <Badge className="bg-amber-600" title={l.returnedAt ? "Not yet billed — post it from the Overdue tab" : "Accruing — recorded when the book is returned"}>
+                      {fmtCedi(l.fineCents || l.computedFineCents)}{!l.returnedAt ? " accruing" : ""}
+                    </Badge>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">—</span>
+                  )}
+                </TableCell>
+              )}
               <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">{l.issuedByName ?? "—"}</TableCell>
               {onReturn && (
                 <TableCell>
-                  <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={() => onReturn(l.id)}>
+                  <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={() => onReturn(l)}>
                     <RotateCcw className="size-3" /> Return
                   </Button>
                 </TableCell>
@@ -534,6 +666,67 @@ function IssueDialog({ open, onOpenChange, books, schoolId, onIssue }: {
           <Button disabled={busy || !student || !bookId} onClick={async () => { setBusy(true); await onIssue({ studentId: student!.id, bookId, days }); setBusy(false); }}>
             Issue book
           </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ── wave 74: fine policy — per-day rate, grace days, cap. Stored in OpsSetting so
+   each school tunes its own. Shown from the Overdue & fines tab toolbar. ── */
+function FinePolicyDialog({ open, onOpenChange, policy, schoolId, onSaved }: {
+  open: boolean; onOpenChange: (o: boolean) => void; policy: FinePolicy; schoolId: string;
+  onSaved: () => void;
+}) {
+  const [perDay, setPerDay] = useState("0.50");
+  const [grace, setGrace] = useState("0");
+  const [cap, setCap] = useState("20");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setPerDay((policy.perDayCents / 100).toFixed(2));
+      setGrace(String(policy.graceDays));
+      setCap((policy.capCents / 100).toFixed(2));
+    }
+  }, [open, policy]);
+
+  async function save() {
+    setBusy(true);
+    try {
+      await apiPost(`/api/school/${schoolId}/ops/library`, {
+        action: "policy.save",
+        perDayCents: Math.round(parseFloat(perDay || "0") * 100),
+        graceDays: parseInt(grace || "0", 10),
+        capCents: Math.round(parseFloat(cap || "0") * 100),
+      });
+      toast({ title: "Fine policy saved" });
+      onSaved();
+    } catch (e: any) {
+      toast({ title: "Could not save policy", description: e.message, variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><Settings2 className="size-4" /> Library fine policy</DialogTitle>
+          <DialogDescription>Applies from the day after the grace period once a book is past due; capped per loan.</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3">
+          <div className="grid grid-cols-3 gap-3">
+            <div className="space-y-1.5"><Label>Fine / day (₵)</Label><Input type="number" min={0} step="0.05" value={perDay} onChange={(e) => setPerDay(e.target.value)} /></div>
+            <div className="space-y-1.5"><Label>Grace days</Label><Input type="number" min={0} value={grace} onChange={(e) => setGrace(e.target.value)} /></div>
+            <div className="space-y-1.5"><Label>Cap (₵)</Label><Input type="number" min={0} step="0.50" value={cap} onChange={(e) => setCap(e.target.value)} /></div>
+          </div>
+          <p className="text-xs text-muted-foreground">A fine is recorded the moment a late book is returned, and stays unbilled until you post it to the learner&apos;s invoice — giving the head room to waive it first.</p>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button disabled={busy} onClick={save}>Save policy</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -2215,18 +2215,23 @@ model LibraryBook {
 }
 
 model LibraryLoan {
-  id            String      @id @default(cuid())
-  bookId        String
-  book          LibraryBook @relation(fields: [bookId], references: [id])
-  studentId     String
-  student       Student     @relation(fields: [studentId], references: [id])
-  schoolId      String
-  school        School      @relation(fields: [schoolId], references: [id])
-  issuedAt      DateTime    @default(now())
-  dueAt         DateTime
-  returnedAt    DateTime?
-  issuedByName  String?
-  conditionNote String? // condition on issue / return
+  id              String      @id @default(cuid())
+  bookId          String
+  book            LibraryBook @relation(fields: [bookId], references: [id])
+  studentId       String
+  student         Student     @relation(fields: [studentId], references: [id])
+  schoolId        String
+  school          School      @relation(fields: [schoolId], references: [id])
+  issuedAt        DateTime    @default(now())
+  dueAt           DateTime
+  returnedAt      DateTime?
+  issuedByName    String?
+  conditionNote   String? // condition on issue / return
+  // ── wave 74: overdue chase & fines ──
+  fineCents       Int         @default(0) // recorded when returned late (daysOverdue − grace × rate, capped); 0 = none
+  finePostedAt    DateTime?   // when the fine rode onto the receipt/invoice engine (invoiceItem appended)
+  overdueSmsAt    DateTime?   // last guardian reminder sent for THIS loan
+  overdueSmsCount Int         @default(0)
 }
 
 // ─────────────────────────────────────────────────────────────
