@@ -5,10 +5,11 @@ import { getUser, canOperateSchool } from "@/lib/session";
 import { canAny } from "@/lib/rbac";
 import { sendSms } from "@/lib/sms";
 import { sendEmail } from "@/lib/email";
-import { genApptCode, newDecisionToken, apptDecisionLink, teachingClash } from "@/lib/appointments";
+import { genApptCode, newDecisionToken, apptDecisionLink, teachingClash, staffFreeWindows, nextFreeHint } from "@/lib/appointments";
 
 // ── Front Office (wave 29 — the front desk books; wave 72 — the booking ──
-// ── workflow: staff-linked appointments with live response & T-2 alarms) ──
+// ── workflow: staff-linked appointments with live response & T-2 alarms; ─
+// ── wave 73 — the break-hours rule made explicit: free/break windows) ───
 // The desk beside the gate every Ghanaian school keeps: the Visitors
 // Book (who came, to see whom, pass number, time in/out), the
 // Appointments Book (scheduled meetings with parents, staff & vendors),
@@ -407,6 +408,25 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     });
   }
 
+  /* ── staff-free (wave 73): the open doors of a staff member on a date —
+     the free/break windows the booking form renders as one-tap chips.
+     Teachers take visitors in their free periods (breaks, before the first
+     lesson, after school) inside school hours; non-teaching staff across
+     the whole school day; administration any hour. The timetable is the
+     truth: a window is free only when no lesson is scheduled in it. */
+  if (action === "staff-free") {
+    const staffId = optStr(sp.get("staffId"));
+    const date = dayStart(sp.get("date")) ?? dayZero;
+    if (!staffId) return bad("staffId is required");
+    const staff = await db.staff.findFirst({
+      where: { id: staffId, schoolId, active: true },
+      select: { id: true, fullName: true, category: true },
+    });
+    if (!staff) return bad("Staff member not found for this school", 404);
+    const fw = await staffFreeWindows(db, staff, isoDay(date)!);
+    return NextResponse.json({ staffId, date: isoDay(date), staffName: staff.fullName, category: staff.category, ...fw });
+  }
+
   /* ── calls: the phone call log ── */
   if (action === "calls") {
     const followUpOnly = sp.get("followUp") === "1";
@@ -577,7 +597,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       if (odd) return bad(odd);
       if (a.staff) {
         const clash = await teachingClash(db, a.staff, newAt);
-        if (clash) return bad(`Class clash: ${clash.detail}`);
+        if (clash) {
+          // wave 73 — the refusal points the staff member at their next free slot
+          const hint = await nextFreeHint(db, a.staff, newAt);
+          const fw = await staffFreeWindows(db, a.staff, newAt.toISOString());
+          return NextResponse.json({ error: `Class clash: ${clash.detail}${hint ? ` ${hint}` : ""}`, freeWindows: fw }, { status: 400 });
+        }
       }
       data.scheduledAt = newAt;
       data.rescheduledFrom = a.scheduledAt;
@@ -709,10 +734,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const odd = oddHoursError(staff, scheduledAt);
     if (odd) return bad(odd);
     // class-hours rule — the timetable is the truth for teachers: a visitor
-    // cannot pull them out of a lesson even inside school hours
+    // cannot pull them out of a lesson even inside school hours. wave 73:
+    // the refusal points at the next open door — breaks & free periods are
+    // bookable, and the payload carries them for one-tap chips.
     if (staff) {
       const clash = await teachingClash(db, staff, scheduledAt);
-      if (clash) return bad(`Class clash: ${clash.detail}`);
+      if (clash) {
+        const hint = await nextFreeHint(db, staff, scheduledAt);
+        const fw = await staffFreeWindows(db, staff, scheduledAt.toISOString());
+        return NextResponse.json({ error: `Class clash: ${clash.detail}${hint ? ` ${hint}` : ""}`, freeWindows: fw }, { status: 400 });
+      }
     }
     // staff-linked bookings get a reference code + the one-time decision link
     const code = staff ? await genApptCode(db, schoolId) : null;
@@ -806,7 +837,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (odd) return bad(odd);
     if (a.staff) {
       const clash = await teachingClash(db, a.staff, newAt);
-      if (clash) return bad(`Class clash: ${clash.detail}`);
+      if (clash) {
+        // wave 73 — the refusal points the desk at the next open door
+        const hint = await nextFreeHint(db, a.staff, newAt);
+        const fw = await staffFreeWindows(db, a.staff, newAt.toISOString());
+        return NextResponse.json({ error: `Class clash: ${clash.detail}${hint ? ` ${hint}` : ""}`, freeWindows: fw }, { status: 400 });
+      }
     }
     const row = await db.appointment.update({
       where: { id },

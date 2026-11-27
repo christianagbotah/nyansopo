@@ -126,6 +126,33 @@ CLASHY=$(echo "$CLASH" | jqpy "print('Class clash' in d.get('error',''))")
 echo "9b. teacher mid-lesson (Mon 08:15) rejected: $CLASHY"
 [ "$CLASHY" = "True" ] || fail "booking a teacher inside their lesson should fail with a class clash"
 
+# ── 9c — wave 73: the free/break windows engine — teachers CAN be seen in
+#      break hours: the gaps between their lessons surface as one-tap windows
+FREE=$(curl -s -H "$DH" "$BASE/api/school/$SID/ops/frontoffice?action=staff-free&staffId=$ISAAC&date=${NEXTMON%T*}")
+NW=$(echo "$FREE" | jqpy "print(len(d['windows']))")
+GAP=$(echo "$FREE" | jqpy "print(any(w['start']=='08:40' and w['end']=='09:20' for w in d['windows']))")
+echo "9c. Isaac's free windows on ${NEXTMON%T*}: $NW (the 08:40–09:20 timetable gap surfaced: $GAP)"
+[ "$NW" -ge 1 ] || fail "staff-free should return at least one free window for a teaching day"
+[ "$GAP" = "True" ] || fail "the 08:40–09:20 timetable gap should surface as a free window (break hours)"
+
+# the desk books the visit INTO the first free window — a break-hours visit lands
+BRKT=$(echo "$FREE" | jqpy "print(d['windows'][0]['start'])")
+BRK=$(curl -s -H "$DH" -X POST "$BASE/api/school/$SID/ops/frontoffice" -H 'content-type: application/json' -d "{\"action\":\"appointment-create\",\"title\":\"Smoke: break-hours visit\",\"withName\":\"Ama Parent\",\"staffId\":\"$ISAAC\",\"scheduledAt\":\"${NEXTMON%T*}T${BRKT}:00.000Z\"}")
+BID=$(echo "$BRK" | jqpy "print(d['appointment']['id'])")
+echo "    booked into the first free window (${BRKT}) — break-hours visit: $BID"
+[ "$BID" != "None" ] || fail "a teacher booking inside their free period (break hours) should succeed"
+
+# the class-clash refusal now points at the next open door (wave 73 hint)
+HINT=$(echo "$CLASH" | jqpy "print('next free' in d.get('error',''))")
+echo "    class-clash refusal carries the next-free hint: $HINT"
+[ "$HINT" = "True" ] || fail "the class clash error should suggest the staff member's next free slot"
+
+# administration reports anytime — the head's door never closes
+FREEA=$(curl -s -H "$DH" "$BASE/api/school/$SID/ops/frontoffice?action=staff-free&staffId=$GRACE&date=${NEXTMON%T*}")
+ANY=$(echo "$FREEA" | jqpy "print(d['anytime'])")
+echo "    Grace (administration) anytime flag: $ANY"
+[ "$ANY" = "True" ] || fail "administration staff should report anytime free windows"
+
 # ── 10 — the head ACCEPTS the evening appointment → CONFIRMED
 ACC=$(curl -s -H "$HH" -X POST "$BASE/api/school/$SID/ops/frontoffice" -H 'content-type: application/json' -d "{\"action\":\"appointment-respond\",\"appointmentId\":\"$A2\",\"decision\":\"ACCEPT\"}")
 AST=$(echo "$ACC" | jqpy "print(d['appointment']['status'])")
@@ -250,7 +277,7 @@ echo "     relayed reschedule confirms the new time: $REL2ST"
 [ "$REL2ST" = "CONFIRMED" ] || fail "relaying a reschedule should confirm the new time (got $REL2ST)"
 
 # ── 17 — clean the transient rows (keep the book tidy — the week-ahead ones stay as demo data)
-for id in $AID $A2 $A3 $A4 $A5 $A6; do
+for id in $AID $A2 $A3 $BID $A4 $A5 $A6; do
   curl -s -o /dev/null -H "$DH" -X POST "$BASE/api/school/$SID/ops/frontoffice" -H 'content-type: application/json' -d "{\"action\":\"appointment-status\",\"appointmentId\":\"$id\",\"status\":\"CANCELLED\"}"
 done
 echo "17. smoke rows cancelled"

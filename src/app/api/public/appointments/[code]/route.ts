@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { oddHoursGuard, APPT_ACTIVE } from "@/lib/appointments";
+import { oddHoursGuard, APPT_ACTIVE, staffFreeWindows, nextFreeHint } from "@/lib/appointments";
 import { sendSms } from "@/lib/sms";
 
 /* ── Public appointment decision endpoint (/appoint/{code}) ─────
@@ -87,7 +87,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ cod
       return NextResponse.json({ error: "That time is in the past — pick a moment ahead" }, { status: 400 });
     }
     const refusal = await oddHoursGuard(db, row.staff, newAt);
-    if (refusal) return NextResponse.json({ error: refusal }, { status: 400 });
+    if (refusal) {
+      // wave 73 — a class-clash refusal points the staff member at their next
+      // open door that day (breaks & free periods are bookable)
+      if (refusal.startsWith("Class clash") && row.staff) {
+        const hint = await nextFreeHint(db, row.staff, newAt);
+        const fw = await staffFreeWindows(db, row.staff, newAt.toISOString());
+        return NextResponse.json({ error: `${refusal}${hint ? ` ${hint}` : ""}`, freeWindows: fw }, { status: 400 });
+      }
+      return NextResponse.json({ error: refusal }, { status: 400 });
+    }
     data.status = "RESCHEDULED";
     data.scheduledAt = newAt;
     data.rescheduledFrom = row.scheduledAt;

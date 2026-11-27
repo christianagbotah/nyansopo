@@ -54,6 +54,10 @@ type StaffOption = {
   id: string; fullName: string; role: string; title: string | null;
   category: string; position: string | null; hasPhone: boolean; hasEmail: boolean;
 };
+// wave 73 — the free/break windows of the staff member being booked (the
+// break-hours rule made visible: teachers take visitors in their free periods)
+type FreeWindow = { start: string; end: string; minutes: number; label: string };
+type FreeWins = { anytime: boolean; wholeSchoolDay: boolean; windows: FreeWindow[] };
 type AppointmentRow = {
   id: string; title: string; withName: string; withRole: string;
   visitorPhone: string | null; visitorOrg: string | null;
@@ -169,6 +173,45 @@ const isOddSlot = (date: string, time: string) => {
   return d.getDay() === 0 || d.getDay() === 6 || d.getHours() < 7 || d.getHours() >= 17;
 };
 
+// wave 73 — one-tap free-period chips: the staff member's open doors for the
+// chosen day, computed from the timetable (a window is free only when no
+// lesson is scheduled in it). Breaks land as first-class chips.
+function FreeChips({ fw, verb, busyHint, onPick }: { fw: FreeWins | null; verb: string; busyHint?: string | null; onPick: (start: string) => void }) {
+  if (!fw) return null;
+  if (fw.anytime) {
+    return (
+      <p className="col-span-2 text-xs text-emerald-600 dark:text-emerald-400">
+        Administration — the head&apos;s door never closes: bookable at any hour, day or evening.
+      </p>
+    );
+  }
+  if (fw.wholeSchoolDay) {
+    return (
+      <p className="col-span-2 text-xs text-muted-foreground">
+        Non-teaching staff take visitors at any time during school hours (Mon–Fri 07:00–17:00) — pick any time in that window.
+      </p>
+    );
+  }
+  if (!fw.windows.length) {
+    return busyHint ? <p className="col-span-2 text-xs text-muted-foreground">{busyHint}</p> : null;
+  }
+  return (
+    <div className="col-span-2 flex flex-wrap items-center gap-1.5">
+      <span className="text-xs text-muted-foreground">Free periods that day — tap one to {verb}:</span>
+      {fw.windows.map((w) => (
+        <button
+          key={`${w.start}-${w.end}`}
+          type="button"
+          onClick={() => onPick(w.start)}
+          className="rounded-full border border-teal-500/40 bg-teal-50 dark:bg-teal-950/40 px-2.5 py-1 text-[11px] font-semibold text-teal-800 dark:text-teal-300 transition-colors hover:bg-teal-100 dark:hover:bg-teal-900"
+        >
+          {w.label} · {w.start}–{w.end}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function FrontOffice() {
   const { currentSchoolId, session, navTarget } = useStore();
   const { toast } = useToast();
@@ -215,6 +258,9 @@ export function FrontOffice() {
   const [moveDate, setMoveDate] = useState("");
   const [moveTime, setMoveTime] = useState("");
   const [moveBusy, setMoveBusy] = useState(false);
+  // wave 73 — free/break windows of the picked staff member (booking + move)
+  const [apptFree, setApptFree] = useState<FreeWins | null>(null);
+  const [moveFree, setMoveFree] = useState<FreeWins | null>(null);
 
   // calls
   const [calls, setCalls] = useState<CallRow[]>([]);
@@ -302,6 +348,37 @@ export function FrontOffice() {
       .then((r) => { setAppointments(r.appointments); setApptCounts(r.counts ?? {}); })
       .catch((e: Error) => toast({ title: "Could not load the appointments book", description: e.message, variant: "destructive" }));
   }, [schoolId, tab, apptScope, apptStatus, appointmentsTick]);
+
+  // wave 73 — the open doors of the staff member being booked: their free
+  // windows for the chosen date (teachers get their free periods — breaks,
+  // before first lesson, after school — as one-tap chips)
+  useEffect(() => {
+    const sid = apptForm.staffId;
+    if (!apptDialog || !schoolId || sid === "none" || !apptForm.date) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setApptFree(null);
+      return;
+    }
+    let alive = true;
+    apiGet<FreeWins & { category: string }>(`/api/school/${schoolId}${OPS}?action=staff-free&staffId=${sid}&date=${apptForm.date}`)
+      .then((d) => { if (alive) setApptFree(d); })
+      .catch(() => { if (alive) setApptFree(null); });
+    return () => { alive = false; };
+  }, [apptDialog, apptForm.staffId, apptForm.date, schoolId]);
+
+  // wave 73 — the same open doors inside the desk's Move dialog
+  useEffect(() => {
+    if (!moveAppt || !schoolId || !moveAppt.staffId || !moveDate) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setMoveFree(null);
+      return;
+    }
+    let alive = true;
+    apiGet<FreeWins & { category: string }>(`/api/school/${schoolId}${OPS}?action=staff-free&staffId=${moveAppt.staffId}&date=${moveDate}`)
+      .then((d) => { if (alive) setMoveFree(d); })
+      .catch(() => { if (alive) setMoveFree(null); });
+    return () => { alive = false; };
+  }, [moveAppt, moveDate, schoolId]);
 
   // wave 72 — the live desk feed. While the board or the appointments tab
   // is open, poll action=live every 8 s: today's active appointments with
@@ -461,13 +538,15 @@ export function FrontOffice() {
   // wave 72 — client odd-hours mirror: at odd times only administration
   // staff can be booked (teachers & non-teaching staff are school-hours only)
   const apptOdd = isOddSlot(apptForm.date, apptForm.time);
+  // wave 73 — the staff member currently picked in the booking form
+  const pickedStaff = apptForm.staffId !== "none" ? staffOpts.find((s) => s.id === apptForm.staffId) ?? null : null;
 
   const submitAppointment = async () => {
     if (!apptForm.title.trim() || !apptForm.withName.trim() || !apptForm.date) {
       toast({ title: "Title, who it's with and the date are required", variant: "destructive" });
       return;
     }
-    const picked = apptForm.staffId !== "none" ? staffOpts.find((s) => s.id === apptForm.staffId) ?? null : null;
+    const picked = pickedStaff;
     if (picked && apptOdd && picked.category !== "ADMINISTRATION") {
       toast({
         title: "Odd hours — pick an administrator",
@@ -1251,10 +1330,22 @@ export function FrontOffice() {
                 <p className="text-xs text-muted-foreground">
                   {apptOdd
                     ? "Odd hours — only administration staff can take visitors; teaching & non-teaching staff are school-hours only (Mon–Fri 07:00–17:00)."
-                    : "The staff member is alerted by SMS, email and in-app the moment you book, and answers from their Home."}
+                    : pickedStaff?.category === "TEACHING"
+                      ? "Teachers take visitors in their free periods — breaks, before first lesson and after school, inside school hours. Their timetable (lessons in progress) stays off-limits."
+                      : pickedStaff?.category === "NON_TEACHING"
+                        ? "Non-teaching staff take visitors at any time during school hours (Mon–Fri 07:00–17:00)."
+                        : "The staff member is alerted by SMS, email and in-app the moment you book, and answers from their Home."}
                 </p>
               )}
             </FormField>
+            {apptForm.staffId !== "none" && (
+              <FreeChips
+                fw={apptFree}
+                verb="book the visit"
+                busyHint={apptForm.date ? "Fully booked that day — no free period left; try another date." : null}
+                onPick={(start) => setApptForm({ ...apptForm, time: start })}
+              />
+            )}
             {apptForm.staffId === "none" && (
               <FormField label="Meeting with (free text)" span={2}>
                 <Input value={apptForm.personToSee} onChange={(e) => setApptForm({ ...apptForm, personToSee: e.target.value })} placeholder="e.g. Headmistress" />
@@ -1293,6 +1384,9 @@ export function FrontOffice() {
             <FormField label="New time" required>
               <Input type="time" value={moveTime} onChange={(e) => setMoveTime(e.target.value)} />
             </FormField>
+            {moveAppt?.staffId && (
+              <FreeChips fw={moveFree} verb="move it" busyHint="Fully booked that day — try another date." onPick={(start) => setMoveTime(start)} />
+            )}
           </FormGrid>
           {moveAppt?.staffCategory && moveAppt.staffCategory !== "ADMINISTRATION" && isOddSlot(moveDate, moveTime) && (
             <p className="rounded-md bg-red-50 dark:bg-red-950/40 p-2 text-xs text-red-700 dark:text-red-300">
