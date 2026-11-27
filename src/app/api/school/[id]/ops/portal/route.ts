@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getUser } from "@/lib/session";
 import { attStats, leaveBalances } from "@/lib/staff-duty-core";
-import { createPaymentRequest, checkPaymentRequest, publicPayUrl, paymentsProvider } from "@/lib/payment-requests";
+import { createPaymentRequest, checkPaymentRequest, publicPayUrl, paymentsProvider, availablePaymentProviders } from "@/lib/payment-requests";
 import { nextOrderNo } from "@/lib/shop";
 
 // ── GET /api/school/[id]/ops/portal?view=parent|student|staff
@@ -177,6 +177,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       })),
       // wave 77 — shop & online payments
       paymentsMode: paymentsProvider(),
+      paymentsProviders: availablePaymentProviders(),
       shopItems: shopItems.map((i) => ({
         id: i.id, name: i.name, category: i.category, price: i.priceCents, stock: i.stock,
       })),
@@ -190,7 +191,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       })),
       paymentRequests: paymentRequests.map((r) => ({
         id: r.id, purpose: r.purpose, amount: r.amountCents, status: r.status, method: r.method,
-        channel: r.channel, clientReference: r.clientReference, checkoutUrl: r.checkoutUrl,
+        channel: r.channel, provider: r.provider, clientReference: r.clientReference, checkoutUrl: r.checkoutUrl,
         appliedNote: r.appliedNote, failureReason: r.failureReason,
         createdAt: r.createdAt, completedAt: r.completedAt,
         shopOrderId: r.shopOrderId, invoiceId: r.invoiceId, walletKind: r.walletKind,
@@ -710,6 +711,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         method: body.method === "PAYMENT_LINK" ? "PAYMENT_LINK" : "MOMO_PROMPT",
         payerMsisdn: body.payerMsisdn || user.phone || undefined,
         channel: body.channel ?? null,
+        provider: typeof body.provider === "string" ? body.provider : undefined,
         createdByName: `${user.fullName} (parent portal)`,
         description: `School shop order ${order.orderNo}`,
       });
@@ -745,6 +747,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         method: body.method === "PAYMENT_LINK" ? "PAYMENT_LINK" : "MOMO_PROMPT",
         payerMsisdn: body.payerMsisdn || user.phone || undefined,
         channel: body.channel ?? null,
+        provider: typeof body.provider === "string" ? body.provider : undefined,
         createdByName: `${user.fullName} (parent portal)`,
         description: `School fees — invoice ${invoice.invoiceNo}`,
       });
@@ -766,6 +769,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         method: body.method === "MOMO_PROMPT" ? "MOMO_PROMPT" : "PAYMENT_LINK",
         payerMsisdn: body.payerMsisdn || user.phone || undefined,
         channel: body.channel ?? null,
+        provider: typeof body.provider === "string" ? body.provider : undefined,
         createdByName: `${user.fullName} (parent portal)`,
         description: walletKind === "TRANSPORT" ? "Transport wallet top-up" : "Prepaid wallet top-up",
       });

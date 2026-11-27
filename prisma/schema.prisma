@@ -765,7 +765,7 @@ model PaymentRequest {
   payerName        String
   payerMsisdn      String
   status           String         @default("PENDING") // PENDING | COMPLETED | FAILED | CANCELLED
-  provider         String         @default("HUBTEL") // HUBTEL | SIMULATED
+  provider         String         @default("HUBTEL") // HUBTEL | PAYSTACK | FLUTTERWAVE | SIMULATED (wave 78 multi-gateway)
   clientReference  String         @unique
   providerTxnId    String?
   checkoutToken    String?

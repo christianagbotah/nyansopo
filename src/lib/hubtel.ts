@@ -292,10 +292,11 @@ export function hubtelWebhookUrl(): string {
   return base ? `${base}/api/webhooks/hubtel${secret ? `?secret=${encodeURIComponent(secret)}` : ""}` : "";
 }
 
-/** A short, unique, Hubtel-safe client reference (≤ 32 chars). */
-export function newClientReference(): string {
+/** A short, unique, gateway-safe client reference (≤ 32 chars). The prefix
+ *  names the gateway that minted it (HTL=Hubtel, PSK=Paystack, FLW=Flutterwave). */
+export function newClientReference(prefix = "HTL"): string {
   const d = new Date();
   const stamp = `${d.getFullYear().toString().slice(2)}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
   const rand = Math.random().toString(36).slice(2, 8).toUpperCase();
-  return `HTL-${stamp}-${rand}`; // 4+1+6+1+6 = 18 chars
+  return `${prefix}-${stamp}-${rand}`; // 3+1+6+1+6 = 17 chars
 }

@@ -92,7 +92,7 @@ type CheckedRequest = {
   appliedNote: string | null; failureReason: string | null;
 };
 type PaymentRequestRow = {
-  id: string; purpose: string; amount: number; status: string; method: string | null; channel: string | null;
+  id: string; purpose: string; amount: number; status: string; method: string | null; channel: string | null; provider: string;
   clientReference: string; checkoutUrl: string | null; appliedNote: string | null; failureReason: string | null;
   createdAt: string; completedAt: string | null; shopOrderId: string | null; invoiceId: string | null; walletKind: string | null;
 };
@@ -113,6 +113,7 @@ type ParentData = {
   mealRequests?: MealRequestLite[];
   // wave 77 — school shop catalog, the family's orders and recent online payment attempts
   paymentsMode?: "HUBTEL" | "SIMULATED";
+  paymentsProviders?: string[]; // wave 78 — gateways with live keys on this deployment
   shopItems?: ShopItem[];
   shopOrders?: ShopOrder[];
   paymentRequests?: PaymentRequestRow[];
@@ -137,6 +138,35 @@ const ORDER_STATUS: Record<string, { label: string; className: string }> = {
 };
 const ORDER_PAYMENT: Record<string, string> = { ONLINE: "paid online", COUNTER: "counter receipt" };
 const PURPOSE_LABEL: Record<string, string> = { INVOICE: "School fees", WALLET: "Wallet top-up", SHOP_ORDER: "Shop order", DAILY_ITEMS: "Daily fee items", ITEM_BALANCE: "Fee-item advance" };
+// wave 78 — Ghana payment gateways the school can collect through
+const PROVIDER_NAMES: Record<string, string> = { HUBTEL: "Hubtel", PAYSTACK: "Paystack", FLUTTERWAVE: "Flutterwave" };
+
+/** wave 78 — gateway chips: pick which gateway collects this payment.
+ *  "live" = credentials on the deployment; "sandbox" = no keys at all, every
+ *  gateway runs the rehearse flow (pay page simulate button). */
+function GatewayPicker({ providers, value, onChange }: { providers: string[]; value: string; onChange: (v: string) => void }) {
+  const sandbox = providers.length === 0;
+  return (
+    <div className="space-y-1.5">
+      <Label>Gateway</Label>
+      <div className="grid grid-cols-3 gap-2">
+        {(["HUBTEL", "PAYSTACK", "FLUTTERWAVE"] as const).map((p) => {
+          const live = providers.includes(p);
+          const on = value === p;
+          return (
+            <button key={p} type="button" onClick={() => onChange(p)} aria-pressed={on}
+              className={`rounded-lg border px-2 py-2 text-center transition-colors ${on ? "border-primary bg-primary/5" : "hover:bg-muted/50"}`}>
+              <div className="text-sm font-medium leading-tight">{PROVIDER_NAMES[p]}</div>
+              <div className={`text-[10px] leading-tight ${live ? "text-emerald-600" : sandbox ? "text-amber-600" : "text-muted-foreground"}`}>
+                {live ? "live" : sandbox ? "sandbox" : "not set up"}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 export function ParentPortal() {
   const { currentSchoolId, session } = useStore();
@@ -466,7 +496,7 @@ export function ParentPortal() {
                     return (
                       <div key={r.id} className="flex items-center justify-between gap-2 rounded-lg border px-3 py-2">
                         <div className="min-w-0">
-                          <div className="text-sm font-medium">{fmtCedi(r.amount)} <span className="font-normal text-muted-foreground">· {label}</span></div>
+                          <div className="text-sm font-medium">{fmtCedi(r.amount)} <span className="font-normal text-muted-foreground">· {label}</span> <span className="text-[10px] font-normal text-muted-foreground">via {PROVIDER_NAMES[r.provider] ?? r.provider}</span></div>
                           <div className="text-[11px] text-muted-foreground truncate">
                             {fmtDate(r.createdAt)}{r.appliedNote ? ` · ${r.appliedNote}` : ""}{r.failureReason ? ` · ${r.failureReason}` : ""}
                           </div>
@@ -703,7 +733,7 @@ export function ParentPortal() {
         onOpenChange={(o) => { if (!o) setPayTarget(null); }}
         target={payTarget}
         schoolId={currentSchoolId!}
-        paymentsMode={data.paymentsMode}
+        providers={data.paymentsProviders ?? []}
         onDone={load}
       />
     </div>
@@ -974,10 +1004,9 @@ type PolledRequest = { id: string; data: CheckedRequest };
    created: reference, amount, status badge, then mode-specific instructions
    (sandbox pay page / MoMo prompt / hosted checkout) and the terminal
    success / failure states. */
-function PaymentTrackingPanel({ request, payUrl, method, phone, paymentsMode }: {
+function PaymentTrackingPanel({ request, payUrl, method, phone, sandbox }: {
   request: PayLiveRequest; payUrl: string | null;
-  method: "MOMO_PROMPT" | "PAYMENT_LINK"; phone: string;
-  paymentsMode: "HUBTEL" | "SIMULATED" | undefined;
+  method: "MOMO_PROMPT" | "PAYMENT_LINK"; phone: string; sandbox: boolean;
 }) {
   const st = PAY_STATUS[request.status] ?? PAY_STATUS.PENDING;
   const payPage = payUrl || `/pay/${request.clientReference}`;
@@ -995,23 +1024,23 @@ function PaymentTrackingPanel({ request, payUrl, method, phone, paymentsMode }: 
       </div>
       {request.status === "PENDING" && (
         <>
-          {paymentsMode === "SIMULATED" && (
+          {sandbox && (
             <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 flex items-start gap-2">
               <AlertTriangle className="size-4 text-amber-600 shrink-0 mt-0.5" />
               <div className="flex-1 space-y-2">
-                <p className="text-sm">Sandbox: no Hubtel keys configured — complete the payment on the payment page.</p>
+                <p className="text-sm">Sandbox: no {PROVIDER_NAMES[request.provider] ?? "gateway"} keys configured — complete the payment on the payment page.</p>
                 <a href={payPage} target="_blank" rel="noreferrer">
                   <Button size="sm" variant="outline" className="gap-1.5"><ExternalLink className="size-3.5" /> Open payment page</Button>
                 </a>
               </div>
             </div>
           )}
-          {paymentsMode === "HUBTEL" && method === "MOMO_PROMPT" && (
+          {!sandbox && method === "MOMO_PROMPT" && (
             <p className="text-sm text-muted-foreground">Approve the MoMo prompt on <b className="text-foreground">{phone || "your phone"}</b> — this page updates automatically.</p>
           )}
-          {paymentsMode === "HUBTEL" && method === "PAYMENT_LINK" && (
+          {!sandbox && method === "PAYMENT_LINK" && (
             <div className="flex items-center justify-between gap-2 rounded-lg border p-3">
-              <span className="text-sm text-muted-foreground">A secure checkout page is ready.</span>
+              <span className="text-sm text-muted-foreground">A secure {PROVIDER_NAMES[request.provider] ?? ""} checkout page is ready.</span>
               {request.checkoutUrl
                 ? <a href={request.checkoutUrl} target="_blank" rel="noreferrer"><Button size="sm" className="gap-1.5 shrink-0"><ExternalLink className="size-3.5" /> Open secure checkout</Button></a>
                 : <a href={payPage} target="_blank" rel="noreferrer"><Button size="sm" variant="outline" className="gap-1.5 shrink-0"><ExternalLink className="size-3.5" /> Open payment page</Button></a>}
@@ -1045,11 +1074,13 @@ function PaymentTrackingPanel({ request, payUrl, method, phone, paymentsMode }: 
 /* Shared online-payment dialog (fees invoice / wallet top-up / shop order).
    Form → create the payment request → tracking panel with the 3-second poll.
    Money enters as GHS text and leaves as integer cents (Math.round). */
-function PayDialog({ open, onOpenChange, target, schoolId, paymentsMode, onDone }: {
+function PayDialog({ open, onOpenChange, target, schoolId, providers, onDone }: {
   open: boolean; onOpenChange: (o: boolean) => void;
   target: PayTarget | null; schoolId: string;
-  paymentsMode: "HUBTEL" | "SIMULATED" | undefined; onDone: () => void;
+  providers: string[]; onDone: () => void;
 }) {
+  const sandbox = providers.length === 0;
+  const [provider, setProvider] = useState("HUBTEL");
   const [method, setMethod] = useState<"MOMO_PROMPT" | "PAYMENT_LINK">("MOMO_PROMPT");
   const [phone, setPhone] = useState("");
   const [amountGhs, setAmountGhs] = useState("");
@@ -1064,6 +1095,7 @@ function PayDialog({ open, onOpenChange, target, schoolId, paymentsMode, onDone 
   useEffect(() => {
     if (open && target) {
       settledRef.current = false;
+      setProvider(providers[0] ?? "HUBTEL");
       setMethod("MOMO_PROMPT");
       setPhone(target.phone ?? "");
       setAmountGhs(target.kind === "fees" ? (target.balance / 100).toFixed(2) : "");
@@ -1102,11 +1134,13 @@ function PayDialog({ open, onOpenChange, target, schoolId, paymentsMode, onDone 
     }
     setBusy(true);
     try {
+      // Paystack & Flutterwave collect on their hosted checkouts (links)
+      const effMethod = provider === "HUBTEL" ? method : "PAYMENT_LINK";
       const body = target.kind === "fees"
-        ? { action: "fees.pay-online", studentId: target.studentId, invoiceId: target.invoiceId, amountCents, method, payerMsisdn: phone || undefined }
+        ? { action: "fees.pay-online", studentId: target.studentId, invoiceId: target.invoiceId, amountCents, method: effMethod, provider, payerMsisdn: phone || undefined }
         : target.kind === "wallet"
-          ? { action: "wallet.topup", studentId: target.studentId, walletKind: target.walletKind, amountCents, method, payerMsisdn: phone || undefined }
-          : { action: "shop.order-pay", orderId: target.orderId, method, payerMsisdn: phone || undefined };
+          ? { action: "wallet.topup", studentId: target.studentId, walletKind: target.walletKind, amountCents, method: effMethod, provider, payerMsisdn: phone || undefined }
+          : { action: "shop.order-pay", orderId: target.orderId, method: effMethod, provider, payerMsisdn: phone || undefined };
       const res = await apiPost<{ ok: boolean; request: PayRequest; payUrl: string | null }>(`/api/school/${schoolId}/ops/portal`, body);
       settledRef.current = false;
       setResult(null);
@@ -1133,7 +1167,7 @@ function PayDialog({ open, onOpenChange, target, schoolId, paymentsMode, onDone 
         </DialogHeader>
         {active ? (
           <>
-            <PaymentTrackingPanel request={result ?? active.request} payUrl={active.payUrl} method={method} phone={phone} paymentsMode={paymentsMode} />
+            <PaymentTrackingPanel request={result ?? active.request} payUrl={active.payUrl} method={provider === "HUBTEL" ? method : "PAYMENT_LINK"} phone={phone} sandbox={sandbox} />
             <DialogFooter>
               {(result?.status === "FAILED" || result?.status === "CANCELLED") && (
                 <Button variant="outline" onClick={() => { setActive(null); setResult(null); settledRef.current = false; }}>Try again</Button>
@@ -1144,6 +1178,7 @@ function PayDialog({ open, onOpenChange, target, schoolId, paymentsMode, onDone 
         ) : (
           <>
             <div className="grid gap-3">
+              <GatewayPicker providers={providers} value={provider} onChange={(v) => { setProvider(v); if (v !== "HUBTEL") setMethod("PAYMENT_LINK"); }} />
               {target.kind === "shop" ? (
                 <div className="flex items-center justify-between gap-2 rounded-lg border px-3 py-2.5">
                   <div className="min-w-0">
@@ -1163,13 +1198,17 @@ function PayDialog({ open, onOpenChange, target, schoolId, paymentsMode, onDone 
               )}
               <div className="space-y-1.5">
                 <Label>Pay with</Label>
-                <Select value={method} onValueChange={(v) => setMethod(v === "PAYMENT_LINK" ? "PAYMENT_LINK" : "MOMO_PROMPT")}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="MOMO_PROMPT">MoMo prompt — approve on your phone</SelectItem>
-                    <SelectItem value="PAYMENT_LINK">Payment link — open a checkout page</SelectItem>
-                  </SelectContent>
-                </Select>
+                {provider === "HUBTEL" ? (
+                  <Select value={method} onValueChange={(v) => setMethod(v === "PAYMENT_LINK" ? "PAYMENT_LINK" : "MOMO_PROMPT")}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="MOMO_PROMPT">MoMo prompt — approve on your phone</SelectItem>
+                      <SelectItem value="PAYMENT_LINK">Payment link — open a checkout page</SelectItem>
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <p className="text-xs text-muted-foreground rounded-lg border px-3 py-2">Secure {PROVIDER_NAMES[provider]} checkout — card, bank transfer &amp; mobile money on one page.</p>
+                )}
               </div>
               <div className="space-y-1.5">
                 <Label>Mobile-money number</Label>
@@ -1378,7 +1417,7 @@ function ParentShop({ data, schoolId, defaultStudentId, onChanged }: {
         kids={data.children}
         defaultStudentId={defaultStudentId}
         schoolId={schoolId}
-        paymentsMode={data.paymentsMode}
+        providers={data.paymentsProviders ?? []}
         onPlaced={() => { setCart([]); onChanged(); }}
       />
 
@@ -1388,7 +1427,7 @@ function ParentShop({ data, schoolId, defaultStudentId, onChanged }: {
         onOpenChange={(o) => { if (!o) setPayTarget(null); }}
         target={payTarget}
         schoolId={schoolId}
-        paymentsMode={data.paymentsMode}
+        providers={data.paymentsProviders ?? []}
         onDone={onChanged}
       />
     </div>
@@ -1398,16 +1437,18 @@ function ParentShop({ data, schoolId, defaultStudentId, onChanged }: {
 /* Checkout dialog for the basket: choose the ward, add a delivery note, then
    either pay online now (order → payment request → tracking) or place the
    order and pay at the school counter. */
-function ShopCheckoutDialog({ open, onOpenChange, lines, total, kids, defaultStudentId, schoolId, paymentsMode, onPlaced }: {
+function ShopCheckoutDialog({ open, onOpenChange, lines, total, kids, defaultStudentId, schoolId, providers, onPlaced }: {
   open: boolean; onOpenChange: (o: boolean) => void;
   lines: { item: ShopItem; qty: number }[]; total: number;
   kids: Child[]; defaultStudentId: string; schoolId: string;
-  paymentsMode: "HUBTEL" | "SIMULATED" | undefined;
+  providers: string[];
   onPlaced: () => void;
 }) {
+  const sandbox = providers.length === 0;
   const [studentId, setStudentId] = useState(defaultStudentId);
   const [deliveryNote, setDeliveryNote] = useState("");
   const [payHow, setPayHow] = useState<"ONLINE" | "COUNTER">("ONLINE");
+  const [provider, setProvider] = useState("HUBTEL");
   const [method, setMethod] = useState<"MOMO_PROMPT" | "PAYMENT_LINK">("MOMO_PROMPT");
   const [phone, setPhone] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1425,6 +1466,7 @@ function ShopCheckoutDialog({ open, onOpenChange, lines, total, kids, defaultStu
       setStudentId(defaultStudentId);
       setDeliveryNote("");
       setPayHow("ONLINE");
+      setProvider(providers[0] ?? "HUBTEL");
       setMethod("MOMO_PROMPT");
       setPhone(kids.find((c) => c.id === defaultStudentId)?.guardianPhone ?? kids[0]?.guardianPhone ?? "");
       setBusy(false);
@@ -1474,7 +1516,7 @@ function ShopCheckoutDialog({ open, onOpenChange, lines, total, kids, defaultStu
         try {
           const pr = await apiPost<{ ok: boolean; request: PayRequest; payUrl: string | null }>(
             `/api/school/${schoolId}/ops/portal`,
-            { action: "shop.order-pay", orderId: res.order.id, method, payerMsisdn: phone || undefined },
+            { action: "shop.order-pay", orderId: res.order.id, method: provider === "HUBTEL" ? method : "PAYMENT_LINK", provider, payerMsisdn: phone || undefined },
           );
           settledRef.current = false;
           setActive({ request: pr.request, payUrl: pr.payUrl ?? null });
@@ -1513,7 +1555,7 @@ function ShopCheckoutDialog({ open, onOpenChange, lines, total, kids, defaultStu
           </>
         ) : active ? (
           <>
-            <PaymentTrackingPanel request={result ?? active.request} payUrl={active.payUrl} method={method} phone={phone} paymentsMode={paymentsMode} />
+            <PaymentTrackingPanel request={result ?? active.request} payUrl={active.payUrl} method={provider === "HUBTEL" ? method : "PAYMENT_LINK"} phone={phone} sandbox={sandbox} />
             <DialogFooter>
               {(result?.status === "FAILED" || result?.status === "CANCELLED") && (
                 <Button variant="outline" onClick={() => { setActive(null); setResult(null); settledRef.current = false; }}>Try again</Button>
@@ -1549,15 +1591,20 @@ function ShopCheckoutDialog({ open, onOpenChange, lines, total, kids, defaultStu
               </div>
               {payHow === "ONLINE" && (
                 <>
+                  <GatewayPicker providers={providers} value={provider} onChange={(v) => { setProvider(v); if (v !== "HUBTEL") setMethod("PAYMENT_LINK"); }} />
                   <div className="space-y-1.5">
                     <Label>Pay with</Label>
-                    <Select value={method} onValueChange={(v) => setMethod(v === "PAYMENT_LINK" ? "PAYMENT_LINK" : "MOMO_PROMPT")}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="MOMO_PROMPT">MoMo prompt — approve on your phone</SelectItem>
-                        <SelectItem value="PAYMENT_LINK">Payment link — open a checkout page</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    {provider === "HUBTEL" ? (
+                      <Select value={method} onValueChange={(v) => setMethod(v === "PAYMENT_LINK" ? "PAYMENT_LINK" : "MOMO_PROMPT")}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="MOMO_PROMPT">MoMo prompt — approve on your phone</SelectItem>
+                          <SelectItem value="PAYMENT_LINK">Payment link — open a checkout page</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <p className="text-xs text-muted-foreground rounded-lg border px-3 py-2">Secure {PROVIDER_NAMES[provider]} checkout — card, bank transfer &amp; mobile money on one page.</p>
+                    )}
                   </div>
                   <div className="space-y-1.5">
                     <Label>Mobile-money number</Label>

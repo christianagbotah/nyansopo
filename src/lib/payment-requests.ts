@@ -1,14 +1,17 @@
-// ── MoMo payment requests — engine (Hubtel + SIMULATED) ───────
-// Shared core behind the payments module API, the Hubtel webhook and the
+// ── Online payment requests — engine (Hubtel | Paystack | Flutterwave + SIMULATED) ──
+// Shared core behind the payments module API, the gateway webhooks and the
 // public /pay status page:
-//   • createRequest      — validate + persist + call Hubtel (or simulate)
-//   • checkRequest       — poll Hubtel (checkout token / transaction id)
+//   • createRequest      — validate + persist + call the gateway (or simulate)
+//   • checkRequest       — poll the gateway (checkout token / reference)
 //   • applyCompletion    — idempotently post a completed request to the
 //                          right ledger (invoice, daily items FIFO, per-item
 //                          balance, wallet) + receipt SMS + audit event
-// SIMULATED mode (no Hubtel env credentials) mirrors the SMS gateway
+// SIMULATED mode (no gateway env credentials) mirrors the SMS gateway
 // approach: requests are created locally, the public /pay page carries a
 // "simulate payment" button, and everything else behaves identically.
+// Wave 78 — multi-gateway: every request names its provider (HUBTEL, the
+// Ghana MoMo veteran, or PAYSTACK / FLUTTERWAVE hosted checkouts). With no
+// credentials at all any labelled gateway runs in sandbox mode.
 
 import { PrismaClient, Payment, PaymentRequest } from "@prisma/client";
 import { collectDailyItems, creditItemBalance } from "@/lib/daily-billing";
@@ -18,6 +21,8 @@ import {
   hubtelPaymentsConfigured, hubtelReceiveMoney, hubtelCreateCheckout, hubtelCheckoutStatus,
   hubtelTransactionStatus, hubtelWebhookUrl, hubtelCallbackBase, newClientReference, detectMomoChannel,
 } from "@/lib/hubtel";
+import { paystackConfigured, paystackInitTransaction, paystackVerify } from "@/lib/paystack";
+import { flutterwaveConfigured, flwInitPayment, flwVerify } from "@/lib/flutterwave";
 import { toGhanaIntl } from "@/lib/phone";
 
 export const PAYMENT_PURPOSES = ["INVOICE", "DAILY_ITEMS", "ITEM_BALANCE", "WALLET", "SHOP_ORDER"] as const;
@@ -43,6 +48,50 @@ type RequestItem = { serviceId: string; amountCents: number };
 
 export function paymentsProvider(): "HUBTEL" | "SIMULATED" {
   return hubtelPaymentsConfigured() ? "HUBTEL" : "SIMULATED";
+}
+
+// ── wave 78 — multi-gateway provider model ─────────────────────
+export const PAYMENT_PROVIDER_LABELS: Record<string, string> = {
+  HUBTEL: "Hubtel", PAYSTACK: "Paystack", FLUTTERWAVE: "Flutterwave", SIMULATED: "Sandbox",
+};
+export const PAYMENT_PROVIDERS = ["HUBTEL", "PAYSTACK", "FLUTTERWAVE"] as const;
+
+/** Gateways this deployment has live credentials for (empty → sandbox demo). */
+export function availablePaymentProviders(): string[] {
+  const out: string[] = [];
+  if (hubtelPaymentsConfigured()) out.push("HUBTEL");
+  if (paystackConfigured()) out.push("PAYSTACK");
+  if (flutterwaveConfigured()) out.push("FLUTTERWAVE");
+  return out;
+}
+
+export type ResolvedProvider =
+  | { ok: true; provider: string; simulated: boolean }
+  | { ok: false; error: string };
+
+/** Which gateway a request should ride. An explicit choice must be configured
+ *  — unless the deployment has NO credentials at all, in which case any
+ *  labelled gateway runs in SIMULATED mode so schools can rehearse every
+ *  flow (same sandbox approach as the SMS gateways). */
+export function resolvePaymentProvider(requested?: string | null): ResolvedProvider {
+  const req = String(requested ?? "").trim().toUpperCase();
+  if ((PAYMENT_PROVIDERS as readonly string[]).includes(req)) {
+    if (availablePaymentProviders().includes(req)) return { ok: true, provider: req, simulated: false };
+    if (availablePaymentProviders().length === 0) return { ok: true, provider: req, simulated: true };
+    return {
+      ok: false,
+      error: `${PAYMENT_PROVIDER_LABELS[req]} keys are not configured on this deployment — this school collects through ${PAYMENT_PROVIDER_LABELS[availablePaymentProviders()[0]]}`,
+    };
+  }
+  const first = availablePaymentProviders()[0];
+  if (first) return { ok: true, provider: first, simulated: false };
+  return { ok: true, provider: req === "SIMULATED" ? "SIMULATED" : "HUBTEL", simulated: true };
+}
+
+/** A request minted in SIMULATED mode (SIM- token/txn) — it never polls a
+ *  real gateway and is the only kind the public page may "pay" by button. */
+export function isSimulatedRequest(r: { checkoutToken: string | null; providerTxnId: string | null }): boolean {
+  return !!(r.checkoutToken?.startsWith("SIM-") || r.providerTxnId?.startsWith("SIM-"));
 }
 
 /** Public pay-page URL for a request (the local, friendly status page the
@@ -71,6 +120,7 @@ export type CreateRequestInput = {
   method: "MOMO_PROMPT" | "PAYMENT_LINK";
   payerMsisdn?: string;
   channel?: string | null;
+  provider?: string | null; // wave 78 — explicit gateway choice (HUBTEL | PAYSTACK | FLUTTERWAVE)
   createdByName: string;
   description?: string;
 };
@@ -84,7 +134,13 @@ export async function createPaymentRequest(db: PrismaClient, input: CreateReques
   if (!enrolled) return { ok: false, error: "This learner is not enrolled in this school" };
   const amount = Math.round(Number(input.amountCents) || 0);
   if (amount <= 0) return { ok: false, error: "Enter an amount greater than zero" };
-  if (amount < 50) return { ok: false, error: "Hubtel collects a minimum of ₵0.50 per transaction" };
+  if (amount < 50) return { ok: false, error: "Payments start at a minimum of ₵0.50 per transaction" };
+
+  // wave 78 — resolve the gateway BEFORE anything else so a misconfigured
+  // choice fails fast with a clear message and never leaves a dangling row
+  const resolved = resolvePaymentProvider(input.provider);
+  if (!resolved.ok) return { ok: false, error: resolved.error };
+  const provider = resolved.provider;
 
   // purpose validation + description
   let itemsJson: RequestItem[] | null = null;
@@ -144,19 +200,33 @@ export async function createPaymentRequest(db: PrismaClient, input: CreateReques
   if (!payerMsisdn) return { ok: false, error: "A valid Ghana mobile-money number is required" };
   const payerName = student.guardianName || `${student.firstName} ${student.lastName}`;
 
-  const provider = paymentsProvider();
-  const method = input.method === "PAYMENT_LINK" ? "PAYMENT_LINK" : "MOMO_PROMPT";
-  if (method === "MOMO_PROMPT" && provider === "HUBTEL" && !hubtelWebhookUrl())
+  // Paystack & Flutterwave collect on their hosted checkouts — direct MoMo
+  // prompts are a Hubtel capability, so non-Hubtel choices always ride links.
+  const method = !resolved.simulated && provider !== "HUBTEL" ? "PAYMENT_LINK"
+    : input.method === "PAYMENT_LINK" ? "PAYMENT_LINK" : "MOMO_PROMPT";
+  if (method === "MOMO_PROMPT" && !resolved.simulated && provider === "HUBTEL" && !hubtelWebhookUrl())
     return { ok: false, error: "MoMo prompts need HUBTEL_CALLBACK_BASE (the public URL of this deployment) — use a payment link instead" };
 
-  const clientReference = newClientReference();
+  const clientReference = newClientReference(
+    provider === "PAYSTACK" ? "PSK" : provider === "FLUTTERWAVE" ? "FLW" : provider === "SIMULATED" ? "SIM" : "HTL",
+  );
   const channel = method === "MOMO_PROMPT" ? (input.channel || detectMomoChannel(payerMsisdn).channel) : null;
 
-  // call Hubtel FIRST (live mode) so a gateway failure never leaves a dangling row
+  // call the gateway FIRST (live mode) so a gateway failure never leaves a dangling row
   let providerTxnId: string | null = null;
   let checkoutToken: string | null = null;
   let checkoutUrl: string | null = null;
-  if (provider === "HUBTEL") {
+  if (resolved.simulated) {
+    // SIMULATED (any labelled gateway) — local link behaves like the hosted checkout
+    if (method === "PAYMENT_LINK") {
+      const payUrl = publicPayUrl({ clientReference });
+      if (payUrl) checkoutUrl = payUrl;
+      else checkoutUrl = `/pay/${clientReference}`; // relative fallback (client resolves origin)
+      checkoutToken = `SIM-${clientReference}`;
+    } else {
+      providerTxnId = `SIM-${clientReference}`;
+    }
+  } else if (provider === "HUBTEL") {
     if (method === "MOMO_PROMPT") {
       const r = await hubtelReceiveMoney({
         customerName: payerName,
@@ -187,16 +257,35 @@ export async function createPaymentRequest(db: PrismaClient, input: CreateReques
       checkoutToken = r.data?.token ?? null;
       checkoutUrl = r.data?.checkoutUrl ?? null;
     }
-  } else {
-    // SIMULATED — local link behaves like the hosted checkout
-    if (method === "PAYMENT_LINK") {
-      const payUrl = publicPayUrl({ clientReference });
-      if (payUrl) checkoutUrl = payUrl;
-      else checkoutUrl = `/pay/${clientReference}`; // relative fallback (client resolves origin)
-      checkoutToken = `SIM-${clientReference}`;
-    } else {
-      providerTxnId = `SIM-${clientReference}`;
-    }
+  } else if (provider === "PAYSTACK") {
+    // hosted checkout — card, bank transfer & all Ghana MoMo wallets on one page
+    const payUrl = publicPayUrl({ clientReference });
+    if (!payUrl) return { ok: false, error: "Paystack checkouts need HUBTEL_CALLBACK_BASE (the public URL of this deployment)" };
+    const r = await paystackInitTransaction({
+      email: (student.guardianEmail || `${clientReference.toLowerCase()}@parents.nyansapo.invalid`).trim(),
+      amountCents: amount,
+      reference: clientReference,
+      callbackUrl: `${payUrl}?done=1`,
+      description: description.slice(0, 120),
+    });
+    if (!r.ok) return { ok: false, error: r.error ?? "Paystack rejected the checkout" };
+    checkoutUrl = r.data?.authorizationUrl ?? null;
+    checkoutToken = r.data?.accessCode ?? null;
+    providerTxnId = clientReference; // Paystack tracks transactions by our reference
+  } else if (provider === "FLUTTERWAVE") {
+    const payUrl = publicPayUrl({ clientReference });
+    if (!payUrl) return { ok: false, error: "Flutterwave checkouts need HUBTEL_CALLBACK_BASE (the public URL of this deployment)" };
+    const r = await flwInitPayment({
+      txRef: clientReference,
+      amountCents: amount,
+      redirectUrl: `${payUrl}?done=1`,
+      payerName,
+      payerPhone: payerMsisdn,
+      description: description.slice(0, 120),
+    });
+    if (!r.ok) return { ok: false, error: r.error ?? "Flutterwave rejected the checkout" };
+    checkoutUrl = r.data?.link ?? null;
+    providerTxnId = clientReference;
   }
 
   const request = await db.paymentRequest.create({
@@ -217,24 +306,42 @@ export async function createPaymentRequest(db: PrismaClient, input: CreateReques
 }
 
 // ── status checking ────────────────────────────────────────────
-/** Poll Hubtel (live) for the authoritative status; SIMULATED stays at
- *  PENDING until the public page's simulate button completes it. */
+/** Poll the request's gateway (live) for the authoritative status; SIMULATED
+ *  requests stay at PENDING until the public page's simulate button (or a
+ *  sandbox webhook) completes them. */
 export async function checkPaymentRequest(db: PrismaClient, request: PaymentRequest): Promise<PaymentRequest> {
   if (request.status !== "PENDING") return request;
   await db.paymentRequest.update({ where: { id: request.id }, data: { lastCheckedAt: new Date() } });
 
-  if (request.provider === "HUBTEL") {
-    let status: "PENDING" | "COMPLETED" | "FAILED" | "CANCELLED" | null = null;
-    if (request.checkoutToken) {
-      const r = await hubtelCheckoutStatus(request.checkoutToken);
-      if (r.ok) status = r.data!.status;
-    } else {
-      const r = await hubtelTransactionStatus({ transactionId: request.providerTxnId, clientReference: request.clientReference });
-      if (r.ok) status = r.data!.status;
+  if (!isSimulatedRequest(request)) {
+    if (request.provider === "HUBTEL") {
+      let status: "PENDING" | "COMPLETED" | "FAILED" | "CANCELLED" | null = null;
+      if (request.checkoutToken) {
+        const r = await hubtelCheckoutStatus(request.checkoutToken);
+        if (r.ok) status = r.data!.status;
+      } else {
+        const r = await hubtelTransactionStatus({ transactionId: request.providerTxnId, clientReference: request.clientReference });
+        if (r.ok) status = r.data!.status;
+      }
+      if (status === "COMPLETED") return applyCompletion(db, request.id, "status check");
+      if (status === "FAILED") return failRequest(db, request.id, "Declined / failed at the mobile-money network");
+      if (status === "CANCELLED") return cancelRequest(db, request.id, "Cancelled by the payer");
+    } else if (request.provider === "PAYSTACK") {
+      const r = await paystackVerify(request.clientReference);
+      if (r.ok) {
+        const st = r.data!.status;
+        if (st === "COMPLETED") return applyCompletion(db, request.id, "status check");
+        if (st === "FAILED") return failRequest(db, request.id, "Declined / failed on Paystack");
+        // "abandoned" stays pending — the payer can still come back and finish
+      }
+    } else if (request.provider === "FLUTTERWAVE") {
+      const r = await flwVerify(request.clientReference);
+      if (r.ok) {
+        const st = r.data!.status;
+        if (st === "COMPLETED") return applyCompletion(db, request.id, "status check");
+        if (st === "FAILED") return failRequest(db, request.id, "Declined / failed on Flutterwave");
+      }
     }
-    if (status === "COMPLETED") return applyCompletion(db, request.id, "status check");
-    if (status === "FAILED") return failRequest(db, request.id, "Declined / failed at the mobile-money network");
-    if (status === "CANCELLED") return cancelRequest(db, request.id, "Cancelled by the payer");
   }
   return (await db.paymentRequest.findUnique({ where: { id: request.id } })) ?? request;
 }
@@ -268,8 +375,9 @@ export async function applyCompletion(db: PrismaClient, requestId: string, sourc
   try {
     const student = request.studentId ? await db.student.findUnique({ where: { id: request.studentId } }) : null;
     const momoChannel = MOMO_LABEL[request.channel ?? ""] ?? "Mobile Money";
+    const providerLabel = PAYMENT_PROVIDER_LABELS[request.provider] ?? "MoMo";
     const method = `MOMO_${(request.channel ?? "").split("-")[0]?.toUpperCase() || "GH"}`;
-    const byName = `Hubtel MoMo — ${request.payerName}`;
+    const byName = `${providerLabel} — ${request.payerName}`;
     let payment: Payment | null = null;
     let note = "";
 
@@ -429,7 +537,7 @@ export async function applyCompletion(db: PrismaClient, requestId: string, sourc
             receipt: payment?.receiptNo ?? "", date: new Date().toLocaleDateString("en-GB"),
           },
           studentId: request.studentId, recipientName: student.guardianName,
-          recipientPhone: student.guardianPhone, sentByName: "Hubtel MoMo",
+          recipientPhone: student.guardianPhone, sentByName: `${providerLabel} payments`,
         });
       }
     }
@@ -465,4 +573,4 @@ export function parseHubtelCallback(payload: any): { reference: string | null; t
   return { reference, transactionId, status: "PENDING", amountCents: null };
 }
 
-export { MOMO_LABEL, fmtGH };
+export { MOMO_LABEL, fmtGH, isSimulatedRequest };

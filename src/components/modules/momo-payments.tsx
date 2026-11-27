@@ -37,6 +37,7 @@ type MomoRequest = {
 
 type MomoData = {
   provider: "HUBTEL" | "SIMULATED";
+  providers: string[]; // wave 78 — gateways with live credentials
   configured: boolean;
   webhookUrl: string | null;
   callbackBase: string | null;
@@ -83,6 +84,9 @@ const CHANNEL_STYLE: Record<string, string> = {
   "vodafone-gh": "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300",
   "tigo-gh": "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300",
 };
+
+// wave 78 — Ghana payment gateways
+const PROVIDER_NAMES: Record<string, string> = { HUBTEL: "Hubtel", PAYSTACK: "Paystack", FLUTTERWAVE: "Flutterwave" };
 
 const CAT_CHIP: Record<string, string> = {
   MEAL: "bg-orange-500/15 text-orange-700 dark:text-orange-300 border border-orange-500/30",
@@ -368,13 +372,13 @@ export function MomoPayments() {
         </TabsContent>
       </Tabs>
 
-      <NewRequestDialog open={dialogOpen} onOpenChange={(o) => { setDialogOpen(o); if (!o) load(); }} live={live} />
+      <NewRequestDialog open={dialogOpen} onOpenChange={(o) => { setDialogOpen(o); if (!o) load(); }} live={live} providers={data?.providers ?? []} />
     </div>
   );
 }
 
 /* ── New request dialog ──────────────────────────────────────── */
-function NewRequestDialog({ open, onOpenChange, live }: { open: boolean; onOpenChange: (o: boolean) => void; live: boolean }) {
+function NewRequestDialog({ open, onOpenChange, live, providers }: { open: boolean; onOpenChange: (o: boolean) => void; live: boolean; providers: string[] }) {
   const { currentSchoolId } = useStore();
   const [search, setSearch] = useState("");
   const [students, setStudents] = useState<StudentLite[]>([]);
@@ -391,6 +395,7 @@ function NewRequestDialog({ open, onOpenChange, live }: { open: boolean; onOpenC
   const [walletKind, setWalletKind] = useState("PREPAID");
   const [walletAmount, setWalletAmount] = useState("");
   const [method, setMethod] = useState<"MOMO_PROMPT" | "PAYMENT_LINK">("MOMO_PROMPT");
+  const [provider, setProvider] = useState(providers[0] ?? "HUBTEL");
   const [phone, setPhone] = useState("");
   const [channelOverride, setChannelOverride] = useState<string>("");
   const [sendLinkSms, setSendLinkSms] = useState(true);
@@ -401,7 +406,7 @@ function NewRequestDialog({ open, onOpenChange, live }: { open: boolean; onOpenC
     setSearch(""); setStudents([]); setStudentId(null); setAccounts(null);
     setPurpose("INVOICE"); setInvoiceId(null); setInvoiceAmount(""); setItemAmounts({});
     setItemBalanceId(null); setItemBalanceAmount(""); setWalletKind("PREPAID"); setWalletAmount("");
-    setMethod("MOMO_PROMPT"); setPhone(""); setChannelOverride(""); setCreated(null);
+    setMethod("MOMO_PROMPT"); setProvider(providers[0] ?? "HUBTEL"); setPhone(""); setChannelOverride(""); setCreated(null);
   };
 
   useEffect(() => {
@@ -465,10 +470,11 @@ function NewRequestDialog({ open, onOpenChange, live }: { open: boolean; onOpenC
         studentId, purpose,
         invoiceId: purpose === "INVOICE" ? invoiceId : null,
         items, walletKind: purpose === "WALLET" ? walletKind : null,
-        amountCents, method,
+        amountCents, method: provider === "HUBTEL" ? method : "PAYMENT_LINK",
+        provider,
         payerMsisdn: phone || undefined,
-        channel: method === "MOMO_PROMPT" ? effChannel : null,
-        sendLinkSms: method === "PAYMENT_LINK" && sendLinkSms,
+        channel: method === "MOMO_PROMPT" && provider === "HUBTEL" ? effChannel : null,
+        sendLinkSms: (provider === "HUBTEL" ? method : "PAYMENT_LINK") === "PAYMENT_LINK" && sendLinkSms,
       });
       setCreated({ clientReference: res.request.clientReference, checkoutUrl: res.request.checkoutUrl, payUrl: res.request.payUrl, method: res.request.method });
     } catch (e: any) {
@@ -484,7 +490,7 @@ function NewRequestDialog({ open, onOpenChange, live }: { open: boolean; onOpenC
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><SmartphoneNfc className="size-5" /> Request a momo payment</DialogTitle>
           <DialogDescription>
-            Send a payment prompt to the guardian&apos;s phone, or create a checkout link — {live ? "live via Hubtel" : "demo mode (no Hubtel credentials yet)"}.
+            Send a payment prompt to the guardian&apos;s phone, or create a checkout link through Hubtel, Paystack or Flutterwave — {providers.length ? `${providers.map((p) => PROVIDER_NAMES[p]).join(" · ")} live` : "demo mode (no gateway credentials yet)"}.
           </DialogDescription>
         </DialogHeader>
 
@@ -647,18 +653,34 @@ function NewRequestDialog({ open, onOpenChange, live }: { open: boolean; onOpenC
 
                 {/* delivery */}
                 <div className="space-y-2 rounded-xl border p-3">
-                  <Label>Delivery *</Label>
+                  <Label>Gateway *</Label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {(["HUBTEL", "PAYSTACK", "FLUTTERWAVE"] as const).map((p) => {
+                      const liveP = providers.includes(p);
+                      const sandbox = providers.length === 0;
+                      return (
+                        <button key={p} onClick={() => { setProvider(p); if (p !== "HUBTEL") setMethod("PAYMENT_LINK"); }}
+                          className={`rounded-lg border p-2 text-center transition-colors ${provider === p ? "border-primary bg-primary/5" : "hover:bg-muted/50"}`}>
+                          <div className="text-xs font-semibold">{PROVIDER_NAMES[p]}</div>
+                          <div className={`text-[10px] ${liveP ? "text-emerald-600" : sandbox ? "text-amber-600" : "text-muted-foreground"}`}>
+                            {liveP ? "live" : sandbox ? "sandbox" : "not set up"}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <Label className="pt-1">Delivery *</Label>
                   <div className="grid grid-cols-2 gap-2">
-                    <button onClick={() => setMethod("MOMO_PROMPT")} className={`rounded-lg border p-2.5 text-left ${method === "MOMO_PROMPT" ? "border-primary bg-primary/5" : "hover:bg-muted/50"}`}>
+                    <button onClick={() => { setProvider("HUBTEL"); setMethod("MOMO_PROMPT"); }} className={`rounded-lg border p-2.5 text-left ${provider === "HUBTEL" && method === "MOMO_PROMPT" ? "border-primary bg-primary/5" : "hover:bg-muted/50"}`}>
                       <div className="text-xs font-semibold flex items-center gap-1.5"><SmartphoneNfc className="size-3.5" /> MoMo prompt</div>
-                      <div className="text-[11px] text-muted-foreground">USSD push — guardian approves with PIN</div>
+                      <div className="text-[11px] text-muted-foreground">USSD push — guardian approves with PIN (Hubtel)</div>
                     </button>
                     <button onClick={() => setMethod("PAYMENT_LINK")} className={`rounded-lg border p-2.5 text-left ${method === "PAYMENT_LINK" ? "border-primary bg-primary/5" : "hover:bg-muted/50"}`}>
                       <div className="text-xs font-semibold flex items-center gap-1.5"><Link2 className="size-3.5" /> Payment link</div>
                       <div className="text-[11px] text-muted-foreground">Hosted checkout — share by SMS/WhatsApp</div>
                     </button>
                   </div>
-                  {method === "MOMO_PROMPT" ? (
+                  {provider === "HUBTEL" && method === "MOMO_PROMPT" ? (
                     <div className="grid grid-cols-2 gap-2">
                       <div className="space-y-1.5">
                         <Label>MoMo number *</Label>

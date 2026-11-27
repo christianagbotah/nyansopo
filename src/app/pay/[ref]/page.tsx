@@ -24,6 +24,7 @@ type PayStatus = {
   channelLabel: string | null;
   checkoutUrl: string | null;
   provider: string;
+  providerLabel: string;
   simulated: boolean;
 };
 
@@ -82,7 +83,7 @@ export default function PublicPayPage() {
           <div className="w-10 h-10 rounded-xl bg-white/20 grid place-items-center font-bold">₵</div>
           <div>
             <div className="font-semibold leading-tight">{data?.school.name ?? "School"}</div>
-            <div className="text-xs text-white/80">Mobile-money payment</div>
+            <div className="text-xs text-white/80">School payment</div>
           </div>
         </div>
 
@@ -127,7 +128,7 @@ export default function PublicPayPage() {
               )}
               {status === "PENDING" && data.simulated && (
                 <div className="space-y-2 pt-2 border-t border-border">
-                  <p className="text-[11px] text-muted-foreground text-center">Demo mode (no Hubtel credentials on this deployment) — rehearse the flow:</p>
+                  <p className="text-[11px] text-muted-foreground text-center">Demo mode (no gateway credentials on this deployment) — rehearse the flow:</p>
                   <div className="grid grid-cols-2 gap-2">
                     <button disabled={busy} onClick={() => simulate("pay")} className="rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 text-sm font-medium disabled:opacity-50">I have paid</button>
                     <button disabled={busy} onClick={() => simulate("fail")} className="rounded-lg bg-muted hover:bg-muted/70 px-3 py-2 text-sm font-medium disabled:opacity-50">Simulate failure</button>
@@ -140,7 +141,7 @@ export default function PublicPayPage() {
             </>
           )}
         </div>
-        <p className="text-center text-[11px] text-muted-foreground mt-4">Secured by Hubtel · Nyansapo School Management</p>
+        <p className="text-center text-[11px] text-muted-foreground mt-4">Secured by {data?.providerLabel ?? "our payment gateway"} · Nyansapo School Management</p>
       </div>
     </div>
   );

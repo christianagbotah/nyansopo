@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { opsAuth } from "@/lib/ops-auth";
 import {
   createPaymentRequest, checkPaymentRequest, failRequest, cancelRequest,
-  paymentsProvider, publicPayUrl, PURPOSE_LABELS, MOMO_LABEL, PAYMENT_PURPOSES, type PaymentPurpose,
+  paymentsProvider, availablePaymentProviders, isSimulatedRequest, publicPayUrl, PURPOSE_LABELS, MOMO_LABEL, PAYMENT_PURPOSES, type PaymentPurpose,
   logEvent,
 } from "@/lib/payment-requests";
 import { hubtelPaymentsConfigured, hubtelWebhookUrl, detectMomoChannel } from "@/lib/hubtel";
@@ -67,6 +67,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   return NextResponse.json({
     provider: paymentsProvider(),
+    providers: availablePaymentProviders(),
     configured: hubtelPaymentsConfigured(),
     webhookUrl: hubtelWebhookUrl() || null,
     callbackBase: process.env.HUBTEL_CALLBACK_BASE || process.env.PUBLIC_APP_BASE_URL || null,
@@ -159,7 +160,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   if (action === "create") {
-    const { studentId, purpose, invoiceId, items, walletKind, amountCents, method, payerMsisdn, channel, sendLinkSms } = body;
+    const { studentId, purpose, invoiceId, items, walletKind, amountCents, method, payerMsisdn, channel, provider, sendLinkSms } = body;
     if (!PAYMENT_PURPOSES.includes(purpose)) return NextResponse.json({ error: "Unknown payment purpose" }, { status: 400 });
     const r = await createPaymentRequest(db, {
       schoolId, studentId: String(studentId ?? ""), purpose: purpose as PaymentPurpose,
@@ -169,6 +170,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       amountCents: Math.round(Number(amountCents) || 0),
       method: method === "PAYMENT_LINK" ? "PAYMENT_LINK" : "MOMO_PROMPT",
       payerMsisdn: payerMsisdn || undefined, channel: channel ?? null,
+      provider: typeof provider === "string" ? provider : undefined,
       createdByName: user.fullName,
     });
     if (!r.ok) return NextResponse.json({ error: r.error }, { status: 400 });
@@ -230,7 +232,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (action === "simulate-fail") {
     const request = await db.paymentRequest.findFirst({ where: { id: String(body.id ?? ""), schoolId } });
     if (!request) return NextResponse.json({ error: "Request not found" }, { status: 404 });
-    if (request.provider !== "SIMULATED" || request.status !== "PENDING")
+    if (!isSimulatedRequest(request) || request.status !== "PENDING")
       return NextResponse.json({ error: "Only simulated pending requests can be failed" }, { status: 400 });
     const updated = await failRequest(db, request.id, "Simulated failure (test)");
     return NextResponse.json({ request: updated });

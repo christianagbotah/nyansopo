@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { applyCompletion, failRequest, logEvent, PURPOSE_LABELS, MOMO_LABEL, paymentsProvider } from "@/lib/payment-requests";
+import { applyCompletion, failRequest, logEvent, PURPOSE_LABELS, MOMO_LABEL, paymentsProvider, isSimulatedRequest, PAYMENT_PROVIDER_LABELS } from "@/lib/payment-requests";
 
 /* ── Public payment status (the /pay/{ref} parent page) ────────
    Unauthenticated by design — a parent opens the link on their phone. Only
@@ -43,7 +43,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ ref
     channelLabel: MOMO_LABEL[request.channel ?? ""] ?? null,
     checkoutUrl: request.status === "PENDING" && request.method === "PAYMENT_LINK" ? request.checkoutUrl : null,
     provider: request.provider,
-    simulated: paymentsProvider() === "SIMULATED",
+    providerLabel: PAYMENT_PROVIDER_LABELS[request.provider] ?? request.provider,
+    simulated: isSimulatedRequest(request) && paymentsProvider() === "SIMULATED",
     createdAt: request.createdAt,
   });
 }
@@ -51,12 +52,12 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ ref
 /** SIMULATED mode only — the public page's "I have paid — simulate" button. */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ ref: string }> }) {
   const { ref } = await params;
-  if (paymentsProvider() !== "SIMULATED")
-    return NextResponse.json({ error: "Simulation disabled — live Hubtel credentials are active" }, { status: 400 });
   const body = await req.json().catch(() => ({}));
   const request = await db.paymentRequest.findUnique({ where: { clientReference: ref.toUpperCase() } });
   if (!request) return NextResponse.json({ error: "Payment reference not found" }, { status: 404 });
   if (request.status !== "PENDING") return NextResponse.json({ error: "This request is no longer pending" }, { status: 400 });
+  if (!isSimulatedRequest(request) || paymentsProvider() !== "SIMULATED")
+    return NextResponse.json({ error: "Simulation disabled — this request rides live gateway credentials" }, { status: 400 });
 
   if (body.action === "fail") {
     await failRequest(db, request.id, "Simulated failure (from pay page)");
